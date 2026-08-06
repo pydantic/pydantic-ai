@@ -1,8 +1,11 @@
 import dataclasses
 import json
+import re
+from copy import deepcopy
+from typing import Literal
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -13,9 +16,12 @@ from pydantic_ai import (
     StructuredDict,
     TextOutput,
     ToolOutput,
+    UserError,
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models import ModelProfile
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputObjectDefinition
 
 from ._inline_snapshot import snapshot
@@ -282,6 +288,116 @@ async def test_custom_output_json_schema():
             'required': ['name', 'age'],
         }
     )
+
+
+def test_non_recursive_structured_dict_can_be_nested():
+    PersonDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'name': {'type': 'string'}},
+            'required': ['name'],
+        },
+        name='Person',
+    )
+
+    assert TypeAdapter(list[PersonDict]).json_schema() == snapshot(
+        {
+            'items': {
+                'properties': {'name': {'type': 'string'}},
+                'required': ['name'],
+                'title': 'Person',
+                'type': 'object',
+            },
+            'type': 'array',
+        }
+    )
+
+
+@pytest.mark.parametrize('mode', ['tool', 'native'])
+async def test_structured_dict_recursive_refs_sent_to_model(mode: Literal['tool', 'native']):
+    """Recursive definitions are sent unchanged for both output modes from issue #4018."""
+    # The recursive union reported in the issue: `data` holds an arbitrarily nested JSON value.
+    json_schema = {
+        'type': 'object',
+        'title': 'Output',
+        'properties': {
+            'name': {'type': 'string'},
+            'data': {'$ref': '#/$defs/JSONValue'},
+        },
+        'required': ['name', 'data'],
+        '$defs': {
+            'JSONValue': {
+                'anyOf': [
+                    {'type': 'string'},
+                    {'type': 'integer'},
+                    {'type': 'boolean'},
+                    {'type': 'null'},
+                    {'type': 'array', 'items': {'$ref': '#/$defs/JSONValue'}},
+                    {'$ref': '#/$defs/Map'},
+                ],
+            },
+            'Map': {
+                'type': 'object',
+                'title': 'Map',
+                'properties': {'entries': {'type': 'array', 'items': {'$ref': '#/$defs/JSONValue'}}},
+                'required': ['entries'],
+            },
+        },
+    }
+    original_schema = deepcopy(json_schema)
+
+    expected_output = {'name': 'test', 'data': ['hello', {'entries': [1]}]}
+    profile = ModelProfile(supports_json_schema_output=True)
+    if mode == 'native':
+        model = TestModel(profile=profile, custom_output_text=json.dumps(expected_output))
+    else:
+        model = TestModel(profile=profile, custom_output_args=expected_output)
+    structured_dict = StructuredDict(json_schema)
+    assert json_schema == original_schema
+    output_type = NativeOutput(structured_dict) if mode == 'native' else structured_dict
+    agent = Agent(model, output_type=output_type)
+    result = await agent.run('Return some data')
+    assert result.output == expected_output
+    assert agent.output_json_schema() == original_schema
+
+    request_parameters = model.last_model_request_parameters
+    assert request_parameters is not None
+    if mode == 'native':
+        assert request_parameters.output_object is not None
+        sent_schema = request_parameters.output_object.json_schema
+    else:
+        sent_schema = request_parameters.output_tools[0].parameters_json_schema
+    assert sent_schema == original_schema
+
+
+async def test_structured_dict_recursive_refs_rejected_by_type_adapter():
+    """A recursive `StructuredDict` can't go through `TypeAdapter`, so it raises a helpful error.
+
+    Not a VCR test: this is a pre-request guard, no model is ever called.
+    """
+
+    RecursiveDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'value': {'$ref': '#/$defs/Value'}},
+            '$defs': {
+                'Value': {
+                    'anyOf': [
+                        {'type': 'string'},
+                        {'type': 'array', 'items': {'$ref': '#/$defs/Value'}},
+                    ]
+                }
+            },
+        }
+    )
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'A `StructuredDict` with recursive `$ref`s and `$defs` can only be used as an `output_type` by itself, not nested inside another type.'
+        ),
+    ):
+        TypeAdapter(RecursiveDict).json_schema()
 
 
 async def test_image_output_json_schema():

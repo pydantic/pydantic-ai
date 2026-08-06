@@ -30,6 +30,7 @@ from .output import (
     TextOutputFunc,
     ToolOutput,
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
+    _structured_dict_json_schema,  # type: ignore[reportPrivateUsage]
 )
 from .tools import DeferredToolRequests, GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -878,34 +879,42 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                     break
         else:
             self.output_type = cast(type[Any], output)
-            json_schema_type_adapter: TypeAdapter[Any]
             validation_type_adapter: TypeAdapter[Any]
-            if _utils.is_model_like(output):
-                json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)
+            if (structured_dict_schema := _structured_dict_json_schema(output)) is not None:
+                # Recursive `$defs` cannot go through Pydantic's JSON Schema generator, but the core schema
+                # still provides the dict validator. Send the schema carried by `StructuredDict` directly.
+                validation_type_adapter = TypeAdapter(output)
+                json_schema = structured_dict_schema
             else:
-                self.outer_typed_dict_key = 'response'
-                output_type: type[OutputDataT] = cast(type[OutputDataT], output)
+                json_schema_type_adapter: TypeAdapter[Any]
+                if _utils.is_model_like(output):
+                    validation_type_adapter = TypeAdapter(output)
+                    json_schema_type_adapter = validation_type_adapter
+                else:
+                    self.outer_typed_dict_key = 'response'
+                    output_type: type[OutputDataT] = cast(type[OutputDataT], output)
 
-                response_data_typed_dict = TypedDict(  # noqa: UP013
-                    'response_data_typed_dict',
-                    {'response': output_type},  # pyright: ignore[reportInvalidTypeForm]
-                )
-                json_schema_type_adapter = TypeAdapter(response_data_typed_dict)
+                    response_data_typed_dict = TypedDict(  # noqa: UP013
+                        'response_data_typed_dict',
+                        {'response': output_type},  # pyright: ignore[reportInvalidTypeForm]
+                    )
+                    json_schema_type_adapter = TypeAdapter(response_data_typed_dict)
 
-                # More lenient validator: allow either the native type or a JSON string containing it
-                # i.e. `response: OutputDataT | Json[OutputDataT]`, as some models don't follow the schema correctly,
-                # e.g. `BedrockConverseModel('us.meta.llama3-2-11b-instruct-v1:0')`
-                response_validation_typed_dict = TypedDict(  # noqa: UP013
-                    'response_validation_typed_dict',
-                    {'response': output_type | Json[output_type]},  # pyright: ignore[reportInvalidTypeForm]
+                    # More lenient validator: allow either the native type or a JSON string containing it
+                    # i.e. `response: OutputDataT | Json[OutputDataT]`, as some models don't follow the schema correctly,
+                    # e.g. `BedrockConverseModel('us.meta.llama3-2-11b-instruct-v1:0')`
+                    response_validation_typed_dict = TypedDict(  # noqa: UP013
+                        'response_validation_typed_dict',
+                        {'response': output_type | Json[output_type]},  # pyright: ignore[reportInvalidTypeForm]
+                    )
+                    validation_type_adapter = TypeAdapter(response_validation_typed_dict)
+
+                json_schema = _utils.check_object_json_schema(
+                    json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
                 )
-                validation_type_adapter = TypeAdapter(response_validation_typed_dict)
 
             # Really a PluggableSchemaValidator, but it's API-compatible
             self.validator = cast(SchemaValidator, validation_type_adapter.validator)
-            json_schema = _utils.check_object_json_schema(
-                json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
-            )
 
             if self.outer_typed_dict_key:
                 # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM

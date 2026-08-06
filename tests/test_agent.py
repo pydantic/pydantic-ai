@@ -2718,7 +2718,7 @@ def test_structured_dict_recursive_refs():
     with pytest.raises(
         UserError,
         match=re.escape(
-            '`StructuredDict` does not currently support recursive `$ref`s and `$defs`. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
+            '`StructuredDict` requires recursive schemas to have an object at the root. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
         ),
     ):
         StructuredDict(schema)
