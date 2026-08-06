@@ -350,6 +350,16 @@ class TemporalModel(WrapperModel):
         return current.system
 
     @property
+    def model_id(self) -> str:
+        """Get the ID of the currently active model, rather than the default one's."""
+        current = self._current_model()
+        if isinstance(current, str):
+            # `system` and `model_name` already parse the raw ID, falling back to the default model's
+            # provider when the string names none, so recombining them is the answer here.
+            return f'{self.system}:{self.model_name}'
+        return current.model_id
+
+    @property
     def profile(self) -> ModelProfile:
         """Get the model profile, inferring from raw strings without provider construction.
 
