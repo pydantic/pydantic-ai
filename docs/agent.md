@@ -631,6 +631,18 @@ _(This example is complete, it can be run "as is" -- you'll need to add `asyncio
 
 [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] accepts the same token. Calling `token.cancel()` from another thread is the only way to interrupt a synchronous run while it is blocked.
 
+!!! note "Which mechanism, and which exception"
+    A [`CancellationToken`][pydantic_ai.CancellationToken] is the one to reach for by default -- it's the only surface that works from outside the run, from another thread, and against `run_sync()`, and one token can govern several runs at once. The others exist for where a token can't reach:
+
+    | Where you are when you cancel | Use | Run ends with |
+    | --- | --- | --- |
+    | Outside the run (a "stop" button, another thread) | [`CancellationToken`][pydantic_ai.CancellationToken] | [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] |
+    | Inside a tool, `event_stream_handler`, or capability hook | [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] | [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] |
+    | Driving the graph yourself via [`agent.iter()`][pydantic_ai.agent.Agent.iter] | [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] | [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] |
+    | The environment cancelled you (`asyncio.timeout()`, a [`TaskGroup`][asyncio.TaskGroup], shutdown) | *(you don't call anything)* | [`CancelledError`][asyncio.CancelledError] |
+
+    The first three are **first-party**: Pydantic AI stops the run itself and raises `RunCancelled`, an ordinary catchable exception carrying the resumable history. The last is **external**: the `CancelledError` keeps propagating unchanged -- so `asyncio.timeout()` still raises `TimeoutError`, a `TaskGroup` still tears down, and Temporal still ends the workflow *Cancelled* -- with the same history *attached* for [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation]. Pydantic AI can't turn an external `CancelledError` into `RunCancelled` without breaking those semantics; that's why cancellation has the two shapes, covered next.
+
 When the surrounding environment cancels the run -- for example through `asyncio.timeout()`, a [`TaskGroup`][asyncio.TaskGroup], or application shutdown -- the [`CancelledError`][asyncio.CancelledError] remains unchanged. [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] provides the attached run state:
 
 ```python {title="run_external_cancel.py"}
