@@ -1511,6 +1511,24 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not isinstance(messages[-1], _messages.ModelRequest):
             raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
 
+        # History processors and capabilities may replace the request context with new message
+        # objects. Record the instruction parts on the request that is actually sent so history
+        # does not retain the pre-hook rendering. This may not be the last message when a hook has
+        # appended a tool-availability request after the original request.
+        request_to_update = next(
+            (
+                message
+                for message in reversed(messages)
+                if isinstance(message, _messages.ModelRequest)
+                and message.parts == self.request.parts
+                and message.timestamp == self.request.timestamp
+                and message.metadata == self.request.metadata
+            ),
+            None,
+        )
+        if request_to_update is not None and model_request_parameters.instruction_parts is not None:
+            request_to_update.instructions = _messages.InstructionPart.join(model_request_parameters.instruction_parts)
+
         # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
         fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
 

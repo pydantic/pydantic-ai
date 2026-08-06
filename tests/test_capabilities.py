@@ -82,6 +82,7 @@ from pydantic_ai.messages import (
     FilePart,
     FunctionToolCallEvent,
     ImageUrl,
+    InstructionPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -5038,6 +5039,40 @@ async def test_for_run_with_different_instructions():
     assert any('per-run' in i for i in instructions_found), (
         f'Expected per-run instructions in messages, got: {captured_messages}'
     )
+
+
+async def test_before_model_request_records_instructions_from_replaced_context():
+    """History records the instructions from the context that the model actually receives."""
+
+    class ReplacingCapability(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            messages = [replace(message) for message in request_context.messages]
+            parameters = replace(
+                request_context.model_request_parameters,
+                instruction_parts=[InstructionPart(content='managed', dynamic=False)],
+            )
+            return replace(request_context, messages=messages, model_request_parameters=parameters)
+
+    seen: list[list[str]] = []
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append([part.content for part in info.model_request_parameters.instruction_parts or []])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        instructions='base',
+        capabilities=[ReplacingCapability()],
+    )
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'done'
+    assert seen == [['managed']]
+    requests = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
+    assert requests[-1].instructions == 'managed'
 
 
 async def test_for_run_receives_populated_run_context():
