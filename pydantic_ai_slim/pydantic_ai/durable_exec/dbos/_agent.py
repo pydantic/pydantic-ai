@@ -50,7 +50,6 @@ if TYPE_CHECKING:
     from pydantic_ai.realtime import (
         AudioRetention,
         KnownRealtimeModelName,
-        RealtimeEvent,
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeSession,
@@ -304,12 +303,12 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             return handler
 
     async def _call_event_stream_handler_in_workflow(
-        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent | RealtimeEvent]
+        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
     ) -> None:
         handler = self._effective_event_stream_handler()
         assert handler is not None
 
-        async def streamed_response(event: _messages.AgentStreamEvent | RealtimeEvent):
+        async def streamed_response(event: _messages.AgentStreamEvent):
             yield event
 
         async for event in stream:

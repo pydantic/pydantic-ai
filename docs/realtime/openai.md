@@ -105,6 +105,6 @@ that expose the realtime protocol can also be supplied through an `OpenAIProvide
 - The provider connection has no resumable server handle. Automatic reconnect restores completed
   history by replaying local messages into a new session.
 - The provider can speak while local function tools run, so a single user exchange may contain
-  multiple model responses. Wait for `TurnCompleteEvent`.
+  multiple model responses. Wait for `RealtimeTurnCompleteEvent`.
 - Changing `openai_voice` or other provider settings should be done before opening the session; the
   shared agent configuration is resolved once at connect.

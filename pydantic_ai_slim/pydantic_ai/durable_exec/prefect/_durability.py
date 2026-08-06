@@ -30,7 +30,7 @@ from ._toolset import prefectify_toolset as _default_prefectify_toolset, with_no
 from ._types import TaskConfig, default_task_config
 
 if TYPE_CHECKING:
-    from pydantic_ai.realtime import RealtimeEvent
+    pass
 
 
 @dataclass(init=False)
@@ -182,14 +182,12 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return FlowRunContext.get() is not None
 
-    async def _dispatch_event_stream_event(
-        self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent | RealtimeEvent | RealtimeEvent
-    ) -> None:
+    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         assert self._event_stream_handler is not None
         handler = self._event_stream_handler
 
         @task(name='Handle Stream Event', **self._event_stream_handler_task_config)
-        async def event_stream_handler_task(stream_event: AgentStreamEvent | RealtimeEvent, sequence: int) -> None:
+        async def event_stream_handler_task(stream_event: AgentStreamEvent, sequence: int) -> None:
             with self._durable_run_context_scope(ctx) as task_ctx:
                 await handler(task_ctx, self._single_event_stream(stream_event))
 

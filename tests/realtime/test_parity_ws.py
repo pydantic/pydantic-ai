@@ -28,8 +28,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeModel, TurnCompleteEvent
-from pydantic_ai.realtime._base import SessionErrorEvent
+from pydantic_ai.realtime import RealtimeModel, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime._base import RealtimeSessionErrorEvent
 
 from ..conftest import try_import
 from .ws_cassettes import RealtimeCassette
@@ -197,7 +197,7 @@ async def _collect_complete_turn(session: Any, *, after_tool_result: bool = Fals
             if isinstance(event, FunctionToolResultEvent):
                 tool_result_seen = True
             elif (
-                isinstance(event, TurnCompleteEvent)
+                isinstance(event, RealtimeTurnCompleteEvent)
                 and tool_result_seen
                 and isinstance(session.all_messages()[-1], ModelResponse)
                 and session.all_messages()[-1].parts
@@ -237,7 +237,7 @@ async def test_text_tool_round_parity(
         await session.send('What is the weather in London?')
         events = await _collect_complete_turn(session, after_tool_result=True)
 
-    assert not any(isinstance(event, SessionErrorEvent) for event in events)
+    assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)
     assert sum(isinstance(event, FunctionToolCallEvent) for event in events) == 1
     assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
     messages = session.all_messages()
@@ -277,7 +277,7 @@ async def test_history_seeding_parity(
         await session.send('What is my name and favorite color?')
         events = await _collect_complete_turn(session)
 
-    assert not any(isinstance(event, SessionErrorEvent) for event in events)
+    assert not any(isinstance(event, RealtimeSessionErrorEvent) for event in events)
     messages = session.all_messages()
     assert messages[:2] == history
     assert [type(message) for message in messages[2:]] == [ModelRequest, ModelResponse]

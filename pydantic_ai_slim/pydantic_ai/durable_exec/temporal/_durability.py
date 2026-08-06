@@ -45,7 +45,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
 if TYPE_CHECKING:
-    from pydantic_ai.realtime import RealtimeEvent
+    pass
 
 from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
@@ -82,7 +82,7 @@ class _CancelParams:
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _EventStreamHandlerParams:
-    event: AgentStreamEvent | RealtimeEvent
+    event: AgentStreamEvent
     serialized_run_context: Any
 
 
@@ -429,9 +429,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return workflow.in_workflow()
 
-    async def _dispatch_event_stream_event(
-        self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent | RealtimeEvent | RealtimeEvent
-    ) -> None:
+    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         config: ActivityConfig = {
             'summary': f'handle event: {event.event_kind}',

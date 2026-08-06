@@ -49,16 +49,16 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     AudioInput,
-    InputSpeechEndEvent,
-    InputSpeechStartEvent,
-    InputTranscriptionErrorEvent,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
+    RealtimeInputTranscriptionErrorEvent,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeSession,
-    SessionReconnectEvent,
+    RealtimeSessionReconnectEvent,
     TurnDetection,
 )
-from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput, merge_realtime_profile
+from pydantic_ai.realtime._base import ImageInput, RealtimeSessionErrorEvent, TextInput, merge_realtime_profile
 from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
     map_conversation_event,
@@ -402,7 +402,7 @@ def test_map_response_done_mixed_output_is_turn_complete() -> None:
 
 
 def test_map_response_done_without_response_object() -> None:
-    assert map_event({'type': 'response.done'}) == SessionErrorEvent(
+    assert map_event({'type': 'response.done'}) == RealtimeSessionErrorEvent(
         message='`response.done.response` must be an object', recoverable=True
     )
 
@@ -438,17 +438,17 @@ def test_map_conversation_event_rejects_malformed_nested_object(frame: dict[str,
 
 
 def test_map_error_event_with_message() -> None:
-    assert map_event({'type': 'error', 'error': {'message': 'bad'}}) == SessionErrorEvent(message='bad')
+    assert map_event({'type': 'error', 'error': {'message': 'bad'}}) == RealtimeSessionErrorEvent(message='bad')
 
 
 def test_map_error_event_without_message_serializes_payload() -> None:
-    assert map_event({'type': 'error', 'error': {'code': 'x'}}) == SessionErrorEvent(
+    assert map_event({'type': 'error', 'error': {'code': 'x'}}) == RealtimeSessionErrorEvent(
         message=json.dumps({'code': 'x'}), code='x'
     )
 
 
 def test_map_error_event_non_dict_payload() -> None:
-    assert map_event({'type': 'error', 'error': 'plain'}) == SessionErrorEvent(message='plain')
+    assert map_event({'type': 'error', 'error': 'plain'}) == RealtimeSessionErrorEvent(message='plain')
 
 
 def test_handshake_error_message_falls_back_to_repr() -> None:
@@ -461,7 +461,7 @@ def test_handshake_error_message_falls_back_to_repr() -> None:
 
 def test_map_error_event_with_type_and_code_is_recoverable() -> None:
     event = map_event({'type': 'error', 'error': {'message': 'bad', 'type': 'invalid_request_error', 'code': 'c1'}})
-    assert event == SessionErrorEvent(message='bad', type='invalid_request_error', code='c1', recoverable=True)
+    assert event == RealtimeSessionErrorEvent(message='bad', type='invalid_request_error', code='c1', recoverable=True)
 
 
 def test_map_usage_full_payload() -> None:
@@ -525,11 +525,11 @@ def test_map_usage_minimal_and_missing() -> None:
 
 
 def test_map_speech_started() -> None:
-    assert map_event({'type': 'input_audio_buffer.speech_started'}) == InputSpeechStartEvent()
+    assert map_event({'type': 'input_audio_buffer.speech_started'}) == RealtimeInputSpeechStartEvent()
 
 
 def test_map_speech_stopped() -> None:
-    assert map_event({'type': 'input_audio_buffer.speech_stopped'}) == InputSpeechEndEvent()
+    assert map_event({'type': 'input_audio_buffer.speech_stopped'}) == RealtimeInputSpeechEndEvent()
 
 
 def test_map_unhandled_event_returns_none() -> None:
@@ -583,16 +583,16 @@ def test_map_unhandled_event_returns_none() -> None:
             },
             ToolCall('call-1', 'weather', '{}', response_usage_follows=True),
         ),
-        ({'type': 'input_audio_buffer.speech_started'}, InputSpeechStartEvent()),
-        ({'type': 'input_audio_buffer.speech_stopped'}, InputSpeechEndEvent()),
+        ({'type': 'input_audio_buffer.speech_started'}, RealtimeInputSpeechStartEvent()),
+        ({'type': 'input_audio_buffer.speech_stopped'}, RealtimeInputSpeechEndEvent()),
         (
             {'type': 'response.done', 'response': {'id': 'r', 'status': 'completed', 'output': []}},
             ResponseDone(False, 'r', 'stop', {'status': 'completed'}),
         ),
-        ({'type': 'error', 'error': {'message': 'bad'}}, SessionErrorEvent('bad')),
+        ({'type': 'error', 'error': {'message': 'bad'}}, RealtimeSessionErrorEvent('bad')),
         (
             {'type': 'conversation.item.input_audio_transcription.failed', 'error': {'message': 'bad'}},
-            InputTranscriptionErrorEvent(message='bad'),
+            RealtimeInputTranscriptionErrorEvent(message='bad'),
         ),
         (
             {
@@ -601,7 +601,7 @@ def test_map_unhandled_event_returns_none() -> None:
                 'item_id': 'u',
                 'content_index': 2,
             },
-            InputTranscriptionErrorEvent(
+            RealtimeInputTranscriptionErrorEvent(
                 message='bad',
                 type='transcription_error',
                 code='audio_unintelligible',
@@ -615,7 +615,7 @@ def test_map_unhandled_event_returns_none() -> None:
                 'type': 'conversation.item.input_audio_transcription.failed',
                 'error': {'message': 'x', 'type': 'server_error', 'code': 'DeploymentNotFound'},
             },
-            InputTranscriptionErrorEvent(
+            RealtimeInputTranscriptionErrorEvent(
                 message=(
                     'x The transcription model is not deployed on this Azure OpenAI resource. Deploy one and '
                     'set `input_transcription_model` to its deployment name, or set it to `None` to disable '
@@ -631,7 +631,7 @@ def test_map_unhandled_event_returns_none() -> None:
                 'type': 'conversation.item.input_audio_transcription.failed',
                 'error': {'code': 'DeploymentNotFound'},
             },
-            InputTranscriptionErrorEvent(
+            RealtimeInputTranscriptionErrorEvent(
                 message=(
                     'The transcription model is not deployed on this Azure OpenAI resource. Deploy one and '
                     'set `input_transcription_model` to its deployment name, or set it to `None` to disable '
@@ -1141,7 +1141,7 @@ async def test_connection_iter_skips_non_string_frames(monkeypatch: pytest.Monke
 @pytest.mark.anyio
 async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest.MonkeyPatch) -> None:
     # A malformed frame (invalid JSON, a valid-JSON-but-non-object frame, then a bad base64 audio
-    # payload) surfaces as a recoverable SessionErrorEvent and the session keeps streaming rather than
+    # payload) surfaces as a recoverable RealtimeSessionErrorEvent and the session keeps streaming rather than
     # tearing down. The non-object case guards against `json.loads` returning a list/str/number, which
     # would otherwise raise `AttributeError` from a later `.get()` and escape the recoverable path.
     bad_json = 'not json'
@@ -1224,12 +1224,12 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
     assert [type(e).__name__ for e in events] == [
-        'SessionErrorEvent',
-        'SessionErrorEvent',
-        'SessionErrorEvent',
-        *['SessionErrorEvent', 'AudioDelta'] * len(malformed_nested_frames),
+        'RealtimeSessionErrorEvent',
+        'RealtimeSessionErrorEvent',
+        'RealtimeSessionErrorEvent',
+        *['RealtimeSessionErrorEvent', 'AudioDelta'] * len(malformed_nested_frames),
     ]
-    errors = [event for event in events if isinstance(event, SessionErrorEvent)]
+    errors = [event for event in events if isinstance(event, RealtimeSessionErrorEvent)]
     assert len(errors) == 3 + len(malformed_nested_frames)
     assert all(event.recoverable for event in errors)
     assert events[-1] == AudioDelta(data=b'\x09')
@@ -2064,7 +2064,7 @@ async def test_malformed_usage_on_response_done_still_releases_the_response() ->
     conn._pending_response = True  # pyright: ignore[reportPrivateUsage]
 
     events = await collect_codec_events(conn)
-    assert any(isinstance(event, SessionErrorEvent) and event.recoverable for event in events)
+    assert any(isinstance(event, RealtimeSessionErrorEvent) and event.recoverable for event in events)
     assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]  # the replayed request
     assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
     assert json.dumps({'type': 'response.create'}) in ws.sent
@@ -2087,7 +2087,7 @@ async def test_socket_oserror_is_reported_like_a_drop() -> None:
     events = [event async for event in conn]
     assert len(events) == 1
     error = events[0]
-    assert isinstance(error, SessionErrorEvent)
+    assert isinstance(error, RealtimeSessionErrorEvent)
     assert error.recoverable is False
     assert 'connection reset by peer' in error.message
 
@@ -2100,7 +2100,7 @@ async def test_response_done_without_response_object_is_recoverable() -> None:
     conn._response_active = True  # pyright: ignore[reportPrivateUsage]
     conn._pending_response = True  # pyright: ignore[reportPrivateUsage]
     events = await collect_codec_events(conn)
-    assert events == [SessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)]
+    assert events == [RealtimeSessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)]
     assert ws.sent == [json.dumps({'type': 'response.create'})]
     assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]
     assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
@@ -2114,7 +2114,7 @@ async def test_response_done_without_response_object_sends_nothing_when_none_was
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     conn._response_active = True  # pyright: ignore[reportPrivateUsage]
     events = await collect_codec_events(conn)
-    assert events == [SessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)]
+    assert events == [RealtimeSessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)]
     assert ws.sent == []
     assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
 
@@ -2373,7 +2373,7 @@ async def test_connection_closed_yields_fatal_error() -> None:
     events = [e async for e in conn]
     assert len(events) == 1
     error = events[0]
-    assert isinstance(error, SessionErrorEvent)
+    assert isinstance(error, RealtimeSessionErrorEvent)
     assert error.recoverable is False
 
 
@@ -2395,7 +2395,7 @@ async def test_clean_close_is_reported_as_a_fatal_error() -> None:
     """
     conn = OpenAIRealtimeConnection(_ExpiredWebSocket([]))  # type: ignore[arg-type]
     assert [event async for event in conn] == [
-        SessionErrorEvent(
+        RealtimeSessionErrorEvent(
             message=(
                 'OpenAI Realtime connection closed: received 1001 Your session hit the maximum duration of 60 minutes.'
             ),
@@ -2422,7 +2422,10 @@ async def test_clean_close_reconnects_when_a_policy_is_configured() -> None:
         reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
     )
     events = await collect_codec_events(conn)
-    assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='still here', is_final=True)]
+    assert events == [
+        RealtimeSessionReconnectEvent(state_restored=False),
+        OutputTranscript(text='still here', is_final=True),
+    ]
 
 
 @pytest.mark.anyio
@@ -2465,7 +2468,7 @@ async def test_reconnects_on_drop_and_resumes() -> None:
         reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
     )
     events = await collect_codec_events(conn)
-    assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
+    assert events == [RealtimeSessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
 
 
 class _DropAfterHandshake(FakeWebSocket):
@@ -2517,7 +2520,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [SessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
+    assert events == [RealtimeSessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
 
 
@@ -2585,7 +2588,7 @@ async def test_reconnect_gives_up_after_max_attempts() -> None:
     events = [e async for e in conn]
     assert len(events) == 1
     error = events[0]
-    assert isinstance(error, SessionErrorEvent)
+    assert isinstance(error, RealtimeSessionErrorEvent)
     assert error.recoverable is False
     assert 'reconnect failed' in error.message
 
@@ -3111,7 +3114,7 @@ async def test_reconnect_replays_the_conversation(monkeypatch: pytest.MonkeyPatc
         events = await collect_codec_events(conn)
 
     # The reconnect reports state as restored, because the replay is what restores it.
-    assert events[0] == SessionReconnectEvent(state_restored=True)
+    assert events[0] == RealtimeSessionReconnectEvent(state_restored=True)
     replayed = [json.loads(frame) for frame in fresh.sent if 'conversation.item.create' in frame]
     assert replayed == snapshot(
         [
@@ -3170,5 +3173,5 @@ async def test_reconnect_without_a_session_does_not_replay(monkeypatch: pytest.M
     async with _connect(model, 'be brief') as conn:
         events = await collect_codec_events(conn)
 
-    assert events[0] == SessionReconnectEvent(state_restored=False)
+    assert events[0] == RealtimeSessionReconnectEvent(state_restored=False)
     assert not [frame for frame in fresh.sent if 'conversation.item.create' in frame]

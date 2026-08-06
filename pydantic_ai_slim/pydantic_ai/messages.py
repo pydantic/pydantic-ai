@@ -3806,6 +3806,160 @@ class DeferredToolResultsEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False)
+class RealtimeTurnCompleteEvent:
+    """The exchange is over: the model has finished replying and nothing is outstanding.
+
+    This is the event to stop consuming on. It is synthesized by the session once no tool calls are
+    still running and no further response is in flight.
+    """
+
+    _: KW_ONLY
+
+    event_kind: Literal['realtime_turn_complete'] = 'realtime_turn_complete'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RealtimeInputSpeechStartEvent:
+    """The provider detected that the user started speaking.
+
+    Useful for barge-in: stop playing any buffered model audio when this arrives, since the model's
+    in-progress turn is being interrupted.
+
+    Reported by OpenAI, Azure OpenAI, and xAI. Gemini Live does not report speech onset.
+    """
+
+    _: KW_ONLY
+
+    item_id: str | None = None
+    """Provider id of the user input item this speech segment belongs to, when reported."""
+
+    event_kind: Literal['realtime_input_speech_start'] = 'realtime_input_speech_start'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RealtimeResponseInterruptedEvent:
+    """The provider cut the model's in-progress response short.
+
+    Arrives as soon as the provider interrupts, ahead of its response terminal, so it's the point at
+    which to flush buffered model audio.
+
+    Reported by Gemini Live, which interrupts server-side when it hears the user speak. The other
+    providers report the user's speech onset as
+    [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] and leave the cancellation
+    to [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt], so they never report this.
+    """
+
+    _: KW_ONLY
+
+    event_kind: Literal['realtime_response_interrupted'] = 'realtime_response_interrupted'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RealtimeInputSpeechEndEvent:
+    """The provider detected that the user stopped speaking.
+
+    Useful as a 'processing' indicator: the user's turn has ended and the model is about to respond.
+    """
+
+    _: KW_ONLY
+
+    item_id: str | None = None
+    """Provider id of the user input item this speech segment belongs to, when reported.
+
+    Used to attach retained input audio (`audio_retention='input_audio'`/`'all'`) to the right user turn
+    when turns overlap, since transcripts for different items can finalize out of order.
+    """
+
+    event_kind: Literal['realtime_input_speech_end'] = 'realtime_input_speech_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RealtimeInputTranscriptionErrorEvent:
+    """The provider failed to transcribe a user audio input turn, but the session continues.
+
+    This is recoverable; `item_id` and `content_index` locate the affected user turn.
+    """
+
+    message: str
+    """Human-readable error message."""
+
+    _: KW_ONLY
+
+    type: str | None = None
+    """Provider error category, if any."""
+    code: str | None = None
+    """Provider error code, if any."""
+    item_id: str | None = None
+    """Provider conversation-item ID for the affected user turn, when available."""
+    content_index: int | None = None
+    """Content index within the affected user turn, when available."""
+
+    event_kind: Literal['realtime_input_transcription_error'] = 'realtime_input_transcription_error'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RealtimeSessionReconnectEvent:
+    """The connection dropped and was automatically re-established; inspect `state_restored` for continuity.
+
+    Session configuration (instructions, tools, voice, ...) is restored on every reconnect. OpenAI
+    starts with fresh server-side conversation state; Gemini and xAI restore conversation state when
+    their session-resumption support is enabled (xAI enables it automatically when `reconnect` is set).
+    """
+
+    _: KW_ONLY
+
+    state_restored: bool = False
+    """Whether the provider restored prior conversation state on reconnect.
+
+    `False` (OpenAI/Azure OpenAI — the server starts a fresh conversation) means the consumer should
+    treat the session as having lost prior turns; `True` (xAI Grok Voice and Gemini Live, when their native
+    session resumption is active) means prior turns were restored.
+    """
+
+    event_kind: Literal['realtime_session_reconnect'] = 'realtime_session_reconnect'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RealtimeSessionErrorEvent:
+    """A provider-reported error occurred in the session."""
+
+    message: str
+    """Human-readable error message."""
+
+    _: KW_ONLY
+
+    type: str | None = None
+    """Provider error category, e.g. `invalid_request_error` or `server_error`."""
+    code: str | None = None
+    """Provider error code, if any."""
+    recoverable: bool = True
+    """Whether the session can continue. A protocol `error` is recoverable; a dropped connection is not."""
+
+    event_kind: Literal['realtime_session_error'] = 'realtime_session_error'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
@@ -3817,7 +3971,20 @@ HandleResponseEvent = Annotated[
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""
 
-AgentStreamEvent = Annotated[
-    ModelResponseStreamEvent | EnqueuedMessagesEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')
+RealtimeSessionEvent = Annotated[
+    RealtimeTurnCompleteEvent
+    | RealtimeInputSpeechStartEvent
+    | RealtimeInputSpeechEndEvent
+    | RealtimeResponseInterruptedEvent
+    | RealtimeInputTranscriptionErrorEvent
+    | RealtimeSessionReconnectEvent
+    | RealtimeSessionErrorEvent,
+    pydantic.Discriminator('event_kind'),
 ]
-"""An event in the agent stream: model response stream events, enqueued-message delivery events, and response-handling events."""
+"""An event that occurs only in realtime session streams."""
+
+AgentStreamEvent = Annotated[
+    ModelResponseStreamEvent | EnqueuedMessagesEvent | HandleResponseEvent | RealtimeSessionEvent,
+    pydantic.Discriminator('event_kind'),
+]
+"""An event in an agent run or realtime session stream."""

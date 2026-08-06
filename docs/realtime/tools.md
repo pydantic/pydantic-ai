@@ -154,7 +154,7 @@ while analysis runs. To continue the entire conversation after the voice session
 ## Edge cases
 
 - A tool finishing does not necessarily finish the turn. Wait for
-  [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent].
+  [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent].
 - Short tools can make asynchronous Gemini tool calling counterproductive: the result may interrupt
   a reply that barely started. Enable it for tools whose latency would otherwise create dead air.
 - Native-tool behavior is model-specific. Check the profile and provider page rather than assuming

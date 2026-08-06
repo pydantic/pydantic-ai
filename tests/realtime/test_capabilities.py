@@ -41,7 +41,7 @@ from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
-    TurnCompleteEvent,
+    RealtimeTurnCompleteEvent,
 )
 from pydantic_ai.realtime.codec import (
     OutputTranscript,
@@ -578,15 +578,15 @@ async def test_run_context_realtime_is_false_for_classic_run() -> None:
 
 async def test_wrap_run_event_stream_transforms_session_view_only() -> None:
     """The shared stream wrapper sees realtime-only events but cannot rewrite session history."""
-    observed: list[AgentStreamEvent | RealtimeEvent] = []
+    observed: list[AgentStreamEvent] = []
 
     class TransformStream(AbstractCapability[None]):
         async def wrap_run_event_stream(
             self,
             ctx: RunContext[None],
             *,
-            stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-        ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+            stream: AsyncIterable[AgentStreamEvent],
+        ) -> AsyncIterable[AgentStreamEvent]:
             async for event in stream:
                 observed.append(event)
                 if isinstance(event, PartDeltaEvent) and isinstance(event.delta, SpeechPartDelta):
@@ -601,7 +601,7 @@ async def test_wrap_run_event_stream_transforms_session_view_only() -> None:
     async with agent.realtime(model).session() as session:
         events = [event async for event in session]
 
-    assert any(isinstance(event, TurnCompleteEvent) for event in observed)
+    assert any(isinstance(event, RealtimeTurnCompleteEvent) for event in observed)
     delta = next(event.delta for event in events if isinstance(event, PartDeltaEvent))
     assert isinstance(delta, SpeechPartDelta)
     assert delta.transcript_delta == 'transformed'
@@ -612,25 +612,25 @@ async def test_wrap_run_event_stream_transforms_session_view_only() -> None:
 
 async def test_event_stream_handler_receives_session_events() -> None:
     """`ProcessEventStream` provides the agent-level event handler for realtime sessions."""
-    observed: list[AgentStreamEvent | RealtimeEvent] = []
+    observed: list[AgentStreamEvent] = []
 
-    async def handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent | RealtimeEvent]) -> None:
+    async def handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
         observed.extend([event async for event in events])
 
     agent = Agent(capabilities=[ProcessEventStream(handler)], deps_type=type(None))
     await _drain(agent, _RecordingModel(connection_events=[OutputTranscript(text='hello'), ResponseDone()]))
 
     assert any(isinstance(event, PartStartEvent) for event in observed)
-    assert any(isinstance(event, TurnCompleteEvent) for event in observed)
+    assert any(isinstance(event, RealtimeTurnCompleteEvent) for event in observed)
 
 
 async def test_on_event_hook_receives_session_events() -> None:
     """The `Hooks.on.event` convenience callback shares the realtime session vocabulary."""
-    observed: list[AgentStreamEvent | RealtimeEvent] = []
+    observed: list[AgentStreamEvent] = []
     hooks = Hooks()
 
     @hooks.on.event
-    def observe(ctx: RunContext[None], event: AgentStreamEvent | RealtimeEvent) -> AgentStreamEvent | RealtimeEvent:
+    def observe(ctx: RunContext[None], event: AgentStreamEvent) -> AgentStreamEvent:
         observed.append(event)
         return event
 
@@ -640,7 +640,7 @@ async def test_on_event_hook_receives_session_events() -> None:
     )
 
     assert any(isinstance(event, PartStartEvent) for event in observed)
-    assert any(isinstance(event, TurnCompleteEvent) for event in observed)
+    assert any(isinstance(event, RealtimeTurnCompleteEvent) for event in observed)
 
 
 async def test_session_stream_wrapper_closes_after_early_break() -> None:
@@ -652,8 +652,8 @@ async def test_session_stream_wrapper_closes_after_early_break() -> None:
             self,
             ctx: RunContext[None],
             *,
-            stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-        ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+            stream: AsyncIterable[AgentStreamEvent],
+        ) -> AsyncIterable[AgentStreamEvent]:
             nonlocal wrapper_closed
             try:
                 async for event in stream:

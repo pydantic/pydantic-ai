@@ -13,7 +13,7 @@ not emitted as session events.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.realtime import TurnCompleteEvent
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 agent = Agent()
@@ -23,7 +23,7 @@ async def main():
     async with agent.realtime(OpenAIRealtimeModel('gpt-realtime')).session() as session:
         await session.send('Say hello.')
         async for event in session:
-            if isinstance(event, TurnCompleteEvent):
+            if isinstance(event, RealtimeTurnCompleteEvent):
                 break
         print(session.usage)
         #> RunUsage(requests=1)

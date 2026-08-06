@@ -122,12 +122,10 @@ Use `event_stream_handler=` with `run()` or `run_stream()` when the user wants p
 from collections.abc import AsyncIterable
 
 from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, RunContext
-from pydantic_ai.realtime import RealtimeEvent
-
 agent = Agent('openai:gpt-5.2', name='streaming_agent')
 
 
-async def stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent | RealtimeEvent]):
+async def stream_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]):
     async for event in events:
         if isinstance(event, FunctionToolCallEvent):
             print(f'Calling {event.part.tool_name}...')

@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
-    from pydantic_ai.realtime import RealtimeEvent
     from pydantic_ai.run import AgentRunResult
 
 
@@ -250,8 +249,8 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
-    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> AsyncIterable[AgentStreamEvent]:
         wrapped_stream = self.wrapped.wrap_run_event_stream(ctx, stream=stream)
         try:
             async for event in wrapped_stream:

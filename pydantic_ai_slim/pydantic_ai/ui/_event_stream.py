@@ -26,6 +26,13 @@ from ..messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
+    RealtimeInputTranscriptionErrorEvent,
+    RealtimeResponseInterruptedEvent,
+    RealtimeSessionErrorEvent,
+    RealtimeSessionReconnectEvent,
+    RealtimeTurnCompleteEvent,
     SpeechPart,
     SpeechPartDelta,
     TextPart,
@@ -360,6 +367,17 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case AgentRunResultEvent():
                 async for e in self.handle_run_result(event):
                     yield e
+            case (
+                RealtimeTurnCompleteEvent()
+                | RealtimeInputSpeechStartEvent()
+                | RealtimeInputSpeechEndEvent()
+                | RealtimeResponseInterruptedEvent()
+                | RealtimeInputTranscriptionErrorEvent()
+                | RealtimeSessionReconnectEvent()
+                | RealtimeSessionErrorEvent()
+            ):  # pragma: no cover
+                # Realtime session events don't flow through UI event streams.
+                pass
             case _:
                 pass
 

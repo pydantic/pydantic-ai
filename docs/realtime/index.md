@@ -32,7 +32,7 @@ import asyncio
 import wave
 
 from pydantic_ai import Agent
-from pydantic_ai.realtime import PartDeltaEvent, SpeechPartDelta, TurnCompleteEvent
+from pydantic_ai.realtime import PartDeltaEvent, SpeechPartDelta, RealtimeTurnCompleteEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 agent = Agent(instructions='Keep your replies short and conversational.')
@@ -48,7 +48,7 @@ async def main() -> None:
             match event:
                 case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
                     audio.extend(chunk)
-                case TurnCompleteEvent():
+                case RealtimeTurnCompleteEvent():
                     break
 
         with wave.open(OUTPUT_PATH, 'wb') as wav_file:

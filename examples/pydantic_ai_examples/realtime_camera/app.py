@@ -81,18 +81,18 @@ from pydantic_ai.messages import NativeToolReturnPart, TextPartDelta
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 from pydantic_ai.realtime import (
-    InputSpeechStartEvent,
     PartDeltaEvent,
     PartEndEvent,
     RealtimeError,
     RealtimeEvent,
+    RealtimeInputSpeechStartEvent,
     RealtimeModel,
     RealtimeModelSettings,
+    RealtimeResponseInterruptedEvent,
     RealtimeSession,
+    RealtimeTurnCompleteEvent,
     ReconnectPolicy,
-    ResponseInterruptedEvent,
     SpeechPartDelta,
-    TurnCompleteEvent,
     TurnDetection,
     infer_realtime_model,
 )
@@ -489,9 +489,9 @@ def _json_message(event: RealtimeEvent) -> dict[str, object] | None:
     covers the remaining one-shot events (barge-in, grounding sources, end of turn).
     """
     match event:
-        case InputSpeechStartEvent() | ResponseInterruptedEvent():
+        case RealtimeInputSpeechStartEvent() | RealtimeResponseInterruptedEvent():
             # A barge-in: the user started talking over the model, or the provider reported the
-            # response interrupted — Gemini signals only the latter, without an `InputSpeechStartEvent`.
+            # response interrupted — Gemini signals only the latter, without an `RealtimeInputSpeechStartEvent`.
             # The browser flushes buffered audio either way. (The realtime session records the
             # barge-in in its telemetry.)
             return {'type': 'speech_started'}
@@ -502,7 +502,7 @@ def _json_message(event: RealtimeEvent) -> dict[str, object] | None:
                 'queries': [],
                 'sources': _grounding_sources(content),
             }
-        case TurnCompleteEvent():
+        case RealtimeTurnCompleteEvent():
             return {'type': 'turn_complete'}
         case _:
             return None
