@@ -369,7 +369,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # "unsupported builtin" raise AND leave a redundant function tool on the wire
         # alongside the native builtin on providers that DO support it.
         if self.enable_fallback and searchable:
-            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(ctx, searchable, revealed_tool_names)
+            search_tool = self._build_search_tool(ctx, searchable, revealed_tool_names)
+            if search_tool.corpus:
+                result[_SEARCH_TOOLS_NAME] = search_tool
 
         return result
 

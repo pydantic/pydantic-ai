@@ -39,6 +39,7 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    CompactionPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -898,8 +899,8 @@ async def test_tool_search_toolset_discovered_tools_keep_defer_loading():
     assert tools['crypto_price'].tool_def.defer_loading is True
 
 
-async def test_tool_search_toolset_keeps_search_tool_after_all_discovered():
-    """`search_tools` stays in the request even when every deferred tool is discovered.
+async def test_tool_search_toolset_omits_search_tool_after_compaction_discovery():
+    """A compacted discovery stays callable but is removed from the empty search corpus.
 
     Dropping it would invalidate the cached request prefix on the next turn — keeping
     it preserves prompt caching across discovery steps. The local tool's body is a no-op
@@ -912,20 +913,20 @@ async def test_tool_search_toolset_keeps_search_tool_after_all_discovered():
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
-                ToolReturnPart(
-                    tool_name=_SEARCH_TOOLS_NAME,
+                ToolSearchReturnPart(
                     content={
-                        'tools': [
+                        'discovered_tools': [
                             {'name': 'calculate_mortgage'},
                             {'name': 'stock_price'},
                             {'name': 'crypto_price'},
                         ]
-                    },
+                    }
                 )
             ]
-        )
+        ),
+        ModelResponse(parts=[CompactionPart(content='Earlier conversation compacted.')]),
     ]
-    ctx = _build_run_context(None, messages=messages)
+    ctx = _build_run_context(None, messages=messages, discovered_tool_names=parse_discovered_tools(messages))
 
     tools = await searchable.get_tools(ctx)
     tool_names = list(tools.keys())
@@ -937,7 +938,6 @@ async def test_tool_search_toolset_keeps_search_tool_after_all_discovered():
             'calculate_mortgage',
             'stock_price',
             'crypto_price',
-            'search_tools',
         ]
     )
 
