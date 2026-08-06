@@ -7,9 +7,12 @@ continuation is not available and is not exercised here.
 
 Each case snapshots both the resulting messages and the bodies that actually went out, captured by an
 httpx event hook so the wire assertions run against what the client built rather than what the
-cassette happens to hold. The request bodies are what pin the two facts this pairing rests on: the
-`openai_reasoning_effort` setting reaching DeepSeek as `reasoning.effort`, and DeepSeek's raw
-chain-of-thought being sent back as `reasoning_text` content on the follow-up request of a tool call.
+cassette happens to hold. The request bodies are what pin the facts this pairing rests on:
+
+- the `openai_reasoning_effort` setting reaching DeepSeek as `reasoning.effort`
+- DeepSeek's raw chain-of-thought going back as `reasoning_text` content on a follow-up request
+- the `phase` DeepSeek labels its output with being surfaced in `provider_details` but never sent
+  back, since `openai_supports_phase` stays off for a provider that doesn't document accepting it
 """
 
 from __future__ import annotations as _annotations
@@ -62,10 +65,11 @@ def get_temperature(city: str) -> float:
     return 21.0
 
 
-@dataclass
+@dataclass(frozen=True)
 class Case:
     id: str
     prompt: str
+    follow_up_prompt: str | None = None
     stream: bool = False
     output_type: type[str] | type[City] = str
     tools: Sequence[Callable[..., Any]] = ()
@@ -186,6 +190,121 @@ CASES = [
                     'model': 'deepseek-v4-flash',
                     'stream': True,
                 }
+            ]
+        ),
+    ),
+    Case(
+        id='text_multi_turn',
+        prompt='Say exactly: hello',
+        follow_up_prompt='Now say exactly: goodbye',
+        expected_output=snapshot('goodbye'),
+        expected_messages=snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Say exactly: hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ThinkingPart(
+                            content='',
+                            id='1e97d346-aa16-46e5-866d-b34e91c5d499',
+                            provider_name='deepseek',
+                            provider_details={'raw_content': ['We need answer exactly hello.']},
+                        ),
+                        TextPart(
+                            content='hello',
+                            id='c431c0bc-edd8-4d1d-9bab-46ddd59d15e1',
+                            provider_name='deepseek',
+                            provider_details={'phase': 'final_answer'},
+                        ),
+                    ],
+                    usage=RequestUsage(
+                        details={'reasoning_tokens': 6},
+                        input_tokens=87,
+                        output_reasoning_tokens=6,
+                        output_tokens=8,
+                        cost=Decimal('0.00001442'),
+                    ),
+                    model_name='deepseek-v4-flash',
+                    timestamp=IsDatetime(),
+                    provider_name='deepseek',
+                    provider_url='https://api.deepseek.com',
+                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_response_id='49d254fd-deb4-4207-a85a-038a3893db25',
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[UserPromptPart(content='Now say exactly: goodbye', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ThinkingPart(
+                            content='',
+                            id='3e320fb9-da94-4b4f-8ef8-08d750d3cdf9',
+                            provider_name='deepseek',
+                            provider_details={
+                                'raw_content': [
+                                    'We need to respond to the user. The user said "Now say exactly: goodbye". The instruction is to say exactly "goodbye". We already responded "hello" to the previous "Say exactly: hello". Now we just output "goodbye". Ensure no extra text.'
+                                ]
+                            },
+                        ),
+                        TextPart(
+                            content='goodbye',
+                            id='2d999a8e-8086-4e87-bf7e-051cab5b9181',
+                            provider_name='deepseek',
+                            provider_details={'phase': 'final_answer'},
+                        ),
+                    ],
+                    usage=RequestUsage(
+                        details={'reasoning_tokens': 56},
+                        input_tokens=97,
+                        output_reasoning_tokens=56,
+                        output_tokens=59,
+                        cost=Decimal('0.00003010'),
+                    ),
+                    model_name='deepseek-v4-flash',
+                    timestamp=IsDatetime(),
+                    provider_name='deepseek',
+                    provider_url='https://api.deepseek.com',
+                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_response_id='cad18dc8-ce7a-4247-8cd7-d9574926a924',
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        ),
+        expected_request_bodies=snapshot(
+            [
+                {
+                    'input': [{'role': 'user', 'content': 'Say exactly: hello'}],
+                    'model': 'deepseek-v4-flash',
+                    'stream': False,
+                },
+                {
+                    'input': [
+                        {'role': 'user', 'content': 'Say exactly: hello'},
+                        {
+                            'id': '1e97d346-aa16-46e5-866d-b34e91c5d499',
+                            'summary': [],
+                            'encrypted_content': None,
+                            'type': 'reasoning',
+                            'content': [{'text': 'We need answer exactly hello.', 'type': 'reasoning_text'}],
+                        },
+                        {'role': 'assistant', 'content': 'hello'},
+                        {'role': 'user', 'content': 'Now say exactly: goodbye'},
+                    ],
+                    'model': 'deepseek-v4-flash',
+                    'stream': False,
+                },
             ]
         ),
     ),
@@ -333,6 +452,168 @@ CASES = [
                     ],
                     'model': 'deepseek-v4-flash',
                     'stream': False,
+                    'tool_choice': 'auto',
+                    'tools': [
+                        {
+                            'name': get_temperature.__qualname__,
+                            'parameters': {
+                                'additionalProperties': False,
+                                'properties': {'city': {'type': 'string'}},
+                                'required': ['city'],
+                                'type': 'object',
+                            },
+                            'type': 'function',
+                            'description': 'Get the current temperature in a city.',
+                            'strict': True,
+                        }
+                    ],
+                },
+            ]
+        ),
+    ),
+    Case(
+        id='function_tool_stream',
+        prompt='What is the temperature in Tokyo?',
+        stream=True,
+        tools=[get_temperature],
+        expected_output=snapshot('The current temperature in Tokyo is **21.0°C**.'),
+        expected_messages=snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='What is the temperature in Tokyo?', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ThinkingPart(
+                            content='',
+                            id='fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba',
+                            provider_name='deepseek',
+                            provider_details={
+                                'raw_content': ["The user asks about temperature in Tokyo. I'll call the tool."]
+                            },
+                        ),
+                        ToolCallPart(
+                            tool_name=get_temperature.__qualname__,
+                            args='{"city": "Tokyo"}',
+                            tool_call_id='call_00_xjY8Z2BvSlzgEmmw0DtH0464',
+                            id='62bf2bb7-56af-4e3a-883b-83d4aad54da1',
+                            provider_name='deepseek',
+                        ),
+                    ],
+                    usage=RequestUsage(
+                        details={'reasoning_tokens': 14},
+                        output_tokens=59,
+                        output_reasoning_tokens=14,
+                        cache_read_tokens=256,
+                        input_tokens=366,
+                        cost=Decimal('0.0000326368'),
+                    ),
+                    model_name='deepseek-v4-flash',
+                    timestamp=IsDatetime(),
+                    provider_name='deepseek',
+                    provider_url='https://api.deepseek.com',
+                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                    provider_response_id='1235b7ba-fdc9-4a1c-bfe4-6137c207baf3',
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name=get_temperature.__qualname__,
+                            content=21.0,
+                            tool_call_id='call_00_xjY8Z2BvSlzgEmmw0DtH0464',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='The current temperature in Tokyo is **21.0°C**.',
+                            id='305ae5c3-aed7-4986-88b5-4bcbb950ca6b',
+                            provider_name='deepseek',
+                            provider_details={'phase': 'final_answer'},
+                        )
+                    ],
+                    usage=RequestUsage(
+                        details={'reasoning_tokens': 0},
+                        output_tokens=14,
+                        output_reasoning_tokens=0,
+                        cache_read_tokens=384,
+                        input_tokens=440,
+                        cost=Decimal('0.0000128352'),
+                    ),
+                    model_name='deepseek-v4-flash',
+                    timestamp=IsDatetime(),
+                    provider_name='deepseek',
+                    provider_url='https://api.deepseek.com',
+                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                    provider_response_id='33df88f0-9f36-4616-95b0-ead91a37f7f1',
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        ),
+        expected_request_bodies=snapshot(
+            [
+                {
+                    'input': [{'role': 'user', 'content': 'What is the temperature in Tokyo?'}],
+                    'model': 'deepseek-v4-flash',
+                    'stream': True,
+                    'tool_choice': 'auto',
+                    'tools': [
+                        {
+                            'name': get_temperature.__qualname__,
+                            'parameters': {
+                                'additionalProperties': False,
+                                'properties': {'city': {'type': 'string'}},
+                                'required': ['city'],
+                                'type': 'object',
+                            },
+                            'type': 'function',
+                            'description': 'Get the current temperature in a city.',
+                            'strict': True,
+                        }
+                    ],
+                },
+                {
+                    'input': [
+                        {'role': 'user', 'content': 'What is the temperature in Tokyo?'},
+                        {
+                            'id': 'fa6f3a83-5d25-46e8-9d03-1a89ce5cf2ba',
+                            'summary': [],
+                            'encrypted_content': None,
+                            'type': 'reasoning',
+                            'content': [
+                                {
+                                    'text': "The user asks about temperature in Tokyo. I'll call the tool.",
+                                    'type': 'reasoning_text',
+                                }
+                            ],
+                        },
+                        {
+                            'name': get_temperature.__qualname__,
+                            'arguments': '{"city": "Tokyo"}',
+                            'call_id': 'call_00_xjY8Z2BvSlzgEmmw0DtH0464',
+                            'type': 'function_call',
+                        },
+                        {
+                            'type': 'function_call_output',
+                            'call_id': 'call_00_xjY8Z2BvSlzgEmmw0DtH0464',
+                            'output': '21.0',
+                        },
+                    ],
+                    'model': 'deepseek-v4-flash',
+                    'stream': True,
                     'tool_choice': 'auto',
                     'tools': [
                         {
@@ -508,7 +789,15 @@ CASES = [
 
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in CASES])
 async def test_deepseek_responses(case: Case, allow_model_requests: None, deepseek_api_key: str):
-    """`OpenAIResponsesModel('deepseek-v4-flash', provider=DeepSeekProvider())` against the live API."""
+    """`OpenAIResponsesModel('deepseek-v4-flash', provider=DeepSeekProvider())` against the live API.
+
+    Every case snapshots the request bodies as the httpx hook saw them, so the two recorded facts
+    the pairing depends on stay pinned to what the client builds rather than to the cassette: the
+    `tool_choice: 'auto'` that DeepSeek's `openai_supports_tool_choice_required=False` profile
+    forces even where the run would otherwise force a tool, and the `phase` label DeepSeek puts on
+    its output being surfaced in `provider_details` while never going back out (the off side of
+    `openai_supports_phase`, which stays off because DeepSeek doesn't document accepting it).
+    """
     sent_bodies: list[dict[str, Any]] = []
 
     async def capture_request(request: httpx.Request) -> None:
@@ -520,14 +809,19 @@ async def test_deepseek_responses(case: Case, allow_model_requests: None, deepse
     )
     agent = Agent(model, output_type=case.output_type, tools=case.tools, model_settings=case.model_settings)
 
-    if case.stream:
-        async with agent.run_stream(case.prompt) as streamed:
-            output = await streamed.get_output()
-        messages = streamed.all_messages()
-    else:
-        result = await agent.run(case.prompt)
-        output = result.output
-        messages = result.all_messages()
+    async def run(
+        prompt: str, message_history: list[ModelMessage] | None = None
+    ) -> tuple[str | City, list[ModelMessage]]:
+        if case.stream:
+            async with agent.run_stream(prompt, message_history=message_history) as streamed:
+                output = await streamed.get_output()
+            return output, streamed.all_messages()
+        result = await agent.run(prompt, message_history=message_history)
+        return result.output, result.all_messages()
+
+    output, messages = await run(case.prompt)
+    if case.follow_up_prompt is not None:
+        output, messages = await run(case.follow_up_prompt, message_history=messages)
 
     assert output == case.expected_output
     assert messages == case.expected_messages

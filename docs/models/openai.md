@@ -416,7 +416,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
-On models that don't label their output, per [`OpenAIModelProfile.openai_supports_phase`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_phase], `provider_details` has no `'phase'` key and nothing is sent back.
+A `'phase'` key appears in `provider_details` whenever the model labels its output, but it is only sent back on models that [`OpenAIModelProfile.openai_supports_phase`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_phase] marks as accepting it. On every other model the label is surfaced to you and dropped from follow-up requests.
 
 ### Background mode
 
@@ -568,7 +568,7 @@ agent = Agent(model)
 ...
 ```
 
-As an alternative to the Chat Completions API shown above, DeepSeek also serves an OpenAI-compatible [Responses API](#responses-api-features), currently for the `deepseek-v4-flash` model only. Use it by pairing [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with `DeepSeekProvider`:
+As an alternative to the Chat Completions API shown above, DeepSeek also serves an OpenAI-compatible [Responses API](#responses-api-features), [currently for the `deepseek-v4-flash` model only](https://api-docs.deepseek.com/guides/responses_api). Use it by pairing [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider]:
 
 ```python
 from pydantic_ai import Agent
@@ -583,7 +583,11 @@ agent = Agent(model)
 ...
 ```
 
-DeepSeek's Responses API is stateless, so [`openai_previous_response_id`](#referencing-earlier-responses) and [`openai_conversation_id`](#using-durable-conversations) are not available: pass [message history](../message-history.md) back on each run instead.
+DeepSeek [documents](https://api-docs.deepseek.com/guides/responses_api) which parts of the Responses API it implements, and unsupported fields are silently ignored rather than rejected, so it's worth knowing what does nothing:
+
+- The API is stateless, so [`openai_previous_response_id`](#referencing-earlier-responses), [`openai_conversation_id`](#using-durable-conversations), [background mode](#background-mode) and [message compaction](#message-compaction) are unavailable. Pass [message history](../message-history.md) back on each run instead.
+- Of the [native tools](../native-tools.md), only [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] is executed; the others are ignored rather than refused.
+- Reasoning is configured with `openai_reasoning_effort` (or the unified [`thinking`](../capabilities/thinking.md) setting); `openai_reasoning_summary` is accepted but produces no summary.
 
 ### Alibaba Cloud Model Studio (DashScope)
 
