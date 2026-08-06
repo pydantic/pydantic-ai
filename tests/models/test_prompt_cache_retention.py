@@ -6,19 +6,25 @@ from typing import Literal
 import pytest
 
 from pydantic_ai.models import Model
-from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
-from pydantic_ai.models.openai import (
-    OpenAIChatModel,
-    OpenAIChatModelSettings,
-    OpenAIResponsesModel,
-)
-from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.providers.anthropic import AnthropicProvider
-from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
-from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
+
+from ..conftest import try_import
+
+with try_import() as imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
+    from pydantic_ai.models.openai import (
+        OpenAIChatModel,
+        OpenAIChatModelSettings,
+        OpenAIResponsesModel,
+    )
+    from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='provider extras not installed')
 
 
 def test_model_resolve_prompt_cache_retention_defaults_to_none() -> None:
@@ -27,7 +33,7 @@ def test_model_resolve_prompt_cache_retention_defaults_to_none() -> None:
     assert model.resolve_prompt_cache_retention(None) is None
 
 
-@pytest.mark.parametrize('model_type', [OpenAIChatModel, OpenAIResponsesModel])
+@pytest.mark.parametrize('api', ['chat', 'responses'])
 @pytest.mark.parametrize(
     ('setting', 'expected'),
     [
@@ -37,10 +43,11 @@ def test_model_resolve_prompt_cache_retention_defaults_to_none() -> None:
     ],
 )
 def test_openai_resolve_prompt_cache_retention(
-    model_type: type[OpenAIChatModel | OpenAIResponsesModel],
+    api: Literal['chat', 'responses'],
     setting: Literal['in_memory', '24h'] | None,
     expected: timedelta | None,
 ) -> None:
+    model_type = OpenAIChatModel if api == 'chat' else OpenAIResponsesModel
     model = model_type('gpt-5.6', provider=OpenAIProvider(api_key='test-key'))
     settings = OpenAIChatModelSettings(openai_prompt_cache_retention=setting) if setting is not None else None
 
@@ -50,15 +57,15 @@ def test_openai_resolve_prompt_cache_retention(
 @pytest.mark.parametrize(
     ('settings', 'expected'),
     [
-        (AnthropicModelSettings(anthropic_cache=True), timedelta(minutes=5)),
-        (AnthropicModelSettings(anthropic_cache='5m'), timedelta(minutes=5)),
-        (AnthropicModelSettings(anthropic_cache='1h'), timedelta(hours=1)),
-        (AnthropicModelSettings(anthropic_cache_instructions=True), timedelta(minutes=5)),
-        (AnthropicModelSettings(anthropic_cache_instructions='1h'), timedelta(hours=1)),
-        (AnthropicModelSettings(anthropic_cache_tool_definitions=True), timedelta(minutes=5)),
-        (AnthropicModelSettings(anthropic_cache_tool_definitions='1h'), timedelta(hours=1)),
-        (AnthropicModelSettings(anthropic_cache_messages=True), timedelta(minutes=5)),
-        (AnthropicModelSettings(anthropic_cache_messages='1h'), timedelta(hours=1)),
+        ({'anthropic_cache': True}, timedelta(minutes=5)),
+        ({'anthropic_cache': '5m'}, timedelta(minutes=5)),
+        ({'anthropic_cache': '1h'}, timedelta(hours=1)),
+        ({'anthropic_cache_instructions': True}, timedelta(minutes=5)),
+        ({'anthropic_cache_instructions': '1h'}, timedelta(hours=1)),
+        ({'anthropic_cache_tool_definitions': True}, timedelta(minutes=5)),
+        ({'anthropic_cache_tool_definitions': '1h'}, timedelta(hours=1)),
+        ({'anthropic_cache_messages': True}, timedelta(minutes=5)),
+        ({'anthropic_cache_messages': '1h'}, timedelta(hours=1)),
     ],
 )
 def test_anthropic_resolve_prompt_cache_retention(settings: AnthropicModelSettings, expected: timedelta) -> None:
@@ -83,31 +90,31 @@ def test_anthropic_resolve_prompt_cache_retention_biases_high() -> None:
     ('settings', 'profile', 'expected'),
     [
         (
-            BedrockModelSettings(bedrock_cache_instructions=True),
-            BedrockModelProfile(bedrock_supports_prompt_caching=True),
+            {'bedrock_cache_instructions': True},
+            {'bedrock_supports_prompt_caching': True},
             timedelta(minutes=5),
         ),
         (
-            BedrockModelSettings(bedrock_cache_messages='1h'),
-            BedrockModelProfile(bedrock_supports_prompt_caching=True),
+            {'bedrock_cache_messages': '1h'},
+            {'bedrock_supports_prompt_caching': True},
             timedelta(hours=1),
         ),
         (
-            BedrockModelSettings(bedrock_cache_tool_definitions='5m'),
-            BedrockModelProfile(bedrock_supports_tool_caching=True),
+            {'bedrock_cache_tool_definitions': '5m'},
+            {'bedrock_supports_tool_caching': True},
             timedelta(minutes=5),
         ),
         (
-            BedrockModelSettings(bedrock_cache_instructions='1h'),
-            BedrockModelProfile(bedrock_supports_prompt_caching=False),
+            {'bedrock_cache_instructions': '1h'},
+            {'bedrock_supports_prompt_caching': False},
             None,
         ),
         (
-            BedrockModelSettings(bedrock_cache_tool_definitions='1h'),
-            BedrockModelProfile(bedrock_supports_tool_caching=False),
+            {'bedrock_cache_tool_definitions': '1h'},
+            {'bedrock_supports_tool_caching': False},
             None,
         ),
-        (None, BedrockModelProfile(bedrock_supports_prompt_caching=True, bedrock_supports_tool_caching=True), None),
+        (None, {'bedrock_supports_prompt_caching': True, 'bedrock_supports_tool_caching': True}, None),
     ],
 )
 def test_bedrock_resolve_prompt_cache_retention(
@@ -186,12 +193,12 @@ def test_openrouter_resolve_prompt_cache_retention_biases_high() -> None:
 @pytest.mark.parametrize(
     'profile',
     [
-        OpenRouterModelProfile(openrouter_supports_cache_control=True, openrouter_supports_tool_cache=True),
-        OpenRouterModelProfile(
-            openrouter_supports_cache_ttl=True,
-            openrouter_supports_cache_control=False,
-            openrouter_supports_tool_cache=False,
-        ),
+        {'openrouter_supports_cache_control': True, 'openrouter_supports_tool_cache': True},
+        {
+            'openrouter_supports_cache_ttl': True,
+            'openrouter_supports_cache_control': False,
+            'openrouter_supports_tool_cache': False,
+        },
     ],
 )
 def test_openrouter_resolve_prompt_cache_retention_ignores_unsupported_settings(
