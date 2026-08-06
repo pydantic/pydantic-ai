@@ -6460,7 +6460,7 @@ class TestMultipleToolCalls:
             end_strategy='exhaustive',
         )
 
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'output_tool' exceeded max retries count of 1.*tool-retries"):
             agent.run_sync('test')
 
     def test_exhaustive_skips_output_tool_exceeding_retries_on_validation(self):
@@ -12969,7 +12969,7 @@ def test_output_validator_exceeds_output_retries():
         retries_log.append(ctx.retry)
         raise ModelRetry(f'Retry {ctx.retry}')
 
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries \\(2\\)'):
+    with pytest.raises(UnexpectedModelBehavior, match=r"Tool '.+' exceeded max retries count of 2.*tool-retries"):
         agent.run_sync('Hello')
 
     assert retries_log == [0, 1, 2]
@@ -13240,7 +13240,7 @@ def test_output_retry_budget_resolution(case: OutputRetryBudgetCase):
         retries_log.append(ctx.retry)
         raise ModelRetry(f'retry {ctx.retry}')
 
-    expected_msg = rf'Exceeded maximum output retries \({case.expected_budget}\)'
+    expected_msg = rf"Tool '.+' exceeded max retries count of {case.expected_budget}.*tool-retries"
     override_ctx = agent.override(**case.override) if case.override is not None else nullcontext()
 
     with override_ctx:
@@ -13297,7 +13297,7 @@ def test_run_level_output_retry_override_without_validators():
     assert shared_toolset is not None
     assert shared_toolset.max_retries == 10
 
-    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(2\)'):
+    with pytest.raises(UnexpectedModelBehavior, match=r"Tool '.+' exceeded max retries count of 2.*tool-retries"):
         agent.run_sync('Hello', retries={'output': 2})
 
     # 3 attempts: initial + 2 retries, capped by the run override at 2 (not the agent default 10)
@@ -13321,7 +13321,7 @@ def test_from_spec_preserves_zero_retry_budgets():
         output_type=ToolOutput(Foo),
     )
 
-    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(0\)'):
+    with pytest.raises(UnexpectedModelBehavior, match=r"Tool '.+' exceeded max retries count of 0.*tool-retries"):
         output_agent.run_sync('Hello')
 
     assert output_call_count == 1
@@ -13590,7 +13590,7 @@ def test_wrapper_override_forwards_retries():
     wrapped = WrapperAgent(agent)
 
     with wrapped.override(retries=0):
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(0\)'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool '.+' exceeded max retries count of 0.*tool-retries"):
             wrapped.run_sync('Hello')
 
     assert call_count == 1

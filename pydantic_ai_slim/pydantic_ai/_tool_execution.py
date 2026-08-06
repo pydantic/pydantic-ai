@@ -347,15 +347,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         rather than raised inline so the caller can decide whether to re-raise (no other output
         produced a valid result) or absorb it as a skip.
         """
-        max_output_retries = self.ctx.deps.max_output_retries
         try:
             validated = await self.tool_manager.validate_output_tool_call(call, schema=self.schema)
         except exceptions.UnexpectedModelBehavior as e:
-            tool = self.tool_manager.tools.get(call.tool_name) if self.tool_manager.tools else None
-            # Defensive: an output tool is always present in the toolset, so the `None` fallback to
-            # the agent-level budget isn't expected in normal operation.
-            max_retries = tool.max_retries if tool is not None else max_output_retries
-            wrapped = exceptions.UnexpectedModelBehavior(f'Exceeded maximum output retries ({max_retries})')
+            wrapped = exceptions.UnexpectedModelBehavior(str(e))
             wrapped.__cause__ = e.__cause__ or e
             return _OutputCallResult(call=call, args_valid=False, raise_exc=wrapped)
 
@@ -372,8 +367,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         try:
             result_data: Any = await self.tool_manager.execute_output_tool_call(validated, schema=self.schema)
         except exceptions.UnexpectedModelBehavior as e:
-            max_retries = validated.tool.max_retries if validated.tool else max_output_retries
-            wrapped = exceptions.UnexpectedModelBehavior(f'Exceeded maximum output retries ({max_retries})')
+            wrapped = exceptions.UnexpectedModelBehavior(str(e))
             wrapped.__cause__ = e.__cause__ or e
             return _OutputCallResult(call=call, args_valid=True, raise_exc=wrapped)
         except ToolRetryError as e:
