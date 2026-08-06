@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager, nullcontext, suppress
+from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, ClassVar, TypeAlias, cast
@@ -45,11 +44,14 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
+from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
+    heartbeating,
     temporalize_toolset as _default_temporalize_toolset,
     toolset_temporal_activities,
+    validate_activity_config,
     with_non_retryable_errors,
 )
 
@@ -91,50 +93,27 @@ _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
 """Default `heartbeat_timeout` for the model-request activities.
 
 A model request activity can legitimately run for a long time while waiting for one
-provider round trip. Heartbeating lets Temporal distinguish that long-but-healthy
-activity from a crashed worker, and makes workflow cancellation deliverable
-mid-request (cancellation reaches an activity as a response to a heartbeat).
+provider round trip, and heartbeating (see `heartbeating`) lets Temporal distinguish that
+long-but-healthy activity from a crashed worker. Tool activities deliberately get no default:
+a CPU-bound tool can starve the heartbeat task, and failing it for a missed heartbeat would
+be a regression against no timeout at all.
 """
 
 
-@asynccontextmanager
-async def _heartbeating() -> AsyncGenerator[None]:
-    """Emit periodic activity heartbeats in the background while the wrapped request runs.
+def serialization_user_error(error: PydanticSerializationError) -> UserError:
+    """Explain a serialization failure that happened while scheduling a Temporal activity.
 
-    The beat interval is derived from the activity's configured `heartbeat_timeout` so a
-    custom (shorter or longer) timeout keeps working; the SDK additionally throttles
-    outgoing heartbeats on its own. Without a configured timeout, heartbeats are inert but
-    harmless, so a plain 5-second cadence is fine.
-
-    The heartbeat task is supervised: if `beat()` itself crashes, the failure surfaces
-    once the wrapped request completes, so the activity fails loudly instead of having
-    silently run without heartbeats (the server would have failed the attempt via
-    `heartbeat_timeout` anyway had the crash come early). An exception from the wrapped
-    request always wins — a heartbeat failure never replaces it.
+    The failing value isn't identifiable from here — activity arguments are encoded by
+    Temporal's payload converter, which reports the offending type but not the argument it
+    came from — so the message names the values the framework passes rather than claiming
+    it was `deps`.
     """
-
-    async def beat() -> None:
-        timeout = activity.info().heartbeat_timeout
-        interval = timeout.total_seconds() / 2 if timeout else 5.0
-        while True:
-            activity.heartbeat()
-            await asyncio.sleep(interval)
-
-    task = asyncio.create_task(beat())
-    try:
-        yield
-    except BaseException:
-        # The request's exception is already propagating; a heartbeat failure must not
-        # replace it.
-        task.cancel()
-        with suppress(BaseException):
-            await task
-        raise
-    else:
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            # Anything but our own cancellation is a `beat()` crash — propagate it.
-            await task
+    return UserError(
+        f'A value passed to a Temporal activity failed to be serialized ({error}). '
+        "Temporal requires all values that are passed to activities to be serializable using Pydantic's "
+        '`TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and '
+        '`tool_call_metadata`, and tool `metadata`.'
+    )
 
 
 @dataclass(init=False)
@@ -198,13 +177,14 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 `'default'`. A `Model` instance can't be serialized across the
                 activity boundary, so a run-time model (via `agent.run(model=...)`
                 / `agent.override(model=...)`, or swapped in by an outer capability)
-                is sent as its `model_id` string and rebuilt on the worker by
-                registry lookup, then the agent's `resolve_model_id` capability
-                chain / `infer_model`. Register an instance here (and reference it
-                by key or pass the registered instance) whenever its `model_id`
-                alone wouldn't rebuild it faithfully — e.g. a custom provider,
-                client, or settings. Model-name strings never need registering;
-                to customize how they're built (e.g. a custom provider), use the
+                has to be registered here and referenced by key (or passed as the
+                registered instance); an unregistered instance is rejected, because
+                rebuilding it from its `model_id` would build a different model.
+                Model-name strings never need registering: they cross as the string
+                the caller wrote and are built on the worker by the agent's
+                `resolve_model_id` capability chain, then `infer_model`. To build a
+                specific instance on the worker from such a string — a custom
+                provider, or per-user credentials carried on `deps` — use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request activities, and tool events are handled in
@@ -242,6 +222,23 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self.run_context_type = run_context_type
         self._deps_type = deps_type
 
+        # An unknown key, or a value Temporal's own types don't accept, would only fail when the
+        # config is splatted into `workflow.start_activity()` inside the workflow, where the
+        # `TypeError` wedges the workflow task forever. Validation also *coerces* — a
+        # round-tripped `'PT5M'` becomes a `timedelta` — so the validated config is what we keep.
+        if activity_config is not None:
+            activity_config = validate_activity_config(activity_config, '`activity_config`')
+        if model_activity_config is not None:
+            model_activity_config = validate_activity_config(model_activity_config, '`model_activity_config`')
+        if event_stream_handler_activity_config is not None:
+            event_stream_handler_activity_config = validate_activity_config(
+                event_stream_handler_activity_config, '`event_stream_handler_activity_config`'
+            )
+        toolset_activity_config = {
+            ts_id: validate_activity_config(config, f'`toolset_activity_config[{ts_id!r}]`')
+            for ts_id, config in (toolset_activity_config or {}).items()
+        }
+
         # Normalize the activity config on copies: mutating the caller's `ActivityConfig` or a
         # `RetryPolicy` shared with other activities would leak the non-retryable entries into
         # them, and repeated construction from the same config would accumulate duplicates.
@@ -250,8 +247,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         )
         activity_config['retry_policy'] = with_non_retryable_errors(activity_config.get('retry_policy'))
         self.activity_config = activity_config
-        # The model activities heartbeat in the background (see `_heartbeating`), so give them a
-        # heartbeat timeout by default; an explicit `heartbeat_timeout` in either config wins.
+        # All activities heartbeat in the background (see `heartbeating`), but only the model
+        # ones get a heartbeat timeout by default; an explicit `heartbeat_timeout` in either
+        # config wins.
         self._model_activity_config: ActivityConfig = {
             'heartbeat_timeout': _DEFAULT_MODEL_HEARTBEAT_TIMEOUT,
             **activity_config,
@@ -313,7 +311,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
-            async with _heartbeating():
+            async with heartbeating():
                 with set_current_run_context(run_context):
                     return await model_for_request.request(
                         params.messages,
@@ -329,7 +327,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
             model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
-            async with _heartbeating():
+            async with heartbeating():
                 with set_current_run_context(run_context):
                     async with model_for_request.request_stream(
                         params.messages,
@@ -353,10 +351,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             handler = self._event_stream_handler
 
             async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: Any) -> None:
-                run_context = deserialize_run_context(
-                    run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
-                )
-                await handler(run_context, self._single_event_stream(params.event))
+                async with heartbeating():
+                    run_context = deserialize_run_context(
+                        run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
+                    )
+                    await handler(run_context, self._single_event_stream(params.event))
 
             self.event_stream_handler_activity = register_activity(
                 event_stream_handler_activity, name=f'{activity_name_prefix}__event_stream_handler'
@@ -377,7 +376,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 model = await self._resolve_model_for_request(params.model_id, run_context)
             # The cancel activity shares `_model_activity_config`, whose default `heartbeat_timeout`
             # would otherwise fail a slow provider-teardown call for missed heartbeats.
-            async with _heartbeating():
+            async with heartbeating():
                 with nullcontext() if run_context is None else set_current_run_context(run_context):
                     await model.cancel_suspended_response(params.response)
 
@@ -433,7 +432,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             'summary': f'handle event: {event.event_kind}',
             **self._event_stream_handler_activity_config,
         }
-        await workflow.execute_activity(
+        await execute_activity(
             activity=self.event_stream_handler_activity,
             args=[
                 _EventStreamHandlerParams(event=event, serialized_run_context=serialized_run_context),
@@ -448,18 +447,22 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Disable threads and catch serialization errors inside Temporal workflows."""
+        """Disable threads inside Temporal workflows."""
         if not self.in_durable_context:
             return await handler()
 
         with disable_threads(), set_agent_graph_sleep(workflow.sleep):
-            try:
-                return await handler()
-            except PydanticSerializationError as e:  # pragma: lax no cover
-                raise UserError(
-                    'The `deps` object failed to be serialized. Temporal requires all objects that are passed '
-                    "to activities to be serializable using Pydantic's `TypeAdapter`."
-                ) from e
+            return await handler()
+
+    async def on_run_error(self, ctx: RunContext[AgentDepsT], *, error: BaseException) -> AgentRunResult[Any]:
+        """Explain a serialization failure raised while scheduling an activity.
+
+        This is the run's error-transformation hook: an exception raised from `wrap_run`
+        would only be attached as the original error's `__context__`, never propagated.
+        """
+        if self.in_durable_context and isinstance(error, PydanticSerializationError):
+            raise serialization_user_error(error) from error
+        raise error
 
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
@@ -511,16 +514,14 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
             config: ActivityConfig = {'summary': f'request model: {model_name}', **self._model_activity_config}
-            return await workflow.execute_activity(
-                activity=self.request_activity, args=[params(request), deps], **config
-            )
+            return await execute_activity(activity=self.request_activity, args=[params(request), deps], **config)
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
             config: ActivityConfig = {
                 'summary': f'request model: {model_name} (stream)',
                 **self._model_activity_config,
             }
-            result = await workflow.execute_activity(
+            result = await execute_activity(
                 activity=self.request_stream_activity, args=[params(request), deps], **config
             )
             if isinstance(result, ModelResponse):
@@ -537,7 +538,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 'summary': f'cancel suspended response: {model_name}',
                 **self._model_activity_config,
             }
-            await workflow.execute_activity(
+            await execute_activity(
                 activity=self.cancel_suspended_response_activity,
                 args=[
                     _CancelParams(

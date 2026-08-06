@@ -827,7 +827,7 @@ def test_chat_app_index_http_error(monkeypatch: pytest.MonkeyPatch):
 
         async def get(self, url: str) -> None:
             response = MockResponse()
-            raise httpx.HTTPStatusError('Server error', request=None, response=response)  # type: ignore
+            raise httpx.HTTPStatusError('Server error', request=None, response=response)  # pyright: ignore[reportArgumentType]
 
     monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
     # Use a fresh temp dir so there's no cached file

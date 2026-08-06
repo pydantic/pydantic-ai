@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal, cast, get_args, get_origin
 
 import pytest
 from pydantic import TypeAdapter
+from pydantic_core import to_json, to_jsonable_python
 
 from pydantic_ai import (
     Agent,
@@ -41,6 +42,7 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolApproved,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolDenied,
     ToolReturn,
@@ -413,7 +415,7 @@ def test_url_with_query_parameters() -> None:
 
 
 def test_thinking_part_delta_apply_to_thinking_part_delta():
-    """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
+    """Apply ThinkingPartDelta to another ThinkingPartDelta (delta-on-delta merge)."""
     original_delta = ThinkingPartDelta(
         content_delta='original',
         signature_delta='sig1',
@@ -583,6 +585,77 @@ def test_pre_usage_refactor_messages_deserializable():
             ),
         ]
     )
+    assert ModelMessagesTypeAdapter.dump_python(messages, mode='json')[1]['usage'] == snapshot(
+        {
+            'input_tokens': 13,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 76,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {},
+            'cost': None,
+        }
+    )
+
+
+def test_pre_usage_refactor_empty_usage_deserializable():
+    data: list[dict[str, Any]] = [
+        {
+            'parts': [],
+            'usage': {
+                'requests': 0,
+                'request_tokens': None,
+                'response_tokens': None,
+                'total_tokens': None,
+                'details': None,
+            },
+            'kind': 'response',
+        }
+    ]
+
+    [message] = ModelMessagesTypeAdapter.validate_python(data)
+    assert isinstance(message, ModelResponse)
+    assert message.usage == RequestUsage()
+
+
+def test_usage_arbitrary_fields_serialization_roundtrip():
+    usage = RequestUsage(
+        input_tokens=5,
+        details={'reasoning_tokens': 3},
+        future_tokens=42,
+        label='original',
+        zero_tokens=0,
+    )
+    messages: list[ModelMessage] = [ModelResponse(parts=[], usage=usage)]
+
+    expected_usage = snapshot(
+        {
+            'input_tokens': 5,
+            'cache_write_tokens': 0,
+            'cache_read_tokens': 0,
+            'output_tokens': 0,
+            'input_audio_tokens': 0,
+            'cache_audio_read_tokens': 0,
+            'output_audio_tokens': 0,
+            'details': {'reasoning_tokens': 3},
+            'cost': None,
+            'future_tokens': 42,
+            'label': 'original',
+            'zero_tokens': 0,
+        }
+    )
+    assert to_jsonable_python(messages)[0]['usage'] == expected_usage
+    assert json.loads(to_json(messages))[0]['usage'] == expected_usage
+
+    serialized = ModelMessagesTypeAdapter.dump_json(messages)
+    assert json.loads(serialized)[0]['usage'] == expected_usage
+
+    [loaded] = ModelMessagesTypeAdapter.validate_json(serialized)
+    assert isinstance(loaded, ModelResponse)
+    assert loaded.usage == usage
+    assert loaded.usage.__dict__['future_tokens'] == 42
 
 
 @pytest.mark.anyio
@@ -719,6 +792,7 @@ def test_file_part_serialization_roundtrip():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': None,
                 'timestamp': IsStr(),
@@ -1886,6 +1960,38 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
+def test_args_as_json_str_valid_json_verbatim():
+    """args_as_json_str should return valid object JSON verbatim, preserving key order and whitespace."""
+    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": 2}')
+    assert part.args_as_json_str() == '{"b":  1, "a": 2}'
+
+
+def test_args_as_json_str_dict_args():
+    """args_as_json_str should serialize dict args."""
+    part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
+    assert part.args_as_json_str() == '{"key":"value"}'
+
+
+def test_args_as_json_str_malformed_json_returns_invalid_json_wrapper():
+    """args_as_json_str should return the serialized INVALID_JSON wrapper for malformed JSON, like args_as_dict."""
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    assert json.loads(part.args_as_json_str()) == {INVALID_JSON_KEY: malformed}
+
+
+def test_args_as_json_str_non_dict_json_returns_invalid_json_wrapper():
+    """args_as_json_str should return the serialized INVALID_JSON wrapper for valid JSON that's not a dict."""
+    json_list = '[1, 2, 3]'
+    part = ToolCallPart(tool_name='test_tool', args=json_list)
+    assert json.loads(part.args_as_json_str()) == {INVALID_JSON_KEY: json_list}
+
+
+def test_args_as_json_str_empty_args():
+    """args_as_json_str should return '{}' when args is None/empty."""
+    part = ToolCallPart(tool_name='test_tool', args=None)
+    assert part.args_as_json_str() == '{}'
+
+
 def test_user_prompt_part_with_text_content():
     part = UserPromptPart(
         content=[
@@ -2140,3 +2246,26 @@ def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
     assert type(narrowed[0].parts[0]) is LoadCapabilityCallPart
     assert narrowed[0].parts[1] is messages[0].parts[1]
     assert type(narrowed[1].parts[0]) is LoadCapabilityReturnPart
+
+
+def test_tool_availability_delta_round_trip():
+    """Tool availability changes retain their discriminator and optional cause across persistence."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])
+    ]
+
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
+
+
+def test_tool_availability_delta_otel_message_uses_system_role():
+    """Tool availability is framework control state, not user-authored content."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'])])]
+
+    assert InstrumentationSettings().messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'system',
+                'parts': [{'type': 'text', 'content': 'Tool availability changed: +new_tool'}],
+            }
+        ]
+    )

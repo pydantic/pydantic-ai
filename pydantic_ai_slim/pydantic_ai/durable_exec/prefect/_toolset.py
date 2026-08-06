@@ -4,20 +4,20 @@ import inspect
 from collections.abc import Mapping
 from typing import Any, Literal, cast
 
+from pydantic.errors import PydanticUserError
+
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool
-from pydantic_ai.durable_exec._toolset import EnqueueGuard
+from pydantic_ai.durable_exec._toolset import guard_run_context_enqueue
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._types import TaskConfig
 
 
-def enqueue_guard() -> EnqueueGuard:
-    return EnqueueGuard(
-        '`ctx.enqueue()` is not supported inside Prefect task-wrapped tools because task-cache replay '
-        'would drop the enqueued messages. Enqueue messages from flow-level code instead.'
-    )
+def guard_task_enqueue(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+    """Make `ctx.enqueue()` raise inside a Prefect task-wrapped tool call."""
+    return guard_run_context_enqueue(ctx, unit_noun='task', container_noun='flow')
 
 
 def with_non_retryable_errors(config: TaskConfig) -> TaskConfig:
@@ -29,7 +29,7 @@ def with_non_retryable_errors(config: TaskConfig) -> TaskConfig:
         result = state.result(raise_on_failure=False)
         if inspect.isawaitable(result):
             result = await result
-        if isinstance(result, (UserError, UnexpectedModelBehavior)):
+        if isinstance(result, (UserError, PydanticUserError, UnexpectedModelBehavior)):
             return False
         if configured_condition is None:
             return True

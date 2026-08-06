@@ -44,7 +44,7 @@ Pydantic AI ships with several capabilities that cover common needs:
 | [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] | Resolves [deferred tool calls](handle-deferred-tool-calls.md) inline with a handler function | — |
 | [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] | Wraps a [history processor](process-history.md) | — |
 | [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream] | Forwards [agent stream events](process-event-stream.md) to a handler function | — |
-| [`ThreadExecutor`][pydantic_ai.capabilities.ThreadExecutor] | Uses a [custom thread executor](thread-executor.md) for [sync functions](../tools-advanced.md#thread-executor-for-long-running-servers) | — |
+| [`UseThreadExecutor`][pydantic_ai.capabilities.UseThreadExecutor] | Uses a [custom thread executor](thread-executor.md) for [sync functions](../tools-advanced.md#thread-executor-for-long-running-servers) | — |
 
 The **Spec** column indicates whether the capability can be used in [agent specs](../agent-spec.md) (YAML/JSON). Capabilities marked **—** take non-serializable arguments (callables, toolset objects) and can only be used in Python code.
 

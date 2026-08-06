@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag
@@ -191,11 +191,11 @@ def unwrap_tool_call_result(result: CallToolResult) -> Any:
 
 
 class EnqueueGuard(list[PendingMessage]):
-    """Replaces `ctx.pending_messages` inside durable-unit-wrapped tools, where enqueueing can't be supported.
+    """Replaces `ctx.pending_messages` inside a durable unit, where enqueueing can't be supported.
 
-    A durable unit's recorded output is replayed on recovery (DBOS) or cache hit (Prefect)
-    without re-executing the tool, so messages enqueued inside it would be silently dropped;
-    enqueueing raises the engine's explanatory `UserError` instead.
+    A durable unit's recorded output is replayed on recovery (DBOS), cache hit (Prefect), or
+    across the activity boundary (Temporal) without re-running the code, so messages enqueued
+    inside it would be silently dropped; enqueueing raises an explanatory `UserError` instead.
     """
 
     def __init__(self, message: str):
@@ -204,6 +204,32 @@ class EnqueueGuard(list[PendingMessage]):
 
     def append(self, pending: PendingMessage) -> None:
         raise UserError(self._message)
+
+
+def enqueue_not_supported_message(unit_noun: str, container_noun: str) -> str:
+    """The shared `ctx.enqueue()` error, worded for one engine's durable unit and container.
+
+    `unit_noun` is the engine's durable unit (`'activity'`/`'step'`/`'task'`) and
+    `container_noun` is its durable container (`'workflow'`/`'flow'`), so every engine
+    raises the same explanation with its own vocabulary.
+    """
+    return (
+        f'`ctx.enqueue()` is not supported inside a durable {unit_noun}: the durable runtime replays '
+        f"the {unit_noun}'s recorded result without re-running your code, so the enqueued messages "
+        f'would be dropped. Enqueue messages from {container_noun}-level code instead.'
+    )
+
+
+def guard_run_context_enqueue(
+    ctx: RunContext[AgentDepsT], *, unit_noun: str, container_noun: str
+) -> RunContext[AgentDepsT]:
+    """Return a copy of `ctx` whose `enqueue()` raises, for running user code inside a durable unit.
+
+    Used by the in-process engines (DBOS steps, Prefect tasks) that pass the live context into
+    the durable unit. Temporal reconstructs its context across the activity boundary and installs
+    the same guard in `deserialize_run_context` instead.
+    """
+    return replace(ctx, pending_messages=EnqueueGuard(enqueue_not_supported_message(unit_noun, container_noun)))
 
 
 def unwrap_recorded_tool_call_result(result: Any) -> Any:
@@ -444,11 +470,11 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
             return await self.wrapped.get_tools(ctx)
         cache_key = self.id or ''
         if self._mcp_toolset.cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
-            return {name: self._mcp_toolset.tool_for_tool_def(tool_def) for name, tool_def in cached.items()}
+            return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in cached.items()}
         tool_defs = await self._get_tools_operation(ctx)
         if self._mcp_toolset.cache_tools:
             ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
-        return {name: self._mcp_toolset.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
+        return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in tool_defs.items()}
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> Instructions:
         if not self._mcp_toolset.include_instructions:
@@ -466,6 +492,6 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         if not self._in_durable_context():
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
         config = self._resolve_tool_config(tool, name)
-        if config is False:  # pragma: no cover — no engine's resolver currently permits inline MCP tools
+        if config is False:
             return await self._mcp_toolset.call_tool(name, tool_args, ctx, tool)
         return await self._call_tool_operation(name, tool_args, ctx, tool, config)

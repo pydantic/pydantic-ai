@@ -5,6 +5,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from functools import cached_property
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
@@ -412,6 +413,27 @@ async def test_usage_with_cached_tokens(allow_model_requests: None):
     assert result.usage == snapshot(RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1))
 
 
+@pytest.mark.vcr()
+async def test_mistral_history_uses_prompt_cache(allow_model_requests: None, mistral_api_key: str, vcr: Cassette):
+    instructions = ' '.join(['Retain this instruction prefix for the entire conversation.'] * 24)
+    settings = MistralModelSettings(mistral_prompt_cache_key='pydantic-ai-test-mistral-history-cache')
+    agent = Agent(
+        MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key)),
+        instructions=instructions,
+    )
+
+    first = await agent.run('Reply with exactly: cache probe one.', model_settings=settings)
+    second = await agent.run(
+        'Reply with exactly: cache probe two.',
+        message_history=first.all_messages(),
+        model_settings=settings,
+    )
+
+    second_request = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert second_request['messages'][2]['content'] == [{'text': first.output, 'type': 'text'}]
+    assert second.usage.cache_read_tokens >= 64
+
+
 #####################
 ## Completion Stream
 #####################
@@ -562,7 +584,9 @@ async def test_stream_usage_with_cached_tokens(allow_model_requests: None):
             pass
 
     # `prompt_tokens_details.cached_tokens` is surfaced as first-class `cache_read_tokens`.
-    assert result.usage == snapshot(RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1))
+    assert result.usage == snapshot(
+        RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1, cost=Decimal('0.002206'))
+    )
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -2540,7 +2564,7 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='FI5qQGzDE')],
-                usage=RequestUsage(input_tokens=65, output_tokens=16),
+                usage=RequestUsage(input_tokens=65, output_tokens=16, cost=Decimal('0.00001215')),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
@@ -2570,7 +2594,7 @@ async def test_image_as_binary_content_tool_response(
                         content='The image shows a kiwi fruit that has been cut in half. Kiwis are small, oval-shaped fruits with a bright green flesh and tiny black seeds. They have a sweet and tangy flavor and are known for being rich in vitamin C and fiber.'
                     )
                 ],
-                usage=RequestUsage(input_tokens=1540, output_tokens=54),
+                usage=RequestUsage(input_tokens=1540, output_tokens=54, cost=Decimal('0.0002391')),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
@@ -2923,13 +2947,18 @@ async def test_uploaded_file_input(allow_model_requests: None):
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
-    response = httpx.Response(500, content=b'test error')
+    response = httpx.Response(500, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, content=b'test error')
     mock_client = MockMistralAI.create_mock(SDKError('test error', raw_response=response))
     m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
     agent = Agent(m)
     with pytest.raises(ModelHTTPError) as exc_info:
         agent.run_sync('hello')
-    assert str(exc_info.value) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
+    exc = exc_info.value
+    assert str(exc) == snapshot('status_code: 500, model_name: mistral-large-latest, body: test error')
+    # SDKError.headers is httpx.Headers; _map_api_errors converts it with dict() — verify it lands correctly.
+    assert exc.headers is not None
+    assert exc.headers.get('retry-after') == '30'
+    assert exc.headers.get('x-request-id') == 'rid-1'
 
 
 def test_model_non_http_error(allow_model_requests: None) -> None:
@@ -3030,7 +3059,13 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1616, details={'reasoning_tokens': 1344}),
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=1616,
+                    output_reasoning_tokens=1344,
+                    details={'reasoning_tokens': 1344},
+                    cost=Decimal('0.0071247'),
+                ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3071,7 +3106,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                     ThinkingPart(content=IsStr()),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=664, output_tokens=747),
+                usage=RequestUsage(input_tokens=664, output_tokens=747, cost=Decimal('0.005063')),
                 model_name='magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
@@ -3142,7 +3177,7 @@ By following these steps, you can ensure a safe crossing.\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=232),
+                usage=RequestUsage(input_tokens=10, output_tokens=232, cost=Decimal('0.00118')),
                 model_name='magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',

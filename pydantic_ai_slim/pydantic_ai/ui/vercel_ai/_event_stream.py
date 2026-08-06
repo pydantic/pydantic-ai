@@ -263,7 +263,14 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             ),
         )
         if part.args:
-            yield ToolInputDeltaChunk(tool_call_id=tool_call_id, input_text_delta=part.args_as_json_str())
+            # A `str` is emitted raw: the args this first chunk carries can be a partial JSON fragment
+            # that only becomes valid once the following deltas are concatenated, and
+            # `args_as_json_str()` would degrade it to the `INVALID_JSON` wrapper. `dict` args always
+            # arrive complete, so the helper is still the right encoder for them.
+            yield ToolInputDeltaChunk(
+                tool_call_id=tool_call_id,
+                input_text_delta=part.args if isinstance(part.args, str) else part.args_as_json_str(),
+            )
 
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseChunk]:
         tool_call_id = delta.tool_call_id or ''
@@ -282,7 +289,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # run with no result event, flushed by `on_error`.
         self._streamed_call_parts[part.tool_call_id] = part
         return
-        yield  # pragma: no cover  # mark this as an async generator
+        # Marks this an async generator.
+        yield  # pragma: no cover
 
     def _tool_input_available_chunk(self, part: ToolCallPart) -> ToolInputAvailableChunk:
         """Build the `tool-input-available` chunk announcing a streamed tool call's input."""

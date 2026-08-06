@@ -82,7 +82,10 @@ _R = TypeVar('_R')
 def get_event_loop() -> asyncio.AbstractEventLoop:
     try:
         event_loop = asyncio.get_event_loop()
-    except RuntimeError:  # pragma: lax no cover
+    except RuntimeError:
+        event_loop = None
+
+    if event_loop is None or event_loop.is_closed():
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
@@ -118,7 +121,7 @@ async def task_group_gather(tasks: Sequence[Callable[[], Awaitable[T]]]) -> list
     Returns:
         A list of results in the same order as the input tasks.
     """
-    results: list[T] = [None] * len(tasks)  # type: ignore
+    results: list[T] = [None] * len(tasks)  # pyright: ignore[reportAssignmentType]
 
     async def _run_task(tsk: Callable[[], Awaitable[T]], index: int) -> None:
         """Helper function to run a task and store the result in the correct index."""

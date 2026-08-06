@@ -1,9 +1,7 @@
-from dataclasses import replace
-
 from dbos import DBOS
 from typing_extensions import TypedDict
 
-from pydantic_ai.durable_exec._toolset import EnqueueGuard
+from pydantic_ai.durable_exec._toolset import guard_run_context_enqueue
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 
@@ -25,11 +23,4 @@ def guard_enqueue_in_workflow(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDe
     """
     if DBOS.workflow_id is None:
         return ctx
-    return replace(
-        ctx,
-        pending_messages=EnqueueGuard(
-            '`ctx.enqueue()` is not supported inside DBOS step-wrapped tools because workflow '
-            'recovery replays the recorded step output and would drop the enqueued messages. '
-            'Enqueue messages from workflow-level code instead.'
-        ),
-    )
+    return guard_run_context_enqueue(ctx, unit_noun='step', container_noun='workflow')

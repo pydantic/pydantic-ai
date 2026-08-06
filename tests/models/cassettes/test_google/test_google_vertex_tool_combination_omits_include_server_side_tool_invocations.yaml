@@ -1,0 +1,392 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '557'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Look up the city I live in, then search the web for its weather today.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          mode: AUTO
+      tools:
+      - googleSearch: {}
+      - functionDeclarations:
+        - description: The city the user lives in.
+          name: get_user_city
+          parametersJsonSchema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '997'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - functionCall:
+              args: {}
+              id: vcyiitct
+              name: get_user_city
+            thoughtSignature: AY89a19Otdr37hcYt/uTONS2bytGlqxMLCYg/5VjJU9ijdwGXV+hV30bvswblsieJ469odGKJwCAxlMGT8e/CbAUCl88CH7HUW5zORQB32SVDvJTmGb6k09B5fcJVT3nQ7iNBsj6F6ZSv3msbc55vFHgQFQQmqrnsOU9vpFOVmaWW9AblT0C0bqChaMqKdKBX+jXdFiYsctqMwjH7tOIIIXBGUM9lLm1oRMXKhK1aumaNh6DASEmsk3JqEkl9Pc0mxff5O1lICDB7SQEf07gK+IFCTYuOxz46+AH2hMQn4tc3UVnc/SEx7C7qe6tEHP3mTlx0PQY62WDY6XecWSAJ/or7Y3qa8C3uREr9ba4o1LC8FxM3hSP9condEf26yQAom5UNmSbRq0nzGNsi8Za
+          role: model
+        finishReason: STOP
+      createTime: '2026-07-28T19:58:29.069844Z'
+      modelVersion: gemini-3-flash-preview
+      responseId: 5QlpatShBNyV3tMPkcCE2Ak
+      usageMetadata:
+        candidatesTokenCount: 12
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 12
+        promptTokenCount: 43
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 43
+        thoughtsTokenCount: 59
+        totalTokenCount: 114
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1233'
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Look up the city I live in, then search the web for its weather today.
+        role: user
+      - parts:
+        - functionCall:
+            args: {}
+            id: vcyiitct
+            name: get_user_city
+          thoughtSignature: AY89a19Otdr37hcYt_uTONS2bytGlqxMLCYg_5VjJU9ijdwGXV-hV30bvswblsieJ469odGKJwCAxlMGT8e_CbAUCl88CH7HUW5zORQB32SVDvJTmGb6k09B5fcJVT3nQ7iNBsj6F6ZSv3msbc55vFHgQFQQmqrnsOU9vpFOVmaWW9AblT0C0bqChaMqKdKBX-jXdFiYsctqMwjH7tOIIIXBGUM9lLm1oRMXKhK1aumaNh6DASEmsk3JqEkl9Pc0mxff5O1lICDB7SQEf07gK-IFCTYuOxz46-AH2hMQn4tc3UVnc_SEx7C7qe6tEHP3mTlx0PQY62WDY6XecWSAJ_or7Y3qa8C3uREr9ba4o1LC8FxM3hSP9condEf26yQAom5UNmSbRq0nzGNsi8Za
+        role: model
+      - parts:
+        - functionResponse:
+            id: vcyiitct
+            name: get_user_city
+            response:
+              return_value: San Francisco
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      toolConfig:
+        functionCallingConfig:
+          mode: AUTO
+      tools:
+      - googleSearch: {}
+      - functionDeclarations:
+        - description: The city the user lives in.
+          name: get_user_city
+          parametersJsonSchema:
+            additionalProperties: false
+            properties: {}
+            type: object
+    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '10242'
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: "Based on your location in **San Francisco**, here is the weather forecast for today, **Tuesday, July 28,
+              2026**:\n\n*   **Condition:** Sunny and clear throughout the day and night.\n*   **Temperature:** \n    *   **Current:**
+              Approximately **66°F (19°C)**.\n    *   **High:** Expected to reach around **67°F to 71°F (19°C - 22°C)**.\n
+              \   *   **Low:** Around **57°F (14°C)** tonight.\n*   **Humidity:** About **73% - 78%**.\n*   **Precipitation:**
+              0% chance of rain.\n*   **Wind:** A gentle breeze from the southwest at about **10 mph (16 km/h)**.\n\n**Note:**
+              While it is currently comfortable in the city due to the marine layer (fog), meteorologists are tracking a heatwave
+              expected to arrive later this week, which could bring much higher temperatures to the Bay Area by the weekend.
+              For today, however, you can expect typical mild San Francisco summer weather."
+            thoughtSignature: AY89a19fNfRvLWH70AMTjHe9pI4wRxP0q6PhE/FSLA5JSh34NLSp8IlS88jUGJE6BM/5dOLuOQtZQ3rOWni9kxjpeV+1RGDY2fKpXW623Yv3i5B+l4whRaPAVXvo3xJkVYopci5zg9OO+jC+CuUCvC8iqimZLpoDmsE906s+6xhqr0jDIe0S8DHqQS0b/O/fz6XUxipZ4Y/+/s4A9aS7KpJVdqOQfXdUbTcMbLNbc9Ck79v5DnQ5fbs/Mw90rO0aiM4ylyaJ4XIm9VKkZJWX5OpOFQG/HoHVF1ZFDOvlO3GQOKGRHXwQFs5vCiNN/Bz+InExx0s2VetD7hqtkwnLacPMMRcqzf/2ydTpImeQD+ZPC/cQ6KgazTd0x3EStWoqdtCdkx4WyCSvJhkf/sB6j3Q/xhV2xxUezOSZwzBsoSIKZSVZFMdEkqL0fvn9s7eFgBNjftNIsn59BW/PIB8H5K43R4pKXIo8nOz8T4fc27GJ8SNYiR3OQ2laIM0f31ZP9QFiDDosz+zVW4iz9vQytn3qQ2T/FDyxHPrfnot+f6KeSHcp3ijCKNJTGDNayrdyFuVJB+Pk5NxD7ogV4NcrSGmZMrKLB7zknAYStfBqhP21UFjh256JfRjF/AqQ7iuDDSCS6TVuJ5+yPKmFsVN687SX0XXUrsjM/2L2l9Mb2BzcTc9CpB5hF1Ir2qHn1dQN0C5K+ImeNgsix2uA1dYAM/3eXzdvjHc5wA19Qu7tRb078MhrxhHJoFXcN0ZD7DX4wBhbyfkJrTdN0ER3vNnPTaQbVS4Qmxm5tp6pPAuWXCMoKuoxOV10pRd5jRF12pIBuhYQ0y9whQrb22PKQIy8ZHlQF5bDYKcwXGWcakTPuKcpwP54EgBEFgeUFJzVJzS0vNmxqmzS7Kksowveo9Mhh9huTgumSKn6wrsAxz9acjC0vGxNuknNLkY00/CunnR48TGeQYwOg4MAWtEZzaQ7An4nnbqScMyuqWqZz5sPC1iC1kkPghBeYDRvsJRAthhhRvzNhhqEVA1QPfl0ZDvcZM7hWxgLaMgcLZyIJZJvXcDsAnwjaCTzB1FJvaq8/2DyDDdHS9IzVKHaHJpB9ZWKGeoWcnQ=
+          role: model
+        finishReason: STOP
+        groundingMetadata:
+          groundingChunks:
+          - web:
+              title: google.com
+              uri: https://www.google.com/search?q=weather+in+San Francisco, CA,+US
+          - web:
+              title: wunderground.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGEVtYUrUNBWs0IdSROOa1zgAWq04FAfoFOcqNAg8w4rElxnmJNMe3PhGvzdhuayE0q8eXhZb43nRsU1cKt82HTTdAVtdROr7w6VTsyALRsSRLYzJaJWvUw0i16yc-MRSWHnxTDM8E9SblsgMdSyaCfk2ABtdiCn_wcM8hYA-062TTZi5eJJGy4XfIBlDJ8Ao3-DnIKDCGQHNtskthvmqFaqfwwfYIrg9M31ImX
+          - web:
+              title: weather25.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHLVYhJuD2agpsZDuENX1T3c7eFl9szJTqJ3PoATv15VVFVE6OtFHFnZEf2OhIhyjwpg5bs9AMZx3LK9QovLCpp1Dfz8ZevsizZ2x6jsztw0G4ne7HIObaEPZoS_n--7RI-0y6zn-2BXP-u3sVCG88FbYW9ItQqp0We1egzMV6aNlOZUxi2MaJnEdhS9NBfVn3c22lFqg==
+          - web:
+              title: youtube.com
+              uri: https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFm5mxg-EPVj0qx6-e8Bms4iqTrVx43gNzLitYty7Tt2QOsCjZcBu-8HB9LNZfzOQNCVDVRPz0BsEZoTeNk-FwmwEdPayjB7rakUK9o9ga6lvarayaj0scu-XNSpR-iIJ1XTfEUDN8=
+          groundingSupports:
+          - groundingChunkIndices:
+            - 0
+            - 1
+            segment:
+              endIndex: 178
+              startIndex: 114
+              text: '*   **Condition:** Sunny and clear throughout the day and night.'
+          - groundingChunkIndices:
+            - 0
+            - 1
+            segment:
+              endIndex: 254
+              startIndex: 205
+              text: '*   **Current:** Approximately **66°F (19°C)**.'
+          - groundingChunkIndices:
+            - 1
+            segment:
+              endIndex: 333
+              startIndex: 259
+              text: '*   **High:** Expected to reach around **67°F to 71°F (19°C - 22°C)**.'
+          - groundingChunkIndices:
+            - 0
+            - 1
+            segment:
+              endIndex: 384
+              startIndex: 338
+              text: '*   **Low:** Around **57°F (14°C)** tonight.'
+          - groundingChunkIndices:
+            - 0
+            - 1
+            segment:
+              endIndex: 425
+              startIndex: 385
+              text: '*   **Humidity:** About **73% - 78%**.'
+          - groundingChunkIndices:
+            - 2
+            - 0
+            - 1
+            segment:
+              endIndex: 467
+              startIndex: 426
+              text: '*   **Precipitation:** 0% chance of rain.'
+          - groundingChunkIndices:
+            - 1
+            segment:
+              endIndex: 547
+              startIndex: 468
+              text: '*   **Wind:** A gentle breeze from the southwest at about **10 mph (16 km/h)**.'
+          - groundingChunkIndices:
+            - 3
+            - 1
+            segment:
+              endIndex: 785
+              startIndex: 549
+              text: '**Note:** While it is currently comfortable in the city due to the marine layer (fog), meteorologists
+                are tracking a heatwave expected to arrive later this week, which could bring much higher temperatures to
+                the Bay Area by the weekend.'
+          - groundingChunkIndices:
+            - 1
+            segment:
+              endIndex: 863
+              startIndex: 786
+              text: For today, however, you can expect typical mild San Francisco summer weather.
+          searchEntryPoint:
+            renderedContent: |
+              <style>
+              .container {
+                align-items: center;
+                border-radius: 8px;
+                display: flex;
+                font-family: Google Sans, Roboto, sans-serif;
+                font-size: 14px;
+                line-height: 20px;
+                padding: 8px 12px;
+              }
+              .chip {
+                display: inline-block;
+                border: solid 1px;
+                border-radius: 16px;
+                min-width: 14px;
+                padding: 5px 16px;
+                text-align: center;
+                user-select: none;
+                margin: 0 8px;
+                -webkit-tap-highlight-color: transparent;
+              }
+              .carousel {
+                overflow: auto;
+                scrollbar-width: none;
+                white-space: nowrap;
+                margin-right: -12px;
+              }
+              .headline {
+                display: flex;
+                margin-right: 4px;
+              }
+              .gradient-container {
+                position: relative;
+              }
+              .gradient {
+                position: absolute;
+                transform: translate(3px, -9px);
+                height: 36px;
+                width: 9px;
+              }
+              @media (prefers-color-scheme: light) {
+                .container {
+                  background-color: #fafafa;
+                  box-shadow: 0 0 0 1px #0000000f;
+                }
+                .headline-label {
+                  color: #1f1f1f;
+                }
+                .chip {
+                  background-color: #ffffff;
+                  border-color: #d2d2d2;
+                  color: #5e5e5e;
+                  text-decoration: none;
+                }
+                .chip:hover {
+                  background-color: #f2f2f2;
+                }
+                .chip:focus {
+                  background-color: #f2f2f2;
+                }
+                .chip:active {
+                  background-color: #d8d8d8;
+                  border-color: #b6b6b6;
+                }
+                .logo-dark {
+                  display: none;
+                }
+                .gradient {
+                  background: linear-gradient(90deg, #fafafa 15%, #fafafa00 100%);
+                }
+              }
+              @media (prefers-color-scheme: dark) {
+                .container {
+                  background-color: #1f1f1f;
+                  box-shadow: 0 0 0 1px #ffffff26;
+                }
+                .headline-label {
+                  color: #fff;
+                }
+                .chip {
+                  background-color: #2c2c2c;
+                  border-color: #3c4043;
+                  color: #fff;
+                  text-decoration: none;
+                }
+                .chip:hover {
+                  background-color: #353536;
+                }
+                .chip:focus {
+                  background-color: #353536;
+                }
+                .chip:active {
+                  background-color: #464849;
+                  border-color: #53575b;
+                }
+                .logo-light {
+                  display: none;
+                }
+                .gradient {
+                  background: linear-gradient(90deg, #1f1f1f 15%, #1f1f1f00 100%);
+                }
+              }
+              </style>
+              <div class="container">
+                <div class="headline">
+                  <svg class="logo-light" width="18" height="18" viewBox="9 9 35 35" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M42.8622 27.0064C42.8622 25.7839 42.7525 24.6084 42.5487 23.4799H26.3109V30.1568H35.5897C35.1821 32.3041 33.9596 34.1222 32.1258 35.3448V39.6864H37.7213C40.9814 36.677 42.8622 32.2571 42.8622 27.0064V27.0064Z" fill="#4285F4"/>
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M26.3109 43.8555C30.9659 43.8555 34.8687 42.3195 37.7213 39.6863L32.1258 35.3447C30.5898 36.3792 28.6306 37.0061 26.3109 37.0061C21.8282 37.0061 18.0195 33.9811 16.6559 29.906H10.9194V34.3573C13.7563 39.9841 19.5712 43.8555 26.3109 43.8555V43.8555Z" fill="#34A853"/>
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M16.6559 29.8904C16.3111 28.8559 16.1074 27.7588 16.1074 26.6146C16.1074 25.4704 16.3111 24.3733 16.6559 23.3388V18.8875H10.9194C9.74388 21.2072 9.06992 23.8247 9.06992 26.6146C9.06992 29.4045 9.74388 32.022 10.9194 34.3417L15.3864 30.8621L16.6559 29.8904V29.8904Z" fill="#FBBC05"/>
+                    <path fill-rule="evenodd" clip-rule="evenodd" d="M26.3109 16.2386C28.85 16.2386 31.107 17.1164 32.9095 18.8091L37.8466 13.8719C34.853 11.082 30.9659 9.3736 26.3109 9.3736C19.5712 9.3736 13.7563 13.245 10.9194 18.8875L16.6559 23.3388C18.0195 19.2636 21.8282 16.2386 26.3109 16.2386V16.2386Z" fill="#EA4335"/>
+                  </svg>
+                  <svg class="logo-dark" width="18" height="18" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="24" cy="23" fill="#FFF" r="22"/>
+                    <path d="M33.76 34.26c2.75-2.56 4.49-6.37 4.49-11.26 0-.89-.08-1.84-.29-3H24.01v5.99h8.03c-.4 2.02-1.5 3.56-3.07 4.56v.75l3.91 2.97h.88z" fill="#4285F4"/>
+                    <path d="M15.58 25.77A8.845 8.845 0 0 0 24 31.86c1.92 0 3.62-.46 4.97-1.31l4.79 3.71C31.14 36.7 27.65 38 24 38c-5.93 0-11.01-3.4-13.45-8.36l.17-1.01 4.06-2.85h.8z" fill="#34A853"/>
+                    <path d="M15.59 20.21a8.864 8.864 0 0 0 0 5.58l-5.03 3.86c-.98-2-1.53-4.25-1.53-6.64 0-2.39.55-4.64 1.53-6.64l1-.22 3.81 2.98.22 1.08z" fill="#FBBC05"/>
+                    <path d="M24 14.14c2.11 0 4.02.75 5.52 1.98l4.36-4.36C31.22 9.43 27.81 8 24 8c-5.93 0-11.01 3.4-13.45 8.36l5.03 3.85A8.86 8.86 0 0 1 24 14.14z" fill="#EA4335"/>
+                  </svg>
+                  <div class="gradient-container"><div class="gradient"></div></div>
+                </div>
+                <div class="carousel">
+                  <a class="chip" href="https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHOLkUCjQBWO9ewbbek45tn360K1h6Tvxx4LY7NYUzr6xTM1egn4xRFkEyeeRSp5hiEJB1HG6dMLNL3dm49NyOCHAM0BXDf6gWdMMMxseHcLIDvS5YyHKnyGUirpDzzj0oeIPtlTaZJT7JUu35eHlLmY0sNzGMMMZwGb5_Tje41i1wujWNp9G_oUGVONpEmfqlADA5SFa2vjKyQlIU0tvsbyD3QHwQ=">weather San Francisco July 28 2026</a>
+                </div>
+              </div>
+          webSearchQueries:
+          - weather San Francisco July 28 2026
+      createTime: '2026-07-28T19:58:35.376789Z'
+      modelVersion: gemini-3-flash-preview
+      responseId: 6wlpatX_FviAjNsP4MPYsQw
+      usageMetadata:
+        candidatesTokenCount: 250
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 250
+        promptTokenCount: 125
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 125
+        thoughtsTokenCount: 456
+        totalTokenCount: 831
+        trafficType: ON_DEMAND
+    status:
+      code: 200
+      message: OK
+version: 1

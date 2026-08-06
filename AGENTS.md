@@ -69,9 +69,24 @@ All changes need to:
 
 When you submit a PR, make sure you include the [PR template](.github/pull_request_template.md) and fill in the issue number that should be closed when the PR is merged. The "AI generated code" checkbox should always be checked manually by the user in the UI, not by the agent.
 
-PR titles feed directly into the release changelog — wrap code identifiers (class names, keyword arguments, module paths, CLI flags, env vars) in backticks, matching the style of recent release notes (e.g. `git log main --oneline -10`).
+PR titles feed directly into the release changelog. Write one as an imperative sentence naming the change — no `fix:` / `docs:` / `chore:` prefix, which belongs on the commit subject and not on the title — and wrap every code identifier (class names, keyword arguments, module paths, CLI flags, env vars, file paths) in backticks. Check the convention against merged PRs rather than commit subjects, which follow a different one: `gh pr list --state merged --limit 20`.
 
 Never add yourself (Claude) as a co-author on commits. Commits should be authored as the user only, with no `Co-Authored-By` trailer referencing Claude.
+
+## Pushing changes
+
+**A restriction is a conclusion you earn from a real failure, not a field you read.** Never report an
+operation as blocked, unavailable, or not-permitted based on a metadata flag, a config field, or a
+docs claim — attempt it and quote the actual error. (`maintainerCanModify: false` on a PR does *not*
+mean you cannot push: it governs the upstream-maintainer auto-grant, not your own access to the
+fork.) If you genuinely cannot attempt it, say "not attempted", never "we can't".
+
+**Pushing is not the end of the task.** After you push, do not go idle. The work is done when
+**CI is green and there are no unresolved comments** — see the `pushing-commits-to-the-repo` skill
+for the full loop.
+
+**Do not leave work uncommitted.** Don't end a turn with unstaged or uncommitted local changes
+unless the user's own instructions say otherwise.
 
 ## Repository structure
 

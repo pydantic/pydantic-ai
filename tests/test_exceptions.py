@@ -116,10 +116,22 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         ),
         (lambda: ContentFilterError('filtered'), {'message': 'filtered', 'body': None}),
         (lambda: ModelAPIError('gpt-4', 'api failed'), {'model_name': 'gpt-4', 'message': 'api failed'}),
-        (lambda: ModelHTTPError(500, 'gpt-4'), {'status_code': 500, 'model_name': 'gpt-4', 'body': None}),
+        (
+            lambda: ModelHTTPError(500, 'gpt-4'),
+            {'status_code': 500, 'model_name': 'gpt-4', 'body': None, 'headers': None},
+        ),
         (
             lambda: ModelHTTPError(429, 'gpt-4', {'error': 'rate limit'}),
-            {'status_code': 429, 'model_name': 'gpt-4', 'body': {'error': 'rate limit'}},
+            {'status_code': 429, 'model_name': 'gpt-4', 'body': {'error': 'rate limit'}, 'headers': None},
+        ),
+        (
+            lambda: ModelHTTPError(429, 'gpt-4', headers={'Retry-After': '60', 'X-Request-Id': 'abc'}),
+            {
+                'status_code': 429,
+                'model_name': 'gpt-4',
+                'body': None,
+                'headers': {'retry-after': '60', 'x-request-id': 'abc'},
+            },
         ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
     ],
@@ -140,6 +152,7 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelAPIError',
         'ModelHTTPError-no-body',
         'ModelHTTPError-with-body',
+        'ModelHTTPError-with-headers',
         'IncompleteToolCall',
     ],
 )
@@ -235,3 +248,221 @@ def test_tool_retry_error_str_with_value_error_type():
     assert str(error) == (
         "1 validation error for 'my_tool'\nfield\n  Value error, must not be foo [type=value_error, input_value='foo']"
     )
+
+
+def test_model_http_error_headers_normalized_to_lowercase():
+    """Headers passed to ModelHTTPError are stored with lowercase keys.
+
+    Providers return headers in various casings (e.g. httpx normalises to lowercase,
+    but some SDKs may preserve server casing). Requiring callers to lowercase before
+    access would be fragile, so we normalise on construction.
+    """
+    exc = ModelHTTPError(429, 'gpt-4', headers={'Retry-After': '60', 'X-Request-Id': 'abc'})
+    assert exc.headers == {'retry-after': '60', 'x-request-id': 'abc'}
+    # Access is case-insensitive only on the stored lowercase keys
+    assert exc.headers is not None
+    assert exc.headers.get('retry-after') == '60'
+
+
+def test_model_http_error_headers_default_none():
+    """headers defaults to None when not provided, keeping existing call-sites unchanged."""
+    exc = ModelHTTPError(500, 'gpt-4')
+    assert exc.headers is None
+
+
+def test_model_http_error_headers_none_explicit():
+    """Passing headers=None is equivalent to omitting it."""
+    exc = ModelHTTPError(500, 'gpt-4', headers=None)
+    assert exc.headers is None
+
+
+def test_model_http_error_headers_does_not_change_message():
+    """Adding headers must not alter the existing str() / message format.
+
+    Several places in the test suite — and downstream user code — pattern-match
+    on the message string, so this must stay stable.
+    """
+    without = ModelHTTPError(429, 'gpt-4')
+    with_headers = ModelHTTPError(429, 'gpt-4', headers={'retry-after': '60'})
+    assert str(without) == str(with_headers)
+    assert without.message == with_headers.message
+
+
+def test_model_http_error_retry_after_delta_seconds():
+    """retry_after parses an integer delta-seconds Retry-After value."""
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': '42'})
+    assert exc.retry_after == 42.0
+
+
+def test_model_http_error_retry_after_missing():
+    """retry_after returns None when no Retry-After header is present."""
+    exc = ModelHTTPError(429, 'gpt-4', headers={'x-request-id': 'abc'})
+    assert exc.retry_after is None
+
+
+def test_model_http_error_retry_after_no_headers():
+    """retry_after returns None when headers is None."""
+    exc = ModelHTTPError(429, 'gpt-4')
+    assert exc.retry_after is None
+
+
+def test_model_http_error_retry_after_http_date():
+    """retry_after parses an HTTP-date Retry-After value into a non-negative float.
+
+    We can't assert the exact value without freezing time, so we just check it's
+    a non-negative float (the date is far in the future).
+    """
+    # Wed, 01 Jan 2099 00:00:00 GMT — always in the future
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': 'Thu, 01 Jan 2099 00:00:00 GMT'})
+    result = exc.retry_after
+    assert result is not None
+    assert result > 0
+
+
+def test_model_http_error_retry_after_unparseable():
+    """retry_after returns None for a Retry-After value it cannot parse."""
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': 'not-a-number-or-date'})
+    assert exc.retry_after is None
+
+
+def test_model_http_error_retry_after_negative():
+    """retry_after returns None for a negative Retry-After value.
+
+    Negative delta-seconds are not defined by RFC 9110 — a server that sends
+    Retry-After: -1 is misbehaving, and we must not propagate a negative wait
+    time to callers who would sleep for a negative duration.
+    """
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': '-1'})
+    assert exc.retry_after is None
+
+
+def test_model_http_error_retry_after_overflow():
+    """retry_after returns None for an astronomically large integer Retry-After.
+
+    float(int(very_large_string)) raises OverflowError in Python when the integer
+    cannot be represented as a finite float. The except clause must cover it so
+    callers always receive None rather than an unhandled exception.
+    """
+    # 10^309 cannot be represented as a finite double
+    huge = '1' + '0' * 309
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': huge})
+    assert exc.retry_after is None
+
+
+def test_model_http_error_retry_after_http_date_asctime():
+    """retry_after handles the asctime HTTP-date format (RFC 9110 §5.6.7 obs-date).
+
+    Python's parsedate_to_datetime returns a *naive* datetime for the asctime
+    format because the string carries no timezone. Without the fix the subtraction
+    from an aware datetime.now(UTC) raises TypeError which is caught and silently
+    returns None — a false negative. The fix normalises the naive datetime to UTC
+    before computing the wait, so a future asctime date yields a positive float.
+    """
+    # Far-future date so the wait is always positive regardless of when the test runs.
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': 'Sun Nov  6 08:49:37 2099'})
+    result = exc.retry_after
+    assert result is not None
+    assert result > 0
+
+
+def test_model_http_error_headers_provider_openai():
+    """Headers from an openai.APIStatusError land on ModelHTTPError.
+
+    This is a unit test — not a VCR test — because the header propagation path
+    lives in our own _map_api_errors helper, not in recorded API behaviour.
+    """
+    openai = pytest.importorskip('openai', reason='openai extra not installed')
+    import httpx
+
+    from pydantic_ai.models.openai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
+
+    req = httpx.Request('POST', 'https://api.openai.com/v1/chat/completions')
+    resp = httpx.Response(429, headers={'retry-after': '30', 'x-request-id': 'rid-1'}, request=req)
+    sdk_exc = openai.RateLimitError('Rate limited', response=resp, body=None)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        with _map_api_errors('gpt-4o'):
+            raise sdk_exc
+
+    exc = exc_info.value
+    assert exc.status_code == 429
+    assert exc.headers is not None
+    assert exc.headers.get('retry-after') == '30'
+    assert exc.headers.get('x-request-id') == 'rid-1'
+    assert exc.retry_after == 30.0
+
+
+def test_model_http_error_headers_provider_anthropic():
+    """Headers from an anthropic.APIStatusError land on ModelHTTPError."""
+    anthropic = pytest.importorskip('anthropic', reason='anthropic extra not installed')
+    import httpx
+
+    from pydantic_ai.models.anthropic import _map_api_errors  # pyright: ignore[reportPrivateUsage]
+
+    req = httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
+    resp = httpx.Response(
+        429,
+        headers={'retry-after': '10', 'anthropic-ratelimit-tokens-remaining': '0'},
+        request=req,
+    )
+    sdk_exc = anthropic.RateLimitError(message='Rate limited', response=resp, body=None)
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        with _map_api_errors('claude-sonnet-4-5'):
+            raise sdk_exc
+
+    exc = exc_info.value
+    assert exc.status_code == 429
+    assert exc.headers is not None
+    assert exc.headers.get('retry-after') == '10'
+    assert exc.retry_after == 10.0
+
+
+def test_model_http_error_headers_provider_bedrock():
+    """Headers from a botocore.ClientError land on ModelHTTPError."""
+    pytest.importorskip('botocore', reason='botocore (bedrock extra) not installed')
+    from botocore.exceptions import ClientError
+
+    from pydantic_ai.models.bedrock import _map_api_errors  # pyright: ignore[reportPrivateUsage]
+
+    error_response: Any = {
+        'Error': {'Code': 'ThrottlingException', 'Message': 'Too many requests'},
+        'ResponseMetadata': {
+            'HTTPStatusCode': 429,
+            'HTTPHeaders': {'retry-after': '5', 'x-amzn-requestid': 'req-abc'},
+        },
+    }
+    sdk_exc = ClientError(error_response, 'InvokeModel')
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        with _map_api_errors('amazon.nova-pro-v1:0'):
+            raise sdk_exc
+
+    exc = exc_info.value
+    assert exc.status_code == 429
+    assert exc.headers is not None
+    assert exc.headers.get('retry-after') == '5'
+    assert exc.retry_after == 5.0
+
+
+def test_model_http_error_headers_provider_xai_no_headers():
+    """xAI errors are gRPC-based: no HTTP response headers, so ModelHTTPError.headers is None."""
+    grpc = pytest.importorskip('grpc', reason='grpcio (xai extra) not installed')
+
+    from pydantic_ai.models.xai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
+
+    class _FakeRpcError(grpc.RpcError):
+        def code(self) -> Any:  # grpc.StatusCode only known at runtime
+            return grpc.StatusCode.RESOURCE_EXHAUSTED
+
+        def details(self) -> str:
+            return 'quota exceeded'
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        with _map_api_errors('grok-3'):
+            raise _FakeRpcError()
+
+    exc = exc_info.value
+    assert exc.status_code == 429
+    assert exc.headers is None
+    assert exc.retry_after is None

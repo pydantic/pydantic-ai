@@ -8,7 +8,6 @@ from typing import Any, ClassVar, cast
 from dbos import DBOS
 
 from pydantic_ai import messages as _messages
-from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapModelRequestHandler, WrapRunHandler
@@ -28,7 +27,7 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._agent import DBOSParallelExecutionMode
-from ._utils import StepConfig
+from ._utils import StepConfig, guard_enqueue_in_workflow
 
 
 @dataclass(init=False)
@@ -82,13 +81,14 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 `'default'`. A `Model` instance can't be serialized across the
                 step boundary, so a run-time model (via `agent.run(model=...)`
                 / `agent.override(model=...)`, or swapped in by an outer capability)
-                is sent as its `model_id` string and rebuilt inside the step by
-                registry lookup, then the agent's `resolve_model_id` capability
-                chain / `infer_model`. Register an instance here (and reference it
-                by key or pass the registered instance) whenever its `model_id`
-                alone wouldn't rebuild it faithfully — e.g. a custom provider,
-                client, or settings. Model-name strings never need registering;
-                to customize how they're built (e.g. a custom provider), use the
+                has to be registered here and referenced by key (or passed as the
+                registered instance); an unregistered instance is rejected, because
+                rebuilding it from its `model_id` would build a different model.
+                Model-name strings never need registering: they cross as the string
+                the caller wrote and are built inside the step by the agent's
+                `resolve_model_id` capability chain, then `infer_model`. To build a
+                specific instance inside the step from such a string — a custom
+                provider, or per-user credentials carried on `deps` — use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request steps, and each tool event is handled in its own
@@ -149,8 +149,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> ModelResponse:
-            model = await self._resolve_model_for_request(model_id, run_context)
-            with set_current_run_context(run_context):
+            async with self._durable_model_scope(model_id, run_context) as (model, _):
                 return await model.request(messages, model_settings, model_request_parameters)
 
         self._request_step = request_step
@@ -163,13 +162,12 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> StreamedActivityResult:
-            model = await self._resolve_model_for_request(model_id, run_context)
-            with set_current_run_context(run_context):
+            async with self._durable_model_scope(model_id, run_context) as (model, ctx):
                 async with model.request_stream(
-                    messages, model_settings, model_request_parameters, run_context
+                    messages, model_settings, model_request_parameters, ctx
                 ) as streamed_response:
                     events = await capture_event_stream(
-                        run_context=run_context,
+                        run_context=ctx,
                         stream=streamed_response,
                         handler=self._effective_event_stream_handler(),
                     )
@@ -181,8 +179,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         async def cancel_suspended_response_step(
             model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
         ) -> None:
-            model = await self._resolve_model_for_request(model_id, run_context)
-            with set_current_run_context(run_context):
+            async with self._durable_model_scope(model_id, run_context) as (model, _):
                 await model.cancel_suspended_response(response)
 
         self._cancel_suspended_response_step = cancel_suspended_response_step
@@ -195,7 +192,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             ) -> None:
                 handler = self._effective_event_stream_handler()
                 assert handler is not None
-                await handler(run_context, self._single_event_stream(event))
+                with self._durable_run_context_scope(run_context) as ctx:
+                    await handler(ctx, self._single_event_stream(event))
 
             self._event_stream_handler_step = event_stream_handler_step
 
@@ -243,11 +241,17 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return DBOS.workflow_id is not None and DBOS.step_id is None
 
+    def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        # A DBOS step degrades to a plain inline call outside a workflow, where enqueueing is
+        # safe, so only guard once actually inside a workflow.
+        return guard_enqueue_in_workflow(ctx)
+
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         if self._in_legacy_workflow.get():
             # Wrapper-era recordings contain no `__event_stream_handler` steps (the wrapper called
             # the handler directly in workflow code), so a legacy run must do the same to keep the
-            # recorded step sequence replayable.
+            # recorded step sequence replayable. The handler runs at workflow level here, not inside
+            # a step, so the enqueue guard doesn't apply — matching how the wrapper delivered it.
             handler = self._effective_event_stream_handler()
             assert handler is not None
             await handler(ctx, self._single_event_stream(event))

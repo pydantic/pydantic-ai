@@ -118,6 +118,19 @@ print(result.output)
     [`WebFetch`][pydantic_ai.capabilities.WebFetch] capability automatically uses it
     as a local fallback when the model doesn't support native URL fetching.
 
+By default the tool caps returned text at 50,000 characters (`max_content_length`) and caps the
+downloaded response body at 50 MiB (`max_download_bytes`). Pass `None` for either to disable that limit.
+
+!!! warning "Credentials in `headers`"
+    Headers configured via `web_fetch_tool(headers=...)` are sent to whatever URL the model requests,
+    since the model chooses the URL. If you configure a credential like `Authorization`, use
+    `allowed_domains` to restrict which hosts can receive it, and keep in mind that domain filters
+    match the hostname only: the model can still direct the credential to plain `http://` or to a
+    non-standard port on an allowed host. On redirects, configured sensitive headers
+    (`Authorization`, `Cookie`, `Proxy-Authorization`) are only forwarded when the redirect stays
+    on the same origin (scheme, host, and port) or upgrades from `http` to `https` on the same host
+    on the default ports; they are stripped on any other redirect.
+
 ## Tavily Search Tool
 
 !!! info

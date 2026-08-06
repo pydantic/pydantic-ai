@@ -170,4 +170,8 @@ GoogleCloudLocation = Literal[
 ]
 """Regions available for Google Cloud.
 More details [here](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#genai-locations).
+
+This lists single-region values only. `GoogleCloudProvider` also accepts the `'global'` location and the
+`'us'`/`'eu'` multi-regions (routed to the `aiplatform.{us,eu}.rep.googleapis.com` data-residency endpoints)
+as separate union members on its `location` parameter.
 """

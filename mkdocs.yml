@@ -164,6 +164,7 @@ nav:
           - examples/stream-whales.md
       - Complex Workflows:
           - examples/flight-booking.md
+          - examples/medical-agent-delegation.md
       - Business Applications:
           - examples/slack-lead-qualifier.md
       - UI Examples:
@@ -188,6 +189,7 @@ nav:
           - api/models/anthropic.md
           - api/models/base.md
           - api/models/bedrock.md
+          - api/models/bedrock_mantle.md
           - api/models/cerebras.md
           - api/models/cohere.md
           - api/models/fallback.md

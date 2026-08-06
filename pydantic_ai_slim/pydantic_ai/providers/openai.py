@@ -7,7 +7,8 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import create_async_http_client
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles import merge_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
 try:
@@ -36,7 +37,21 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        return openai_model_profile(model_name)
+        # No per-model gate on `additional_tools`. OpenAI documents a model restriction for the sibling
+        # feature ("Only `gpt-5.4` and later models support `tool_search`") and states none for the item,
+        # and measurement agrees: 13 models from `gpt-4o-mini` through `gpt-5.6` each called a tool that
+        # only an `additional_tools` item declared, 3/3, against 0/3 for a control with the item removed.
+        # An earlier list here recorded `gpt-5.4` and `gpt-5` as silently ignoring it; that came from a
+        # probe whose prompt named the tool and told the model to call it, which a model that never saw
+        # the declaration can satisfy from the prompt text alone.
+        #
+        # The flag stays here rather than moving into `openai_model_profile`, which is shared with
+        # OpenAI-compatible endpoints (Azure, OpenRouter, vLLM, ...) that speak the Responses API without
+        # necessarily implementing this item — the same reasoning `openai_supports_phase` documents.
+        return merge_profile(
+            openai_model_profile(model_name),
+            OpenAIModelProfile(tool_additions='with_definitions'),
+        )
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

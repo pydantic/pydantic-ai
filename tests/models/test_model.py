@@ -265,8 +265,8 @@ def test_infer_model_with_provider():
     m = infer_model('openai-chat:gpt-5', lambda x: provider_class)
 
     assert isinstance(m, OpenAIChatModel)
-    assert m._provider is provider_class  # type: ignore
-    assert m._provider.base_url == 'http://test'  # type: ignore
+    assert m._provider is provider_class  # pyright: ignore[reportPrivateUsage]
+    assert m._provider.base_url == 'http://test'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_infer_str_unknown():

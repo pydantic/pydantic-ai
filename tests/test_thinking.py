@@ -25,7 +25,7 @@ from pydantic_ai.profiles.google import GoogleModelProfile, google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
@@ -348,6 +348,36 @@ class TestOpenAIChatThinkingTranslation:
         result = OpenAIChatModel._translate_thinking(model, settings, params)
         assert result == 'none'
 
+    def test_thinking_minimal_maps_to_low_for_gpt_5_6(self):
+        """Not a VCR test: pins the pre-request fallback for an effort GPT-5.6 does not support."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=openai_model_profile('gpt-5.6-sol'))
+
+        result = OpenAIChatModel._translate_thinking(model, settings, params)
+
+        assert result == 'low'
+
+    def test_thinking_minimal_passes_through_when_supported(self):
+        """Not a VCR test: pins the capability-on side using a model that supports minimal effort."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=openai_model_profile('gpt-5'))
+
+        result = OpenAIChatModel._translate_thinking(model, settings, params)
+
+        assert result == 'minimal'
+
+    def test_thinking_minimal_passes_through_with_sparse_profile(self):
+        """Not a VCR test: pins the default for sparse OpenAI-compatible profiles."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=OpenAIModelProfile())
+
+        result = OpenAIChatModel._translate_thinking(model, settings, params)
+
+        assert result == 'minimal'
+
     def test_thinking_none_returns_omit(self):
         params = ModelRequestParameters(thinking=None)
         settings: ModelSettings = {}
@@ -363,6 +393,18 @@ class TestOpenAIChatThinkingTranslation:
         model = FunctionModel(_echo)
         result = OpenAIChatModel._translate_thinking(model, settings, params)
         assert result == 'low'
+
+    def test_provider_specific_minimal_is_not_clamped(self):
+        params = ModelRequestParameters(thinking=True)
+        settings = {'openai_reasoning_effort': 'minimal'}
+        model = FunctionModel(
+            _echo,
+            profile=OpenAIModelProfile(openai_supports_minimal_reasoning_effort=False),
+        )
+
+        result = OpenAIChatModel._translate_thinking(model, settings, params)
+
+        assert result == 'minimal'
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -396,6 +438,36 @@ class TestOpenAIResponsesThinkingTranslation:
         # which gets set as reasoning_effort. Then `if reasoning_effort:` is truthy for 'none'.
         assert result == snapshot({'effort': 'none'})
 
+    def test_thinking_minimal_maps_to_low_for_gpt_5_6(self):
+        """Not a VCR test: pins the pre-request fallback for an effort GPT-5.6 does not support."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=openai_model_profile('gpt-5.6-sol'))
+
+        result = OpenAIResponsesModel._translate_thinking(model, settings, params)
+
+        assert result == snapshot({'effort': 'low', 'context': 'all_turns'})
+
+    def test_thinking_minimal_passes_through_when_supported(self):
+        """Not a VCR test: pins the capability-on side using a model that supports minimal effort."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=openai_model_profile('gpt-5'))
+
+        result = OpenAIResponsesModel._translate_thinking(model, settings, params)
+
+        assert result == snapshot({'effort': 'minimal'})
+
+    def test_thinking_minimal_passes_through_with_sparse_profile(self):
+        """Not a VCR test: pins the default for sparse OpenAI-compatible profiles."""
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        model = FunctionModel(_echo, profile=OpenAIModelProfile())
+
+        result = OpenAIResponsesModel._translate_thinking(model, settings, params)
+
+        assert result == snapshot({'effort': 'minimal'})
+
     def test_provider_specific_takes_precedence(self):
         params = ModelRequestParameters(thinking=True)
         settings = {'openai_reasoning_effort': 'high'}
@@ -403,6 +475,18 @@ class TestOpenAIResponsesThinkingTranslation:
         model = FunctionModel(_echo)
         result = OpenAIResponsesModel._translate_thinking(model, settings, params)
         assert result == snapshot({'effort': 'high'})
+
+    def test_provider_specific_minimal_is_not_clamped(self):
+        params = ModelRequestParameters(thinking=True)
+        settings = {'openai_reasoning_effort': 'minimal'}
+        model = FunctionModel(
+            _echo,
+            profile=OpenAIModelProfile(openai_supports_minimal_reasoning_effort=False),
+        )
+
+        result = OpenAIResponsesModel._translate_thinking(model, settings, params)
+
+        assert result == snapshot({'effort': 'minimal'})
 
 
 @pytest.mark.skipif(not google_imports(), reason='google-genai not installed')
