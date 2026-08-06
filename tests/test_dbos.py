@@ -2282,9 +2282,8 @@ async def test_dbos_durability_rejects_cancellation_token_in_workflow(dbos: DBOS
     agent = Agent(_durability_fn_model, name='durability_cancel_token', capabilities=[DBOSDurability()])
 
     @DBOS.workflow()
-    async def run_durable_agent() -> str:
-        result = await agent.run('Hello', cancellation_token=CancellationToken())
-        return result.output
+    async def run_durable_agent() -> None:
+        await agent.run('Hello', cancellation_token=CancellationToken())
 
     with pytest.raises(UserError, match='`cancellation_token` cannot be used with DBOS durable execution'):
         await run_durable_agent()
