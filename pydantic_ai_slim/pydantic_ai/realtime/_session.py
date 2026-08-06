@@ -694,7 +694,7 @@ class RealtimeSession:
             kind=SpanKind.INTERNAL,
         ).end()
 
-    def _record_lifecycle_event(self, name: str, **attributes: Any) -> None:
+    def _record_lifecycle_event(self, name: str, *, message: str | None = None, **attributes: Any) -> None:
         """Record a realtime lifecycle moment (barge-in, turn boundary) as a zero-duration child span.
 
         Turn boundaries and barge-ins have no request/response of their own, so they surface as
@@ -704,12 +704,18 @@ class RealtimeSession:
         lowercase to match the surrounding spans; attributes whose value is `None` are dropped so the
         span stays clean. Every span carries `pydantic_ai.realtime` so backends can recognize the
         whole session tree, lifecycle moments included. No-op when instrumentation is disabled.
+
+        `message` sets `logfire.msg` to vary the displayed text without splitting the span name into
+        more than one grouping key — e.g. an interrupted turn boundary reads "turn complete
+        (interrupted)" while still counting as a `turn complete` span.
         """
         settings = self._instrumentation
         context = self._session_span_context
         if settings is None or context is None:
             return
         attrs: dict[str, Any] = {'pydantic_ai.realtime': True}
+        if message is not None:
+            attrs['logfire.msg'] = message
         attrs.update({key: value for key, value in attributes.items() if value is not None})
         settings.tracer.start_span(name, context=context, attributes=attrs, kind=SpanKind.INTERNAL).end()
 
@@ -1615,7 +1621,14 @@ class RealtimeSession:
             # Only the exchange boundary is marked: each response is already a `chat` span, so a marker
             # per response would say nothing the trace doesn't show, while the turn boundary — where the
             # model is actually done — has no span of its own.
-            self._record_lifecycle_event('turn complete', interrupted=event.interrupted or None)
+            # An interrupted boundary says so in its display text: on providers that auto-respond per
+            # VAD segment (OpenAI server VAD), a talking user cancels response after response, and a
+            # bare "turn complete" per cancellation reads as turns that never happened.
+            self._record_lifecycle_event(
+                'turn complete',
+                message='turn complete (interrupted)' if event.interrupted else None,
+                interrupted=event.interrupted or None,
+            )
         return events
 
     def _handle_tool_call_part(self, call_part: ToolCallPart, *, response_usage_follows: bool) -> list[RealtimeEvent]:

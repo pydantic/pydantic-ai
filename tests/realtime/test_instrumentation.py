@@ -476,7 +476,11 @@ async def test_session_span_records_lifecycle_spans() -> None:
 
     spans = {s.name: s for s in exporter.get_finished_spans()}
     session_span = spans['invoke_agent agent']
-    assert dict(spans['turn complete'].attributes or {}) == {'pydantic_ai.realtime': True, 'interrupted': True}
+    assert dict(spans['turn complete'].attributes or {}) == {
+        'pydantic_ai.realtime': True,
+        'logfire.msg': 'turn complete (interrupted)',
+        'interrupted': True,
+    }
     # No `user speech` span here: this stream never reports the end of speech, and its length is not
     # something to guess at.
     assert 'user speech' not in spans
