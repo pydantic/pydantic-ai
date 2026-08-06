@@ -369,6 +369,26 @@ class RunContext(Generic[RunContextAgentDepsT]):
         self.pending_messages.append(pending)
         return pending.enqueue_id
 
+    @property
+    def cancel_requested(self) -> bool:
+        """Whether a first-party cancellation has been requested for this run.
+
+        `True` once [`cancel_run()`][pydantic_ai.tools.RunContext.cancel_run],
+        [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel], or a cancelled
+        [`CancellationToken`][pydantic_ai.CancellationToken] has requested cancellation, and sticky
+        for the rest of the run. `False` for an external `asyncio.CancelledError` (an
+        `asyncio.wait_for` timeout, an enclosing task group, a bare `task.cancel()`), which is not
+        first-party.
+
+        Both kinds of cancellation reach a capability as an `asyncio.CancelledError` — through a
+        `wrap_*` hook's `handler()` await or `on_run_error` (never the `Exception`-typed
+        `on_tool_execute_error`/`on_node_run_error`/`on_model_request_error`) — so this is how a
+        capability tells a first-party cancellation apart from an environmental one. Cancellation is
+        terminal either way: a hook may observe it but cannot recover the run.
+        """
+        cancellation: RunCancellation | None = self.__dict__.get('_cancellation')
+        return cancellation is not None and cancellation.cancel_requested
+
     def cancel_run(self) -> None:
         """Cancel the agent run this context belongs to.
 

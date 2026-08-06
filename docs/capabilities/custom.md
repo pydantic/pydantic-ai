@@ -464,6 +464,11 @@ Capabilities can hook into five lifecycle points, each with up to four variants:
 
     Prefer structured concurrency ([`anyio.create_task_group()`](https://anyio.readthedocs.io/en/stable/tasks.html) with `async with`): the run's cancellation flows through the `async with` and children are cancelled on scope exit, with no manual cleanup. If you keep raw tasks, cancel and drain them in a `try`/`finally` in `wrap_run` (issue every `task.cancel()` first, then a single `await asyncio.gather(*tasks, return_exceptions=True)`), and wrap that teardown in `anyio.CancelScope(shield=True)` so it still completes when the run is already being cancelled. A raw `task.cancel()` can pierce even a shielded scope, so for work that must finish regardless, keep it on its own task and await that task explicitly. A sub-agent run you launch on a background task is likewise yours to cancel and drain — only sub-agents you `await` inline are torn down for you.
 
+!!! note "Observing cancellation"
+    A cancellation reaches a capability as an `asyncio.CancelledError`: through a `wrap_*` hook's `handler()` await (catch it around `await handler(...)`), or at the run's terminal funnel [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error], whose `error` is a `BaseException`. It does **not** reach the recovery-oriented `Exception`-typed hooks — [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error], [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error], [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] — because a cancellation is a terminal control signal, not a failure of that step you could recover from.
+
+    Cancellation is terminal: a hook may observe it and clean up, but returning a result to recover the run does not work — the run re-asserts the cancellation at the next step boundary. Use [`RunContext.cancel_requested`][pydantic_ai.tools.RunContext.cancel_requested] to tell a first-party cancellation (`cancel_run()` / a `CancellationToken`) from an external `asyncio.CancelledError` (a timeout or the enclosing task being cancelled).
+
 ### Node hooks
 
 | Hook | Signature | Purpose |

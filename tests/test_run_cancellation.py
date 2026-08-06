@@ -1324,6 +1324,51 @@ async def test_sub_agent_cancel_from_non_tool_site_reports_parent_history():
     assert isinstance(exc.__cause__, RunCancelled)  # the sub-agent's own cancellation, preserved
 
 
+@requires_task_cancelling
+async def test_cancel_requested_distinguishes_first_party_from_external():
+    """`RunContext.cancel_requested` lets a capability tell a first-party cancellation
+    (`cancel_run()` / `CancellationToken`) from an external one — both of which reach `on_run_error`
+    as a plain `asyncio.CancelledError`."""
+    seen: list[bool] = []
+
+    class RecordCancelRequested(AbstractCapability):
+        async def on_run_error(self, ctx: RunContext, *, error: BaseException) -> AgentRunResult:
+            seen.append(ctx.cancel_requested)
+            raise error
+
+    started = asyncio.Event()
+
+    def make_agent() -> Agent[None, str]:
+        agent = Agent(TestModel(), capabilities=[RecordCancelRequested()])
+
+        @agent.tool_plain
+        async def slow() -> str:
+            started.set()
+            await asyncio.Event().wait()
+            return 'never'  # pragma: no cover
+
+        return agent
+
+    # First-party cancellation: `cancel_requested` is True.
+    token = CancellationToken()
+    task = asyncio.create_task(make_agent().run('go', cancellation_token=token))
+    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    token.cancel()
+    with pytest.raises(RunCancelled):
+        await task
+    assert seen == [True]
+
+    # External cancellation: `cancel_requested` is False.
+    started.clear()
+    seen.clear()
+    task = asyncio.create_task(make_agent().run('go'))
+    await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+    assert seen == [False]
+
+
 async def test_cancel_run_outside_a_run_raises_user_error():
     """A synthetic `RunContext` not backed by a running agent has no run to cancel."""
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
