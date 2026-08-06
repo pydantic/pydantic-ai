@@ -16460,8 +16460,8 @@ async def test_resolve_model_id_uses_override_root_capability() -> None:
     token = agent._override_root_capability.set(Some(override_root))  # pyright: ignore[reportPrivateUsage]
     try:
         resolved = await agent._resolve_model_selection(  # pyright: ignore[reportPrivateUsage]
-            agent._pick_raw_model(None),
-            capability=agent._effective_root_capability(),
+            agent._pick_raw_model(None),  # pyright: ignore[reportPrivateUsage]
+            capability=agent._effective_root_capability(),  # pyright: ignore[reportPrivateUsage]
             deps=None,
         )
         assert resolved is override_target
@@ -16471,8 +16471,8 @@ async def test_resolve_model_id_uses_override_root_capability() -> None:
         agent._override_root_capability.reset(token)  # pyright: ignore[reportPrivateUsage]
 
     resolved = await agent._resolve_model_selection(  # pyright: ignore[reportPrivateUsage]
-        agent._pick_raw_model(None),
-        capability=agent._effective_root_capability(),
+        agent._pick_raw_model(None),  # pyright: ignore[reportPrivateUsage]
+        capability=agent._effective_root_capability(),  # pyright: ignore[reportPrivateUsage]
         deps=None,
     )
     assert resolved is chain_target
