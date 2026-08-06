@@ -497,7 +497,6 @@ async def test_event_stream_aclose_with_tool_call_in_flight():
 
     async def event_generator() -> AsyncIterator[NativeEvent]:
         yield FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', tool_call_id='call_1', args={}))
-        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
 
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
     event_stream = DummyUIEventStream(run_input=request)
