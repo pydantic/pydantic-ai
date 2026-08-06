@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import zlib
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,6 +13,7 @@ from pydantic_ai._ssrf import (
     _DEFAULT_TIMEOUT,  # pyright: ignore[reportPrivateUsage]
     _MAX_REDIRECTS,  # pyright: ignore[reportPrivateUsage]
     ResolvedUrl,
+    _decode_gzip,
     build_url_with_ip,
     extract_host_and_port,
     is_cloud_metadata_ip,
@@ -24,6 +26,30 @@ from pydantic_ai._ssrf import (
 )
 
 pytestmark = [pytest.mark.anyio]
+
+
+def _gzip_members(*members: bytes) -> bytes:
+    """Return a concatenated (multi-member) gzip stream for `members`."""
+    out = b''
+    for member in members:
+        compressor = zlib.compressobj(9, zlib.DEFLATED, 16 + zlib.MAX_WBITS)
+        out += compressor.compress(member) + compressor.flush()
+    return out
+
+
+def _make_client() -> MagicMock:
+    """Return a client mock whose ``stream()`` yields an async context manager.
+
+    ``safe_download`` uses ``client.stream(...)`` as an async context manager,
+    so ``stream`` must return the CM synchronously (an ``AsyncMock`` would
+    return a coroutine instead).
+    """
+    client = MagicMock()
+    stream_cm = MagicMock()
+    stream_cm.__aenter__ = AsyncMock()
+    stream_cm.__aexit__ = AsyncMock(return_value=None)
+    client.stream = MagicMock(return_value=stream_cm)
+    return client
 
 
 @pytest.fixture
@@ -594,22 +620,24 @@ class TestSafeDownload:
 
     async def test_successful_download(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         mock_response = AsyncMock()
+        mock_response.headers = {}
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
         mock_response.content = b'test content'
 
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = mock_response
         mock_ssrf_client.return_value = mock_client
 
         response = await safe_download('https://example.com/file.txt')
         assert response.content == b'test content'
 
-        mock_client.get.assert_called_once()
-        call_args = mock_client.get.call_args
-        assert '93.184.215.14' in call_args[0][0]
+        mock_client.stream.assert_called_once()
+        call_args = mock_client.stream.call_args
+        assert call_args[0][0] == 'GET'
+        assert '93.184.215.14' in call_args[0][1]
         assert call_args[1]['headers']['Host'] == 'example.com'
         assert call_args[1]['extensions'] == {'sni_hostname': 'example.com'}
 
@@ -619,6 +647,7 @@ class TestSafeDownload:
         redirect_response.headers = {'location': 'https://cdn.example.com/file.txt'}
 
         final_response = AsyncMock()
+        final_response.headers = {}
         final_response.is_redirect = False
         final_response.raise_for_status = lambda: None
         final_response.content = b'final content'
@@ -628,13 +657,13 @@ class TestSafeDownload:
             [(2, 1, 6, '', ('140.82.114.4', 0))],
         ]
 
-        mock_client = AsyncMock()
-        mock_client.get.side_effect = [redirect_response, final_response]
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.side_effect = [redirect_response, final_response]
         mock_ssrf_client.return_value = mock_client
 
         response = await safe_download('https://example.com/file.txt')
         assert response.content == b'final content'
-        assert mock_client.get.call_count == 2
+        assert mock_client.stream.call_count == 2
 
     async def test_redirect_to_private_ip_blocked(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         redirect_response = AsyncMock()
@@ -646,8 +675,8 @@ class TestSafeDownload:
             [(2, 1, 6, '', ('192.168.1.1', 0))],
         ]
 
-        mock_client = AsyncMock()
-        mock_client.get.return_value = redirect_response
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = redirect_response
         mock_ssrf_client.return_value = mock_client
 
         with pytest.raises(ValueError, match='Access to private/internal IP address'):
@@ -660,8 +689,8 @@ class TestSafeDownload:
 
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-        mock_client = AsyncMock()
-        mock_client.get.return_value = redirect_response
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = redirect_response
         mock_ssrf_client.return_value = mock_client
 
         with pytest.raises(ValueError, match=f'Too many redirects \\({_MAX_REDIRECTS + 1}\\)'):
@@ -673,21 +702,23 @@ class TestSafeDownload:
         redirect_response.headers = {'location': '/new-path/file.txt'}
 
         final_response = AsyncMock()
+        final_response.headers = {}
         final_response.is_redirect = False
         final_response.raise_for_status = lambda: None
         final_response.content = b'final content'
 
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-        mock_client = AsyncMock()
-        mock_client.get.side_effect = [redirect_response, final_response]
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.side_effect = [redirect_response, final_response]
         mock_ssrf_client.return_value = mock_client
 
         response = await safe_download('https://example.com/old-path/file.txt')
         assert response.content == b'final content'
 
-        second_call = mock_client.get.call_args_list[1]
-        assert '/new-path/file.txt' in second_call[0][0]
+        second_call = mock_client.stream.call_args_list[1]
+        assert second_call[0][0] == 'GET'
+        assert '/new-path/file.txt' in second_call[0][1]
 
     async def test_missing_location_header(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         redirect_response = AsyncMock()
@@ -696,8 +727,8 @@ class TestSafeDownload:
 
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-        mock_client = AsyncMock()
-        mock_client.get.return_value = redirect_response
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = redirect_response
         mock_ssrf_client.return_value = mock_client
 
         with pytest.raises(ValueError, match='Redirect response missing Location header'):
@@ -709,6 +740,7 @@ class TestSafeDownload:
         redirect_response.headers = {'location': '//cdn.example.com/file.txt'}
 
         final_response = AsyncMock()
+        final_response.headers = {}
         final_response.is_redirect = False
         final_response.raise_for_status = lambda: None
         final_response.content = b'final content'
@@ -718,15 +750,15 @@ class TestSafeDownload:
             [(2, 1, 6, '', ('140.82.114.4', 0))],
         ]
 
-        mock_client = AsyncMock()
-        mock_client.get.side_effect = [redirect_response, final_response]
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.side_effect = [redirect_response, final_response]
         mock_ssrf_client.return_value = mock_client
 
         response = await safe_download('https://example.com/file.txt')
         assert response.content == b'final content'
-        assert mock_client.get.call_count == 2
+        assert mock_client.stream.call_count == 2
 
-        second_call = mock_client.get.call_args_list[1]
+        second_call = mock_client.stream.call_args_list[1]
         assert second_call[1]['headers']['Host'] == 'cdn.example.com'
 
     async def test_protocol_relative_redirect_to_private_blocked(
@@ -741,8 +773,8 @@ class TestSafeDownload:
             [(2, 1, 6, '', ('192.168.1.1', 0))],
         ]
 
-        mock_client = AsyncMock()
-        mock_client.get.return_value = redirect_response
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = redirect_response
         mock_ssrf_client.return_value = mock_client
 
         with pytest.raises(ValueError, match='Access to private/internal IP address'):
@@ -750,18 +782,19 @@ class TestSafeDownload:
 
     async def test_http_no_sni_extension(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         mock_response = AsyncMock()
+        mock_response.headers = {}
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
 
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = mock_response
         mock_ssrf_client.return_value = mock_client
 
         await safe_download('http://example.com/file.txt')
 
-        call_args = mock_client.get.call_args
+        call_args = mock_client.stream.call_args
         assert call_args[1]['extensions'] == {}
 
     async def test_protocol_validation(self) -> None:
@@ -773,13 +806,14 @@ class TestSafeDownload:
 
     async def test_timeout_parameter(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         mock_response = AsyncMock()
+        mock_response.headers = {}
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
 
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = mock_response
         mock_ssrf_client.return_value = mock_client
 
         await safe_download('https://example.com/file.txt', timeout=60)
@@ -788,13 +822,14 @@ class TestSafeDownload:
 
     async def test_default_timeout(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         mock_response = AsyncMock()
+        mock_response.headers = {}
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
 
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = mock_response
         mock_ssrf_client.return_value = mock_client
 
         await safe_download('https://example.com/file.txt')
@@ -813,6 +848,7 @@ class TestSafeDownload:
         https://github.com/pydantic/pydantic-ai/pull/4421
         """
         mock_response = AsyncMock()
+        mock_response.headers = {}
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
         mock_response.content = b'test content'
@@ -823,7 +859,10 @@ class TestSafeDownload:
 
         def tracking_create(**kwargs: Any) -> httpx.AsyncClient:
             client = httpx.AsyncClient()
-            client.get = AsyncMock(return_value=mock_response)
+            stream_cm = AsyncMock()
+            stream_cm.__aenter__ = AsyncMock(return_value=mock_response)
+            stream_cm.__aexit__ = AsyncMock(return_value=None)
+            client.stream = MagicMock(return_value=stream_cm)
             created_clients.append(client)
             return client
 
@@ -838,10 +877,11 @@ class TestSafeDownload:
         """Test that allowed domain passes validation."""
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         mock_response = AsyncMock()
+        mock_response.headers = {}
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = mock_response
         mock_ssrf_client.return_value = mock_client
 
         await safe_download('https://example.com/page', allowed_domains=['example.com'])
@@ -861,10 +901,11 @@ class TestSafeDownload:
         """A trailing FQDN dot or uppercasing must not cause false rejection by the allowed-domains list."""
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         mock_response = AsyncMock()
+        mock_response.headers = {}
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = mock_response
         mock_ssrf_client.return_value = mock_client
 
         await safe_download(url, allowed_domains=['example.com'])
@@ -886,10 +927,11 @@ class TestSafeDownload:
         """Test that non-blocked domain passes validation."""
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
         mock_response = AsyncMock()
+        mock_response.headers = {}
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
-        mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = mock_response
         mock_ssrf_client.return_value = mock_client
 
         await safe_download('https://example.com/page', blocked_domains=['evil.com'])
@@ -903,8 +945,8 @@ class TestSafeDownload:
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'https://evil.com/payload'}
-        mock_client = AsyncMock()
-        mock_client.get.return_value = redirect_response
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = redirect_response
         mock_ssrf_client.return_value = mock_client
 
         with pytest.raises(ValueError, match='is blocked'):
@@ -921,12 +963,84 @@ class TestSafeDownload:
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'https://other.com/page'}
-        mock_client = AsyncMock()
-        mock_client.get.return_value = redirect_response
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = redirect_response
         mock_ssrf_client.return_value = mock_client
 
         with pytest.raises(ValueError, match='not in the allowed domains'):
             await safe_download('https://example.com/page', allowed_domains=['example.com'])
+
+    async def test_gzip_multi_member_decoded_in_full(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+        """A concatenated multi-member gzip body must not be truncated to the first member."""
+        raw = _gzip_members(b'first-member\n', b'second-member\n')
+
+        async def aiter_raw() -> Any:
+            yield raw
+
+        mock_response = AsyncMock()
+        mock_response.is_redirect = False
+        mock_response.raise_for_status = lambda: None
+        mock_response.status_code = 200
+        mock_response.headers = {'content-encoding': 'gzip'}
+        mock_response.request = httpx.Request('GET', 'https://example.com/file.txt')
+        mock_response.extensions = {}
+        mock_response.aiter_raw = aiter_raw
+
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = mock_response
+        mock_ssrf_client.return_value = mock_client
+
+        response = await safe_download('https://example.com/file.txt')
+
+        assert response.content == b'first-member\nsecond-member\n'
+        assert response.headers.get('content-encoding') is None
+        assert response.headers['content-length'] == str(len(response.content))
+        assert response is not mock_response
+
+    async def test_gzip_truncated_stream_raises(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+        """A gzip body cut off before the trailer must raise instead of returning partial data."""
+        raw = _gzip_members(b'200 bytes of decoded content that never completes')
+        truncated = raw[: len(raw) // 2]
+
+        async def aiter_raw() -> Any:
+            yield truncated
+
+        mock_response = AsyncMock()
+        mock_response.is_redirect = False
+        mock_response.raise_for_status = lambda: None
+        mock_response.status_code = 200
+        mock_response.headers = {'content-encoding': 'gzip'}
+        mock_response.request = httpx.Request('GET', 'https://example.com/file.txt')
+        mock_response.extensions = {}
+        mock_response.aiter_raw = aiter_raw
+
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+        mock_client = _make_client()
+        mock_client.stream.return_value.__aenter__.return_value = mock_response
+        mock_ssrf_client.return_value = mock_client
+
+        with pytest.raises(ValueError, match='Truncated gzip stream'):
+            await safe_download('https://example.com/file.txt')
+
+
+class TestDecodeGzip:
+    """Unit tests for the shared gzip decoder used by safe_download."""
+
+    def test_single_member(self) -> None:
+        assert _decode_gzip(_gzip_members(b'hello world')) == b'hello world'
+
+    def test_multi_member(self) -> None:
+        assert _decode_gzip(_gzip_members(b'first\n', b'second\n', b'third\n')) == b'first\nsecond\nthird\n'
+
+    def test_truncated_raises(self) -> None:
+        raw = _gzip_members(b'never completes')
+        with pytest.raises(ValueError, match='Truncated gzip stream'):
+            _decode_gzip(raw[: len(raw) // 2])
+
+    def test_empty_input_raises(self) -> None:
+        with pytest.raises(ValueError, match='Truncated gzip stream'):
+            _decode_gzip(b'')
 
 
 class TestDnsRebindingPrevention:

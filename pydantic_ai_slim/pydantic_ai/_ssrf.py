@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import zlib
 from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
@@ -117,6 +118,30 @@ _CLOUD_METADATA_IPV6: frozenset[ipaddress.IPv6Address] = frozenset(
 _MAX_REDIRECTS = 10
 _DEFAULT_TIMEOUT = 30  # seconds
 _SENSITIVE_HEADERS = frozenset(('authorization', 'cookie', 'proxy-authorization'))
+
+
+def _decode_gzip(data: bytes) -> bytes:
+    """Decompress a gzip stream, following concatenated members and rejecting truncation.
+
+    ``zlib.decompressobj`` only decodes the first member of a concatenated
+    (multi-member) gzip stream and does not report whether the end-of-stream
+    marker was reached. httpx's ``GZipDecoder`` inherits both behaviours, so a
+    truncated download can silently reach callers as if it were complete.
+    This decoder continues onto ``unused_data`` while members remain, and raises
+    when the input ends before a member trailer was seen.
+    """
+    out = bytearray()
+    decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    out += decompressor.decompress(data)
+    out += decompressor.flush()
+    while decompressor.eof and decompressor.unused_data:
+        unused = decompressor.unused_data
+        decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        out += decompressor.decompress(unused)
+        out += decompressor.flush()
+    if not decompressor.eof:
+        raise ValueError('Truncated gzip stream: data ended before the gzip trailer')
+    return bytes(out)
 
 
 @dataclass
@@ -498,36 +523,60 @@ async def safe_download(
             request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
             request_headers['Host'] = resolved.hostname
 
-            # Make request with Host header set to original hostname
-            response = await client.get(
+            # Make request with Host header set to original hostname. Use a
+            # streaming request so gzip bodies can be decoded here: httpx's
+            # GZipDecoder silently truncates concatenated members and accepts
+            # streams cut off before the trailer (#7159).
+            async with client.stream(
+                'GET',
                 request_url,
                 headers=request_headers,
                 extensions=extensions,
                 follow_redirects=False,
-            )
+            ) as response:
+                # Check if we need to follow a redirect
+                if response.is_redirect:
+                    redirects_followed += 1
+                    if redirects_followed > max_redirects:
+                        raise ValueError(f'Too many redirects ({redirects_followed}). Maximum allowed: {max_redirects}')
 
-            # Check if we need to follow a redirect
-            if response.is_redirect:
-                redirects_followed += 1
-                if redirects_followed > max_redirects:
-                    raise ValueError(f'Too many redirects ({redirects_followed}). Maximum allowed: {max_redirects}')
+                    # Get redirect location
+                    location = response.headers.get('location')
+                    if not location:
+                        raise ValueError('Redirect response missing Location header')
 
-                # Get redirect location
-                location = response.headers.get('location')
-                if not location:
-                    raise ValueError('Redirect response missing Location header')
+                    current_url = resolve_redirect_url(current_url, location)
 
-                current_url = resolve_redirect_url(current_url, location)
+                    # Strip sensitive headers on cross-origin redirects (RFC 7235)
+                    redirect_hostname = urlparse(current_url).hostname
+                    if redirect_hostname != original_hostname:
+                        effective_headers = {
+                            k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS
+                        }
 
-                # Strip sensitive headers on cross-origin redirects (RFC 7235)
-                redirect_hostname = urlparse(current_url).hostname
-                if redirect_hostname != original_hostname:
-                    effective_headers = {
-                        k: v for k, v in effective_headers.items() if k.lower() not in _SENSITIVE_HEADERS
-                    }
+                    continue
 
-                continue
+                # Not a redirect, we're done
+                response.raise_for_status()
 
-            # Not a redirect, we're done
-            response.raise_for_status()
-            return response
+                # httpx decodes non-gzip encodings itself; for gzip we decode
+                # the raw body so concatenated members and truncation are
+                # handled correctly instead of silently dropping data.
+                content_encoding = (response.headers.get('content-encoding') or '').lower()
+                encodings = [e.strip() for e in content_encoding.split(',') if e.strip()]
+                if encodings == ['gzip'] or encodings == ['x-gzip']:
+                    raw = b''.join([chunk async for chunk in response.aiter_raw()])
+                    content = _decode_gzip(raw)
+                    headers = response.headers.copy()
+                    headers.pop('content-encoding', None)
+                    headers['content-length'] = str(len(content))
+                    return httpx.Response(
+                        status_code=response.status_code,
+                        headers=headers,
+                        content=content,
+                        request=response.request,
+                        extensions=response.extensions,
+                    )
+
+                await response.aread()
+                return response
