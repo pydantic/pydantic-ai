@@ -23,6 +23,7 @@ from ...messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -37,10 +38,12 @@ from ._interrupt import (
     approval_to_interrupt,
 )
 from ._utils import (
+    ACTIVITY_EVENTS_VERSION,
     BUILTIN_TOOL_CALL_ID_PREFIX,
     DEFAULT_AG_UI_VERSION,
     INTERRUPTS_VERSION,
     REASONING_VERSION,
+    TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
     dump_tool_return_content,
     parse_ag_ui_version,
     tool_kind_encrypted_value,
@@ -324,6 +327,19 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
             yield e
+
+    async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseEvent]:
+        if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
+            return
+
+        from ag_ui.core import ActivitySnapshotEvent
+
+        part = event.part
+        yield ActivitySnapshotEvent(
+            message_id=str(uuid4()),
+            activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
+            content={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+        )
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):

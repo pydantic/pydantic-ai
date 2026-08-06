@@ -113,7 +113,7 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
         part = _TOOL_AVAILABILITY_DELTA_PART_ADAPTER.validate_python(payload)
     except ValidationError:
         return ToolAvailabilityDeltaPart()
-    part.added = [name for name in part.added if _TOOL_NAME_PATTERN.fullmatch(name)]
+    part.tools_added = [name for name in part.tools_added if _TOOL_NAME_PATTERN.fullmatch(name)]
     if part.tool_call_id is not None and not part.tool_call_id.strip():
         part.tool_call_id = None
     return part

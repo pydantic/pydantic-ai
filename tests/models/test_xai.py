@@ -119,6 +119,26 @@ pytestmark = [
     pytest.mark.vcr,
 ]
 
+
+def test_xai_hidden_tools_stay_off_the_wire():
+    """Guard xAI's single-line switch from `tool_defs` to `declared_tool_defs`."""
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(api_key='foobar'))
+    hidden = ToolDefinition(
+        name='process_refund',
+        description='Process a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    visible = ToolDefinition(name='visible')
+
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+    assert prepared.tool_visibility == {'process_refund': 'withheld', 'visible': 'visible'}
+
+    tool_defs, _ = model._get_tool_choice({}, prepared)  # pyright: ignore[reportPrivateUsage]
+    assert list(tool_defs) == ['visible']
+
+
 # Test model constants
 XAI_NON_REASONING_MODEL = 'grok-4-fast-non-reasoning'
 XAI_REASONING_MODEL = 'grok-4-fast-reasoning'

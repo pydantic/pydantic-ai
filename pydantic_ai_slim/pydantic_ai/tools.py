@@ -619,13 +619,8 @@ class ToolDefinition:
 
     Set on `Tool(defer_loading=True)` (or via a custom toolset) to opt this tool into
     deferred loading. This author intent remains stable after the tool is revealed;
-    current visibility is tracked separately in the request context.
-
-    On the `function_tools` of a [`ModelRequestParameters`][pydantic_ai.models.ModelRequestParameters]
-    that [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request] has resolved, it means
-    something narrower: send this tool's `tools` entry with the provider's deferral flag in place of
-    its schema. A model that can't express that gets revealed tools plainly and hidden ones not at
-    all, so an adapter renders the flag from this field alone.
+    current wire placement is tracked separately by
+    [`ModelRequestParameters.tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility].
 
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
