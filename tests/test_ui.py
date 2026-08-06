@@ -917,6 +917,35 @@ async def test_run_stream_on_cancel_not_called_for_success_or_error():
     assert success_stream.cancelled is None
 
 
+async def test_run_stream_error_wrapping_nested_cancellation_reported_as_error():
+    """An ordinary error raised while a nested `RunCancelled` is being handled carries that
+    `RunCancelled` in its implicit `__context__`. It must be reported to the client as an error,
+    not reclassified as a cancellation by chain-walking `__context__` (which would swallow the
+    failure into an abort/finished signal and never tell the client the run errored).
+
+    The agent graph re-parents such an error's `__context__` to its `TaskGroup`'s `ExceptionGroup`
+    before it reaches `transform_stream`, so a public-API run can't reproduce the misclassification;
+    inject the context-carrying exception straight into the stream to pin the classifier itself."""
+    adapter = DummyUIAdapter(
+        Agent(model=TestModel()), DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    )
+    event_stream = adapter.build_event_stream()
+
+    async def failing_stream() -> AsyncIterator[Any]:
+        try:
+            raise RunCancelled('nested run was cancelled')
+        except RunCancelled:
+            raise ValueError('delegate failed')
+        yield  # pragma: no cover
+
+    cancellations: list[RunCancelled] = []
+    events = [event async for event in event_stream.transform_stream(failing_stream(), on_cancel=cancellations.append)]
+
+    assert cancellations == []
+    assert event_stream.cancelled is None
+    assert "<error type='ValueError'>delegate failed</error>" in events
+
+
 async def test_run_stream_request_error():
     agent = Agent(model=TestModel())
 

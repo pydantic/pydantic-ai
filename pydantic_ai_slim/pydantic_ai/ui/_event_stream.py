@@ -269,7 +269,13 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             # A cancelled run's pending calls were interrupted, not failed: `'interrupted'` keeps
             # the closeout honest on reload (a `'failed'` closeout would tell the model the tool
             # errored) and matches how cancellation records tool calls in message history.
-            cancelled = RunCancelled.from_cancellation(exc)
+            #
+            # Classify on the exception itself, not `from_cancellation()`: external cancellation is a
+            # `CancelledError` (a `BaseException`) that never reaches this `except Exception` block, so
+            # the only cancellation seen here is a first-party `RunCancelled`. Chain-walking would
+            # misread an ordinary error raised while handling a nested `RunCancelled` (Python sets
+            # `__context__` implicitly) as a cancellation, hiding the failure from the client.
+            cancelled = exc if isinstance(exc, RunCancelled) else None
             for tool_call_id, (kind, tool_name) in self._pending_tool_calls.items():
                 async for e in self._turn_to('request'):
                     yield e
