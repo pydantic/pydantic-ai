@@ -2584,9 +2584,12 @@ def compacted_window(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         if isinstance(message, ModelResponse):
             for part_index in range(len(message.parts) - 1, -1, -1):
                 if isinstance(message.parts[part_index], CompactionPart):
+                    # Indexed iteration rather than `messages[message_index + 1:]`: the runtime
+                    # `Sequence` contract only requires integer `__getitem__`, so a minimal
+                    # conforming implementation may reject slices. (`message.parts` is a list.)
                     return [
                         replace(message, parts=list(message.parts[part_index:])),
-                        *messages[message_index + 1 :],
+                        *(messages[i] for i in range(message_index + 1, len(messages))),
                     ]
     return list(messages)
 

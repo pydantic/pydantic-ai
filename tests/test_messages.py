@@ -2,6 +2,7 @@ import json
 import re
 import sys
 import warnings
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2313,3 +2314,34 @@ def test_compacted_window_slices_at_the_latest_compaction_part():
         TextPart(content='after the block'),
     ]
     assert window[1] is messages[-1]
+
+
+def test_compacted_window_accepts_a_minimal_sequence():
+    """The runtime `Sequence` contract only requires integer `__getitem__`; the window must
+    not depend on slice support that a minimal conforming implementation may lack."""
+
+    class IntOnlySequence(Sequence[ModelMessage]):
+        def __init__(self, items: list[ModelMessage]):
+            self._items = items
+
+        def __getitem__(self, index: Any) -> ModelMessage:
+            if isinstance(index, slice):
+                raise TypeError('slices not supported')
+            return self._items[cast(int, index)]
+
+        def __len__(self) -> int:
+            return len(self._items)
+
+    messages = IntOnlySequence(
+        [
+            ModelRequest.user_text_prompt('old context'),
+            ModelResponse(parts=[CompactionPart(content='summary', provider_name='anthropic')]),
+            ModelRequest.user_text_prompt('tail'),
+        ]
+    )
+
+    window = compacted_window(messages)
+
+    assert len(window) == 2
+    assert isinstance(window[0], ModelResponse)
+    assert isinstance(window[1], ModelRequest)
