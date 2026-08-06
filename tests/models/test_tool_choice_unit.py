@@ -339,7 +339,7 @@ async def test_thinking_with_forced_tool_choice_raises(
             'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
             'tool_choice': tool_choice,
         }
-        match = 'Anthropic does not support .* with thinking mode'
+        match = 'Anthropic does not support .* with manual extended thinking'
     else:  # bedrock
         mock_client = MagicMock()
         provider = BedrockProvider(bedrock_client=mock_client)
