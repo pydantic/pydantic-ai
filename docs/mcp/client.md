@@ -89,6 +89,42 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 ```
 
+### Stateless mode
+
+For HTTP servers that don't require persistent sessions — such as stateless servers behind load balancers, per-request Lambda-style deployments, or multi-agent systems where you want to decouple agent instantiation from MCP server connections — you can set `stateless=True` to defer the MCP `initialize` handshake:
+
+```python {title="mcp_stateless_client.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
+
+toolset = MCPToolset('http://localhost:8000/mcp', stateless=True)
+agent = Agent('openai:gpt-5.2', toolsets=[toolset])
+
+
+async def main():
+    async with agent:  # No call to the MCP server is made here
+        result = await agent.run('What tools do you have?')  # Lazy initialization happens here
+        print(result.output)
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+In stateless mode:
+
+- Entering the toolset context (`async with toolset:` or `async with agent:`) opens the transport connection but does **not** send the `initialize` request
+- The `initialize` handshake happens lazily on the first real operation (`list_tools`, `call_tool`, `list_resources`, etc.)
+- [`server_info`][pydantic_ai.mcp.MCPToolset.server_info], [`capabilities`][pydantic_ai.mcp.MCPToolset.capabilities], and [`instructions`][pydantic_ai.mcp.MCPToolset.instructions] properties are unavailable until that first operation completes
+
+This is useful when:
+
+- Your MCP servers are stateless and don't need the session-id handshake
+- You don't want the startup latency of the `initialize` round-trip
+- You're running health checks that shouldn't require MCP servers to be fully running
+- You have multi-agent systems where agents are created ahead of time but MCP connections should only be established on demand
+
+!!! note
+    Stateless mode is only applicable when constructing the toolset from a URL or transport — it cannot be used with a pre-built `fastmcp.Client`.
+
 ### SSE
 
 The [HTTP + Server-Sent Events](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport is also supported. URLs ending in `/sse` are auto-detected as SSE; for any other path, pass an explicit [`SSETransport`](https://gofastmcp.com/clients/transports).
