@@ -76,6 +76,7 @@ with try_import() as google_imports_successful:
         GoogleEmbeddingSettings,
         LatestGoogleGLAEmbeddingModelNames,
         LatestGoogleVertexEmbeddingModelNames,
+        _map_usage,
     )
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
