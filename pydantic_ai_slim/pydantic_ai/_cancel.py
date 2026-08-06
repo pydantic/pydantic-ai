@@ -131,6 +131,10 @@ class RunCancellation:
             self._owner = task
             self._loop = task.get_loop()
             if sys.version_info >= (3, 11) and task in self._issued:
+                # Re-sync our issued count with what's actually pending, in case user code
+                # uncancelled some of it. Because this clamps counts rather than tracking
+                # issuance identity, a user uncancel followed by a matching external cancel can
+                # retain a stale issuance that `resolve()` then mis-attributes as ours (#7240).
                 self._issued[task] = min(self._issued[task], task.cancelling())
                 if self._issued[task] == 0:
                     del self._issued[task]
@@ -201,7 +205,14 @@ class RunCancellation:
         Unlike `asyncio.timeout()`, which arbitrates against a baseline count captured at scope
         entry, this check is baseline-free: a cancellation count already pending when the run
         started makes a first-party cancel resolve as external. That is deliberate — the
-        conservative direction is "external wins", never mis-translating an external cancellation.
+        conservative direction is "external wins".
+
+        One residual window escapes that guarantee: because attribution counts cancellations
+        rather than tracking their identity, if user code catches a first-party cancellation and
+        calls `Task.uncancel()` itself, then an external `Task.cancel()` arrives before the next
+        `bind()` with a matching count, `bind()`'s clamp keeps the stale issuance and this check
+        consumes the external cancellation as first-party. Reaching it requires user code to
+        uncancel a cancellation it was handed; a robust fix needs issuance-identity tracking (#7240).
         """
         if not self._requested:
             return False
