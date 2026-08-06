@@ -965,6 +965,66 @@ async def test_xai_file_search_sends_collection_ids(allow_model_requests: None):
     assert 'collections_search' in tool_dict
 
 
+async def test_xai_file_search_options_forwarded(allow_model_requests: None):
+    """FileSearchTool option fields are forwarded to xAI's collections search payload."""
+    response = create_response(content='result', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        capabilities=[
+            NativeTool(
+                FileSearchTool(
+                    file_store_ids=['col-1', 'col-2'],
+                    max_num_results=5,
+                    instructions='Focus on recent documents.',
+                    retrieval_mode='hybrid',
+                )
+            )
+        ],
+    )
+
+    await agent.run('Search my docs')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'collections_search': {
+                    'collection_ids': ['col-1', 'col-2'],
+                    'limit': 5,
+                    'instructions': 'Focus on recent documents.',
+                    'hybrid_retrieval': {},
+                }
+            }
+        ]
+    )
+
+
+async def test_xai_file_search_options_omitted_when_none(allow_model_requests: None):
+    """Unset FileSearchTool options are omitted from the outgoing collections search payload."""
+    response = create_response(content='result', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        capabilities=[NativeTool(FileSearchTool(file_store_ids=['col-1']))],
+    )
+
+    await agent.run('Search my docs')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'collections_search': {
+                    'collection_ids': ['col-1'],
+                }
+            }
+        ]
+    )
+
+
 async def test_xai_file_search_include_option(allow_model_requests: None):
     """Test that xai_include_collections_search_output maps correctly."""
     response = create_response(content='test', usage=create_usage(prompt_tokens=10, completion_tokens=5))

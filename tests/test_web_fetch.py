@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -297,6 +298,7 @@ class TestWebFetchLocalTool:
             headers={'Accept': 'text/markdown, text/html;q=0.9, */*;q=0.8'},
             allowed_domains=None,
             blocked_domains=None,
+            max_bytes=50 * 1024 * 1024,
         )
 
     async def test_safe_download_error_raises_model_retry(self):
@@ -488,6 +490,50 @@ class TestWebFetchLocalTool:
         call_headers = mock_dl.call_args[1]['headers']
         assert call_headers['Accept'] == 'text/html'
 
+    @pytest.fixture
+    def serve_response(self, monkeypatch: pytest.MonkeyPatch) -> Callable[[httpx.Response], None]:
+        """Serves a canned response through the real `safe_download` so its download bound applies.
+
+        The tests using it request an IP-literal URL, so no DNS resolution is involved.
+        """
+
+        def serve(response: httpx.Response) -> None:
+            client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: response))
+
+            def create_http_client(*, timeout: int) -> httpx.AsyncClient:
+                return client
+
+            monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+
+        return serve
+
+    @pytest.mark.parametrize('content_type', ['text/plain', 'application/pdf'])
+    async def test_download_over_max_download_bytes_raises_model_retry(
+        self, serve_response: Callable[[httpx.Response], None], content_type: str
+    ):
+        """A response body larger than `max_download_bytes` is rejected before it is buffered."""
+        from pydantic_ai.exceptions import ModelRetry
+
+        request = httpx.Request('GET', 'https://93.184.215.14/doc')
+        serve_response(
+            httpx.Response(200, content=b'x' * 2000, headers={'content-type': content_type}, request=request)
+        )
+
+        tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30, max_download_bytes=1024)
+        with pytest.raises(ModelRetry, match='maximum size of 1024 bytes'):
+            await tool('https://93.184.215.14/doc')
+
+    async def test_no_download_limit_when_none(self, serve_response: Callable[[httpx.Response], None]):
+        """`max_download_bytes=None` keeps reading the whole body, however large."""
+        request = httpx.Request('GET', 'https://93.184.215.14/big.txt')
+        serve_response(httpx.Response(200, text='x' * 200_000, headers={'content-type': 'text/plain'}, request=request))
+
+        tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30, max_download_bytes=None)
+        result = await tool('https://93.184.215.14/big.txt')
+
+        assert isinstance(result, dict)
+        assert len(result['content']) == 200_000
+
 
 class TestWebFetchToolFactory:
     def test_creates_tool(self):
@@ -497,5 +543,7 @@ class TestWebFetchToolFactory:
 
     def test_custom_parameters(self):
         """web_fetch_tool() accepts custom parameters."""
-        tool = web_fetch_tool(max_content_length=10_000, timeout=60, allow_local_urls=True)
+        tool = web_fetch_tool(
+            max_content_length=10_000, timeout=60, allow_local_urls=True, max_download_bytes=1_000_000
+        )
         assert tool.name == 'web_fetch'
