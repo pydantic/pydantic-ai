@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
@@ -7544,6 +7544,80 @@ async def test_compaction_rehides_capability_tools_until_reloaded() -> None:
     await agent.run('refund', message_history=history)
 
     assert visible_tools == [['load_capability'], ['load_capability', 'issue_refund']]
+
+
+class _HookObservingCapability(Capability[None]):
+    """A deferred capability that records its own tool-execute hook activity."""
+
+    def __init__(self) -> None:
+        super().__init__(id='refunds', description='Refund tools.', defer_loading=True)
+        self.hook_log: list[str] = []
+
+    async def before_tool_execute(
+        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.hook_log.append(f'before:{call.tool_name}:loaded={ctx.capability_loaded}')
+        return args
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[None],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: Callable[[dict[str, Any]], Awaitable[Any]],
+    ) -> Any:
+        self.hook_log.append(f'wrap:{call.tool_name}')
+        return await handler(args)
+
+
+async def _call_capability_tool_directly(history: list[ModelMessage]) -> tuple[_HookObservingCapability, list[str]]:
+    """Run an agent whose model calls the capability-owned tool directly, with no (re)load."""
+    capability = _HookObservingCapability()
+    executed: list[str] = []
+
+    @capability.tool_plain
+    def issue_refund() -> str:
+        executed.append('issue_refund')
+        return 'refunded'
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if not executed:
+            return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[None, str] = Agent(FunctionModel(model_fn), capabilities=[capability], deps_type=type(None))
+    await agent.run('refund now', message_history=history)
+    return capability, executed
+
+
+async def test_capability_tool_called_after_compaction_still_runs_owner_hooks() -> None:
+    """The boundary reset must not double as a hook bypass: a capability-owned tool called
+    post-compaction (its load pair is pre-boundary) still runs its owner's execute hooks,
+    with `capability_loaded` truthfully `False`."""
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='old-load')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='old-load')]),
+        ModelResponse(parts=[CompactionPart(content='Summary: refund tooling exists.', provider_name='anthropic')]),
+    ]
+    capability, executed = await _call_capability_tool_directly(history)
+
+    assert executed == ['issue_refund']
+    assert capability.hook_log == ['before:issue_refund:loaded=False', 'wrap:issue_refund']
+
+
+async def test_capability_tool_called_without_any_load_still_runs_owner_hooks() -> None:
+    """The same guarantee for the fabricated-history residual: reveal evidence with no
+    load pair at all keeps the tool callable, so its owner's hooks must run there too."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['issue_refund'])]),
+        ModelResponse(parts=[TextPart('ok')]),
+    ]
+    capability, executed = await _call_capability_tool_directly(history)
+
+    assert executed == ['issue_refund']
+    assert capability.hook_log == ['before:issue_refund:loaded=False', 'wrap:issue_refund']
 
 
 async def test_searchable_corpus_survives_discovery_and_compaction() -> None:
