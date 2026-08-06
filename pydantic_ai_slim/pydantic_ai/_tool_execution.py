@@ -1103,7 +1103,12 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             except (exceptions.CallDeferred, exceptions.ApprovalRequired) as e:
                 return index, e
 
-        appended = False
+        # Track appends per index rather than with a single flag: the append loop below yields
+        # events between extends (output events, ordered result events, availability-delta
+        # events), and a consumer closing or throwing at any of those suspension points would
+        # otherwise make the `finally` cleanup re-extend indices the loop already appended.
+        appended_function_indices: set[int] = set()
+        appended_user_indices: set[int] = set()
         pruned = False
         try:
             for segment in segments:
@@ -1180,6 +1185,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                             yield event
                 elif i in function_parts:
                     self.output_parts.extend(function_parts[i])
+                    appended_function_indices.add(i)
                     # Under `parallel_ordered_events`, emit the buffered result event here so events
                     # stream in emission order; otherwise it was already yielded as the task completed.
                     if ordered_events and i in function_events:
@@ -1190,24 +1196,25 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             for i in executable_indices:
                 if i in function_user_parts:
                     self.output_parts.append(function_user_parts[i])
-            appended = True
+                    appended_user_indices.add(i)
         finally:
-            if not appended:
-                # Partial capture on exception: surface completed function-tool returns so
-                # `CallToolsNode._handle_tool_calls` can record them in the interrupted request.
-                # `pruned` guards against a second pass when the exception interrupted the
-                # normal append loop above after its prune already ran — the prune is not
-                # idempotent (see `_prune_duplicate_tool_reveals`). That interleaving needs an
-                # exception from inside the append loop itself, which no test can trigger cleanly.
-                if not pruned:  # pragma: no branch
-                    _prune_duplicate_tool_reveals(function_parts, self.ctx.deps.discovered_tool_names)
-                for i in executable_indices:
-                    if i in function_parts:
-                        self.output_parts.extend(function_parts[i])
-                # `executable_indices` is non-empty whenever this runs, so the empty-loop branch can't happen.
-                for i in executable_indices:  # pragma: no branch
-                    if i in function_user_parts:
-                        self.output_parts.append(function_user_parts[i])
+            # Partial capture on exception or mid-stream close: surface completed function-tool
+            # returns so `CallToolsNode._handle_tool_calls` can record them in the interrupted
+            # request — but only the indices the normal loop didn't already append, since the
+            # yields inside that loop are suspension points and an interruption delivered there
+            # would otherwise make this cleanup duplicate everything the loop got through.
+            # `pruned` likewise guards the non-idempotent prune (see
+            # `_prune_duplicate_tool_reveals`). Interrupting between a loop iteration's extend
+            # and its yield needs an exception from inside the append loop itself, which no
+            # test can trigger cleanly — hence the pragmas.
+            if not pruned:
+                _prune_duplicate_tool_reveals(function_parts, self.ctx.deps.discovered_tool_names)
+            for i in executable_indices:
+                if i in function_parts and i not in appended_function_indices:  # pragma: no branch
+                    self.output_parts.extend(function_parts[i])
+            for i in executable_indices:  # pragma: no branch
+                if i in function_user_parts and i not in appended_user_indices:
+                    self.output_parts.append(function_user_parts[i])
 
         self._populate_deferred_calls(
             self.tool_calls,

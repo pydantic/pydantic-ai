@@ -274,7 +274,7 @@ RAISES_CASES = [
             'tool_visibility': {'hidden': 'withheld'},
             'allow_text_output': True,
         },
-        match=r"All requested tools.*currently hidden: \['hidden'\]",
+        match=r"No tool in `tool_choice` is currently available: \['hidden'\]",
     ),
     dict(
         # `required` with every function tool withheld would put `required` next to an empty
@@ -311,6 +311,22 @@ def test_resolve_tool_choice_filters_hidden_names_when_one_is_available() -> Non
         allow_text_output=True,
     )
     assert resolve_tool_choice({'tool_choice': ['visible', 'hidden']}, params) == ('required', {'visible'})
+
+
+def test_resolve_tool_choice_rejects_choice_reduced_to_unknown_names() -> None:
+    """`['hidden', 'typo']` must not reach the wire as `required` targeting only the typo:
+    the hidden name is filtered, the unknown one passes through by the dynamic-availability
+    rule, and a choice left with no available name fails loudly instead."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('hidden')],
+        tool_visibility={'hidden': 'withheld'},
+        allow_text_output=True,
+    )
+    with (
+        pytest.warns(UserWarning, match=r'not currently available and will be ignored'),
+        pytest.raises(UserError, match=r"No tool in `tool_choice` is currently available: \['hidden', 'typo'\]"),
+    ):
+        resolve_tool_choice({'tool_choice': ['hidden', 'typo']}, params)
 
 
 @pytest.mark.parametrize('case', RAISES_CASES, ids=lambda c: c['id'])

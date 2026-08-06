@@ -963,7 +963,7 @@ def test_tool_availability_delta_ignores_visible_unknown_and_duplicate_tools() -
 
 def test_hidden_tool_choice_is_rejected_before_anthropic_mapping() -> None:
     model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
-    with pytest.raises(UserError, match=r'All requested tools.*currently hidden'):
+    with pytest.raises(UserError, match=r'No tool in `tool_choice` is currently available'):
         model._prepare_tools_and_tool_choice(  # pyright: ignore[reportPrivateUsage]
             AnthropicModelSettings(tool_choice=['hidden']),
             ModelRequestParameters(

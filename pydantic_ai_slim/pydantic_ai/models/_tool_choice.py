@@ -58,10 +58,15 @@ def resolve_tool_choice(  # noqa: C901
         declared_function_tool_names = {tool.name for tool in model_request_parameters.declared_function_tools}
         hidden_tool_names = function_tool_names - declared_function_tool_names
         filtered = chosen_tool_names - hidden_tool_names
-        if not filtered and chosen_tool_names:
+        # At least one *available* name must survive: hidden names are filtered here, and
+        # unknown names pass through by design (dynamic tool availability, see
+        # `_check_invalid_tools`) — but a choice left with only unknown names would force the
+        # provider toward tools it was never sent.
+        if chosen_tool_names and not (filtered & available_tools):
             raise UserError(
-                f'All requested tools in `tool_choice` are currently hidden: {sorted(chosen_tool_names)}. '
-                'Reveal at least one with tool search, `load_capability`, or `ToolReturn.tools`.'
+                f'No tool in `tool_choice` is currently available: {sorted(chosen_tool_names)}. '
+                'Hidden tools must be revealed with tool search, `load_capability`, or '
+                '`ToolReturn.tools` before they can be forced.'
             )
         return filtered
 
