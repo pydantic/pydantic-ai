@@ -32,7 +32,11 @@ import asyncio
 import wave
 
 from pydantic_ai import Agent
-from pydantic_ai.realtime import PartDeltaEvent, SpeechPartDelta, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import (
+    PartDeltaEvent,
+    RealtimeTurnCompleteEvent,
+    SpeechPartDelta,
+)
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 agent = Agent(instructions='Keep your replies short and conversational.')
