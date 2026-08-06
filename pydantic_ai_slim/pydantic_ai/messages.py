@@ -2559,6 +2559,38 @@ ModelMessagesTypeAdapter = pydantic.TypeAdapter(
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
 
 
+def compacted_window(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """The messages from the latest [`CompactionPart`][pydantic_ai.messages.CompactionPart] onward.
+
+    After compaction, the summary replaces everything before it, so this window is what the model
+    effectively works from — at part-level precision: within the response that carries the
+    compaction part, parts before it are excluded and parts after it are kept. With no compaction
+    part in the history, the whole history is returned (as a new list).
+
+    This is the boundary rule Pydantic AI itself uses when deriving model-visible state from
+    history (discovered tools, loaded capabilities). Capability and toolset authors should apply
+    the same rule to their own derived state — anything the model needs to have *seen*
+    (announcements, disclosures, catalogs) should be recomputed from this window rather than
+    remembered in instance attributes, so it self-heals when compaction replaces the history that
+    carried it.
+
+    Deliberately provider-agnostic: a compaction part another provider would skip on the wire
+    still counts as a boundary. Treating too little as visible only permits a redundant,
+    idempotent re-disclosure; treating too much as visible hides state the model can no longer
+    see.
+    """
+    for message_index in range(len(messages) - 1, -1, -1):
+        message = messages[message_index]
+        if isinstance(message, ModelResponse):
+            for part_index in range(len(message.parts) - 1, -1, -1):
+                if isinstance(message.parts[part_index], CompactionPart):
+                    return [
+                        replace(message, parts=list(message.parts[part_index:])),
+                        *messages[message_index + 1 :],
+                    ]
+    return list(messages)
+
+
 def _narrow_response_part(part: ModelResponsePart) -> ModelResponsePart:
     if isinstance(part, NativeToolCallPart):
         return NativeToolCallPart.narrow_type(part)

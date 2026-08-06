@@ -17,7 +17,6 @@ from .messages import (
     _TOOL_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
-    CompactionPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -144,20 +143,22 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     over-counting can expose tools whose load evidence is no longer visible, while
     under-counting only permits a redundant, idempotent load.
 
-    Scans from the end and stops at the boundary: everything before the latest
-    `CompactionPart` would be reset anyway. In reverse, a return is collected first
-    and its call then completes the pair, so only pairs entirely after the boundary
-    count — the same pairs the forward scan produced.
+    Only the [`compacted_window`][pydantic_ai.messages.compacted_window] is scanned —
+    the one definition of the boundary — so only pairs entirely after the boundary count.
     """
-    return_tool_call_ids: set[str] = set()
+    # This module loads while `messages` is still mid-import (see the module-level import note),
+    # and `compacted_window` is defined after that point, so it can only be imported at call time.
+    from .messages import compacted_window
+
+    call_id_by_tool_call_id: dict[str, str] = {}
     loaded: set[str] = set()
-    for msg in reversed(messages):
-        for part in reversed(msg.parts):
-            if isinstance(part, CompactionPart):
-                return loaded
+    for msg in compacted_window(messages):
+        for part in msg.parts:
+            if isinstance(part, LoadCapabilityCallPart):
+                if part.capability_id is not None:
+                    call_id_by_tool_call_id[part.tool_call_id] = part.capability_id
             elif isinstance(part, LoadCapabilityReturnPart):
-                return_tool_call_ids.add(part.tool_call_id)
-            elif isinstance(part, LoadCapabilityCallPart):
-                if part.capability_id is not None and part.tool_call_id in return_tool_call_ids:
-                    loaded.add(part.capability_id)
+                cap_id = call_id_by_tool_call_id.get(part.tool_call_id)
+                if cap_id is not None:
+                    loaded.add(cap_id)
     return loaded

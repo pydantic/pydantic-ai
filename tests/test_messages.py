@@ -55,9 +55,11 @@ from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
+    CompactionPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ToolReturnContent,
+    compacted_window,
     is_multi_modal_content,
     narrow_message_parts,
 )
@@ -2270,3 +2272,44 @@ def test_tool_availability_delta_otel_message_uses_system_role():
             }
         ]
     )
+
+
+def test_compacted_window_returns_history_unchanged_without_compaction():
+    """No boundary: the whole history comes back (as a new list, input untouched)."""
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('hello'),
+        ModelResponse(parts=[TextPart(content='hi')]),
+    ]
+
+    window = compacted_window(messages)
+
+    assert window == messages
+    assert window is not messages
+
+
+def test_compacted_window_slices_at_the_latest_compaction_part():
+    """Latest boundary wins, at part-level precision within its response."""
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('old context'),
+        ModelResponse(parts=[CompactionPart(content='first summary', provider_name='anthropic')]),
+        ModelRequest.user_text_prompt('middle context'),
+        ModelResponse(
+            parts=[
+                TextPart(content='before the block'),
+                CompactionPart(content='latest summary', provider_name='anthropic'),
+                TextPart(content='after the block'),
+            ]
+        ),
+        ModelRequest.user_text_prompt('tail'),
+    ]
+
+    window = compacted_window(messages)
+
+    assert len(window) == 2
+    boundary_response = window[0]
+    assert isinstance(boundary_response, ModelResponse)
+    assert boundary_response.parts == [
+        CompactionPart(content='latest summary', provider_name='anthropic'),
+        TextPart(content='after the block'),
+    ]
+    assert window[1] is messages[-1]

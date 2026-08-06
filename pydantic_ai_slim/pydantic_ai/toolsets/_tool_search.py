@@ -50,7 +50,6 @@ from .._run_context import AgentDepsT, RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from ..exceptions import ModelRetry, UserError
 from ..messages import (
-    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -58,6 +57,7 @@ from ..messages import (
     ToolAvailabilityDeltaPart,
     ToolReturnPart,
     ToolSearchReturnPart,
+    compacted_window,
 )
 from ..native_tools._tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
@@ -211,12 +211,12 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     a TypedDict) so histories serialized before the typed-content migration continue
     to surface previously-discovered tools.
 
-    Scans from the end and stops at the boundary: everything before the latest
-    `CompactionPart` would be reset anyway, and the collected names are a set, so
-    the order of collection doesn't matter.
+    Only the [`compacted_window`][pydantic_ai.messages.compacted_window] is scanned —
+    the one definition of the boundary — so locating it costs a cheap reverse
+    `isinstance` pass rather than parsing history the boundary would reset anyway.
     """
     discovered: set[str] = set()
-    for msg in reversed(messages):
+    for msg in compacted_window(messages):
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if isinstance(part, ToolAvailabilityDeltaPart):
@@ -230,10 +230,8 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
                     # shape.
                     _collect_legacy(part.metadata, discovered)
         elif isinstance(msg, ModelResponse):
-            for part in reversed(msg.parts):
-                if isinstance(part, CompactionPart):
-                    return discovered
-                elif isinstance(part, NativeToolSearchReturnPart):
+            for part in msg.parts:
+                if isinstance(part, NativeToolSearchReturnPart):
                     _collect_typed(part.content, discovered)
         else:
             assert_never(msg)

@@ -920,6 +920,41 @@ async def test_tool_search_toolset_ranks_undiscovered_matches_first_when_trimmed
     assert result == {'discovered_tools': [{'name': 'second_tool'}, {'name': 'first_tool'}]}
 
 
+async def test_repeated_searches_paginate_through_a_large_corpus() -> None:
+    """Repeating the same query enumerates a corpus larger than `max_results`.
+
+    Each page's results become discovered and sink below undiscovered matches, so the next
+    identical search surfaces the next tranche — preserving the scan-by-repetition idiom the
+    old corpus subtraction enabled. A page that includes already-available tools is the
+    signal that enumeration is complete."""
+    toolset = FunctionToolset()
+    all_names = [f'mcp_tool_{i:02d}' for i in range(25)]
+    for tool_name in all_names:
+
+        def tool(name: str = tool_name) -> str:  # pragma: no cover
+            return name
+
+        toolset.add_function(tool, name=tool_name, defer_loading=True)
+
+    searchable = ToolSearchToolset(wrapped=toolset)
+    discovered: set[str] = set()
+    pages: list[list[str]] = []
+    for _ in range(3):
+        ctx = _build_run_context(None, discovered_tool_names=set(discovered))
+        search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
+        result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['mcp']}, ctx, search_tool)
+        page = [match['name'] for match in result['discovered_tools']]
+        pages.append(page)
+        discovered.update(page)
+
+    assert len(pages[0]) == len(pages[1]) == 10
+    assert not set(pages[0]) & set(pages[1])
+    # The final page leads with the 5 still-undiscovered tools; already-available ones
+    # fill the leftover slots — the model's signal that it has seen the whole corpus.
+    assert set(pages[0]) | set(pages[1]) | set(pages[2][:5]) == set(all_names)
+    assert set(pages[2][5:]) <= set(pages[0]) | set(pages[1])
+
+
 async def test_search_corpus_includes_already_discovered_tools() -> None:
     """The corpus a custom `search_fn` receives never shrinks with discovery: an
     already-discovered tool stays searchable with no compaction boundary in sight."""
