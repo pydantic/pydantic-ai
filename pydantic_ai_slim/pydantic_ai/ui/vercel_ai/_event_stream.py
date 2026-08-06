@@ -22,6 +22,7 @@ from ...messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
     ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
@@ -31,10 +32,17 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from ._utils import dump_message_metadata, dump_provider_metadata, iter_metadata_chunks, tool_return_output
+from ._utils import (
+    TOOL_AVAILABILITY_DELTA_DATA_TYPE,
+    dump_message_metadata,
+    dump_provider_metadata,
+    iter_metadata_chunks,
+    tool_return_output,
+)
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
+    DataChunk,
     DoneChunk,
     ErrorChunk,
     FileChunk,
@@ -376,6 +384,13 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):
             yield chunk
+
+    async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseChunk]:
+        part = event.part
+        yield DataChunk(
+            type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
+            data={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+        )
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):

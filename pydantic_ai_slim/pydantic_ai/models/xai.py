@@ -653,7 +653,7 @@ class XaiModel(Model[AsyncClient]):
             A tuple of (filtered_tool_defs, tool_choice).
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         profile = self.profile
 

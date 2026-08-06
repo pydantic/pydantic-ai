@@ -30,6 +30,7 @@ from ..messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
     ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
@@ -312,6 +313,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] -> `handle_enqueued_messages`
         - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] -> `handle_function_tool_call`
         - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
+        - [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] -> `handle_tool_availability_delta`
         - [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] -> `handle_output_tool_call`
         - [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] -> `handle_output_tool_result`
         - [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] -> `handle_deferred_tool_requests`
@@ -342,6 +344,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                     yield e
             case FunctionToolResultEvent():
                 async for e in self.handle_function_tool_result(event):
+                    yield e
+            case ToolAvailabilityDeltaEvent():
+                async for e in self.handle_tool_availability_delta(event):
                     yield e
             case OutputToolCallEvent():
                 async for e in self.handle_output_tool_call(event):
@@ -693,6 +698,18 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Args:
             event: The function tool result event.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[EventT]:
+        """Handle a `ToolAvailabilityDeltaEvent`.
+
+        By default no protocol events are emitted. Override this to surface newly available tools
+        to the frontend.
+
+        Args:
+            event: The tool availability delta event.
         """
         return  # pragma: no cover
         yield  # Make this an async generator
