@@ -2576,10 +2576,15 @@ def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessag
     remembered in instance attributes, so it self-heals when compaction replaces the history that
     carried it.
 
-    Deliberately provider-agnostic: a compaction part another provider would skip on the wire
-    still counts as a boundary. Treating too little as visible only permits a redundant,
-    idempotent re-disclosure; treating too much as visible hides state the model can no longer
-    see.
+    Deliberately provider-agnostic, unlike the wire-level trim, which is provider-specific
+    because it must be exact for the one request it renders. This window feeds run-level state
+    (`RunContext.discovered_tool_names`, loaded capabilities) that must stay valid across
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] failover and mid-run model
+    switches — at parse time there is no "current" provider to resolve against, so the boundary
+    has to be the conservative intersection: a compaction part another provider would skip on the
+    wire still counts. The asymmetry makes that safe: treating too little as visible only permits
+    a redundant, idempotent re-disclosure; treating too much as visible hides state the model can
+    no longer see.
     """
     for message_index in range(len(messages) - 1, -1, -1):
         message = messages[message_index]
