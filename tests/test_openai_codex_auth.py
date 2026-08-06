@@ -1229,6 +1229,47 @@ async def test_device_polling_respects_effective_timeout(timeout: float, monkeyp
             )
 
 
+def test_device_code_requires_timezone_aware_expiry() -> None:
+    with pytest.raises(ValueError, match='timezone-aware'):
+        OpenAICodexDeviceCode(
+            verification_url='https://auth.example/device',
+            user_code=SecretStr('USER-CODE'),
+            expires_at=datetime(2030, 1, 2),
+        )
+
+
+async def test_device_login_falls_back_when_the_issuer_expiry_is_naive() -> None:
+    """A naive issuer timestamp degrades to the fallback lifetime instead of failing the login.
+
+    The deadline is subtracted from an aware `datetime.now`, so a naive value would otherwise raise
+    an uncaught `TypeError`. Dropping it keeps sign-in working; only the shown deadline gets less
+    precise, which is what the field's documented fallback is for.
+    """
+    shown: list[OpenAICodexDeviceCode] = []
+    started = datetime.now(timezone.utc)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith('/deviceauth/usercode'):
+            return httpx.Response(
+                200,
+                json={
+                    'device_auth_id': 'device-id',
+                    'user_code': 'USER-CODE',
+                    'interval': 1,
+                    'expires_at': '2026-08-06T12:00:00',
+                },
+            )
+        return httpx.Response(403)
+
+    with anyio.fail_after(30):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+            with pytest.raises(OpenAICodexOAuthError, match='timed out'):
+                await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(shown.append, timeout=0.01)
+
+    # The fallback deadline is derived from `_DEVICE_CODE_LIFETIME`, so it sits well in the future.
+    assert [code.expires_at > started for code in shown] == [True]
+
+
 async def test_device_polling_stops_at_the_issuer_deadline() -> None:
     """The expiry shown to the user is the one enforced, not the longer fallback lifetime.
 

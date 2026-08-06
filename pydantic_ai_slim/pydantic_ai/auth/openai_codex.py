@@ -94,6 +94,13 @@ class OpenAICodexDeviceCode(BaseModel):
     user_code: SecretStr
     expires_at: datetime
 
+    @field_validator('expires_at')
+    @classmethod
+    def _expires_at_is_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError('expires_at must be timezone-aware')
+        return value
+
 
 class OpenAICodexAuthStatus(BaseModel):
     """Secret-free status for managed OpenAI Codex credentials."""

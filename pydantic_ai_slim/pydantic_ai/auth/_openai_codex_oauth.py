@@ -89,6 +89,17 @@ class _DeviceStartResponse(BaseModel):
     # duration. It is what the user is shown, so prefer it and fall back to `_DEVICE_CODE_LIFETIME`.
     expires_at: datetime | None = None
 
+    @field_validator('expires_at')
+    @classmethod
+    def _drop_naive_expires_at(cls, value: datetime | None) -> datetime | None:
+        # Dropped rather than rejected: the field is already documented as preferred-with-a-fallback,
+        # and it feeds only the displayed deadline and the poll bound. Refusing a non-conforming
+        # timestamp outright would break device login entirely for something both uses degrade from
+        # gracefully. `OpenAICodexDeviceCode` still rejects naive values, since we construct those.
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            return None
+        return value
+
     @field_validator('interval', mode='before')
     @classmethod
     def _parse_interval(cls, value: object) -> object:
