@@ -518,6 +518,27 @@ def _resolve_anthropic_service_tier(
     return OMIT
 
 
+def _trim_messages_before_compaction(messages: list[ModelMessage], system: str) -> list[ModelMessage]:
+    for message_index in range(len(messages) - 1, -1, -1):
+        message = messages[message_index]
+        if isinstance(message, ModelResponse):
+            for part_index in range(len(message.parts) - 1, -1, -1):
+                part = message.parts[part_index]
+                if isinstance(part, CompactionPart) and part.provider_name == system:
+                    tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
+                    first_user_request = next(
+                        (
+                            candidate
+                            for candidate in messages[:message_index]
+                            if isinstance(candidate, ModelRequest)
+                            and any(isinstance(request_part, UserPromptPart) for request_part in candidate.parts)
+                        ),
+                        None,
+                    )
+                    return [first_user_request, *tail] if first_user_request is not None else tail
+    return messages
+
+
 @dataclass(init=False)
 class AnthropicModel(Model[AsyncAnthropicClient]):
     """A model that uses the Anthropic API.
@@ -1522,6 +1543,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
+        messages = _trim_messages_before_compaction(messages, self.system)
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
         # Cross-provider files are dropped silently here, not raised via

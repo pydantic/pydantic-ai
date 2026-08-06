@@ -1888,6 +1888,22 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 
 
+def _trim_messages_before_compaction(messages: list[ModelMessage], system: str) -> list[ModelMessage]:
+    for message_index in range(len(messages) - 1, -1, -1):
+        message = messages[message_index]
+        if isinstance(message, ModelResponse):
+            for part_index in range(len(message.parts) - 1, -1, -1):
+                part = message.parts[part_index]
+                if (
+                    isinstance(part, CompactionPart)
+                    and part.provider_name == system
+                    and part.provider_details
+                    and 'encrypted_content' in part.provider_details
+                ):
+                    return [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
+    return messages
+
+
 @dataclass(init=False)
 class OpenAIResponsesModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI Responses API.
@@ -3151,6 +3167,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         `introduced_tool_names` is the wire partition request building already computed; when a caller
         maps messages on their own (tests, `count_tokens`), leaving it `None` derives the same set here.
         """
+        messages = _trim_messages_before_compaction(messages, self.system)
         profile = self.profile
         if introduced_tool_names is None:
             introduced_tool_names = _introduced_tool_names(messages, profile, model_request_parameters)
@@ -4603,7 +4620,8 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
       [OpenAI's server-side auto-compaction](https://developers.openai.com/api/docs/guides/compaction)
       via the `context_management` field on the regular `/responses` request.
       The server triggers compaction when input tokens cross a threshold,
-      and the compacted item is returned alongside the normal response.
+      and the compacted item is returned alongside the normal response. On
+      subsequent requests, only that item and the content after it are sent.
       Compatible with [`openai_previous_response_id='auto'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]
       and server-side conversation state.
 
