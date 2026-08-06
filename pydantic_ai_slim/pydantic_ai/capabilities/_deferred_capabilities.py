@@ -1,5 +1,7 @@
 """Request preparation shared by deferred capabilities."""
 
+from __future__ import annotations
+
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
