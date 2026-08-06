@@ -54,9 +54,14 @@ def resolve_tool_choice(  # noqa: C901
     available_tools = set(model_request_parameters.tool_defs.keys())
 
     def _filter_hidden_tools(chosen_tool_names: set[str], *, has_output_fallback: bool = False) -> set[str]:
-        function_tool_names = {tool.name for tool in model_request_parameters.function_tools}
-        declared_function_tool_names = {tool.name for tool in model_request_parameters.declared_function_tools}
-        hidden_tool_names = function_tool_names - declared_function_tool_names
+        # Only `'withheld'` names are absent from the wire. A `'deferred'` declaration sits in the
+        # `tools` collection and a `'via_history'` definition travels on the tool-addition channel,
+        # and OpenAI honors `tool_choice` forcing for both, so neither counts as hidden here.
+        hidden_tool_names = {
+            tool.name
+            for tool in model_request_parameters.function_tools
+            if model_request_parameters.visibility_of(tool.name) == 'withheld'
+        }
         filtered = chosen_tool_names - hidden_tool_names
         # At least one *available* name must survive: hidden names are filtered here, and
         # unknown names pass through by design (dynamic tool availability, see
@@ -138,8 +143,8 @@ def resolve_tool_choice(  # noqa: C901
     elif isinstance(function_tool_choice, list):
         chosen_set = set(function_tool_choice)
         _check_invalid_tools(chosen_set, available_tools, available_label='Available tools')
-        # A deferred declaration is already on the wire and remains callable; only tools absent
-        # from the wire cannot be forced by name.
+        # A deferred declaration or a tool-addition definition is already on the wire and remains
+        # callable; only tools absent from the wire cannot be forced by name.
         chosen_set = _filter_hidden_tools(chosen_set)
 
         if chosen_set == available_tools:

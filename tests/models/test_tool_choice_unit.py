@@ -307,10 +307,33 @@ def test_resolve_tool_choice_allows_deferred_declaration() -> None:
 def test_resolve_tool_choice_filters_hidden_names_when_one_is_available() -> None:
     params = ModelRequestParameters(
         function_tools=[make_tool('visible'), make_tool('hidden')],
-        tool_visibility={'visible': 'visible', 'hidden': 'via_history'},
+        tool_visibility={'visible': 'visible', 'hidden': 'withheld'},
         allow_text_output=True,
     )
     assert resolve_tool_choice({'tool_choice': ['visible', 'hidden']}, params) == ('required', {'visible'})
+
+
+def test_resolve_tool_choice_keeps_via_history_names() -> None:
+    """A `'via_history'` definition travels on the tool-addition channel and stays forcible
+    (live-verified against OpenAI Responses), so it must survive the hidden-name filter."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('visible'), make_tool('revealed')],
+        tool_visibility={'visible': 'visible', 'revealed': 'via_history'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ['revealed']}, params) == ('required', {'revealed'})
+
+
+def test_resolve_tool_choice_required_with_only_via_history_tools() -> None:
+    """`required` stays valid when every function tool travels via the tool-addition channel:
+    the definitions are on the wire in history items, and OpenAI accepts `required` with an
+    empty `tools` array in that shape (live-verified)."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('revealed_a'), make_tool('revealed_b')],
+        tool_visibility={'revealed_a': 'via_history', 'revealed_b': 'via_history'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': 'required'}, params) == 'required'
 
 
 def test_resolve_tool_choice_tool_or_output_degrades_to_output_tools_when_all_hidden() -> None:
