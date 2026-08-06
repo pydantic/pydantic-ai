@@ -13,14 +13,20 @@ name: AG-UI Protocol Compat
 # Triggers:
 # - PRs touching the AG-UI adapter, its tests, or the two files that decide which
 #   `ag-ui-protocol` and dependencies the pinned legs resolve against (`uv.lock`,
-#   `pydantic_ai_slim/pyproject.toml`): required to merge.
+#   `pydantic_ai_slim/pyproject.toml`): expected to pass before merge.
 # - Pushes to `main`: confirms the merged commit still works.
+#
+# "Expected to pass" is the same convention `harness-compat.yml` runs on, and for the same
+# reason: a path-filtered workflow reports no status at all on the PRs it skips, so
+# registering it as a required context would leave every unrelated PR waiting on a check
+# that will never arrive. Enforcement is therefore by review, not by branch protection —
+# a red leg here does not itself block the merge button.
 #
 # `compat-check` is an alls-green aggregate over the matrix, mirroring `ci.yml`'s `check`: one
 # stable context whose name survives adding or removing a version. The legs' own names are
 # matrix-derived (`ag-ui-protocol 0.1.13`, ...) and change every time someone follows the rule
 # in `pydantic_ai/ui/AGENTS.md` and adds one, so the aggregate is what anything downstream
-# should key off.
+# should key off if that ever changes.
 #
 # Kept out of `ci.yml` so it can carry the path filter above — `ci.yml` triggers on every PR
 # with no filter at all, and per-job path gating there would need an extra filter action. It
