@@ -198,7 +198,7 @@ async def test_tool_availability_delta_uses_additional_tools(allow_model_request
     )
 
     await model.request(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])],
         None,
         ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool(optional=True)]),
     )
@@ -233,11 +233,30 @@ async def test_tool_availability_delta_uses_additional_tools(allow_model_request
     assert wire_tool['defer_loading'] is True
 
 
+async def test_tool_availability_delta_ignores_visible_and_unknown_tools() -> None:
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='not-used'))
+    _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['always_ready', 'missing'])])],
+        OpenAIResponsesModelSettings(),
+        ModelRequestParameters(
+            function_tools=[ToolDefinition(name='always_ready')],
+            tool_visibility={'always_ready': 'visible'},
+        ),
+    )
+    assert items == []
+
+
 @pytest.mark.parametrize(
     ('tool_choice', 'expected'),
     [
         pytest.param('required', 'required', id='required'),
-        pytest.param(['lookup_refund_policy'], {'type': 'function', 'name': 'lookup_refund_policy'}, id='named'),
+        # Forcing an `additional_tools`-declared name by itself works on the live API
+        # even though the name is absent from the `tools` array.
+        pytest.param(
+            ['lookup_refund_policy'],
+            {'type': 'function', 'name': 'lookup_refund_policy'},
+            id='forced_by_name_via_history',
+        ),
     ],
 )
 async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
@@ -252,6 +271,7 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
         name='lookup_refund_policy',
         description='Look up the refund policy for an order.',
         parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
     )
     always_ready = ToolDefinition(
         name='always_ready',
@@ -259,10 +279,17 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
         parameters_json_schema={'type': 'object', 'properties': {}},
     )
 
+    _, parameters = model.prepare_request(
+        None,
+        ModelRequestParameters(
+            function_tools=[tool, always_ready],
+            revealed_tool_names={tool.name},
+        ),
+    )
     await model.request(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])],
         OpenAIResponsesModelSettings(tool_choice=tool_choice),
-        ModelRequestParameters(function_tools=[tool, always_ready]),
+        parameters,
     )
 
     request_kwargs = get_mock_responses_kwargs(mock_client)[0]
@@ -2912,7 +2939,7 @@ def test_model_profile_strict_not_supported():
     )
 
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, visibility='visible')  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {
@@ -2932,7 +2959,7 @@ def test_model_profile_strict_not_supported():
             openai_model_profile('gpt-4o'), OpenAIModelProfile(openai_supports_strict_tool_definition=False)
         ),
     )
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, visibility='visible')  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {
@@ -4876,7 +4903,6 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
         result.all_messages(),
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
-        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -4958,7 +4984,6 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
         result.all_messages(),
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
-        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -6828,7 +6853,6 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
-        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -9873,7 +9897,6 @@ async def test_openai_responses_builtin_tool_call_id_uses_id_field(allow_model_r
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
-        introduced_tool_names=set(),
     )
 
     # Find the web_search_call item in the output and verify the id field is preserved
@@ -11198,7 +11221,6 @@ async def test_openai_responses_requires_function_call_status_none(allow_model_r
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, model.settings or {}),
         model_request_parameters=ModelRequestParameters(),
-        introduced_tool_names=set(),
     )
     assert openai_messages == snapshot(
         [
@@ -12468,7 +12490,6 @@ async def test_openai_responses_system_prompts_ordering(allow_model_requests: No
         messages,
         model_settings=cast(OpenAIResponsesModelSettings, {}),
         model_request_parameters=ModelRequestParameters(),
-        introduced_tool_names=set(),
     )
 
     # Verify instructions are returned separately
@@ -13279,7 +13300,7 @@ async def test_openai_responses_trims_before_latest_compaction(allow_model_reque
     ]
 
     _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters(), introduced_tool_names=set()
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
     )
 
     # The standing system prompt survives the trim; everything else before the latest
@@ -13315,7 +13336,7 @@ async def test_openai_responses_pre_compaction_introduced_tool_keeps_its_tools_d
         parameters_json_schema={'type': 'object', 'properties': {}},
     )
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
         ModelResponse(
             parts=[
                 CompactionPart(
@@ -13331,6 +13352,48 @@ async def test_openai_responses_pre_compaction_introduced_tool_keeps_its_tools_d
 
     request_kwargs = get_mock_responses_kwargs(mock_client)[0]
     assert [t['name'] for t in request_kwargs['tools']] == snapshot(['lookup_refund_policy'])
+    assert all(item.get('type') != 'additional_tools' for item in request_kwargs['input'])
+
+
+async def test_openai_responses_pre_compaction_revealed_deferred_tool_is_redeclared_with_schema(
+    allow_model_requests: None,
+):
+    """A `'via_history'` reveal whose carrier sits before the compaction boundary is re-declared.
+
+    The visibility promises the definition travels in a history item, but the trim drops that item —
+    left alone, the tool would be absent from `tools` *and* from the input, vanishing from the
+    request entirely. Until reveal state is boundary-aware (#7225), request building re-declares the
+    tool with its full schema; the compaction turn rebuilds the prefix anyway, so this costs nothing."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content=None, provider_name='openai', provider_details={'encrypted_content': 'encrypted'}
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    _, parameters = model.prepare_request(
+        None, ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
+    )
+    assert parameters.visibility_of(tool.name) == 'via_history'
+    await model.request(messages, None, parameters)
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    [wire_tool] = [t for t in request_kwargs['tools'] if t.get('name') == tool.name]
+    assert not wire_tool.get('defer_loading'), 'the re-declaration must carry the schema, not defer it'
     assert all(item.get('type') != 'additional_tools' for item in request_kwargs['input'])
 
 
@@ -13352,7 +13415,7 @@ async def test_openai_responses_standing_prompt_survives_response_first_history(
     ]
 
     _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters(), introduced_tool_names=set()
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
     )
 
     assert mapped == snapshot(
@@ -13454,7 +13517,7 @@ async def test_openai_responses_compaction_composes_with_auto_chain_boundary(all
         messages
     )
     _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        chain_messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters(), introduced_tool_names=set()
+        chain_messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
     )
 
     assert previous_response_id is None
@@ -13478,7 +13541,7 @@ async def test_openai_responses_foreign_compaction_does_not_trim(allow_model_req
     ]
 
     _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters(), introduced_tool_names=set()
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
     )
 
     assert mapped == snapshot(
@@ -13499,7 +13562,7 @@ async def test_openai_responses_without_compaction_maps_unchanged(allow_model_re
     ]
 
     _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters(), introduced_tool_names=set()
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
     )
 
     assert mapped == snapshot(

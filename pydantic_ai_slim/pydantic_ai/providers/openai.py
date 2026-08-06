@@ -50,7 +50,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
         # necessarily implementing this item — the same reasoning `openai_supports_phase` documents.
         return merge_profile(
             openai_model_profile(model_name),
-            OpenAIModelProfile(tool_additions='with_definitions'),
+            OpenAIModelProfile(tool_addition_mode='with_definitions', tool_deferral_mode='with_tool_search'),
         )
 
     @overload

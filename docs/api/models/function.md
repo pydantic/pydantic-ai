@@ -44,7 +44,7 @@ async def model_function(
         output_tools=[],
         model_settings=None,
         model_request_parameters=ModelRequestParameters(
-            function_tools=[], native_tools=[], output_tools=[]
+            function_tools=[], native_tools=[], tool_visibility={}, output_tools=[]
         ),
         instructions=None,
     )

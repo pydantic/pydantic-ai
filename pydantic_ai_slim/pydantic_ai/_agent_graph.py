@@ -34,7 +34,6 @@ from pydantic_ai.models import (
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.toolsets._capability_owned import tool_defs_for_loaded_capabilities
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
@@ -792,10 +791,11 @@ async def _prepare_request_parameters(
 
     # Drop the auto-injected `ToolSearchTool` native tool when the search corpus is empty —
     # the toolset has nothing to manage, so emitting the native tool would waste a tool slot
-    # and surface an inert native tool in `ModelRequestParameters` snapshots. Filtering
-    # here (at MRP-construction time) keeps the request shape honest before
-    # `prepare_request` runs. Non-optional `ToolSearchTool` instances (user-passed) are
-    # preserved so the request still fails loudly on unsupported models.
+    # and surface an inert native tool in `ModelRequestParameters` snapshots. `prepare_request`
+    # applies the same drop during resolution, but instrumentation and durable-execution
+    # payloads observe the parameters BEFORE resolution, so filtering here too is what keeps
+    # the observed request shape honest. Non-optional `ToolSearchTool` instances (user-passed)
+    # are preserved so the request still fails loudly on unsupported models.
     has_tool_search_corpus = any(t.with_native == ToolSearchTool.kind for t in function_tools)
     if not has_tool_search_corpus:
         # Confine the corpus-empty drop to `ToolSearchTool`: other optional native tools
@@ -807,15 +807,8 @@ async def _prepare_request_parameters(
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
-        # Preserve discovered names that aren't in the current definitions while routing the
-        # capability-owned half through the canonical availability predicate.
-        revealed_tool_names=run_context.discovered_tool_names
-        | tool_defs_for_loaded_capabilities(run_context, function_tools).keys(),
-        deferred_capability_ids={
-            capability_id
-            for capability_id, capability in run_context.capabilities.items()
-            if capability.defer_loading is True
-        },
+        # Preserve discovered names that aren't in the current definitions.
+        revealed_tool_names=run_context.discovered_tool_names,
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_schema.object_def,
@@ -1550,6 +1543,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # response's dangling tool calls (e.g. left by a history processor) can be repaired.
         messages = _clean_message_history(messages, repair_last_response=True)
 
+        # Reveal state is a property of the history actually sent to the model. A history
+        # processor may remove or replace availability deltas, so the per-request parameters
+        # must not retain the state derived from the unprocessed durable history. Derive AFTER
+        # cleanup: cleanup strips evidence the processors orphaned (e.g. a search return whose
+        # call was dropped), and counting stripped evidence would ship a "revealed" tool with no
+        # reveal on the wire. (`prepare_messages` below only ever adds or reshapes evidence —
+        # synthesis/translation — so this list is final for derivation purposes.)
+        model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
+
         # Hand off to the model class for any history shapes the active provider can't
         # ship on the wire — currently typed `NativeToolSearch*Part` instances translated
         # to local-shape `ToolSearch*Part` when they came from another provider or the
@@ -1664,6 +1666,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             and suspended.state == 'suspended'
         ):
             raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
+
+        model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
 
         # History bookkeeping operates on the base history ending in the `ModelRequest` that
         # triggered the turn; the request messages keep the suspended tail (the continuation
@@ -2332,6 +2336,19 @@ def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAg
     # Mutate in place (not reassign), for the same shared-by-reference reason as the set above.
     ctx.deps.discovered_tool_names.clear()
     ctx.deps.discovered_tool_names.update(discovered_tool_names)
+
+
+def _with_outgoing_reveal_state(
+    parameters: models.ModelRequestParameters, messages: list[_messages.ModelMessage]
+) -> models.ModelRequestParameters:
+    """Make per-request reveal state match the history that will be sent to the model.
+
+    Deliberately not gated on capability-load markers from the same history: history is the trust
+    boundary (whoever can fabricate a reveal can fabricate the load exchange too), and eager
+    capabilities' search-gated tools are revealed with no load marker ever appearing —
+    `test_delta_in_history_reveals_a_capability_tool_without_a_load` pins the decision.
+    """
+    return replace(parameters, revealed_tool_names=parse_discovered_tools(messages))
 
 
 def build_validation_context(

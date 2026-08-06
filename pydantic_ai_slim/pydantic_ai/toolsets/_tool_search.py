@@ -29,7 +29,7 @@ The two questions a deferred tool raises are kept apart:
 and is dropped by the adapter when the builtin is supported. When the capability commits
 to a named-native strategy with no local equivalent (`'bm25'`/`'regex'`) the toolset is
 constructed with `enable_fallback=False` and `search_tools` is not emitted at all — that
-way `_resolve_native_tool_swap` raises on providers that can't honor the builtin, and
+way `_resolve_request_tools` raises on providers that can't honor the builtin, and
 the wire stays clean (just the native tool) on those that can.
 """
 
@@ -66,7 +66,7 @@ from ..native_tools._tool_search import (
     ToolSearchTool,
 )
 from ..tools import Tool, ToolDefinition
-from ._capability_owned import is_gated_by_deferred_capability, tool_defs_for_loaded_capabilities
+from ._capability_owned import is_gated_by_deferred_capability
 from .abstract import ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -205,41 +205,36 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     a TypedDict) so histories serialized before the typed-content migration continue
     to surface previously-discovered tools.
     """
-    discovered: set[str] = set()
+    return set(discovered_tool_names_in_order(messages))
+
+
+def discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[str, ...]:
+    """Return discovered names in first-appearance order for byte-stable provider tool segments."""
+    discovered: dict[str, None] = {}
     for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if isinstance(part, ToolAvailabilityDeltaPart):
-                    discovered.update(part.added)
+                    discovered.update(dict.fromkeys(part.tools_added))
                 elif isinstance(part, ToolSearchReturnPart):
-                    _collect_typed(part.content, discovered)
+                    discovered.update(dict.fromkeys(match['name'] for match in part.discovered_tools))
                 elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
                     # Legacy histories carry discoveries on `metadata['discovered_tools']`
                     # rather than typed content. Narrowing tool_name + metadata shape avoids
                     # surfacing a user-defined `search_tools` whose metadata has no legacy
                     # shape.
-                    _collect_legacy(part.metadata, discovered)
+                    try:
+                        validated = _LEGACY_METADATA_TA.validate_python(part.metadata)
+                    except ValidationError:
+                        continue
+                    discovered.update(dict.fromkeys(validated['discovered_tools']))
         elif isinstance(msg, ModelResponse):
             for part in msg.parts:
                 if isinstance(part, NativeToolSearchReturnPart):
-                    _collect_typed(part.content, discovered)
+                    discovered.update(dict.fromkeys(match['name'] for match in part.discovered_tools))
         else:
             assert_never(msg)
-    return discovered
-
-
-def _collect_typed(content: ToolSearchReturnContent, discovered: set[str]) -> None:
-    """Add discovered tool names from a validated `ToolSearchReturnContent`."""
-    discovered.update(match['name'] for match in content['discovered_tools'])
-
-
-def _collect_legacy(metadata: Any, discovered: set[str]) -> None:
-    """Backward-compat reader for the pre-typed-content metadata sideband."""
-    try:
-        validated = _LEGACY_METADATA_TA.validate_python(metadata)
-    except ValidationError:
-        return
-    discovered.update(validated['discovered_tools'])
+    return tuple(discovered)
 
 
 @dataclass(kw_only=True)
@@ -288,7 +283,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     enable_fallback: bool = True
     """When False, the local `search_tools` function tool is not emitted — used when the
     capability commits to a named-native strategy that has no local equivalent (e.g.
-    `'bm25'`, `'regex'`). With no fallback registered, `_resolve_native_tool_swap` raises
+    `'bm25'`, `'regex'`). With no fallback registered, `_resolve_request_tools` raises
     on providers that can't honor the builtin, instead of silently substituting the local
     keyword algorithm; and on providers that DO support it, only the native tool reaches
     the wire (no redundant `search_tools` slot that could confuse the model)."""
@@ -324,16 +319,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_SEARCH_TOOLS_NAME}' is reserved for tool search. Rename your tool to avoid conflicts."
             )
 
-        loaded_capability_tool_names = set(
-            tool_defs_for_loaded_capabilities(
-                ctx,
-                (tool.tool_def for tool in all_tools.values()),
-            )
-        )
-
-        # Tools to make visible this turn: those discovered via tool-search history plus
-        # those revealed by a loaded capability.
-        revealed_tool_names = ctx.discovered_tool_names | loaded_capability_tool_names
+        discovered_tool_names = ctx.discovered_tool_names
 
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
@@ -369,7 +355,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # "unsupported builtin" raise AND leave a redundant function tool on the wire
         # alongside the native builtin on providers that DO support it.
         if self.enable_fallback and searchable:
-            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(ctx, searchable, revealed_tool_names)
+            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(ctx, searchable, discovered_tool_names)
 
         return result
 
@@ -377,7 +363,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         searchable: dict[str, ToolsetTool[AgentDepsT]],
-        revealed_tool_names: set[str],
+        discovered_tool_names: set[str],
     ) -> _SearchTool[AgentDepsT]:
         parameter_description = self.parameter_description or _DEFAULT_PARAMETER_DESCRIPTION
         schema, args_validator = _build_search_args_schema(parameter_description)
@@ -385,7 +371,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # Real `ToolDefinition`s for tools still pending discovery — what the user's
         # search function sees, and what the local keywords search indexes. Capability-gated
         # tools never get here: they aren't searchable, so they aren't in `searchable`.
-        corpus = [tool.tool_def for name, tool in searchable.items() if name not in revealed_tool_names]
+        corpus = [tool.tool_def for name, tool in searchable.items() if name not in discovered_tool_names]
 
         # `unless_native` tells the adapter to drop this function tool when the native
         # builtin is supported. That's what we want for server-side strategies (the

@@ -4,11 +4,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
-from .._run_context import (
-    AgentDepsT,
-    RunContext,
-    _is_revealed_by_loaded_capability,  # pyright: ignore[reportPrivateUsage]
-)
+from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
 from .wrapper import WrapperToolset
@@ -84,8 +80,16 @@ def is_gated_by_deferred_capability(ctx: RunContext[Any], tool_def: ToolDefiniti
     )
 
 
-def tool_defs_for_loaded_capabilities(
+def tool_defs_from_pre_definition_load_returns(
     ctx: RunContext[Any], tool_defs: Iterable[ToolDefinition]
 ) -> dict[str, ToolDefinition]:
-    """Return resolved function-tool definitions owned by loaded deferred capabilities, keyed by name."""
-    return {tool_def.name: tool_def for tool_def in tool_defs if _is_revealed_by_loaded_capability(ctx, tool_def)}
+    """Reconstruct definitions for histories serialized before load returns carried tool definitions."""
+    result: dict[str, ToolDefinition] = {}
+    for tool_def in tool_defs:
+        capability_id = tool_def.capability_id
+        if capability_id is None or capability_id not in ctx.loaded_capability_ids:
+            continue
+        capability = ctx.capabilities.get(capability_id)
+        if capability is not None and capability.defer_loading is True:
+            result[tool_def.name] = tool_def
+    return result
