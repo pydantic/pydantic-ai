@@ -87,7 +87,8 @@ execution is available through [`NativeTool`][pydantic_ai.capabilities.NativeToo
 `supported_native_tools` on the model profile.
 
 Native-audio models do not support native URL context. Use `WebFetch(native=False, local=True)`
-instead. Gemini 2.5 also cannot combine native Google Search grounding with function tools; choose
+instead, which requires the `web-fetch` optional group
+(`pip install "pydantic-ai-slim[realtime,google,web-fetch]"`). Gemini 2.5 also cannot combine native Google Search grounding with function tools; choose
 native grounding or local function-tool fallbacks unless using a model that supports the
 combination.
 
