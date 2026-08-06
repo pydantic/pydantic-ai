@@ -1657,6 +1657,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             try:
                 yield
+            except exceptions.RunCancelled as exc:
+                # A `RunCancelled` reaching this run's outer edge from below — e.g. a delegate tool
+                # awaited a sub-agent run that cancelled itself via `cancel_run()` — carries the
+                # *nested* run's history, not this run's. Presenting it to this run's caller
+                # unchanged would make `RunCancelled.all_messages()` (and a resume from it) silently
+                # use the wrong conversation. Re-stamp it with this run's state, keeping the nested
+                # cancellation as the cause. Whether a nested cancellation should terminate this run
+                # at all, or be isolated as a tool failure, is a separate semantics question tracked
+                # in https://github.com/pydantic/pydantic-ai/issues/7199.
+                raise _run_cancelled('The agent run was cancelled by a nested run.') from exc
             except asyncio.CancelledError as exc:
                 first_party = graph_deps.cancellation.resolve()
                 if first_party:

@@ -1244,6 +1244,40 @@ async def test_token_cancels_run_queued_behind_concurrency_limiter():
     assert (await first).output == snapshot('{"hold":"done"}')
 
 
+async def test_nested_sub_agent_self_cancel_reports_parent_history():
+    """When a sub-agent run inside a delegate tool cancels *itself* via `cancel_run()`, the
+    `RunCancelled` that reaches the parent's caller must carry the *parent's* history, not the
+    sub-agent's — otherwise resuming from `all_messages()` would silently use the wrong
+    conversation. The sub-agent's cancellation is preserved as the cause. (Whether a nested
+    cancellation should terminate the parent at all is a separate semantics question, #7199.)"""
+    inner_agent = Agent(TestModel(), name='inner')
+
+    @inner_agent.tool
+    async def inner_stop(ctx: RunContext) -> str:
+        ctx.cancel_run()
+        return 'discarded'
+
+    outer_agent = Agent(TestModel(), name='outer')
+
+    @outer_agent.tool
+    async def delegate(ctx: RunContext) -> str:
+        result = await inner_agent.run('inner prompt')
+        return result.output
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await outer_agent.run('outer prompt')
+
+    exc = exc_info.value
+    user_prompts = [
+        part.content
+        for message in exc.all_messages()
+        for part in getattr(message, 'parts', [])
+        if isinstance(part, UserPromptPart)
+    ]
+    assert user_prompts == ['outer prompt']  # the parent's history, never the sub-agent's 'inner prompt'
+    assert isinstance(exc.__cause__, RunCancelled)  # the sub-agent's own cancellation, preserved for debugging
+
+
 async def test_cancel_run_outside_a_run_raises_user_error():
     """A synthetic `RunContext` not backed by a running agent has no run to cancel."""
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
