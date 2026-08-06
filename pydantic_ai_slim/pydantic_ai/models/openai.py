@@ -3538,11 +3538,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> responses.response_input_item_param.AdditionalTools:
         """Build one `additional_tools` item for the given names, deduped across the request.
 
-        Only `'via_channel'` names render: this item is the channel that carries a definition
-        absent from the `tools` array, so a `'visible'` or `'deferred'` name (already declared
-        there) has nothing to add, and a `'withheld'` name — a delta can name one when a direct
-        `Model.request` caller authors `revealed_tool_names` that don't cover the history's
-        deltas — must not have the schema the request just withheld smuggled on via the item.
+        A `'via_channel'` name renders because this item is the only place its definition travels;
+        a `'deferred'` name renders because its `tools`-array entry stays schema-withheld for
+        byte-stable caching and the item is what delivers the schema on reveal
+        (`test_tool_availability_delta_and_the_tools_cache_section` measures that property). A
+        `'visible'` name is fully declared in `tools` and has nothing to add, and a `'withheld'`
+        name — a delta can name one when a direct `Model.request` caller authors
+        `revealed_tool_names` that don't cover the history's deltas — must not have the schema the
+        request just withheld smuggled on via the item.
 
         `rendered` accumulates the names already declared by an earlier history part (a
         duplicated delta from a UI round-trip, a delta plus a replayed search return) — one
@@ -3557,7 +3560,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if (
                 name not in rendered
                 and name in tool_defs_by_name
-                and model_request_parameters.visibility_of(name) == 'via_channel'
+                and model_request_parameters.visibility_of(name) in ('deferred', 'via_channel')
             ):
                 renderable.append(name)
                 rendered.add(name)
