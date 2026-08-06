@@ -3944,7 +3944,7 @@ class TestMultipleToolCalls:
             end_strategy='exhaustive',
         )
 
-        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries \\(1\\)'):
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'output_tool' exceeded max retries count of 1"):
             async with agent.run_stream('test') as result:
                 await result.get_output()
 
