@@ -13358,11 +13358,11 @@ async def test_openai_responses_pre_compaction_introduced_tool_keeps_its_tools_d
 async def test_openai_responses_pre_compaction_revealed_deferred_tool_is_redeclared_with_schema(
     allow_model_requests: None,
 ):
-    """A `'via_history'` reveal whose carrier sits before the compaction boundary is re-declared.
+    """A `'via_history'` reveal whose carrier sits before the compaction boundary is redeclared.
 
     The visibility promises the definition travels in a history item, but the trim drops that item —
     left alone, the tool would be absent from `tools` *and* from the input, vanishing from the
-    request entirely. Until reveal state is boundary-aware (#7225), request building re-declares the
+    request entirely. Until reveal state is boundary-aware (#7225), request building redeclares the
     tool with its full schema; the compaction turn rebuilds the prefix anyway, so this costs nothing."""
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
@@ -13393,7 +13393,7 @@ async def test_openai_responses_pre_compaction_revealed_deferred_tool_is_redecla
 
     request_kwargs = get_mock_responses_kwargs(mock_client)[0]
     [wire_tool] = [t for t in request_kwargs['tools'] if t.get('name') == tool.name]
-    assert not wire_tool.get('defer_loading'), 'the re-declaration must carry the schema, not defer it'
+    assert not wire_tool.get('defer_loading'), 'the redeclaration must carry the schema, not defer it'
     assert all(item.get('type') != 'additional_tools' for item in request_kwargs['input'])
 
 

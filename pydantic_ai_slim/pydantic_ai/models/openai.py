@@ -2509,7 +2509,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # with it, while the tool's `'via_history'` visibility still promises a history item — so it
         # would vanish from the request entirely. Until reveal state itself becomes boundary-aware
         # (#7225 derives it from the post-compaction window, which makes this branch inert), such a
-        # tool is re-declared in `tools` with its schema: the compaction turn rebuilds the prefix
+        # tool is redeclared in `tools` with its schema: the compaction turn rebuilds the prefix
         # anyway, so the declaration costs nothing extra.
         post_trim_revealed = parse_discovered_tools(trimmed_messages)
         wire_request_parameters = model_request_parameters
