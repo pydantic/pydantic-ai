@@ -22,15 +22,25 @@ carrier (`ReasoningEncryptedValueEvent`) is a separate `REASONING_*` event gated
 """
 
 REASONING_VERSION = (0, 1, 11)
-"""AG-UI version at and above which we emit `REASONING_*` events rather than `THINKING_*`.
+"""AG-UI version at and above which we use `REASONING_*` rather than `THINKING_*`.
 
-This is our emission threshold, and it matches the version the events arrived in: every name the
-`REASONING_*` handlers construct (`ReasoningStartEvent`, `ReasoningMessageStartEvent`/`Content`/`End`,
-`ReasoningEndEvent`, `ReasoningEncryptedValueEvent`, `ReasoningMessage`) is exported from 0.1.11 on,
-and none of them exist at our 0.1.10 floor.
+More rides on this constant than the streamed event family: `dump_messages` also emits
+`ThinkingPart` as `ReasoningMessage` from here on, and both `ReasoningEncryptedValueEvent`
+carriers — the thinking signature and provider metadata, and the `tool_kind`/`outcome` claims —
+are gated on it. Below the threshold all of that is dropped, so a client's history reloads lossily.
 
-It is a separate constant from `ENCRYPTED_VALUE_VERSION` despite the shared value: that one gates a
-field on `ToolCall`/`ToolMessage`, this one gates an event family.
+0.1.11 is the exact boundary: every name the `REASONING_*` handlers construct
+(`ReasoningStartEvent`, `ReasoningMessageStartEvent`/`Content`/`End`, `ReasoningEndEvent`,
+`ReasoningEncryptedValueEvent`, `ReasoningMessage`) is exported from 0.1.11 on and absent at our
+0.1.10 floor. Upstream deprecated `THINKING_*` in the same cut
+([ag-ui#1050](https://github.com/ag-ui-protocol/ag-ui/pull/1050), which released
+`@ag-ui/core@0.0.45` alongside Python 0.1.11): `@ag-ui/client`'s `BackwardCompatibility_0_0_45`
+middleware rewrites `THINKING_*` to `REASONING_*` and warns the integrator to upgrade. There is no
+shim in the other direction, so the residual risk of emitting `REASONING_*` from 0.1.11 is a
+frontend older than `@ag-ui/core@0.0.45` talking to a 0.1.11+ server.
+
+It stays a separate constant from `ENCRYPTED_VALUE_VERSION` despite the shared value: that one
+gates a field on `ToolCall`/`ToolMessage`, this one gates an event family.
 """
 
 REASONING_MESSAGE_ROLE_VERSION = (0, 1, 14)
