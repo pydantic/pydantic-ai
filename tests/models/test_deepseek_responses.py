@@ -1,8 +1,8 @@
 """DeepSeek's OpenAI-compatible Responses API, driven by `OpenAIResponsesModel` + `DeepSeekProvider`.
 
 DeepSeek exposes a Responses endpoint at `https://api.deepseek.com/responses`, currently for
-`deepseek-v4-flash` only (the V4-Flash-0731 backend). It is stateless — requests are recorded with
-`store: false` and there is no server-side conversation to resume — so `previous_response_id`
+`deepseek-v4-flash` only (the V4-Flash-0731 backend). It is stateless — every response reports
+`store: false`, and there is no server-side conversation to resume — so `previous_response_id`
 continuation is not available and is not exercised here.
 
 Each case snapshots both the resulting messages and the bodies that actually went out, captured by an
@@ -193,6 +193,10 @@ CASES = [
             ]
         ),
     ),
+    # The follow-up request body is where the `openai_supports_phase` off side is pinned: DeepSeek
+    # labels its answer `final_answer` on the way in, and the assistant turn goes back out as a
+    # bare `{'role': 'assistant', 'content': ...}` with no `phase` key. Flipping the flag on would
+    # add one and fail this snapshot.
     Case(
         id='text_multi_turn',
         prompt='Say exactly: hello',
