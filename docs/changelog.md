@@ -196,34 +196,34 @@ These changes were announced in the latest V1 releases via deprecation warnings 
 
 **API removals and renames** — look each old name up in the [migration map](migration.md); the PRs that announced and landed each group are:
 
-| Group | Announced | Removed / renamed in |
-| --- | --- | --- |
-| Providers: Grok → xAI (`grok:` prefix → `xai:`) | — | [#5460](https://github.com/pydantic/pydantic-ai/pull/5460) |
-| Providers: Google GLA/Vertex → `GoogleProvider`/`GoogleCloudProvider`, `GeminiModel` → `GoogleModel` | [#5336](https://github.com/pydantic/pydantic-ai/pull/5336), [#5543](https://github.com/pydantic/pydantic-ai/pull/5543) | [#5479](https://github.com/pydantic/pydantic-ai/pull/5479) |
-| Models: `OpenAIModel` → `OpenAIChatModel`, `system_prompt_role` and sampling-settings move into the profile | — | [#5468](https://github.com/pydantic/pydantic-ai/pull/5468) |
-| Models: `StreamedResponse.usage()` becomes a property (affects custom `Model` subclasses) | — | [#5546](https://github.com/pydantic/pydantic-ai/pull/5546) |
-| Models: bare provider-prefix-less names (`Agent('gpt-5')`) now raise `UserError` | — | [#5464](https://github.com/pydantic/pydantic-ai/pull/5464) |
-| Native tools: `builtin_tools` → `native_tools` throughout | [#5338](https://github.com/pydantic/pydantic-ai/pull/5338) | [#5396](https://github.com/pydantic/pydantic-ai/pull/5396) |
-| Native tools: `UrlContextTool` → `WebFetchTool` | — | [#5458](https://github.com/pydantic/pydantic-ai/pull/5458) |
-| MCP: per-transport server classes → `MCPToolset` | [#5325](https://github.com/pydantic/pydantic-ai/pull/5325) | [#5337](https://github.com/pydantic/pydantic-ai/pull/5337) |
-| Agent config → capabilities: `instrument=` | — | [#5434](https://github.com/pydantic/pydantic-ai/pull/5434) |
-| Agent config → capabilities: `event_stream_handler=`, `prepare_tools=` | [#5335](https://github.com/pydantic/pydantic-ai/pull/5335) | [#5475](https://github.com/pydantic/pydantic-ai/pull/5475) |
-| Agent config → capabilities: `history_processors=` | — | [#5425](https://github.com/pydantic/pydantic-ai/pull/5425) |
-| Agent config: `mcp_servers=` → `toolsets=`, `sequential_tool_calls()` → `parallel_tool_call_execution_mode()` | — | [#5466](https://github.com/pydantic/pydantic-ai/pull/5466) |
-| Tools: `DeferredToolCalls` → `DeferredToolRequests`, `DeferredToolset` → `ExternalToolset` | — | [#5459](https://github.com/pydantic/pydantic-ai/pull/5459) |
-| Tools: `FunctionToolset.tool()` now requires a `RunContext` first parameter | — | [#5462](https://github.com/pydantic/pydantic-ai/pull/5462) |
-| Tools: `pydantic_ai.ext.aci` removed (wrap with `Tool.from_schema`) | [#5510](https://github.com/pydantic/pydantic-ai/pull/5510) | [#5467](https://github.com/pydantic/pydantic-ai/pull/5467) |
-| Usage and response-field renames (`request_tokens` → `input_tokens`, `vendor_details` → `provider_details`, …) | — | [#5476](https://github.com/pydantic/pydantic-ai/pull/5476) |
-| Events: dedicated `OutputToolCallEvent`/`OutputToolResultEvent`, `FunctionToolResultEvent.result` → `.part` | — | [#5332](https://github.com/pydantic/pydantic-ai/pull/5332) |
-| Streaming: `StreamedRunResult` accessor renames, `stream_responses()` → `stream_response()` | [#5296](https://github.com/pydantic/pydantic-ai/pull/5296) | [#5463](https://github.com/pydantic/pydantic-ai/pull/5463) |
-| Streaming: `Agent.run_stream_events()` is an async context manager only | — | [#5440](https://github.com/pydantic/pydantic-ai/pull/5440) |
-| Results: `result.usage()`/`result.timestamp()`/`stream.get()` become properties | — | [#5263](https://github.com/pydantic/pydantic-ai/pull/5263) |
-| Integrations: `Agent.to_a2a()` and the bundled `fasta2a` move upstream | [#5426](https://github.com/pydantic/pydantic-ai/pull/5426) | [#5502](https://github.com/pydantic/pydantic-ai/pull/5502) |
-| Integrations: `Agent.to_ag_ui()`/`AGUIApp` → `AGUIAdapter`, `cached_async_http_client` → `create_async_http_client()` | [#5345](https://github.com/pydantic/pydantic-ai/pull/5345) | [#5464](https://github.com/pydantic/pydantic-ai/pull/5464) |
-| Graph: `pydantic_graph.beta` imports move to top-level `pydantic_graph` | [#5306](https://github.com/pydantic/pydantic-ai/pull/5306) | [#5470](https://github.com/pydantic/pydantic-ai/pull/5470) |
-| Instrumentation: `version=1` and its `event_mode=`/`logger_provider=` arguments removed | — | [#5523](https://github.com/pydantic/pydantic-ai/pull/5523) |
-| Pydantic Evals: keyword-only arguments, required `Dataset(name=...)`, `Evaluator.name` → `get_serialization_name()` | [#5547](https://github.com/pydantic/pydantic-ai/pull/5547) | [#5548](https://github.com/pydantic/pydantic-ai/pull/5548) |
-| Pydantic Evals: `evaluation_name`/`evaluator_version` class attributes → `get_default_evaluation_name()`/`get_evaluator_version()` | [#5554](https://github.com/pydantic/pydantic-ai/pull/5554) | [#5556](https://github.com/pydantic/pydantic-ai/pull/5556) |
+| Group | PRs |
+| --- | --- |
+| Providers: Grok → xAI (`grok:` prefix → `xai:`) | [#5460](https://github.com/pydantic/pydantic-ai/pull/5460) |
+| Providers: Google GLA/Vertex → `GoogleProvider`/`GoogleCloudProvider`, `GeminiModel` → `GoogleModel` | [#5336](https://github.com/pydantic/pydantic-ai/pull/5336), [#5543](https://github.com/pydantic/pydantic-ai/pull/5543), [#5479](https://github.com/pydantic/pydantic-ai/pull/5479) |
+| Models: `OpenAIModel` → `OpenAIChatModel`, `system_prompt_role` and sampling-settings move into the profile | [#5468](https://github.com/pydantic/pydantic-ai/pull/5468) |
+| Models: `StreamedResponse.usage()` becomes a property (affects custom `Model` subclasses) | [#5546](https://github.com/pydantic/pydantic-ai/pull/5546) |
+| Models: bare provider-prefix-less names (`Agent('gpt-5')`) now raise `UserError` | [#5464](https://github.com/pydantic/pydantic-ai/pull/5464) |
+| Native tools: `builtin_tools` → `native_tools` throughout | [#5338](https://github.com/pydantic/pydantic-ai/pull/5338), [#5396](https://github.com/pydantic/pydantic-ai/pull/5396) |
+| Native tools: `UrlContextTool` → `WebFetchTool` | [#5458](https://github.com/pydantic/pydantic-ai/pull/5458) |
+| MCP: per-transport server classes → `MCPToolset` | [#5325](https://github.com/pydantic/pydantic-ai/pull/5325), [#5337](https://github.com/pydantic/pydantic-ai/pull/5337) |
+| Agent config → capabilities: `instrument=` | [#5434](https://github.com/pydantic/pydantic-ai/pull/5434) |
+| Agent config → capabilities: `event_stream_handler=`, `prepare_tools=` | [#5335](https://github.com/pydantic/pydantic-ai/pull/5335), [#5475](https://github.com/pydantic/pydantic-ai/pull/5475) |
+| Agent config → capabilities: `history_processors=` | [#5425](https://github.com/pydantic/pydantic-ai/pull/5425) |
+| Agent config: `mcp_servers=` → `toolsets=`, `sequential_tool_calls()` → `parallel_tool_call_execution_mode()` | [#5466](https://github.com/pydantic/pydantic-ai/pull/5466) |
+| Tools: `DeferredToolCalls` → `DeferredToolRequests`, `DeferredToolset` → `ExternalToolset` | [#5459](https://github.com/pydantic/pydantic-ai/pull/5459) |
+| Tools: `FunctionToolset.tool()` now requires a `RunContext` first parameter | [#5462](https://github.com/pydantic/pydantic-ai/pull/5462) |
+| Tools: `pydantic_ai.ext.aci` removed (wrap with `Tool.from_schema`) | [#5510](https://github.com/pydantic/pydantic-ai/pull/5510), [#5467](https://github.com/pydantic/pydantic-ai/pull/5467) |
+| Usage and response-field renames (`request_tokens` → `input_tokens`, `vendor_details` → `provider_details`, …) | [#5476](https://github.com/pydantic/pydantic-ai/pull/5476) |
+| Events: dedicated `OutputToolCallEvent`/`OutputToolResultEvent`, `FunctionToolResultEvent.result` → `.part` | [#5332](https://github.com/pydantic/pydantic-ai/pull/5332) |
+| Streaming: `StreamedRunResult` accessor renames, `stream_responses()` → `stream_response()` | [#5296](https://github.com/pydantic/pydantic-ai/pull/5296), [#5463](https://github.com/pydantic/pydantic-ai/pull/5463) |
+| Streaming: `Agent.run_stream_events()` is an async context manager only | [#5440](https://github.com/pydantic/pydantic-ai/pull/5440) |
+| Results: `result.usage()`/`result.timestamp()`/`stream.get()` become properties | [#5263](https://github.com/pydantic/pydantic-ai/pull/5263) |
+| Integrations: `Agent.to_a2a()` and the bundled `fasta2a` move upstream | [#5426](https://github.com/pydantic/pydantic-ai/pull/5426), [#5502](https://github.com/pydantic/pydantic-ai/pull/5502) |
+| Integrations: `Agent.to_ag_ui()`/`AGUIApp` → `AGUIAdapter`, `cached_async_http_client` → `create_async_http_client()` | [#5345](https://github.com/pydantic/pydantic-ai/pull/5345), [#5464](https://github.com/pydantic/pydantic-ai/pull/5464) |
+| Graph: `pydantic_graph.beta` imports move to top-level `pydantic_graph` | [#5306](https://github.com/pydantic/pydantic-ai/pull/5306), [#5470](https://github.com/pydantic/pydantic-ai/pull/5470) |
+| Instrumentation: `version=1` and its `event_mode=`/`logger_provider=` arguments removed | [#5523](https://github.com/pydantic/pydantic-ai/pull/5523) |
+| Pydantic Evals: keyword-only arguments, required `Dataset(name=...)`, `Evaluator.name` → `get_serialization_name()` | [#5547](https://github.com/pydantic/pydantic-ai/pull/5547), [#5548](https://github.com/pydantic/pydantic-ai/pull/5548) |
+| Pydantic Evals: `evaluation_name`/`evaluator_version` class attributes → `get_default_evaluation_name()`/`get_evaluator_version()` | [#5554](https://github.com/pydantic/pydantic-ai/pull/5554), [#5556](https://github.com/pydantic/pydantic-ai/pull/5556) |
 
 Four of these carry a caveat the name mapping alone doesn't convey:
 
