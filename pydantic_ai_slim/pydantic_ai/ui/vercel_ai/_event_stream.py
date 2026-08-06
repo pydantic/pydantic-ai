@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic_core import to_json
 
+from ...exceptions import RunCancelled
 from ...messages import (
     FilePart,
     FinishReason as PydanticFinishReason,
@@ -22,6 +23,7 @@ from ...messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
     ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
@@ -31,10 +33,18 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from ._utils import dump_message_metadata, dump_provider_metadata, iter_metadata_chunks, tool_return_output
+from ._utils import (
+    TOOL_AVAILABILITY_DELTA_DATA_TYPE,
+    dump_message_metadata,
+    dump_provider_metadata,
+    iter_metadata_chunks,
+    tool_return_output,
+)
 from .request_types import RequestData
 from .response_types import (
+    AbortChunk,
     BaseChunk,
+    DataChunk,
     DoneChunk,
     ErrorChunk,
     FileChunk,
@@ -132,7 +142,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def after_stream(self) -> AsyncIterator[BaseChunk]:
         yield FinishStepChunk()
 
-        yield FinishChunk(finish_reason=self._finish_reason)
+        if self.cancelled is None:
+            yield FinishChunk(finish_reason=self._finish_reason)
         yield DoneChunk()
 
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[BaseChunk]:
@@ -174,6 +185,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # without one. A future opt-in that broadens the roundtrip should revisit this path.
         self._finish_reason = 'error'
         yield ErrorChunk(error_text=str(error))
+
+    async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[BaseChunk]:
+        yield AbortChunk(reason='The agent run was cancelled.')
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseChunk]:
         provider_metadata = dump_provider_metadata(
@@ -376,6 +390,13 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):
             yield chunk
+
+    async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseChunk]:
+        part = event.part
+        yield DataChunk(
+            type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
+            data={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+        )
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):

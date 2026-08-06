@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '639'
+      - '662'
       content-type:
       - application/json
       host:
@@ -41,6 +41,7 @@ interactions:
       reasoning:
         context: all_turns
       stream: false
+      tool_choice: auto
     uri: https://api.openai.com/v1/responses
   response:
     headers:
@@ -57,7 +58,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - '1173'
+      - '1464'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -68,11 +69,11 @@ interactions:
       background: false
       billing:
         payer: developer
-      completed_at: 1785466074
-      created_at: 1785466073
+      completed_at: 1785974866
+      created_at: 1785974865
       error: null
       frequency_penalty: 0.0
-      id: resp_09f1b5d2c22f140d006a6c0cd90b7c8196b6bf95b5b9cc7a9a
+      id: resp_05e2598c23103fb9006a73d05190f48196b8b34726e99df8a0
       incomplete_details: null
       instructions: null
       max_output_tokens: null
@@ -83,8 +84,8 @@ interactions:
       object: response
       output:
       - arguments: '{"order_id":"order-123"}'
-        call_id: call_8Gkv8fsSfxHZvOBrGqw0aGxE
-        id: fc_09f1b5d2c22f140d006a6c0cd9df5081969c76e43326d2cfbd
+        call_id: call_4xx2dWcsD4MBA3MnmqGIifGE
+        id: fc_05e2598c23103fb9006a73d05292148196aa90f5c9b304cc09
         name: lookup_refund_policy
         status: completed
         type: function_call

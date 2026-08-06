@@ -714,7 +714,7 @@ class GoogleModel(Model[Client]):
         """
         native_tools, image_config = self._get_native_tools(model_request_parameters)
 
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 

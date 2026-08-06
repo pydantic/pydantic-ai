@@ -246,7 +246,7 @@ Phrase the instruction as what changed rather than as an override of the user. M
 
 Model providers reject a request whose message history has broken tool-call/tool-result pairing — a tool call with no result, or a result with no call. A run that is cancelled or crashes partway through can leave the history in exactly this state, and so can a hand-built, truncated, or context-evicted history. You don't need to clean these up yourself: before each model request, Pydantic AI repairs the history it was given so the provider accepts it.
 
-Tool availability changes are stored as [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] request parts. Replaying history applies each part's `added` names in order, while tool definitions continue to come from the current run's registered tools.
+Tool additions are stored as [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] request parts; tool removal is not represented. A tool returning [`ToolReturn(tools=[...])`][pydantic_ai.messages.ToolReturn] authors the part immediately after its [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] in the same request, with the call's `tool_call_id` as a causal link. The executor deduplicates names in first-occurrence order and omits names already revealed. Replaying history keeps each `added` name revealed; tool definitions continue to come from the current run, so unknown or already-visible names have no effect when rendering a request.
 
 The guiding rule is to massage the history into a shape the provider accepts without ever discarding something you meant to send. Repairs only **add** synthesized parts or **remove** parts that are fundamentally unsendable (no provider could accept them); nothing meaningful is silently dropped. Concretely, before each request Pydantic AI:
 
@@ -693,6 +693,12 @@ you to intercept and modify the message history before each model request.
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
     This means that if you want to keep the original message history, you need to make a copy of it.
+
+    When using deferred tools, preserve their
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] entries, or the
+    complete `load_capability` call and return pairs from which Pydantic AI can reconstruct them.
+    Reveal state is derived from the processed history sent to the model. If a processor or
+    summarizer drops both representations, the affected tools become hidden again.
 
 !!! warning "History processors can affect `new_messages()` results"
     [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] returns the messages
