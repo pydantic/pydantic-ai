@@ -246,6 +246,63 @@ As a last resort, if the bytes genuinely need to sit in the workflow history, ra
 !!! note "Image output types are not supported at all"
     An agent whose [`output_type`](../output.md) includes [`BinaryImage`][pydantic_ai.messages.BinaryImage] raises a `UserError` before the request is even made, rather than failing on size: every such run would have to carry the generated image across the boundary.
 
+### Large Payloads
+
+Temporal records activity arguments in workflow history and enforces payload-size limits. A large
+[dependencies object](../dependencies.md) is therefore copied into history every time Pydantic AI schedules
+a model, tool, MCP, or event-handler activity, so a wide tool fan-out can both bloat history permanently and
+breach the per-payload limit.
+
+Temporal solves this itself with [external storage](https://docs.temporal.io/external-storage), which
+transparently offloads any payload above a size threshold to your own store and puts a reference in history
+instead. Configure it with an
+[`ExternalStorage`](https://docs.temporal.io/develop/python/data-handling/external-storage) on your
+`DataConverter`:
+
+```python {title="temporal_external_storage.py" test="skip" lint="skip"}
+import dataclasses
+
+from temporalio.client import Client
+from temporalio.converter import DataConverter, ExternalStorage
+
+from pydantic_ai.durable_exec.temporal import PydanticAIPlugin
+
+from my_app.storage import my_storage_driver  # your `StorageDriver` implementation
+
+
+async def connect() -> Client:
+    data_converter = dataclasses.replace(
+        DataConverter.default,
+        external_storage=ExternalStorage(drivers=[my_storage_driver]),
+    )
+    return await Client.connect(
+        'localhost:7233',
+        data_converter=data_converter,
+        plugins=[PydanticAIPlugin()],
+    )
+```
+
+[`PydanticAIPlugin`][pydantic_ai.durable_exec.temporal.PydanticAIPlugin] replaces only Temporal's default
+payload *converter* with its Pydantic-aware one, so your `external_storage` — like a custom `payload_codec`
+or `failure_converter_class` — is preserved.
+
+Payloads below the threshold (256 KiB by default) are untouched, so this costs nothing on runs with small
+dependencies. See Temporal's documentation for the available storage drivers and for writing your own; note
+that external storage is in public preview, so its API may still change.
+
+!!! warning "Stored payloads are part of your workflow history"
+    A payload that is missing, expired, or inaccessible prevents workers from decoding and replaying the
+    workflow. Keep stored payloads available for at least as long as their histories can be replayed.
+
+Because offloading happens per payload, a fan-out of N activities still emits N (small) references. External
+storage removes the size ceiling and the history bloat; it does not deduplicate identical dependencies within
+a single workflow-task completion.
+
+If you cannot adopt a public-preview API, Temporal also documents a hand-written
+[claim check codec](https://docs.temporal.io/ai-cookbook/claim-check-pattern-python) built on
+[`PayloadCodec`](https://docs.temporal.io/develop/python/converters-and-encryption#custom-payload-codec),
+which `PydanticAIPlugin` preserves in the same way.
+
 ### Streaming
 
 [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] work inside a Temporal workflow, but their events are buffered rather than delivered in real time. The model stream runs inside the durable activity, and its events are replayed to the workflow after the activity completes.
