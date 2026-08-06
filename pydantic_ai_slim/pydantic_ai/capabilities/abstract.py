@@ -208,6 +208,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     Required when `defer_loading=True`. If omitted for an always-available
     capability, the run derives a local id from the class name.
+
+    The built-in single-purpose capabilities set a default matching that derived id
+    ([`WebSearch`][pydantic_ai.capabilities.WebSearch]: `'web_search'`,
+    [`WebFetch`][pydantic_ai.capabilities.WebFetch]: `'web_fetch'`,
+    [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration]: `'image_generation'`,
+    [`XSearch`][pydantic_ai.capabilities.XSearch]: `'x_search'`), so the toolset they
+    contribute can be used with [durable execution](../durable_execution/overview.md)
+    without passing an `id`. Pass `id=` to override it.
     """
 
     description: str | None = None

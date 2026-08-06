@@ -40,6 +40,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     IncludeToolReturnSchemas,
     Instrumentation,
+    NativeOrLocalTool,
     NativeTool,
     PrefixTools,
     PrepareTools,
@@ -2812,7 +2813,6 @@ def test_capability_stamps_id_on_contributed_function_toolset():
 def test_native_or_local_stamps_id_on_local_toolset():
     """`NativeOrLocalTool` stamps its `id` on the FunctionToolset wrapping a bare local callable, so
     the local fallback can be used with durable execution."""
-    from pydantic_ai.capabilities import NativeOrLocalTool
     from pydantic_ai.toolsets import PreparedToolset
 
     def local_search(query: str) -> str:
@@ -2826,6 +2826,41 @@ def test_native_or_local_stamps_id_on_local_toolset():
     leaf = toolset.wrapped
     assert isinstance(leaf, FunctionToolset)
     assert leaf.id == 'search'
+
+
+@pytest.mark.parametrize(
+    'capability,expected_id',
+    [
+        pytest.param(WebSearch[object](local='duckduckgo'), 'web_search', id='web_search'),
+        pytest.param(WebSearch[object](local='duckduckgo', id='custom'), 'custom', id='web_search-override'),
+        pytest.param(WebFetch[object](local=True), 'web_fetch', id='web_fetch'),
+        pytest.param(WebFetch[object](local=True, id='custom'), 'custom', id='web_fetch-override'),
+        pytest.param(
+            ImageGeneration[object](fallback_model='openai-responses:gpt-5.4'),
+            'image_generation',
+            id='image_generation',
+        ),
+        pytest.param(
+            ImageGeneration[object](fallback_model='openai-responses:gpt-5.4', id='custom'),
+            'custom',
+            id='image_generation-override',
+        ),
+        pytest.param(XSearch[object](fallback_model='xai:grok-4.3'), 'x_search', id='x_search'),
+        pytest.param(XSearch[object](fallback_model='xai:grok-4.3', id='custom'), 'custom', id='x_search-override'),
+    ],
+)
+def test_single_purpose_capability_defaults_its_id(capability: NativeOrLocalTool[object], expected_id: str):
+    """The single-purpose built-ins default `id` to the id the run would otherwise derive from their
+    class name, so the toolset they contribute works with durable execution without passing an `id`.
+    A user-supplied `id=` still wins."""
+    from pydantic_ai.toolsets import PreparedToolset
+
+    assert capability.id == expected_id
+    toolset = capability.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    leaf = toolset.wrapped
+    assert isinstance(leaf, FunctionToolset)
+    assert leaf.id == expected_id
 
 
 def _noop_greet(name: str) -> str:
@@ -3147,6 +3182,20 @@ def test_duplicate_capability_ids_raise() -> None:
 
     assert str(exc_info.value) == snapshot(
         "Capability id 'dup' is used by multiple capabilities. Capability ids must be unique within a run."
+    )
+
+
+def test_duplicate_single_purpose_capabilities_raise() -> None:
+    """Two instances of a single-purpose capability share its default `id`, so they collide.
+
+    A capability with one fixed identity is only meant to be added once; the second instance is a
+    configuration mistake that the shared default surfaces at construction.
+    """
+    with pytest.raises(UserError) as exc_info:
+        Agent(TestModel(), capabilities=[WebSearch(local='duckduckgo'), WebSearch(local='duckduckgo')])
+
+    assert str(exc_info.value) == snapshot(
+        "Capability id 'web_search' is used by multiple capabilities. Capability ids must be unique within a run."
     )
 
 

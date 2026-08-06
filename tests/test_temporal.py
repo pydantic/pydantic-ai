@@ -78,6 +78,7 @@ from pydantic_ai.capabilities import (
     ProcessHistory,
     ResolveModelId,
     Toolset,
+    WebSearch,
     WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -6720,6 +6721,30 @@ def test_durability_requires_agent_name():
     durability = TemporalDurability()
     with pytest.raises(UserError, match='unique `name`'):
         Agent(_durability_fn_model, capabilities=[durability])
+
+
+def test_durability_accepts_single_purpose_capability_without_explicit_id():
+    """A single-purpose capability's default `id` names the activities of the toolset it contributes.
+
+    Temporal needs an `id` on every leaf toolset, and the local fallback of a `WebSearch` is a
+    toolset the user never constructed, so the capability's default is what makes it usable
+    without configuration.
+
+    Not a VCR test: everything asserted is settled at `Agent(...)` construction time, before any
+    model request.
+    """
+    agent = Agent(
+        _durability_fn_model,
+        name='web_search_agent',
+        capabilities=[WebSearch(local='duckduckgo'), TemporalDurability()],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in bound.temporal_activities
+    }
+    assert 'agent__web_search_agent__toolset__web_search__call_tool' in activity_names
 
 
 def test_durability_explicit_name_overrides_agent_name_and_supports_unnamed_agent():

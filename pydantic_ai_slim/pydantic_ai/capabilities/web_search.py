@@ -61,7 +61,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         allowed_domains: list[str] | None = None,
         max_uses: int | None = None,
         external_web_access: bool | None = None,
-        id: str | None = None,
+        id: str | None = 'web_search',
         defer_loading: bool = False,
         description: str | None = None,
     ) -> None:
