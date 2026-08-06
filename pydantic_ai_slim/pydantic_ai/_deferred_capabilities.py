@@ -17,6 +17,7 @@ from .messages import (
     _TOOL_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
+    CompactionPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -136,12 +137,21 @@ _TYPED_PART_TAGS_BY_TYPE[LoadCapabilityReturnPart] = 'capability-load-return'
 
 
 def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
-    """Parse message history to find capabilities loaded via the `load_capability` tool."""
+    """Parse visible history to find capabilities loaded via `load_capability`.
+
+    Every [`CompactionPart`][pydantic_ai.messages.CompactionPart] resets the derived
+    state at its exact position in a response. This is deliberately provider-agnostic:
+    over-counting can expose tools whose load evidence is no longer visible, while
+    under-counting only permits a redundant, idempotent load.
+    """
     call_id_by_tool_call_id: dict[str, str] = {}
     loaded: set[str] = set()
     for msg in messages:
         for part in msg.parts:
-            if isinstance(part, LoadCapabilityCallPart):
+            if isinstance(part, CompactionPart):
+                call_id_by_tool_call_id.clear()
+                loaded.clear()
+            elif isinstance(part, LoadCapabilityCallPart):
                 if part.capability_id is not None:
                     call_id_by_tool_call_id[part.tool_call_id] = part.capability_id
             elif isinstance(part, LoadCapabilityReturnPart):
