@@ -44,6 +44,12 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         for toolset in self.toolsets:
             if (toolset_id := toolset.id) is None:
                 continue
+            # `<...>` marks an id the framework assigns rather than the user, and those are only
+            # unique per agent: `<agent>` names each agent's own function toolset, so two of them
+            # meet legitimately whenever one workflow runs more than one agent. Uniqueness is a
+            # rule about ids a user chose, which is also all an override can address.
+            if toolset_id.startswith('<') and toolset_id.endswith('>'):
+                continue
             validate_instruction_id_segment(toolset_id, kind='Toolset id')
             if (existing := seen.get(toolset_id)) is not None and existing is not toolset:
                 raise UserError(

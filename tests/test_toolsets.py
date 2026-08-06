@@ -714,6 +714,10 @@ async def test_context_manager_failed_initialization():
 
     server1 = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
     server2 = AsyncMock()
+    # `CombinedToolset` reads each member's `id` when it is constructed, and an auto-created
+    # `AsyncMock` attribute would answer that with a coroutine. This server stands in for one that
+    # fails to initialize, so an unnamed toolset is the honest stand-in.
+    server2.id = None
     server2.__aenter__.side_effect = InitializationError
 
     toolset = CombinedToolset([server1, server2])
