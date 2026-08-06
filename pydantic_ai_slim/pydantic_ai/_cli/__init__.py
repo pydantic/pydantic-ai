@@ -139,10 +139,15 @@ def cli_exit(prog_name: str = 'clai'):  # pragma: no cover
 
 def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
     """Run the CLI and return the exit code for the process."""
+    args_list = list(args_list) if args_list is not None else sys.argv[1:]
+    if args_list and args_list[0] == 'auth':
+        from .auth import cli_auth
+
+        return cli_auth(args_list[1:], prog_name)
+
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-5.2` but not `gpt-5.2`
     qualified_model_names = [n for n in known_model_names() if ':' in n]
-    args_list = list(args_list) if args_list is not None else sys.argv[1:]
 
     # Check if this is a web command - route to web parser if so
     # This allows positional prompt arg in main parser without conflicting with subcommands
@@ -219,6 +224,8 @@ def _cli_chat(args_list: list[str], prog_name: str, default_model: str, qualifie
 Pydantic AI CLI v{__version__}
 
 subcommands:
+  auth          Manage model-provider authentication
+                Run "clai auth --help" for more information
   web           Start a web-based chat interface for an agent
                 Run "clai web --help" for more information
 """,

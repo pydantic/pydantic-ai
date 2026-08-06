@@ -55,7 +55,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
 from pydantic_ai.messages import INVALID_JSON_KEY
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -13403,6 +13403,99 @@ async def test_openai_responses_compact_with_instructions(allow_model_requests: 
     assert isinstance(compacted, ModelResponse)
     assert len(compacted.parts) == 1
     assert isinstance(compacted.parts[0], CompactionPart)
+
+
+def _compact_status_error(code: str) -> APIStatusError:
+    """A 400 the way the sibling `create` tests build one, so both handlers are driven identically."""
+    return APIStatusError(
+        code,
+        response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+        body={'error': {'code': code, 'message': 'Rejected.'}},
+    )
+
+
+async def _compact_via(model: 'OpenAIResponsesModel') -> ModelResponse:
+    return await model.compact_messages(
+        ModelRequestContext(
+            model=model,
+            messages=[ModelRequest.user_text_prompt('hello')],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+    )
+
+
+async def test_openai_responses_compact_parses_a_compaction_response(allow_model_requests: None) -> None:
+    """The success half at the mock level, complementing the recorded Codex compaction.
+
+    The cassette proves a real backend's compaction round-trips; this pins what `compact_messages`
+    makes of a canned one — a single `CompactionPart` carrying the encrypted blob, and the
+    `compaction` marker that stops the response id being reused as `previous_response_id`.
+    """
+    compacted_response = resp.CompactedResponse(
+        id='resp_compact_1',
+        created_at=1704067200,
+        object='response.compaction',
+        output=[resp.ResponseCompactionItem(id='cpt_1', type='compaction', encrypted_content='encrypted-blob')],
+        usage=ResponseUsage.model_construct(input_tokens=41, output_tokens=7, total_tokens=48),
+    )
+    mock_client = MockOpenAIResponses.create_mock(cast(Any, compacted_response))
+    model = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    compacted = await _compact_via(model)
+
+    assert compacted.provider_details == snapshot({'compaction': True})
+    assert compacted.provider_response_id == snapshot('resp_compact_1')
+    assert compacted.parts == snapshot(
+        [
+            CompactionPart(
+                content=None,
+                id='cpt_1',
+                provider_name='openai',
+                provider_details={
+                    'id': 'cpt_1',
+                    'encrypted_content': 'encrypted-blob',
+                    'type': 'compaction',
+                    'created_by': None,
+                },
+            )
+        ]
+    )
+
+
+async def test_openai_responses_compact_reraises_a_non_content_filter_error(allow_model_requests: None) -> None:
+    """Compaction maps SDK errors itself, so it needs the same two branches `create`'s handler has.
+
+    A 400 that is not a content filter has to leave the handler by re-raising, so `_map_api_errors`
+    turns it into a `ModelHTTPError` -- the ordinary way a failed compaction surfaces.
+    """
+    mock_client = MockOpenAIResponses.create_mock(_compact_status_error('invalid_parameter'))
+    model = OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await _compact_via(model)
+
+    assert exc_info.value.status_code == 400
+
+
+async def test_openai_responses_compact_maps_an_azure_content_filter(allow_model_requests: None) -> None:
+    """The other branch: a filtered compaction on Azure is a response, not an error.
+
+    `_check_azure_content_filter` answers with an empty-parts `ModelResponse` carrying the filter
+    reason, which the agent graph is what turns into a `ContentFilterError`. `compact_messages`
+    returns it as-is, so a caller compacting directly sees the reason rather than a 400.
+    """
+    mock_client = MockOpenAIResponses.create_mock(_compact_status_error('content_filter'))
+    model = OpenAIResponsesModel(
+        'gpt-5-mini', provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, mock_client))
+    )
+
+    compacted = await _compact_via(model)
+
+    assert compacted.parts == []
+    assert compacted.finish_reason == snapshot('content_filter')
+    assert compacted.provider_name == snapshot('azure')
+    assert compacted.provider_details == snapshot({'finish_reason': 'content_filter'})
 
 
 async def test_openai_responses_compact_with_auto_previous_response_id_chain(

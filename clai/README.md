@@ -14,13 +14,13 @@ Command line interface to chat to LLMs, part of the [Pydantic AI project](https:
 
 <!-- Keep this in sync with docs/cli.md -->
 
-You'll need to set an environment variable depending on the provider you intend to use.
-
-E.g. if you're using OpenAI, set the `OPENAI_API_KEY` environment variable:
+Most providers use an environment variable. For example, OpenAI Platform models use `OPENAI_API_KEY`:
 
 ```bash
 export OPENAI_API_KEY='your-api-key-here'
 ```
+
+Providers with managed authentication use `clai auth` instead. See [OpenAI Codex subscription authentication](#openai-codex-subscription-authentication) below.
 
 Then with [`uvx`](https://docs.astral.sh/uv/guides/tools/), run:
 
@@ -51,6 +51,15 @@ Either way, running `clai` will start an interactive session where you can chat 
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
 - `/cp`: Copy the last response to clipboard
 
+### OpenAI Codex subscription authentication
+
+OpenAI Codex uses managed sign-in through your ChatGPT account instead of `OPENAI_API_KEY`. Sign in through a browser, then select an `openai-codex:` model:
+
+```bash
+uvx clai auth login openai-codex
+uvx clai --model openai-codex:gpt-5.5
+```
+
 ## Help
 
 ```
@@ -59,6 +68,8 @@ usage: clai [-h] [-l] [--version] [-m MODEL] [-a AGENT] [-t CODE_THEME] [--no-st
 Pydantic AI CLI v...
 
 subcommands:
+  auth          Manage model-provider authentication
+                Run "clai auth --help" for more information
   web           Start a web-based chat interface for an agent
                 Run "clai web --help" for more information
 

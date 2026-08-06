@@ -30,21 +30,47 @@ clai
 
 <!-- clai/README.md links here for full docs -->
 
-You'll need to set an environment variable depending on the provider you intend to use.
-
-E.g. if you're using OpenAI, set the `OPENAI_API_KEY` environment variable:
+Most providers use an environment variable. For example, OpenAI Platform models use `OPENAI_API_KEY`:
 
 ```bash
 export OPENAI_API_KEY='your-api-key-here'
 ```
 
-Then running `clai` will start an interactive session where you can chat with the AI model. Special commands available in interactive mode:
+Providers with managed authentication use `clai auth` instead. See [OpenAI Codex subscription authentication](#openai-codex-subscription-authentication) below.
+
+Running `clai` starts an interactive session where you can chat with the AI model. Special commands available in interactive mode:
 
 - `/exit`: Exit the session
 - `/markdown`: Show the last response in markdown format
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
 - `/cp`: Copy the last response to clipboard
 - `/usage`: Show cumulative token usage for the session (turns, input, output, requests, tool calls); add `--json` for a single-line JSON object
+
+### OpenAI Codex subscription authentication
+
+OpenAI Codex uses managed sign-in through your ChatGPT account instead of `OPENAI_API_KEY`. Sign in through a browser, then select an `openai-codex:` model:
+
+```bash
+clai auth login openai-codex
+clai --model openai-codex:gpt-5.5
+```
+
+For remote or headless environments, use device authorization:
+
+```bash
+clai auth login openai-codex --method device
+```
+
+You can inspect or manage the same credentials without displaying secrets:
+
+```bash
+clai auth status openai-codex
+clai auth status openai-codex --json
+clai auth refresh openai-codex
+clai auth logout openai-codex
+```
+
+See the OpenAI Codex provider guide for [storage security](models/openai-codex.md#credential-storage-and-security), [application-owned credential sources](models/openai-codex.md#application-owned-credentials-and-persistence), [subscription billing](models/openai-codex.md#differences-from-the-openai-platform-api), and [model availability](models/openai-codex.md#sign-in).
 
 ### CLI Options
 

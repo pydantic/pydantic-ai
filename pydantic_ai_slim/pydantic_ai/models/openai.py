@@ -37,6 +37,7 @@ from .._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
+from ..auth.openai_codex import OpenAICodexLoginRequiredError
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import SuspendedResponseExpired, UserError
 from ..messages import (
@@ -208,6 +209,16 @@ def _map_api_errors(model_name: str) -> Generator[None]:
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
+        # The SDK wraps everything raised inside `httpx.AsyncClient.send` in `APIConnectionError`,
+        # including what an `httpx.Auth` hook of ours raises to tell the user what to do —
+        # `OpenAICodexProvider`'s `OpenAICodexLoginRequiredError`, which names the command that fixes it.
+        # Only that one is surfaced as itself. Any wider unwrap (`UserError`, or the rest of the
+        # `OpenAICodexAuthError` hierarchy) would also catch errors that stand for a transport failure —
+        # an unreachable `auth.openai.com` becomes a `OpenAICodexRefreshError` — and re-raising those
+        # stops `FallbackModel`, which falls over on `ModelAPIError`, from falling over on what is
+        # genuinely a network error.
+        if isinstance(cause := e.__cause__, OpenAICodexLoginRequiredError):
+            raise cause
         raise ModelAPIError(model_name=model_name, message=e.message) from e
 
 
@@ -533,7 +544,7 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
 
     Mutates `model_settings`.
 
-    Used currently only by Cerebras
+    Used by the Cerebras and OpenAI Codex providers.
     """
     for setting in profile.get('openai_unsupported_model_settings', ()):
         model_settings.pop(setting, None)
@@ -1910,6 +1921,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         | Literal[
             'openai',
             'gateway',
+            # Named here rather than in `OpenAIResponsesCompatibleProvider`, which also feeds
+            # `OpenAIEmbeddingsCompatibleProvider`: the OpenAI Codex backend serves the Responses API alone,
+            # so `infer_embedding_model` rejects it and the public type has to agree.
+            'openai-codex',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -2017,15 +2032,29 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
 
         # Handle ModelResponse (e.g. from content filter)
-        if isinstance(response, ModelResponse):  # pragma: no cover
+        if isinstance(response, ModelResponse):
             return response
 
         if not response.output:  # pragma: no cover
             raise UnexpectedModelBehavior('CompactedResponse returned with no output items')
 
-        compaction = response.output[-1]
-        if not isinstance(compaction, ResponseCompactionItem):  # pragma: no cover
-            raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {compaction.type}')
+        last_item = response.output[-1]
+        if isinstance(last_item, ResponseCompactionItem):
+            compaction = last_item
+        elif last_item.type == self.profile.get('openai_responses_compaction_item_type', 'compaction'):
+            # A backend that spells the discriminator its own way is not modelled by the SDK's
+            # discriminated union, so the item arrives permissively constructed against a sibling
+            # member, carrying that member's fields as `None`. Only the compaction item's own fields
+            # are carried over, or those nulls would leak into `CompactionPart.provider_details` and
+            # travel back to the provider on the next request. The profile vouching for the spelling
+            # is what makes re-validating safe; the payload is otherwise the documented one.
+            compaction_fields = ResponseCompactionItem.model_fields
+            compaction = ResponseCompactionItem.model_validate(
+                {key: value for key, value in last_item.model_dump().items() if key in compaction_fields}
+                | {'type': 'compaction'}
+            )
+        else:  # pragma: no cover
+            raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {last_item.type}')
 
         part = _map_compaction_item(compaction, self.system)
         return ModelResponse(
@@ -2063,26 +2092,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if instructions_override is not None:
             instructions = instructions_override
 
-        try:
-            return await self.client.responses.compact(
-                input=openai_messages,
-                model=self.model_name,
-                instructions=instructions,
-                previous_response_id=previous_response_id or OMIT,
-            )
-        except APIStatusError as e:  # pragma: no cover
-            if model_response := _check_azure_content_filter(e, self.system, self.model_name):
-                return model_response
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self.model_name,
-                    body=e.body,
-                    headers=dict(e.response.headers),
-                ) from e
-            raise
-        except APIConnectionError as e:  # pragma: no cover
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+        with _map_api_errors(self.model_name):
+            try:
+                return await self.client.responses.compact(
+                    input=openai_messages,
+                    model=self.model_name,
+                    instructions=instructions,
+                    previous_response_id=previous_response_id or OMIT,
+                )
+            except APIStatusError as e:
+                if model_response := _check_azure_content_filter(e, self.system, self.model_name):
+                    return model_response
+                raise
 
     async def request(
         self,
@@ -2100,6 +2121,30 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if info := self._get_continuation_info(messages, settings):
             response_id, _, _ = info
             response = await self._responses_retrieve(response_id, settings)
+        elif self.profile.get('openai_responses_requires_stream', False):
+            # A backend that only answers streamed requests still has to satisfy the non-streaming
+            # `request()` contract, so stream and aggregate locally. Resuming a suspended response is
+            # checked first, matching `request_stream`, so a continuation is never re-created as a
+            # fresh request.
+            response = await self._responses_create(messages, True, settings, model_request_parameters)
+
+            # Only `_check_azure_content_filter` returns a `ModelResponse` here, and it requires
+            # `system == 'azure'`, which no stream-requiring profile uses.
+            if isinstance(response, ModelResponse):  # pragma: no cover
+                return response
+
+            async with response:
+                streamed_response = await self._process_streamed_response(response, settings, model_request_parameters)
+                async for _ in streamed_response:
+                    pass
+                aggregated = streamed_response.get()
+                if aggregated.state == 'incomplete':
+                    # The stream ended without a terminal event, so the collapse above holds whatever
+                    # arrived before it stopped. `request()` promises a finished response and has no
+                    # way to signal a partial one, so returning it would hand back a truncated answer
+                    # and zeroed usage as if complete.
+                    raise UnexpectedModelBehavior('Streamed response ended before it was complete')
+                return aggregated
         else:
             response = await self._responses_create(messages, False, settings, model_request_parameters)
 
@@ -2121,6 +2166,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         settings = cast(OpenAIResponsesModelSettings, model_settings or {})
 
+        profile = self.profile
+        if not profile.get('openai_responses_supports_input_tokens_count', True):
+            raise UserError(
+                f'Counting tokens ahead of the request is not supported by model {self.model_name!r} on '
+                f'provider {self._provider.name!r}, which does not serve the `/responses/input_tokens` endpoint.'
+            )
+
         # Validate that we have something meaningful to count tokens for.
         if (
             not messages
@@ -2129,7 +2181,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         ):
             raise UserError('Cannot count tokens without any messages or a previous response ID.')
 
-        profile = self.profile
         request_params = await self._build_responses_request_params(
             messages,
             settings,
@@ -2638,7 +2689,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     service_tier=_resolve_openai_service_tier(model_settings),
                     conversation=request_params.conversation,
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
-                    store=model_settings.get('openai_store', OMIT),
+                    store=(
+                        False
+                        if profile.get('openai_responses_requires_store_false', False)
+                        else model_settings.get('openai_store', OMIT)
+                    ),
                     user=model_settings.get('openai_user', OMIT),
                     include=include or OMIT,
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),

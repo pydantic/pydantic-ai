@@ -1123,11 +1123,11 @@ wheels = [
 name = "clai"
 source = { editable = "clai" }
 dependencies = [
-    { name = "pydantic-ai" },
+    { name = "pydantic-ai", extra = ["openai-codex"] },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pydantic-ai", editable = "." }]
+requires-dist = [{ name = "pydantic-ai", extras = ["openai-codex"], editable = "." }]
 
 [[package]]
 name = "click"
@@ -5375,6 +5375,9 @@ huggingface = [
 mistral = [
     { name = "pydantic-ai-slim", extra = ["mistral"] },
 ]
+openai-codex = [
+    { name = "pydantic-ai-slim", extra = ["openai-codex"] },
+]
 openrouter = [
     { name = "pydantic-ai-slim", extra = ["openrouter"] },
 ]
@@ -5468,6 +5471,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["groq"], marker = "extra == 'groq'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["huggingface"], marker = "extra == 'huggingface'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["mistral"], marker = "extra == 'mistral'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openai-codex"], marker = "extra == 'openai-codex'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["openrouter"], marker = "extra == 'openrouter'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["prefect"], marker = "extra == 'prefect'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["sentence-transformers"], marker = "extra == 'sentence-transformers'", editable = "pydantic_ai_slim" },
@@ -5479,7 +5483,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["web-fetch"], marker = "extra == 'web-fetch'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "exa", "examples", "groq", "huggingface", "mistral", "openrouter", "prefect", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web-fetch", "xai"]
+provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "exa", "examples", "groq", "huggingface", "mistral", "openai-codex", "openrouter", "prefect", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web-fetch", "xai"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -5650,6 +5654,10 @@ openai = [
     { name = "openai" },
     { name = "tiktoken" },
 ]
+openai-codex = [
+    { name = "filelock" },
+    { name = "openai" },
+]
 openrouter = [
     { name = "openai" },
 ]
@@ -5707,6 +5715,7 @@ requires-dist = [
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<4" },
+    { name = "filelock", marker = "extra == 'openai-codex'", specifier = ">=3.20.3" },
     { name = "genai-prices", specifier = ">=0.1.0" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.70.0" },
     { name = "griffelib", specifier = ">=2.0" },
@@ -5720,6 +5729,7 @@ requires-dist = [
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.4.2,!=2.4.6" },
     { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=2.45.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.45.0" },
+    { name = "openai", marker = "extra == 'openai-codex'", specifier = ">=2.45.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=2.45.0" },
     { name = "openai", marker = "extra == 'zai'", specifier = ">=2.45.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
@@ -5746,7 +5756,7 @@ requires-dist = [
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.14.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openai-codex", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "zai"]
 
 [[package]]
 name = "pydantic-core"

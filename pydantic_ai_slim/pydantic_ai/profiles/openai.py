@@ -280,6 +280,50 @@ class OpenAIModelProfile(ModelProfile, total=False):
     See https://github.com/pydantic/pydantic-ai/issues/3245 for more details.
     """
 
+    openai_responses_requires_store_false: bool
+    """Whether the Responses API requires `store=False`. Default: `False`.
+
+    Required by the OpenAI Codex backend, which rejects a stored response with
+    `400 Store must be set to false`. Set by [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider];
+    any `openai_store` a caller sets is overridden rather than passed through, because this is a backend
+    rule and not a capability.
+
+    Because nothing is stored server-side, the `provider_response_id` stamped on the response cannot be
+    used to resume it: `openai_previous_response_id`, `openai_background` continuation, and retrieval by
+    id all need a stored response. Conversation state has to be resent as message history instead.
+    """
+
+    openai_responses_requires_stream: bool
+    """Whether ordinary Responses API requests must be streamed and aggregated locally. Default: `False`.
+
+    Required by the OpenAI Codex backend, which only answers streamed Responses requests, and set by
+    [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider]. When set,
+    a non-streaming `request()` opens a stream, drains it, and returns the aggregated response, so
+    callers see no difference. Resuming a suspended response is still checked first, so a background
+    continuation is never re-created as a fresh request.
+    """
+
+    openai_responses_supports_input_tokens_count: bool
+    """Whether the Responses API serves the `/responses/input_tokens` endpoint. Default: `True`.
+
+    The OpenAI Codex backend does not route it — the path is answered by the edge with the same
+    challenge page any unknown path gets, so the SDK would surface an HTML body as a `ModelHTTPError`
+    rather than a count. Set to `False` by [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider],
+    which makes `count_tokens` (reached through `UsageLimits(count_tokens_before_request=True)`) raise
+    a `UserError` naming the limitation instead.
+    """
+
+    openai_responses_compaction_item_type: str
+    """The `type` discriminator carried by the compaction item in a `/responses/compact` response. Default: `'compaction'`.
+
+    The OpenAI Codex backend emits `'compaction_summary'` instead, and returns it after a `message`
+    item rather than alone, so a client that accepts only the documented spelling reads its own
+    successful compaction as a malformed response. The OpenAI SDK models no such variant, so the item
+    arrives as a permissively-constructed object and is re-validated against
+    `ResponseCompactionItem` once this flag has vouched for the spelling. Set by
+    [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider].
+    """
+
     openai_responses_tool_call_ids_are_response_scoped: bool
     """Whether Responses API tool call IDs are only unique within one response. Default: `False`.
 

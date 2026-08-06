@@ -12,6 +12,8 @@ pip/uv-add "pydantic-ai-slim[openai]"
 
 To use OpenAI models with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
 
+To use models through OpenAI Codex with a ChatGPT subscription instead of a Platform API key, see [OpenAI Codex](openai-codex.md).
+
 ## Environment variable
 
 Once you have the API key, you can set it as an environment variable:
