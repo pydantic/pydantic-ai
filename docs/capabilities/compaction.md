@@ -13,6 +13,8 @@ Some providers expose a built-in compaction API that runs on their side. Pydanti
 
 Each uses the corresponding provider API, so it's only available on that provider.
 
+A provider compaction part is a visibility boundary: the model starts anew from that point for derived tool state. Tool discoveries and on-demand capability loads before the boundary reset, so their tools are hidden again until searched for or loaded after the boundary. Searchable tools remain in the corpus and all registered tools remain callable if the model emits a valid call, even while their earlier schema or reveal evidence is no longer visible.
+
 ## Model-agnostic compaction
 
 To compact on any model, edit the message history yourself with a [history processor](../message-history.md#processing-message-history) wrapped as a [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] capability — this works with every provider. Common patterns:

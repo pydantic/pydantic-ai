@@ -124,6 +124,8 @@ Use `ctx.is_tool_available(tool_def)` when a wrapping toolset needs to decide wh
 
 Message history matters. Loaded capability state is reconstructed from matching `LoadCapabilityCallPart` and `LoadCapabilityReturnPart` pairs, while revealed function-tool state is reconstructed from `ToolAvailabilityDeltaPart` entries. A history processor must preserve the deltas or the complete capability-load pairs from which Pydantic AI can reconstruct them. If it removes both representations, those tools become hidden again.
 
+A `CompactionPart` resets both forms of derived state at its exact position. Capability tools loaded before the boundary become hidden until the capability is loaded again; the tools remain callable if the model emits a valid call.
+
 ## Dynamic Descriptions and Instructions
 
 Use `get_description()` when the catalog text depends on run context. Return a callable (with or without `RunContext`) that produces the description string. Use dynamic instructions when load-time instructions need deps or current run state.
