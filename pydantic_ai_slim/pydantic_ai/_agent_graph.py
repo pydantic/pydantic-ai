@@ -1474,6 +1474,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
         instruction_parts = await _get_instructions(ctx, run_context)
         if instruction_parts:
+            # Toolsets may reuse `InstructionPart` instances across requests. Clone them before
+            # passing the request context to capabilities so an in-place hook edit is request-local.
+            instruction_parts = [replace(part) for part in instruction_parts]
             instruction_parts = _messages.InstructionPart.sorted(instruction_parts) or None
         self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
 

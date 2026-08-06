@@ -82,6 +82,7 @@ from pydantic_ai.messages import (
     FilePart,
     FunctionToolCallEvent,
     ImageUrl,
+    InstructionPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -5068,6 +5069,63 @@ async def test_for_run_receives_populated_run_context():
     assert captured['conversation_id'] == 'conv-123'
     assert captured['metadata'] == {'run_id_seen': captured['run_id'], 'conversation_id_seen': 'conv-123'}
     assert captured['instrumentation_version'] is not None
+
+
+async def test_before_model_request_instruction_parts_are_fresh_per_request():
+    """A hook's in-place edit must not leak into the next model request."""
+
+    class ReusableInstructionToolset(AbstractToolset[Any]):
+        def __init__(self) -> None:
+            self.part = InstructionPart(content='shared', dynamic=False)
+
+        @property
+        def id(self) -> str:
+            return 'reusable-instructions'
+
+        async def get_instructions(self, ctx: RunContext[Any]) -> list[InstructionPart]:
+            return [self.part]
+
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+            return {}
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+        ) -> Any:
+            raise AssertionError('This toolset has no tools')
+
+    class MutatingCapability(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            instruction_parts = request_context.model_request_parameters.instruction_parts
+            assert instruction_parts is not None
+            instruction_parts[0].content += '!'
+            return request_context
+
+    seen: list[list[str]] = []
+
+    def respond(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append([part.content for part in info.model_request_parameters.instruction_parts or []])
+        return ModelResponse(parts=[TextPart('done')])
+
+    toolset = ReusableInstructionToolset()
+    agent = Agent(
+        FunctionModel(respond),
+        output_type=str,
+        toolsets=[toolset],
+        capabilities=[MutatingCapability()],
+    )
+
+    @agent.output_validator
+    def retry_once(ctx: RunContext[Any], output: str) -> str:
+        if ctx.retry == 0:
+            raise ModelRetry('retry once')
+        return output
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'done'
+    assert seen == [['shared!'], ['shared!']]
 
 
 async def test_concurrent_runs_capability_isolation():
