@@ -10,6 +10,7 @@ capability-function's native tools). Network-free: a fake model records what `co
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import contextvars
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -26,6 +27,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     SpeechPart,
@@ -41,6 +43,7 @@ from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    RealtimeSession,
     RealtimeTurnCompleteEvent,
 )
 from pydantic_ai.realtime.codec import (
@@ -745,3 +748,54 @@ async def test_run_context_exposes_realtime_session_and_merged_settings() -> Non
             pass
 
     assert observed == [{'output_modality': 'audio'}, session, session]
+
+
+async def test_external_cancellation_keeps_its_type_and_settles_history() -> None:
+    """`task.cancel()` during a session propagates an untranslated `CancelledError` with history settled.
+
+    A unit test because no recorded provider exchange can be interrupted mid-reply on replay. Pins
+    the substrate whole-run cancellation (#6497) will attach run state to: external cancellation
+    must keep its exception type — `asyncio.timeout()`, TaskGroup teardown, and Temporal all depend
+    on that — while session teardown still records the cut-off reply as interrupted, so the
+    conversation history survives the cancellation.
+    """
+    mid_reply = asyncio.Event()
+
+    class _ParkedMidReply(_Connection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            yield OutputTranscript(text='cut off mid-', is_final=False)
+            mid_reply.set()
+            await asyncio.Event().wait()
+
+    class _ParkedModel(_RecordingModel):
+        @asynccontextmanager
+        async def connect(
+            self,
+            *,
+            messages: Sequence[ModelMessage],
+            model_settings: RealtimeModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> AsyncGenerator[RealtimeConnection]:
+            yield _ParkedMidReply()
+
+    sessions: list[RealtimeSession] = []
+    agent = Agent(deps_type=type(None))
+
+    async def talk() -> None:
+        async with agent.realtime(_ParkedModel()).session() as session:
+            sessions.append(session)
+            async for _event in session:
+                pass
+
+    task = asyncio.create_task(talk())
+    await mid_reply.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    (session,) = sessions
+    assert session.closed
+    assert session.result is None
+    response = next(message for message in session.all_messages() if isinstance(message, ModelResponse))
+    assert response.state == 'interrupted'
+    assert any(isinstance(part, SpeechPart) and part.transcript == 'cut off mid-' for part in response.parts)
