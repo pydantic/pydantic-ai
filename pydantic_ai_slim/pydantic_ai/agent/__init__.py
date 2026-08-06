@@ -3356,13 +3356,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 supports_tool_return_schema=model_profile.get('supports_tool_return_schema', False),
             )
             # Run the same native ↔ local-tool fallback swap the classic agent-run path applies (via
-            # `Model._resolve_native_tool_swap`): drop an unsupported native tool when a local fallback
+            # `Model._resolve_request_tools`): drop an unsupported native tool when a local fallback
             # (stamped `unless_native=...` by the capability's toolset) is present, drop the redundant
             # local tool when the native tool IS supported, and raise the shared `UserError` (suggesting
             # `local=...`) only when unsupported with no local fallback. Realtime models genuinely default
             # to supporting no native tools, so the default here is `frozenset()`, not `SUPPORTED_NATIVE_TOOLS`.
-            model_request_parameters = models.resolve_native_tool_swap(
+            # No `can_withhold_tool_schemas`/`tool_addition_mode`: a realtime connection can neither
+            # withhold a schema nor reveal a tool later, so every deferred unrevealed tool resolves
+            # to `'withheld'` in the visibility table.
+            model_request_parameters = models.resolve_request_tools(
                 model_request_parameters, model_profile.get('supported_native_tools', frozenset())
+            )
+            # Realtime codecs read `function_tools` directly, so hidden tools are dropped from the
+            # connect-time advertisement entirely — the same physical removal this path applied
+            # before visibility became a resolved table.
+            model_request_parameters = dataclasses.replace(
+                model_request_parameters,
+                function_tools=model_request_parameters.declared_function_tools,
             )
 
             wrap_event_stream: (

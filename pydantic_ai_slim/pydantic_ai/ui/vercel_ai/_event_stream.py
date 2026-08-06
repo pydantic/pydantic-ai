@@ -22,6 +22,7 @@ from ...messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
     ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
@@ -31,10 +32,17 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from ._utils import dump_message_metadata, dump_provider_metadata, iter_metadata_chunks, tool_return_output
+from ._utils import (
+    TOOL_AVAILABILITY_DELTA_DATA_TYPE,
+    dump_message_metadata,
+    dump_provider_metadata,
+    iter_metadata_chunks,
+    tool_return_output,
+)
 from .request_types import RequestData
 from .response_types import (
     BaseChunk,
+    DataChunk,
     DoneChunk,
     ErrorChunk,
     FileChunk,
@@ -263,7 +271,14 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             ),
         )
         if part.args:
-            yield ToolInputDeltaChunk(tool_call_id=tool_call_id, input_text_delta=part.args_as_json_str())
+            # A `str` is emitted raw: the args this first chunk carries can be a partial JSON fragment
+            # that only becomes valid once the following deltas are concatenated, and
+            # `args_as_json_str()` would degrade it to the `INVALID_JSON` wrapper. `dict` args always
+            # arrive complete, so the helper is still the right encoder for them.
+            yield ToolInputDeltaChunk(
+                tool_call_id=tool_call_id,
+                input_text_delta=part.args if isinstance(part.args, str) else part.args_as_json_str(),
+            )
 
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseChunk]:
         tool_call_id = delta.tool_call_id or ''
@@ -369,6 +384,13 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):
             yield chunk
+
+    async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseChunk]:
+        part = event.part
+        yield DataChunk(
+            type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
+            data={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+        )
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):

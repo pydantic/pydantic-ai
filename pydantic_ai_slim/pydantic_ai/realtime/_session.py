@@ -2255,11 +2255,19 @@ class RealtimeSession:
             user_content = None
         else:
             tool_def = tool_manager.get_tool_def(call.tool_name)
-            result_part, user_content = build_tool_return_part(
+            result_part, user_content, tools_added = build_tool_return_part(
                 tool_result,
                 call=call_part,
                 tool_kind=tool_def.tool_kind if tool_def else None,
             )
+            if tools_added:
+                # The connection's tools are fixed when it opens, so a reveal can never reach the
+                # provider; failing loudly beats silently providing less than the tool requested.
+                raise UserError(
+                    f'Realtime sessions cannot reveal tools mid-session, so `ToolReturn.tools` from '
+                    f'tool {call.tool_name!r} cannot be honored: the connection advertises a fixed '
+                    'tool list from the moment it opens.'
+                )
         finally:
             # The call has settled: on success `handle_call` has already recorded it on
             # `usage.tool_calls` in this same event-loop segment (so no limit check can observe the
