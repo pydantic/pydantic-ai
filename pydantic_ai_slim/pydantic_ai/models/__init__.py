@@ -159,12 +159,15 @@ class ModelRequestParameters:
 
     function_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
     native_tools: list[AbstractNativeTool] = field(default_factory=list[AbstractNativeTool])
-    tool_visibility: dict[str, ToolVisibility] = field(default_factory=dict[str, ToolVisibility], repr=False)
+    tool_visibility: dict[str, ToolVisibility] | None = None
     """Maps each function tool name to its resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility].
 
-    Empty on authored parameters; [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request]
-    populates an entry for every function tool. Output tools never get entries because they are
-    always plain `tools` entries, so an absent entry is treated as `'visible'` by the accessors below.
+    `None` on authored parameters; [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request]
+    populates an entry for every function tool, so a resolved request always carries a dict — empty
+    exactly when there are no function tools. Output tools never get entries because they are always
+    plain `tools` entries; [`visibility_of`][pydantic_ai.models.ModelRequestParameters.visibility_of]
+    treats their absent entries like `'visible'`. The no-defaults `repr` omits the field until
+    resolution, so authored parameters print as authored and resolved state stays visible.
     """
     revealed_tool_names: set[str] = field(default_factory=set[str], repr=False)
     """Names history has revealed so far, derived from the outgoing message list before each request.
@@ -201,6 +204,14 @@ class ModelRequestParameters:
     after checking that the model's profile supports thinking.
     """
 
+    def visibility_of(self, tool_name: str) -> ToolVisibility | None:
+        """The resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility] for `tool_name`.
+
+        `None` when the parameters are unresolved, or for a name without an entry (output tools,
+        unknown names) — which every consumer treats like `'visible'`.
+        """
+        return (self.tool_visibility or {}).get(tool_name)
+
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
@@ -211,16 +222,14 @@ class ModelRequestParameters:
         return {
             tool_def.name: tool_def
             for tool_def in [*self.function_tools, *self.output_tools]
-            if self.tool_visibility.get(tool_def.name) not in ('withheld', 'via_channel')
+            if self.visibility_of(tool_def.name) not in ('withheld', 'via_channel')
         }
 
     @cached_property
     def declared_function_tools(self) -> list[ToolDefinition]:
         """Function tools represented in the provider's ordinary `tools` collection."""
         return [
-            tool
-            for tool in self.function_tools
-            if self.tool_visibility.get(tool.name) not in ('withheld', 'via_channel')
+            tool for tool in self.function_tools if self.visibility_of(tool.name) not in ('withheld', 'via_channel')
         ]
 
     @cached_property
@@ -558,10 +567,10 @@ class Model(ABC, Generic[InterfaceClient]):
             t.unless_native or t.with_native or t.defer_loading for t in params.function_tools
         ):
             params = self._resolve_request_tools(params)
-        elif params.function_tools:
+        else:
             # Nothing native and nothing deferred: every function tool is plainly visible. Stamped
-            # here so `tool_visibility` is resolved after `prepare_request` on this path too, not
-            # only when the full swap resolution runs.
+            # unconditionally so `tool_visibility` is a dict — `None` means unresolved — after
+            # `prepare_request` on this path too, not only when the full swap resolution runs.
             params = replace(
                 params,
                 tool_visibility={t.name: 'visible' for t in params.function_tools},
@@ -701,10 +710,10 @@ class Model(ABC, Generic[InterfaceClient]):
             or any(t.unless_native or t.with_native or t.defer_loading for t in params.function_tools)
         ):
             return False
-        # TODO: Phase 3 may reorder the stages so message projection always receives resolved
+        # TODO(#7196): reorder the stages so message projection always receives resolved
         # parameters, at which point this on-demand resolution can be removed.
-        resolved = params if params.tool_visibility else self._resolve_request_tools(params)
-        return any(visibility == 'deferred' for visibility in resolved.tool_visibility.values())
+        resolved = params if params.tool_visibility is not None else self._resolve_request_tools(params)
+        return any(visibility == 'deferred' for visibility in (resolved.tool_visibility or {}).values())
 
     def _resolve_request_tools(self, params: ModelRequestParameters) -> ModelRequestParameters:
         """Resolve native tools, their local fallbacks, and deferred-tool visibility for this model.

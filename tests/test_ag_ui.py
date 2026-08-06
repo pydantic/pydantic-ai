@@ -7435,3 +7435,6 @@ async def test_tool_availability_delta_stream_matches_dumped_activity_message() 
     activity = next(message for message in dumped if isinstance(message, ActivityMessage))
     assert snapshot_event['activityType'] == activity.activity_type
     assert snapshot_event['content'] == activity.content
+    # The literal is a frontend-facing wire contract: deriving both sides from the shared constant
+    # would let a rename drift silently.
+    assert activity.activity_type == 'pydantic_ai_tool_availability_delta'

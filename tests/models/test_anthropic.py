@@ -11595,14 +11595,16 @@ async def test_anthropic_lazy_advertisement_appends_with_tool_addition(allow_mod
     assert after_names == [*before_names, 'lookup_refund_policy']
     [revealed] = [tool for tool in after['tools'] if tool.get('name') == 'lookup_refund_policy']
     assert revealed['defer_loading'] is True
-    addition_names = {
+    addition_names = [
         block['tool']['name']
         for message in after['messages']
         for block in message['content']
         if block.get('type') == 'tool_addition'
-    }
-    assert addition_names == {'lookup_refund_policy'}
-    assert addition_names <= set(after_names)
+    ]
+    # List equality: a same-request duplicate `tool_addition` must fail here, not only in the
+    # dedupe unit test.
+    assert addition_names == ['lookup_refund_policy']
+    assert set(addition_names) <= set(after_names)
     assert [tool.get('name') for tool in final['tools']] == after_names
     assert any(
         part.tool_name == 'lookup_refund_policy'
@@ -11675,14 +11677,16 @@ async def test_anthropic_lazy_advertisement_live(allow_model_requests: None, ant
     assert reveal_tools[:-1] == before_tools
     assert reveal_names == [*before_names, 'lookup_refund_policy']
     assert reveal_tools[-1]['defer_loading'] is True
-    addition_names = {
+    addition_names = [
         block['tool']['name']
         for message in reveal['messages']
         for block in message['content']
         if block.get('type') == 'tool_addition'
-    }
-    assert addition_names == {'lookup_refund_policy'}
-    assert addition_names <= set(reveal_names)
+    ]
+    # List equality: a same-request duplicate `tool_addition` must fail here, not only in the
+    # dedupe unit test.
+    assert addition_names == ['lookup_refund_policy']
+    assert set(addition_names) <= set(reveal_names)
     assert all(request_body['tools'] == reveal_tools for request_body in later)
 
     beta = 'mid-conversation-tool-changes-2026-07-01'
@@ -11745,14 +11749,16 @@ async def test_anthropic_fable_5_lazy_advertisement_live(allow_model_requests: N
     assert reveal_tools[:-1] == before_tools
     assert reveal_names == [*before_names, 'lookup_refund_policy']
     assert reveal_tools[-1]['defer_loading'] is True
-    addition_names = {
+    addition_names = [
         block['tool']['name']
         for message in reveal['messages']
         for block in message['content']
         if block.get('type') == 'tool_addition'
-    }
-    assert addition_names == {'lookup_refund_policy'}
-    assert addition_names <= set(reveal_names)
+    ]
+    # List equality: a same-request duplicate `tool_addition` must fail here, not only in the
+    # dedupe unit test.
+    assert addition_names == ['lookup_refund_policy']
+    assert set(addition_names) <= set(reveal_names)
     assert all(request_body['tools'] == reveal_tools for request_body in later)
 
     beta = 'mid-conversation-tool-changes-2026-07-01'

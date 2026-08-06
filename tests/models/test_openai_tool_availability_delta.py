@@ -158,10 +158,16 @@ async def test_supported_model_calls_additional_tool(
     """A supported model acts on the native item and calls a tool absent from top-level `tools`."""
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
     tool = refund_tool()
-    # The same parameters the request goes out with: `prepare_messages` decides how to render the
-    # delta from the tools it's told about, so handing it a different set than `request` gets is how
-    # a caller ends up with a rendering that describes a request it never sends.
-    parameters = ModelRequestParameters(function_tools=[tool])
+    # The agent-reachable shape: only a *deferred, revealed* tool travels `via_channel`. A plain
+    # visible tool would occupy an ordinary `tools` entry and render no item at all.
+    tool.defer_loading = True
+    # The same *resolved* parameters the request goes out with: `prepare_messages` decides how to
+    # render the delta from the tools it's told about, so handing it a different set than `request`
+    # gets is how a caller ends up with a rendering that describes a request it never sends.
+    _, parameters = model.prepare_request(
+        None,
+        ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name}),
+    )
 
     messages = model.prepare_messages(
         [

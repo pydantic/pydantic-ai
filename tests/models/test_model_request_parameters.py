@@ -1,3 +1,4 @@
+from dataclasses import replace
 from typing import Literal
 
 import pytest
@@ -34,7 +35,7 @@ def test_model_request_parameters_are_serializable():
         {
             'function_tools': [],
             'native_tools': [],
-            'tool_visibility': {},
+            'tool_visibility': None,
             'revealed_tool_names': set(),
             'output_mode': 'text',
             'output_object': None,
@@ -146,7 +147,7 @@ def test_model_request_parameters_are_serializable():
                     'headers': None,
                 },
             ],
-            'tool_visibility': {},
+            'tool_visibility': None,
             'revealed_tool_names': set(),
             'output_mode': 'text',
             'output_object': None,
@@ -187,9 +188,11 @@ def test_request_visibility_state_survives_serialization_but_stays_out_of_repr()
     Temporal hands the model activity a `_RequestParams` carrying the whole
     `ModelRequestParameters`, serialized by the pydantic data converter, and the adapters read both
     sets on the far side — Anthropic decides there whether the corpus is capability-only. Excluding
-    them from serialization would deliver empty sets to every durable run, which nothing that stays
-    inside one process would notice. `repr=False` is what keeps them out of snapshots, and it does
-    that without touching the wire.
+    them from serialization would deliver empty state to every durable run, which nothing that
+    stays inside one process would notice. `revealed_tool_names` stays out of the repr via
+    `repr=False`; `tool_visibility` relies on the no-defaults repr instead — omitted while `None`
+    (authored), visible once resolved — so object snapshots can see resolution state and never
+    mismatch invisibly.
     """
     params = ModelRequestParameters(revealed_tool_names={'deferred_tool'})
 
@@ -197,6 +200,9 @@ def test_request_visibility_state_survives_serialization_but_stays_out_of_repr()
 
     assert round_tripped.revealed_tool_names == {'deferred_tool'}
     assert repr(params) == snapshot('ModelRequestParameters(function_tools=[], native_tools=[], output_tools=[])')
+    assert repr(replace(params, tool_visibility={'t': 'visible'})) == snapshot(
+        "ModelRequestParameters(function_tools=[], native_tools=[], tool_visibility={'t': 'visible'}, output_tools=[])"
+    )
 
 
 @pytest.mark.parametrize('visibility', ['visible', 'deferred', 'withheld', 'via_channel'])
@@ -211,7 +217,7 @@ def test_tool_visibility_round_trip_and_equality(
 
     del dumped['tool_visibility']
     old_payload = ta.validate_python(dumped)
-    assert old_payload.tool_visibility == {}
+    assert old_payload.tool_visibility is None
 
     assert ModelRequestParameters(tool_visibility={'t': visibility}) == ModelRequestParameters(
         tool_visibility={'t': visibility}

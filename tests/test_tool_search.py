@@ -3557,7 +3557,6 @@ class _TransientlyFailingModel(WrapperModel):
 
 
 @pytest.mark.vcr
-@pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after a cross-provider failover')
 @pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
 async def test_live_fallback_failover_capability_load_and_recovery(
@@ -3625,7 +3624,11 @@ async def test_live_fallback_failover_capability_load_and_recovery(
     assert (len(openai_bodies), len(anthropic_bodies)) == (1, 2)
 
     # Both recovered-primary requests render the reveal on Anthropic's own channel: the
-    # `tool_addition` reference plus the lazily appended deferred entry.
+    # `tool_addition` reference plus the lazily appended deferred entry. These bind at record
+    # time only — playback returns the recorded bodies regardless of what current code sends —
+    # so the regression guards for this rendering are the mocked byte-level tests
+    # (`test_fallback_reprojects_openai_delta_to_anthropic_tool_addition` and siblings); what
+    # stays live here is the run trajectory, `served_by`, and the cache-prefix checker.
     for body in anthropic_bodies:
         serialized = json.dumps(body, sort_keys=True)
         assert serialized.count('"type": "tool_addition"') == 1
@@ -7171,11 +7174,15 @@ def test_prepare_request_stamps_visibility_on_the_plain_path() -> None:
             ToolDefinition(name='plain_b', parameters_json_schema={'type': 'object', 'properties': {}}),
         ]
     )
-    assert params.tool_visibility == {}
+    assert params.tool_visibility is None
 
     _, prepared = TestModel().prepare_request(None, params)
 
     assert prepared.tool_visibility == {'plain_a': 'visible', 'plain_b': 'visible'}
+
+    # Zero function tools still resolves: `None` means unresolved, `{}` means resolved-and-empty.
+    _, empty = TestModel().prepare_request(None, ModelRequestParameters())
+    assert empty.tool_visibility == {}
 
 
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])

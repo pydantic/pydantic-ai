@@ -572,7 +572,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
-                        'tool_visibility': {},
+                        'tool_visibility': None,
                         'revealed_tool_names': [],
                         'output_mode': 'text',
                         'output_object': None,
@@ -953,6 +953,7 @@ async def test_fallback_model_structured_output():
 
         assert info.model_request_parameters == snapshot(
             ModelRequestParameters(
+                tool_visibility={},
                 output_mode='tool',
                 output_tools=[
                     ToolDefinition(
@@ -984,6 +985,7 @@ async def test_fallback_model_structured_output():
 
         assert info.model_request_parameters == snapshot(
             ModelRequestParameters(
+                tool_visibility={},
                 output_mode='native',
                 output_object=OutputObjectDefinition(
                     json_schema={
@@ -1007,6 +1009,7 @@ async def test_fallback_model_structured_output():
 
         assert info.model_request_parameters == snapshot(
             ModelRequestParameters(
+                tool_visibility={},
                 output_mode='prompted',
                 output_object=OutputObjectDefinition(
                     json_schema={
@@ -1081,6 +1084,7 @@ async def test_fallback_model_structured_output_instrumented(capfire: CaptureLog
     def prompted_output_func(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.model_request_parameters == snapshot(
             ModelRequestParameters(
+                tool_visibility={},
                 output_mode='prompted',
                 output_object=OutputObjectDefinition(
                     json_schema={
