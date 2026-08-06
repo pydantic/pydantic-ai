@@ -80,6 +80,13 @@ class TestModel(Model):
     """If set, this text is returned as the final output."""
     custom_output_args: Any | None = None
     """If set, these args will be passed to the output tool."""
+    output_tool_name: str | None = None
+    """If set, the output tool with this name is called instead of selecting one based on `seed`.
+
+    This is the output-tool equivalent of `call_tools` for function tools. When unset (the default),
+    the output tool is selected with `seed % len(output_tools)`. Raises `UserError` if no output tool
+    with this name is available.
+    """
     seed: int = 0
     """Seed for generating random data."""
     last_model_request_parameters: ModelRequestParameters | None = field(default=None, init=False)
@@ -98,6 +105,7 @@ class TestModel(Model):
         call_tools: list[str] | Literal['all'] = 'all',
         custom_output_text: str | None = None,
         custom_output_args: Any | None = None,
+        output_tool_name: str | None = None,
         seed: int = 0,
         model_name: str = 'test',
         profile: ModelProfileSpec | None = None,
@@ -107,6 +115,7 @@ class TestModel(Model):
         self.call_tools = call_tools
         self.custom_output_text = custom_output_text
         self.custom_output_args = custom_output_args
+        self.output_tool_name = output_tool_name
         self.seed = seed
         self.last_model_request_parameters = None
         self._model_name = model_name
@@ -187,6 +196,19 @@ class TestModel(Model):
             tools_to_call = (function_tools_lookup[name] for name in self.call_tools)
             return [(r.name, r) for r in tools_to_call]
 
+    def _select_output_tool(self, output_tools: list[ToolDefinition]) -> ToolDefinition:
+        """Select which output tool to call.
+
+        Honors `output_tool_name` when set, otherwise falls back to the seed-based selection.
+        """
+        if self.output_tool_name is None:
+            return output_tools[self.seed % len(output_tools)]
+        for tool in output_tools:
+            if tool.name == self.output_tool_name:
+                return tool
+        available = ', '.join(repr(tool.name) for tool in output_tools)
+        raise UserError(f'Output tool {self.output_tool_name!r} not found. Available output tools: {available}.')
+
     def _get_output(self, model_request_parameters: ModelRequestParameters) -> _WrappedTextOutput | _WrappedToolOutput:
         if self.custom_output_text is not None:
             assert model_request_parameters.output_mode != 'tool', (
@@ -198,7 +220,7 @@ class TestModel(Model):
             assert model_request_parameters.output_tools is not None, (
                 'No output tools provided, but `custom_output_args` is set.'
             )
-            output_tool = model_request_parameters.output_tools[0]
+            output_tool = self._select_output_tool(model_request_parameters.output_tools)
 
             if k := output_tool.outer_typed_dict_key:
                 return _WrappedToolOutput({k: self.custom_output_args})
@@ -287,7 +309,7 @@ class TestModel(Model):
         else:
             assert output_tools, 'No output tools provided'
             custom_output_args = output_wrapper.value
-            output_tool = output_tools[self.seed % len(output_tools)]
+            output_tool = self._select_output_tool(output_tools)
             if custom_output_args is not None:
                 return ModelResponse(
                     parts=[
