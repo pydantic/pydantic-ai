@@ -44,10 +44,15 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         for toolset in self.toolsets:
             if (toolset_id := toolset.id) is None:
                 continue
-            # `<...>` marks an id the framework assigns rather than the user, and those are only
-            # unique per agent: `<agent>` names each agent's own function toolset, so two of them
-            # meet legitimately whenever one workflow runs more than one agent. Uniqueness is a
-            # rule about ids a user chose, which is also all an override can address.
+            # `<...>` marks an id the framework assigns rather than the user (`<agent>` for an
+            # agent's own function toolset, `<output>` for its output toolset). One of those can
+            # legitimately appear twice in one agent: `durable_exec` reads `agent.toolsets` (which
+            # includes the function toolset), wraps each member, and feeds the result back through
+            # `override(toolsets=..., tools=[])`, while `_build_toolset_list` always prepends a
+            # function toolset for the overridden `tools`. Both stand for the same logical toolset,
+            # so neither `toolset:<id>` addressing nor `ToolDefinition.toolset_id` is made ambiguous
+            # by the pair. Uniqueness is a rule about ids a user chose, which is also all an
+            # override can address.
             if toolset_id.startswith('<') and toolset_id.endswith('>'):
                 continue
             validate_instruction_id_segment(toolset_id, kind='Toolset id')
