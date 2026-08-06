@@ -951,6 +951,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         and retry; keep the conversation in-process rather than persisting through the Vercel AI wire
         format if you need retry semantics to survive a round-trip.
 
+        Tool calls lose one thing too: `ToolCallPart.args` that don't parse as a JSON object are
+        rewritten to `{'INVALID_JSON': '<raw args>'}` (see
+        [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict]), so the raw string is
+        no longer recoverable as args on reload.
+
         When `sdk_version=6`, tool calls that have no corresponding result in the message history
         are automatically detected as deferred and emitted with `state='approval-requested'`, so the
         frontend can render approve/reject buttons on reload. On v5, such tool calls are emitted
