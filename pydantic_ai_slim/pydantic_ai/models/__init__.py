@@ -222,7 +222,10 @@ class ModelRequestParameters:
         """
         if visibility := (self.tool_visibility or {}).get(tool_name):
             return visibility
-        return 'withheld' if any(t.name == tool_name and t.defer_loading for t in self.function_tools) else 'visible'
+        # `tool_defs` is a cached dict, so the fallback stays O(1) — adapters call this in
+        # per-tool loops.
+        tool_def = self.tool_defs.get(tool_name)
+        return 'withheld' if tool_def is not None and tool_def.defer_loading else 'visible'
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
