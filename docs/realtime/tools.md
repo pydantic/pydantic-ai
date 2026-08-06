@@ -100,7 +100,14 @@ A [capability][pydantic_ai.capabilities.AbstractCapability] attached to the agen
 
 `get_model_settings()` may run during capability setup, but regular model settings do not configure
 a realtime model. Pass [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] through
-`realtime(model_settings=...)` instead.
+`realtime(model_settings=...)` instead. Inside session hooks and tools,
+[`ctx.model_settings`][pydantic_ai.tools.RunContext.model_settings] holds the merged
+[`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was connected with,
+[`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] is `True` from `before_run` onward, and
+[`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] exposes the live
+[`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] once it is connected (it is still `None` in
+`before_run`, in instruction functions, and in the pre-handler part of `wrap_run`, which all run
+before the connection is established).
 
 Deferred capabilities load in a session the same way they do in a regular run: the capability
 catalog is part of the session's instructions, and calling the `load_capability` tool returns the
