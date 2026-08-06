@@ -39,9 +39,11 @@ Synchronous methods like [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.ru
 When a [tool](tools.md) or [output function](output.md#output-functions) delegates to another agent, match the inner call to the function type:
 
 - From an async function, use `await inner_agent.run(...)`.
-- From a sync function, use `inner_agent.run_sync(...)`.
+- From a sync function, use `inner_agent.run_sync(...)` or `inner_agent.run_stream_sync(...)`.
 
 Calling [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] directly from async code raises `RuntimeError: This event loop is already running`; use [`Agent.run()`][pydantic_ai.agent.AbstractAgent.run] there instead.
+
+Sync functions run in worker threads, and a sync inner run borrows the thread of the sync function that started it. Sync tools of that inner run therefore run one at a time on that thread, rather than in parallel as they would at the top level. Use an async function and `await inner_agent.run(...)` if the inner run's sync tools need to run concurrently.
 
 In runtimes without worker threads, sync delegation is unavailable; use an async callback and `await` the inner run.
 

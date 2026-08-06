@@ -75,12 +75,59 @@ _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
-_originating_event_loop: ContextVar[asyncio.AbstractEventLoop | None] = ContextVar(
-    '_originating_event_loop', default=None
-)
-_worker_thread_requests: ContextVar[Queue[Callable[[], None] | None] | None] = ContextVar(
-    '_worker_thread_requests', default=None
-)
+
+
+@dataclass
+class SyncCallbackHost:
+    """The event loop a synchronous callback was dispatched from, and the queue that hands work back to it."""
+
+    loop: asyncio.AbstractEventLoop
+    """The loop running the agent run that dispatched the callback."""
+
+    requests: Queue[Callable[[], None] | None]
+    """Nested synchronous callbacks for the blocked worker thread to run, plus a `None` wake-up sentinel."""
+
+    def run(self, coro: Coroutine[object, object, _R]) -> _R:
+        """Run `coro` on the originating loop from the worker thread, and wait for its result.
+
+        While waiting, the worker runs nested synchronous callbacks itself, so a finite worker pool cannot
+        starve: the callback blocked here is the one that would otherwise hold the last free pool slot.
+
+        The worker stays blocked until `loop` completes `coro`, so a caller that cancels the enclosing run
+        and then stops driving `loop` -- rather than letting the abandoned callback finish -- strands it.
+        """
+        future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        future.add_done_callback(lambda _: self.requests.put(None))
+        while not future.done():
+            if request := self.requests.get():
+                request()
+        try:
+            return future.result()
+        except FutureCancelledError:
+            raise asyncio.CancelledError from None
+
+
+_sync_callback_host: ContextVar[SyncCallbackHost | None] = ContextVar('_sync_callback_host', default=None)
+
+
+def sync_callback_host() -> SyncCallbackHost | None:
+    """The loop a synchronous callback can hand its asynchronous work back to, if this thread has one.
+
+    Synchronous tools and output functions run in worker threads, where `asyncio` finds no event loop at all
+    because loops are thread-local. A synchronous method called from one would otherwise run its coroutine on
+    a second loop, breaking every resource bound to the first -- like a provider's HTTP connection pool.
+
+    Returns `None` when there is nothing to hand work back to, and when the caller is async code that should
+    keep getting the usual "event loop is already running" error rather than silently being bridged.
+    """
+    host = _sync_callback_host.get()
+    if host is None or not host.loop.is_running():
+        return None
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return host
+    return None
 
 
 def run_until_complete(coro: Coroutine[object, object, _R]) -> _R:
@@ -90,36 +137,9 @@ def run_until_complete(coro: Coroutine[object, object, _R]) -> _R:
     -- like Temporal's workflow event loop -- as a `UserError`, which is how the rest of the library reports
     usage mistakes, and which durable execution integrations know to treat as a deterministic failure rather
     than an infrastructure one to retry.
-
-    Sync callbacks run in worker threads. If one calls a synchronous Pydantic AI method, its coroutine is
-    submitted to the callback's originating event loop so it can safely reuse loop-bound resources. While
-    waiting, the worker executes nested sync callbacks itself so a finite worker pool cannot starve.
     """
-    originating_loop = _originating_event_loop.get()
-    if originating_loop is not None and originating_loop.is_running():
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            requests = _worker_thread_requests.get()
-            if requests is None:
-                requests = Queue[Callable[[], None] | None]()
-                token = _worker_thread_requests.set(requests)
-            else:
-                token = None
-            try:
-                future = asyncio.run_coroutine_threadsafe(coro, originating_loop)
-                future.add_done_callback(lambda _: requests.put(None))
-                while not future.done():
-                    if request := requests.get():
-                        request()
-                try:
-                    return future.result()
-                except FutureCancelledError:
-                    raise asyncio.CancelledError from None
-            finally:
-                if token is not None:
-                    _worker_thread_requests.reset(token)
-        # Preserve the existing active-loop error when a synchronous method is called directly from async code.
+    if (host := sync_callback_host()) is not None:
+        return host.run(coro)
 
     try:
         return _graph_run_until_complete(coro)
@@ -188,8 +208,9 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         except RuntimeError:
             return await run_sync(wrapped_func)
 
-    requests = _worker_thread_requests.get()
-    if requests is not None:
+    if (host := _sync_callback_host.get()) is not None:
+        # This run was started by a synchronous callback whose worker thread is blocked waiting for it, so
+        # hand the callback to that thread rather than taking another slot in a pool it may have exhausted.
         future: Future[_R] = Future()
         ctx = copy_context()
 
@@ -202,18 +223,20 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
                 else:
                     future.set_result(result)
 
-        requests.put(run_request)
+        host.requests.put(run_request)
         return await asyncio.wrap_future(future)
 
-    token = _originating_event_loop.set(loop)
-    try:
-        if executor is not None:
-            ctx = copy_context()
-            return await loop.run_in_executor(executor, ctx.run, wrapped_func)
+    def call_in_worker() -> _R:
+        # Set inside the worker so only the callback's own context knows how to reach this loop; setting it
+        # here also hands the same queue to every callback nested inside, which is what keeps them reentrant.
+        _sync_callback_host.set(SyncCallbackHost(loop, Queue()))
+        return wrapped_func()
 
-        return await run_sync(wrapped_func)
-    finally:
-        _originating_event_loop.reset(token)
+    if executor is not None:
+        ctx = copy_context()
+        return await loop.run_in_executor(executor, ctx.run, call_in_worker)
+
+    return await run_sync(call_in_worker)
 
 
 def is_async_generator_already_running(exc: RuntimeError) -> bool:

@@ -68,6 +68,7 @@ from pydantic_ai._sync_stream import (
     _finalize_loop,  # pyright: ignore[reportPrivateUsage]
     _request_exit,  # pyright: ignore[reportPrivateUsage]
     _run_task_to_completion,  # pyright: ignore[reportPrivateUsage]
+    _StreamLoop,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AgentRun
@@ -375,7 +376,7 @@ def _interrupt_next_loop_run(
     bridge: SyncStreamBridge[Any], monkeypatch: pytest.MonkeyPatch
 ) -> Callable[[Awaitable[Any]], Any]:
     """Raise `KeyboardInterrupt` from the next blocking event-loop drive."""
-    loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    loop = bridge._stream_loop.loop  # pyright: ignore[reportPrivateUsage]
     original_run_until_complete = loop.run_until_complete
     calls = 0
 
@@ -477,7 +478,7 @@ def test_sync_stream_bridge_interrupt_without_pump_preserves_original_error():
             cleanup_complete = True
 
     bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
-    loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    loop = bridge._stream_loop.loop  # pyright: ignore[reportPrivateUsage]
     original_error = KeyboardInterrupt('original')
 
     def interrupt() -> None:
@@ -516,7 +517,7 @@ def test_sync_stream_bridge_task_drain_retries_multiple_early_stops(monkeypatch:
 
     with monkeypatch.context() as context:
         context.setattr(loop, 'run_until_complete', stop_twice)
-        _run_task_to_completion(loop, task)
+        _run_task_to_completion(_StreamLoop(loop, None), task)
 
     assert calls == 3
     assert task.done()
@@ -540,7 +541,7 @@ def test_sync_stream_bridge_task_drain_propagates_error_after_completion(monkeyp
     with monkeypatch.context() as context:
         context.setattr(loop, 'run_until_complete', finish_then_fail)
         with pytest.raises(RuntimeError) as exc_info:
-            _run_task_to_completion(loop, task)
+            _run_task_to_completion(_StreamLoop(loop, None), task)
 
     assert exc_info.value is error
     assert task.done()
@@ -564,7 +565,7 @@ def test_sync_stream_bridge_task_drain_propagates_error_while_loop_is_running(mo
         context.setattr(loop, 'run_until_complete', fail_to_drive_loop)
         context.setattr(loop, 'is_running', lambda: True)
         with pytest.raises(RuntimeError) as exc_info:
-            _run_task_to_completion(loop, task)
+            _run_task_to_completion(_StreamLoop(loop, None), task)
 
     assert exc_info.value is error
     pending_tasks = asyncio.all_tasks(loop)
@@ -605,7 +606,7 @@ def test_sync_stream_bridge_interrupt_drains_pump_before_owner_exit():
     stream = bridge.stream_sync(source)
     assert next(stream) == 'first'
 
-    loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    loop = bridge._stream_loop.loop  # pyright: ignore[reportPrivateUsage]
 
     def interrupt() -> None:
         raise KeyboardInterrupt
@@ -999,7 +1000,7 @@ def test_sync_stream_bridge_owner_cancellation_can_be_suppressed():
 
     bridge = SyncStreamBridge(SuppressingContextManager(), async_alternative='`async_method`')
     bridge._owner_task.cancel()  # pyright: ignore[reportPrivateUsage]
-    bridge._loop.run_until_complete(bridge._owner_task)  # pyright: ignore[reportPrivateUsage]
+    bridge._stream_loop.loop.run_until_complete(bridge._owner_task)  # pyright: ignore[reportPrivateUsage]
 
     assert exit_type is asyncio.CancelledError
     bridge.shutdown()
@@ -1029,7 +1030,7 @@ def test_sync_stream_bridge_finalizes_while_owner_loop_is_running():
     """
     result = Agent(TestModel()).run_stream_sync('Hello')
     bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
-    loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    loop = bridge._stream_loop.loop  # pyright: ignore[reportPrivateUsage]
     owner_task = bridge._owner_task  # pyright: ignore[reportPrivateUsage]
     bridge_ref = weakref.ref(bridge)
     holder = [result]
@@ -1090,7 +1091,7 @@ def test_sync_stream_bridge_running_loop_finalizer_drains_pumps():
         pump_task = loop.create_task(wait_forever())
         pump_tasks = {pump_task}
 
-        _finalize_loop(loop, owner_task, exit_requested, pump_tasks, threading.get_ident())
+        _finalize_loop(_StreamLoop(loop, None), owner_task, exit_requested, pump_tasks, threading.get_ident())
         await owner_task
 
         assert pump_task.cancelled()
@@ -1134,7 +1135,7 @@ def test_sync_stream_bridge_finalizes_while_another_loop_is_running():
     """
     result = Agent(TestModel()).run_stream_sync('Hello')
     bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
-    owner_loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    owner_loop = bridge._stream_loop.loop  # pyright: ignore[reportPrivateUsage]
     owner_task = bridge._owner_task  # pyright: ignore[reportPrivateUsage]
     bridge_ref = weakref.ref(bridge)
     holder = [result]
@@ -1161,7 +1162,7 @@ def test_sync_stream_bridge_finalizes_on_another_thread():
     """
     result = Agent(TestModel()).run_stream_sync('Hello')
     bridge = result._bridge  # pyright: ignore[reportPrivateUsage]
-    owner_loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    owner_loop = bridge._stream_loop.loop  # pyright: ignore[reportPrivateUsage]
     owner_task = bridge._owner_task  # pyright: ignore[reportPrivateUsage]
     bridge_ref = weakref.ref(bridge)
     holder = [result]
@@ -1196,7 +1197,7 @@ def test_sync_stream_bridge_finalizer_ignores_closed_loop():
     assert not owner_task.done()
     loop.close()
 
-    _finalize_loop(loop, owner_task, exit_requested, set(), threading.get_ident())
+    _finalize_loop(_StreamLoop(loop, None), owner_task, exit_requested, set(), threading.get_ident())
 
     assert not owner_task.done()
     assert not exit_requested.done()
@@ -1317,7 +1318,7 @@ def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(error
         raise error
 
     bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
-    loop = bridge._loop  # pyright: ignore[reportPrivateUsage]
+    loop = bridge._stream_loop.loop  # pyright: ignore[reportPrivateUsage]
     stream = bridge.stream_sync(source)
 
     def force_stop() -> None:  # pragma: no cover

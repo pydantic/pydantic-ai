@@ -10,6 +10,10 @@ OpenTelemetry spans dangling, since the run span never closes in the task that o
 `SyncStreamBridge` instead keeps a long-lived task holding the async context manager open, and each
 streaming pass runs its entire `async for` in another long-lived task. All tasks run on the caller's event
 loop, preserving the event-loop affinity of async clients and other resources reused across sync calls.
+
+Which loop that is depends on where the caller is: sync code normally owns the loop and drives it itself,
+but a synchronous callback of an enclosing run reaches back to the loop that run is already using. See
+`_StreamLoop`.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ import weakref
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import AbstractAsyncContextManager, suppress
 from contextvars import Context, copy_context
+from dataclasses import dataclass
 from threading import get_ident
 from types import TracebackType
 from typing import Generic
@@ -40,6 +45,59 @@ _ExitInfo = tuple[type[BaseException] | None, BaseException | None, TracebackTyp
 def _is_awaitable(value: T | Awaitable[T]) -> TypeIs[Awaitable[T]]:
     """Narrow an optionally awaitable result without losing its generic return type."""
     return inspect.isawaitable(value)
+
+
+async def _ensure_task(awaitable: Awaitable[T], context: Context) -> asyncio.Task[T]:
+    return context.run(asyncio.ensure_future, awaitable)
+
+
+async def _await_future(future: asyncio.Future[T]) -> T:
+    return await future
+
+
+async def _call_now(func: Callable[[], object]) -> None:
+    func()
+
+
+@dataclass
+class _StreamLoop:
+    """How synchronous code reaches the event loop its stream runs on.
+
+    Sync code normally owns its event loop and drives it with `run_until_complete()`. Inside a synchronous
+    tool or output function of an enclosing run, the loop that run uses is already running on another thread,
+    so work is submitted to it and this thread blocks on the result instead. Driving a second loop there
+    would strand the enclosing run's async resources -- like a provider's HTTP connection pool -- on the
+    first one, which is the same failure the module docstring's affinity guarantee exists to prevent.
+    """
+
+    loop: asyncio.AbstractEventLoop
+    """The event loop every task of this stream runs on."""
+
+    host: _utils.SyncCallbackHost | None
+    """Set when `loop` belongs to an enclosing run, and this thread must hand work to it rather than drive it."""
+
+    def ensure_task(self, awaitable: Awaitable[T], context: Context) -> asyncio.Task[T]:
+        """Schedule `awaitable` on the loop as a task running in `context`."""
+        if self.host is None:
+            return context.run(asyncio.ensure_future, awaitable, loop=self.loop)
+        return self.host.run(_ensure_task(awaitable, context))
+
+    def wait(self, future: asyncio.Future[T]) -> T:
+        """Block until `future` completes on the loop, and return its result."""
+        if self.host is None:
+            return self.loop.run_until_complete(future)
+        return self.host.run(_await_future(future))
+
+    def run_now(self, func: Callable[[], object]) -> None:
+        """Run `func` on the thread that drives the loop, and wait for it to finish.
+
+        Cancelling a task, closing a memory stream and resolving a future all schedule loop callbacks, so
+        they have to happen on that thread rather than on whichever thread the synchronous caller is.
+        """
+        if self.host is None:
+            func()
+        else:
+            self.host.run(_call_now(func))
 
 
 async def _hold_context_manager(
@@ -80,8 +138,14 @@ async def _wait_for_task(task: asyncio.Task[None]) -> None:
     await asyncio.sleep(0)
 
 
-def _run_task_to_completion(loop: asyncio.AbstractEventLoop, task: asyncio.Task[None]) -> None:
+def _run_task_to_completion(stream_loop: _StreamLoop, task: asyncio.Task[None]) -> None:
     """Drive a task to completion despite stale `run_until_complete()` stop callbacks."""
+    if stream_loop.host is not None:
+        # The loop is driven by its own thread, so there are no stop callbacks of ours to work around.
+        stream_loop.wait(task)
+        return
+
+    loop = stream_loop.loop
     waiter = loop.create_task(_wait_for_task(task))
     try:
         while not waiter.done():
@@ -104,7 +168,7 @@ def _run_task_to_completion(loop: asyncio.AbstractEventLoop, task: asyncio.Task[
 
 
 def _shutdown_loop(
-    loop: asyncio.AbstractEventLoop,
+    stream_loop: _StreamLoop,
     owner_task: asyncio.Task[None],
     exit_requested: asyncio.Future[_ExitInfo],
     pump_tasks: set[asyncio.Task[None]],
@@ -113,15 +177,19 @@ def _shutdown_loop(
     """Tell the owner task to exit the stream context manager, then drive its cleanup to completion."""
     tasks = tuple(pump_tasks)
     for task in tasks:
-        task.cancel()
+        stream_loop.run_now(task.cancel)
     for task in tasks:
         with suppress(BaseException):
-            _run_task_to_completion(loop, task)
+            _run_task_to_completion(stream_loop, task)
     pump_tasks.clear()
 
-    if not exit_requested.done():
-        exit_requested.set_result(exit_info)
-    _run_task_to_completion(loop, owner_task)
+    def resolve_exit() -> None:
+        if not exit_requested.done():
+            exit_requested.set_result(exit_info)
+
+    # Resolving the future schedules the owner task's continuation, so it belongs on the loop's own thread.
+    stream_loop.run_now(resolve_exit)
+    _run_task_to_completion(stream_loop, owner_task)
 
 
 async def _request_exit(
@@ -145,25 +213,27 @@ async def _request_exit(
 
 
 def _finalize_loop(
-    loop: asyncio.AbstractEventLoop,
+    stream_loop: _StreamLoop,
     owner_task: asyncio.Task[None],
     exit_requested: asyncio.Future[_ExitInfo],
     pump_tasks: set[asyncio.Task[None]],
     owner_thread_id: int,
 ) -> None:
     """Best-effort finalizer for callers that do not close the synchronous wrapper explicitly."""
+    loop = stream_loop.loop
     if loop.is_closed() or owner_task.done():
         return
 
     def request_exit() -> None:
         loop.create_task(_request_exit(owner_task, exit_requested, pump_tasks))
 
-    if get_ident() == owner_thread_id and not loop.is_running():
+    # A loop borrowed from an enclosing run is never ours to drive, even once that run has stopped driving it.
+    if stream_loop.host is None and get_ident() == owner_thread_id and not loop.is_running():
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             with suppress(BaseException):
-                _shutdown_loop(loop, owner_task, exit_requested, pump_tasks, (None, None, None))
+                _shutdown_loop(stream_loop, owner_task, exit_requested, pump_tasks, (None, None, None))
             return
 
     # The owner loop is running, this is a foreign thread, or another loop is active in this thread.
@@ -211,18 +281,20 @@ class SyncStreamBridge(Generic[StreamT]):
                 f'event loop; use {async_alternative} instead.'
             )
 
-        loop = _utils.get_event_loop()
+        host = _utils.sync_callback_host()
+        stream_loop = _StreamLoop(host.loop if host is not None else _utils.get_event_loop(), host)
+        loop = stream_loop.loop
         caller_context = copy_context()
         entered: asyncio.Future[tuple[StreamT, Context]] = loop.create_future()
         exit_requested: asyncio.Future[_ExitInfo] = loop.create_future()
-        owner_task = loop.create_task(_hold_context_manager(cm, entered, exit_requested))
+        owner_task = stream_loop.ensure_task(_hold_context_manager(cm, entered, exit_requested), copy_context())
         try:
-            stream, run_context = loop.run_until_complete(entered)
+            stream, run_context = stream_loop.wait(entered)
         except BaseException:
             if not owner_task.done():
-                owner_task.cancel()
+                stream_loop.run_now(owner_task.cancel)
             with suppress(BaseException):
-                _run_task_to_completion(loop, owner_task)
+                _run_task_to_completion(stream_loop, owner_task)
             # If cancellation reached `cm.__aenter__()`, the owner task forwarded it to `entered`.
             # Retrieve it so the abandoned future cannot report an unhandled exception later.
             with suppress(BaseException):
@@ -230,7 +302,7 @@ class SyncStreamBridge(Generic[StreamT]):
             raise
 
         self.stream = stream
-        self._loop = loop
+        self._stream_loop = stream_loop
         self._owner_task = owner_task
         self._exit_requested = exit_requested
         self._caller_context = caller_context
@@ -239,7 +311,7 @@ class SyncStreamBridge(Generic[StreamT]):
         self._pump_tasks: set[asyncio.Task[None]] = set()
         # Clean up if the caller never uses the `with` block: exit the stream at GC.
         self._finalizer = weakref.finalize(
-            self, _finalize_loop, loop, owner_task, exit_requested, self._pump_tasks, self._owner_thread_id
+            self, _finalize_loop, stream_loop, owner_task, exit_requested, self._pump_tasks, self._owner_thread_id
         )
 
     def _task_context(self) -> Context:
@@ -270,22 +342,22 @@ class SyncStreamBridge(Generic[StreamT]):
         """
         self._check_owner_thread()
         if self._finalizer.detach() is not None:
-            _shutdown_loop(self._loop, self._owner_task, self._exit_requested, self._pump_tasks, exit_info)
+            _shutdown_loop(self._stream_loop, self._owner_task, self._exit_requested, self._pump_tasks, exit_info)
 
     def _run(self, awaitable: Awaitable[T]) -> T:
         """Run `awaitable` on the bridge's event loop and clean up its task if the caller interrupts."""
-        task = self._task_context().run(asyncio.ensure_future, awaitable, loop=self._loop)
+        task = self._stream_loop.ensure_task(awaitable, self._task_context())
         # `run_until_complete()` deliberately does not stop for a Future that already holds
         # `KeyboardInterrupt` or `SystemExit`. Read completed tasks directly so teardown cannot hang.
         if task.done():
             return task.result()
         try:
-            return self._loop.run_until_complete(task)
+            return self._stream_loop.wait(task)
         except BaseException:
             if not task.done():
-                task.cancel()
+                self._stream_loop.run_now(task.cancel)
                 with suppress(BaseException):
-                    self._loop.run_until_complete(task)
+                    self._stream_loop.wait(task)
             raise
 
     async def _call(self, func: Callable[[Unpack[_PosArgsT]], Awaitable[T] | T], *args: Unpack[_PosArgsT]) -> T:
@@ -336,7 +408,7 @@ class SyncStreamBridge(Generic[StreamT]):
             raise RuntimeError('This synchronous stream is already closed.')
         self._check_owner_thread()
         send_stream, receive_stream = anyio.create_memory_object_stream[T](max_buffer_size=0)
-        pump_task = self._task_context().run(self._loop.create_task, self._pump_to_stream(make_aiter, send_stream))
+        pump_task = self._stream_loop.ensure_task(self._pump_to_stream(make_aiter, send_stream), self._task_context())
         pump_tasks = self._pump_tasks
         pump_tasks.add(pump_task)
 
@@ -361,7 +433,7 @@ class SyncStreamBridge(Generic[StreamT]):
                 receive_stream.close()
             else:
                 with suppress(RuntimeError):
-                    self._loop.call_soon_threadsafe(cancel_pump)
+                    self._stream_loop.loop.call_soon_threadsafe(cancel_pump)
 
         cleanup_deferred = False
         try:
@@ -395,7 +467,7 @@ class SyncStreamBridge(Generic[StreamT]):
                     raise
                 # Closing and cancelling unblocks the pump whether it is waiting to send or waiting on the
                 # source iterator. Then drive its task so the source iterator closes in that same task.
-                cancel_pump()
+                self._stream_loop.run_now(cancel_pump)
                 with suppress(BaseException):
                     self._run(pump_task)
                 self._pump_tasks.discard(pump_task)

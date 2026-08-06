@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from threading import Barrier, Event
@@ -82,6 +83,56 @@ def test_nested_run_sync_uses_originating_event_loop(
     assert result.output == 'done'
     assert len(loops) == 2
     assert loops[0] is loops[1]
+
+
+def test_nested_run_stream_sync_uses_originating_event_loop() -> None:
+    """Synchronous streaming has the same loop affinity to preserve as `run_sync()`, across the same boundary."""
+    loops: list[asyncio.AbstractEventLoop] = []
+
+    async def inner_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        loops.append(asyncio.get_running_loop())
+        yield 'streamed'
+
+    inner = Agent(FunctionModel(stream_function=inner_model))
+
+    def output_fn(ctx: RunContext[object], instructions: str) -> str:
+        with inner.run_stream_sync(instructions) as stream:
+            # `stream_output()` yields the output accumulated so far, so the last chunk is the whole output.
+            return [*stream.stream_output(debounce_by=None)][-1]
+
+    async def outer_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        loops.append(asyncio.get_running_loop())
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'instructions': 'x'})])
+
+    outer = Agent(FunctionModel(outer_model), output_type=[output_fn])
+
+    assert outer.run_sync('go').output == 'streamed'
+    assert len(loops) == 2
+    assert loops[0] is loops[1]
+
+
+def test_nested_run_stream_sync_propagates_enter_failure() -> None:
+    """A failure entering the inner stream must reach the callback instead of stranding the owner task."""
+
+    async def inner_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise RuntimeError('inner stream failed')
+        yield  # pragma: no cover
+
+    inner = Agent(FunctionModel(stream_function=inner_model))
+
+    def output_fn(ctx: RunContext[object], instructions: str) -> str:
+        with inner.run_stream_sync(instructions) as stream:
+            return [*stream.stream_output(debounce_by=None)][-1]  # pragma: no cover
+
+    async def outer_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'instructions': 'x'})])
+
+    outer = Agent(FunctionModel(outer_model), output_type=[output_fn])
+
+    with pytest.raises(RuntimeError, match='inner stream failed'):
+        outer.run_sync('go')
 
 
 def test_nested_run_sync_from_sync_tool_uses_originating_event_loop() -> None:
