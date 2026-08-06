@@ -64,7 +64,6 @@ try:
         AssistantMessage,
         BaseEvent,
         BinaryInputContent,
-        Context,
         DeveloperMessage,
         FunctionCall,
         Message,
@@ -356,21 +355,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     def conversation_id(self) -> str | None:
         """Conversation ID from the AG-UI `RunAgentInput.threadId`."""
         return self.run_input.thread_id
-
-    @cached_property
-    def context(self) -> list[Context]:
-        """Client-supplied context entries from the AG-UI `RunAgentInput.context`.
-
-        Each entry is a `description`/`value` pair the frontend considers relevant to the run,
-        like the originating platform, the requesting user, or a channel's standing instructions.
-
-        These are **not** passed to the model automatically, and they don't belong in
-        [instructions][pydantic_ai.agent.Agent.instructions]: instructions carry operator
-        authority, so building them out of client-submitted text lets a prompt injection inherit it.
-        Read them here, pass them into `deps`, and deliver them to the model as data — see
-        [Context](../../ui/ag-ui.md#context).
-        """
-        return self.run_input.context
 
     @cached_property
     def deferred_tool_results(self) -> DeferredToolResults | None:

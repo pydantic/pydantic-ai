@@ -373,35 +373,6 @@ async def test_agui_adapter_state_none() -> None:
     assert adapter.state is None
 
 
-async def test_agui_adapter_context_empty() -> None:
-    """Ensure adapter exposes an empty list when the frontend sends no context."""
-    agent = Agent(model=FunctionModel(stream_function=simple_stream))
-
-    adapter = AGUIAdapter(agent=agent, run_input=create_input(), accept=None)
-
-    assert adapter.context == []
-
-
-async def test_agui_adapter_context() -> None:
-    """Ensure adapter exposes the frontend's context entries verbatim."""
-    agent = Agent(model=FunctionModel(stream_function=simple_stream))
-
-    run_input = create_input(
-        context=[
-            Context(description='Originating platform', value='Slack'),
-            Context(description='Requesting user', value='U456'),
-        ]
-    )
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
-
-    assert adapter.context == snapshot(
-        [
-            Context(description='Originating platform', value='Slack'),
-            Context(description='Requesting user', value='U456'),
-        ]
-    )
-
-
 @dataclass
 class ChannelDeps:
     """Deps as the documented pattern wires them: a fact the server established, plus the client's entries."""
@@ -413,9 +384,11 @@ class ChannelDeps:
 async def test_agui_adapter_context_reaches_model_as_tool_output_not_instructions() -> None:
     """Client context is delivered to the model as data; only server-established facts are instructions.
 
-    Instructions carry operator authority, so text a client authored must never become one — a prompt
-    injection in an entry would inherit that authority. This pins the shape the AG-UI docs teach: the
-    authenticated workspace is an instruction, the frontend's entries reach the model as tool output.
+    The adapter never reads `RunAgentInput.context` itself, so nothing reaches the model until the
+    caller wires it in off `run_input`. Instructions carry operator authority, so text a client
+    authored must never become one — a prompt injection in an entry would inherit that authority.
+    This pins the shape the AG-UI docs teach: the authenticated workspace is an instruction, the
+    frontend's entries reach the model as tool output.
     """
     requests: list[ModelRequest] = []
 
@@ -446,7 +419,7 @@ async def test_agui_adapter_context_reaches_model_as_tool_output_not_instruction
         context=[Context(description='Requesting user', value='U456')],
     )
     adapter = AGUIAdapter(agent=agent, run_input=run_input)
-    deps = ChannelDeps(workspace='engineering', context=adapter.context)
+    deps = ChannelDeps(workspace='engineering', context=adapter.run_input.context)
     async for _ in adapter.run_stream(deps=deps):
         pass
 
@@ -466,16 +439,6 @@ async def test_agui_adapter_context_reaches_model_as_tool_output_not_instruction
             )
         ]
     )
-
-
-async def test_agui_adapter_forwarded_props() -> None:
-    """`forwardedProps` is carried through unvalidated for the caller to interpret."""
-    agent = Agent(model=FunctionModel(stream_function=simple_stream))
-
-    run_input = create_input(forwarded_props={'channel': 'C123', 'user': 'U456'})
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=None)
-
-    assert adapter.run_input.forwarded_props == snapshot({'channel': 'C123', 'user': 'U456'})
 
 
 async def test_agui_adapter_forwarded_props_non_dict() -> None:

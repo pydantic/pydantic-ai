@@ -245,7 +245,7 @@ Alongside messages, an AG-UI client can send a `context` array of `description`/
 
 These entries are not passed to the model automatically, and they don't belong in [instructions][pydantic_ai.agent.Agent.instructions]. Instructions carry operator authority — they're treated as *your* instruction to the model — so building them out of text a client sent lets a prompt injection inherit that authority. Delivering them as data denies them that authority but doesn't make them safe: they're still indirect prompt-injection input, so scope and re-authorize side-effecting tools from `deps` your server established, never from an entry's `description` or `value`. See [Mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts) and the [trust model](./overview.md#trust-model-for-client-submitted-messages).
 
-Read the entries off [`AGUIAdapter.context`][pydantic_ai.ui.ag_ui.AGUIAdapter.context] and deliver them to the model as **data**. Facts your server established — the authenticated user, the workspace — are what go in instructions:
+Read the entries off `adapter.run_input.context` and deliver them to the model as **data**. Facts your server established — the authenticated user, the workspace — are what go in instructions:
 
 ```py {title="ag_ui_context.py"}
 from dataclasses import dataclass
@@ -285,7 +285,7 @@ def authenticated_workspace(request: Request) -> str:
 
 async def run_agent(request: Request) -> Response:
     adapter = await AGUIAdapter.from_request(request, agent=agent)
-    deps = ChannelDeps(workspace=authenticated_workspace(request), context=adapter.context)
+    deps = ChannelDeps(workspace=authenticated_workspace(request), context=adapter.run_input.context)
     return adapter.streaming_response(adapter.run_stream(deps=deps))
 ```
 
@@ -295,6 +295,8 @@ async def run_agent(request: Request) -> Response:
 To let a client-supplied fact change how the agent behaves, authenticate it first: verify the caller or channel, look up the policy *your* server holds for it, and write the instruction from that. The entry itself stays data.
 
 Anything that isn't meant for the model at all — a Slack channel ID, a locale — is better carried in `forwardedProps`, which the adapter passes through untouched as `adapter.run_input.forwarded_props`. Validating it proves shape, not identity: who the user is, what tenant they're in, and what they're allowed to do come from authenticated server state.
+
+`context`, `forwardedProps` and `parentRunId` are read straight off [`run_input`][pydantic_ai.ui.UIAdapter.run_input] rather than through adapter properties of their own. The adapter's properties — `messages`, `toolset`, `state`, `conversation_id`, `deferred_tool_results` — are the concepts every UI protocol shares and that the adapter itself feeds into the agent run. These three are AG-UI-specific and consumed only by your code, so they stay on the protocol object where their types are the protocol's own.
 
 ### Tool approval (interrupts)
 
