@@ -459,6 +459,11 @@ Capabilities can hook into five lifecycle points, each with up to four variants:
 
 `wrap_run` supports error recovery: if `handler()` raises and `wrap_run` catches the exception and returns a result instead, the error is suppressed and the recovery result is used. This works with both [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] and [`agent.iter()`][pydantic_ai.agent.Agent.iter].
 
+!!! warning "Tearing down tasks you spawn"
+    A run is cancelled — via [`RunContext.cancel_run()`][pydantic_ai.tools.RunContext.cancel_run], a [`CancellationToken`][pydantic_ai.CancellationToken], an `asyncio.wait_for` timeout, or an enclosing task group — by cancelling the single asyncio task that drives it. Work the run `await`s inline receives the `CancelledError` automatically; a task you start yourself with `asyncio.create_task(...)` runs on a **different** task and does **not**, so a capability that spawns tasks must tear them down itself.
+
+    Prefer structured concurrency ([`anyio.create_task_group()`](https://anyio.readthedocs.io/en/stable/tasks.html) with `async with`): the run's cancellation flows through the `async with` and children are cancelled on scope exit, with no manual cleanup. If you keep raw tasks, cancel and drain them in a `try`/`finally` in `wrap_run` (issue every `task.cancel()` first, then a single `await asyncio.gather(*tasks, return_exceptions=True)`), and wrap that teardown in `anyio.CancelScope(shield=True)` so it still completes when the run is already being cancelled. A raw `task.cancel()` can pierce even a shielded scope, so for work that must finish regardless, keep it on its own task and await that task explicitly. A sub-agent run you launch on a background task is likewise yours to cancel and drain — only sub-agents you `await` inline are torn down for you.
+
 ### Node hooks
 
 | Hook | Signature | Purpose |
