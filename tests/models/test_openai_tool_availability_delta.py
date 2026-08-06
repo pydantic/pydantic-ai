@@ -128,6 +128,28 @@ async def test_duplicate_names_in_one_delta_render_a_single_declaration() -> Non
     )
 
 
+async def test_delta_naming_a_withheld_tool_does_not_smuggle_its_schema() -> None:
+    """`additional_tools` carries `'via_channel'` definitions only.
+
+    On the direct `Model.request` path, a history delta can name a tool the caller-authored
+    parameters keep `'withheld'` (its name absent from `revealed_tool_names`). Rendering it here
+    would declare the schema the request just withheld, and make the tool callable on top —
+    while a `'deferred'` name is already declared in `tools` and would be declared twice.
+    """
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
+    tool = ToolDefinition(name='foo', parameters_json_schema={'type': 'object', 'properties': {}}, defer_loading=True)
+    _, parameters = model.prepare_request(None, ModelRequestParameters(function_tools=[tool]))
+    assert parameters.visibility_of(tool.name) == 'withheld'
+
+    _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+        OpenAIResponsesModelSettings(),
+        parameters,
+    )
+
+    assert all(item.get('type') != 'additional_tools' for item in items)
+
+
 async def test_stored_reveal_does_not_namespace_plain_tool_call() -> None:
     """Reveal state alone cannot move an ordinary `tools`-array function out of the default namespace.
 

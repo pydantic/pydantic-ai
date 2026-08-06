@@ -2341,7 +2341,13 @@ def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAg
 def _with_outgoing_reveal_state(
     parameters: models.ModelRequestParameters, messages: list[_messages.ModelMessage]
 ) -> models.ModelRequestParameters:
-    """Make per-request reveal state match the history that will be sent to the model."""
+    """Make per-request reveal state match the history that will be sent to the model.
+
+    Deliberately not gated on capability-load markers from the same history: history is the trust
+    boundary (whoever can fabricate a reveal can fabricate the load exchange too), and eager
+    capabilities' search-gated tools are revealed with no load marker ever appearing —
+    `test_delta_in_history_reveals_a_capability_tool_without_a_load` pins the decision.
+    """
     return replace(parameters, revealed_tool_names=parse_discovered_tools(messages))
 
 

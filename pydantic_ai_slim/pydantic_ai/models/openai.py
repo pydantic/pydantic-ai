@@ -3538,6 +3538,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> responses.response_input_item_param.AdditionalTools:
         """Build one `additional_tools` item for the given names, deduped across the request.
 
+        Only `'via_channel'` names render: this item is the channel that carries a definition
+        absent from the `tools` array, so a `'visible'` or `'deferred'` name (already declared
+        there) has nothing to add, and a `'withheld'` name — a delta can name one when a direct
+        `Model.request` caller authors `revealed_tool_names` that don't cover the history's
+        deltas — must not have the schema the request just withheld smuggled on via the item.
+
         `rendered` accumulates the names already declared by an earlier history part (a
         duplicated delta from a UI round-trip, a delta plus a replayed search return) — one
         declaration per request is enough, mirroring the Anthropic renderer's `tool_addition`
@@ -3551,7 +3557,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if (
                 name not in rendered
                 and name in tool_defs_by_name
-                and model_request_parameters.visibility_of(name) != 'visible'
+                and model_request_parameters.visibility_of(name) == 'via_channel'
             ):
                 renderable.append(name)
                 rendered.add(name)
