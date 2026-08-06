@@ -6,8 +6,11 @@ from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
+from typing_extensions import deprecated
 
+from pydantic_ai import _utils
 from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import (
@@ -234,8 +237,20 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         visitor(self)
 
     @property
+    @deprecated(
+        '`has_wrap_node_run` is deprecated: `wrap_node_run` now runs under every way of driving a run, '
+        'so there is nothing left to test for.',
+        category=PydanticAIDeprecationWarning,
+    )
     def has_wrap_node_run(self) -> bool:
-        """Whether this capability (or any sub-capability) overrides wrap_node_run."""
+        """Whether this capability (or any sub-capability) overrides wrap_node_run.
+
+        Deprecated: `wrap_node_run` runs under every way of driving a run, so there is nothing left to test for.
+        """
+        return self._has_wrap_node_run
+
+    @property
+    def _has_wrap_node_run(self) -> bool:
         return type(self).wrap_node_run is not AbstractCapability.wrap_node_run
 
     @property
@@ -567,11 +582,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         the returned next node, call `handler` multiple times (retry), or
         return a different node to redirect graph progression.
 
-        Note: this hook fires when using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run],
-        [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and when manually driving
-        an [`agent.iter()`][pydantic_ai.agent.Agent.iter] run with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], but it does **not** fire when
-        iterating over the run with bare `async for` (which yields stream events, not
-        node results).
+        Note: this hook fires however the run is driven -- [`agent.run()`][pydantic_ai.agent.AbstractAgent.run],
+        [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], an
+        [`agent.iter()`][pydantic_ai.agent.Agent.iter] run advanced with
+        [`agent_run.next()`][pydantic_ai.run.AgentRun.next], and a bare `async for node in agent_run:`
+        loop, which advances through `next()` too. The one exception is the final
+        [`ModelRequestNode`][pydantic_ai.agent.ModelRequestNode] under `run_stream()`, which hands back
+        the result mid-stream and so only fires `before_node_run`.
 
         When using `agent.run()` with `event_stream_handler`, the handler wraps both
         streaming and graph advancement (i.e. the model call happens inside the wrapper).
@@ -612,13 +629,20 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> AsyncIterable[AgentStreamEvent]:
         """Wraps the event stream for a streamed node. Can observe or transform events.
 
+        The wrapper is applied where the node's stream is produced, so it fires however the run
+        is driven — including under [`agent.iter()`][pydantic_ai.agent.Agent.iter] and when the
+        caller streams a node itself with `node.stream()`.
+
         Note: when this method is overridden (or [`Hooks.on.event`][pydantic_ai.capabilities.hooks.Hooks.on]
         / [`Hooks.on.run_event_stream`][pydantic_ai.capabilities.hooks.Hooks.on] are registered),
-        `agent.run()` automatically enables streaming mode so this hook
-        fires even without an explicit `event_stream_handler`.
+        `agent.run()` and [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable
+        streaming mode so this hook fires even without an explicit `event_stream_handler`.
         """
-        async for event in stream:
-            yield event
+        try:
+            async for event in stream:
+                yield event
+        finally:
+            await _utils.aclose_if_supported(stream)
 
     # --- Model request lifecycle hooks ---
 

@@ -5,6 +5,7 @@ from contextlib import AbstractAsyncContextManager, aclosing
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from decimal import Decimal
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
@@ -13,6 +14,7 @@ from pydantic import ValidationError
 from typing_extensions import Self
 
 from . import _utils, exceptions, messages as _messages, models
+from ._cost import best_effort_price
 from ._output import (
     OutputDataT_inv,
     OutputSchema,
@@ -59,11 +61,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _metadata_getter: Callable[[], dict[str, Any] | None] | None = field(default=None, repr=False)
     _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] = field(default=list, repr=False)
 
-    _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
+    _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
     _cached_output: OutputDataT | None = field(default=None, init=False)
 
     _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
+    _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
@@ -197,7 +200,21 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         !!! note
             This won't return the full usage until the stream is finished.
         """
-        return self._initial_run_ctx_usage + self._raw_stream_response.usage
+        # Mid-stream, `_raw_stream_response.usage` carries no cost yet (it's filled in when the response is
+        # appended to history), so add a live best-effort estimate of this request's cost on top of the
+        # earlier requests' cost. Once the cost has been filled in, `+` already accounts for it.
+        usage = self._initial_run_ctx_usage + self._raw_stream_response.usage
+        if self._raw_stream_response.usage.cost is None:
+            price = best_effort_price(
+                self._raw_stream_response.usage,
+                model_name=self.response.model_name,
+                provider_api_url=self.response.provider_url,
+                provider_name=self.response.provider_name,
+                genai_request_timestamp=self.response.timestamp,
+            )
+            if price is not None:
+                usage.cost = (usage.cost or Decimal(0)) + price.total_price
+        return usage
 
     @property
     def timestamp(self) -> datetime:
@@ -360,14 +377,62 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s, interleaving events emitted into the run's event buffer."""
-        if self._agent_stream_iterator is None:
-            self._agent_stream_iterator = _get_usage_checking_stream_response(
-                self._raw_stream_response, self._usage_limits, lambda: self.usage
+        if self._events_iterator is None:
+            # Token-limit checks run after every event and only look at token counts, so skip the per-event
+            # cost calculation that the `usage` property does and pass the cheaper token-only usage.
+            base_iter = _get_usage_checking_stream_response(
+                self._raw_stream_response,
+                self._usage_limits,
+                lambda: self._initial_run_ctx_usage + self._raw_stream_response.usage,
+            )
+            # Wrap once, so a capability's `wrap_run_event_stream` sees each event exactly once no
+            # matter how many times this stream is iterated (e.g. `stream_text()` then a drain).
+            self._events_iterator = aiter(
+                self._root_capability.wrap_run_event_stream(self._run_ctx, stream=self._events_iter(base_iter))
             )
 
-        base_iter = self._agent_stream_iterator
+        return self._pull_shared(self._events_iterator)
 
-        return self._events_iter(base_iter)
+    async def aclose_events(self) -> None:
+        """Close the event stream when a consumer walks away before exhausting it.
+
+        The event iterator owns the capability chain, which can otherwise stay suspended with
+        resources held, like a `ProcessEventStream` handler task parked on its receive stream.
+
+        Any in-flight shared pull is cancelled and drained before the iterator is closed. The
+        close is shielded because graph teardown can run inside an already-cancelled scope.
+
+        The closed iterator is kept in place rather than discarded, so a later `__aiter__()` ends
+        immediately instead of building a second chain (and a second handler) over a spent stream.
+        """
+        events_iterator = self._events_iterator
+        if events_iterator is not None:
+            for scope in self._pull_scopes:
+                scope.cancel()
+            with anyio.CancelScope(shield=True):
+                async with self._anext_lock:
+                    await _utils.aclose_if_supported(events_iterator)
+
+    async def _pull_shared(self, events_iterator: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
+        # Serialize access to the shared iterator. An early break from stream_text() can leave a
+        # pending `anext()` task in group_by_temporal while cleanup/drain starts iterating the same
+        # stream.
+        while True:
+            async with self._anext_lock:
+                event: AgentStreamEvent | None = None
+                with anyio.CancelScope() as scope:
+                    self._pull_scopes.add(scope)
+                    try:
+                        try:
+                            event = await anext(events_iterator)
+                        except StopAsyncIteration:
+                            return
+                    finally:
+                        self._pull_scopes.discard(scope)
+                if scope.cancel_called:
+                    return
+                assert event is not None
+            yield event
 
     async def _model_response_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Iterate only the model response stream events, dropping events emitted into the run's event buffer."""
@@ -382,9 +447,6 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield event
 
     async def _events_iter(self, base_iter: AsyncIterator[ModelResponseStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
-        # Serialize access to the shared base iterator. An early break from
-        # stream_text() can leave a pending `anext()` task in group_by_temporal
-        # while cleanup/drain starts iterating the same stream.
         while True:
             # Drain events emitted into the run's event buffer before each pull, so they interleave with the
             # model's own events. Events emitted while a pull is in flight surface on the next pull,
@@ -392,12 +454,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             while buffer := self._event_stream_buffer_getter():
                 yield buffer.pop(0)
 
-            async with self._anext_lock:
-                try:
-                    event = await anext(base_iter)
-
-                except StopAsyncIteration:
-                    return
+            try:
+                event = await anext(base_iter)
+            except StopAsyncIteration:
+                return
 
             yield event
 
@@ -474,7 +534,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             raise NotImplementedError('Setting output tool return content is not supported for this result type.')
         return self._all_messages
 
-    def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes:  # pragma: no cover
+    def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes:
         """Return all messages from [`all_messages`][pydantic_ai.result.StreamedRunResult.all_messages] as JSON bytes.
 
         Args:

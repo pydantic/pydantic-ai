@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, MutableMapping, Sequence
+from collections.abc import AsyncIterator, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, cast
+from typing import Any
 
+import anyio
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import HandleDeferredToolCalls, ReinjectSystemPrompt
@@ -302,6 +304,28 @@ async def test_event_stream_back_to_back_text():
     )
 
 
+async def test_event_stream_close_finalizes_native_stream_without_protocol_trailer():
+    """A disconnected consumer cannot receive protocol trailers, but its native stream must be closed."""
+    finalized = anyio.Event()
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        try:
+            yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+            await asyncio.sleep(30)  # pragma: no cover
+        finally:
+            finalized.set()
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    transformed = DummyUIEventStream(run_input=request).transform_stream(event_generator())
+
+    assert await anext(transformed) == '<stream>'
+    assert await anext(transformed) == '<response>'
+    await _utils.aclose_if_supported(transformed)
+
+    with anyio.fail_after(5):
+        await finalized.wait()
+
+
 async def test_event_stream_error_closes_open_text():
     """A mid-stream error while a text part is open emits `text-end` before the error.
 
@@ -430,90 +454,14 @@ async def test_event_stream_error_closes_open_tool_call():
     )
 
 
-async def test_event_stream_aclose_closes_native_stream():
-    """Closing the transformed stream mid-run must not raise and must close the native stream.
-
-    `aclose()` throws `GeneratorExit` into `transform_stream()` at its current yield; it must not
-    yield its closing protocol events while that propagates (`RuntimeError: async generator ignored
-    GeneratorExit`), and it must close the native stream it was forwarding so the underlying agent
-    run doesn't stay suspended until garbage collection. See #7016.
-    """
-    native_stream_closed = False
-
-    async def event_generator() -> AsyncIterator[NativeEvent]:
-        nonlocal native_stream_closed
-        try:
-            yield PartStartEvent(index=0, part=TextPart(content='Hello'))
-        finally:
-            native_stream_closed = True
-
-    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
-    event_stream = DummyUIEventStream(run_input=request)
-
-    transformed = cast('AsyncGenerator[str, None]', event_stream.transform_stream(event_generator()))
-    events = [await anext(transformed), await anext(transformed), await anext(transformed)]
-
-    await transformed.aclose()
-
-    assert events == snapshot(
-        [
-            '<stream>',
-            '<response>',
-            '<text follows_text=False>Hello',
-        ]
-    )
-    assert native_stream_closed
-
-
-async def test_event_stream_aclose_after_before_stream_closes_native_stream():
-    """Closing before the first native event arrives must still close the native stream.
-
-    `before_stream()` yields too, so a consumer can close while suspended there — before
-    `async for event in stream` has begun. It must be covered by the same `try`/`finally`, or an
-    already-started iterator handed to `transform_stream()` is left suspended. See #7016.
-    """
-
-    class RecordingStream:
-        """An already-started iterator, so `aclose()` is observable.
-
-        A bare async generator would not be: closing one that was never advanced is a language-level
-        no-op that doesn't run its `finally`, which is exactly the case a caller passing an
-        already-started iterator does not hit.
-        """
-
-        def __init__(self):
-            self.closed = False
-
-        def __aiter__(self) -> AsyncIterator[NativeEvent]:
-            return self
-
-        async def __anext__(self) -> NativeEvent:
-            return PartStartEvent(index=0, part=TextPart(content='Hello'))  # pragma: no cover
-
-        async def aclose(self) -> None:
-            self.closed = True
-
-    stream = RecordingStream()
-    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
-    event_stream = DummyUIEventStream(run_input=request)
-
-    transformed = cast('AsyncGenerator[str, None]', event_stream.transform_stream(stream))
-    # Start the generator and stop at the `before_stream()` yield, before the native stream is read.
-    events = [await anext(transformed)]
-
-    await transformed.aclose()
-
-    assert events == snapshot(['<stream>'])
-    assert stream.closed
-
-
 async def test_event_stream_aclose_while_emitting_error():
     """Closing the transformed stream while the error events are being emitted must not raise.
 
     The error handler yields too (it closes the open part and then emits the error chunk), so a
     consumer that aborts at one of those chunks — like the AI SDK does — throws `GeneratorExit` at a
-    yield *inside* the handler. `except GeneratorExit` therefore cannot be a sibling of
-    `except Exception`, or it won't see it and the `finally` will yield again. See #7016.
+    yield *inside* the handler, not just at one in the forwarding loop. The protocol trailers must
+    stay outside the `try`/`finally` for that case too, or the `finally` yields while
+    `GeneratorExit` propagates and closing raises. See #7016.
     """
 
     async def event_generator() -> AsyncIterator[NativeEvent]:
@@ -523,12 +471,12 @@ async def test_event_stream_aclose_while_emitting_error():
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
     event_stream = DummyUIEventStream(run_input=request)
 
-    transformed = cast('AsyncGenerator[str, None]', event_stream.transform_stream(event_generator()))
+    transformed = event_stream.transform_stream(event_generator())
     # Pull through the tool-call close emitted by the error handler, leaving the generator suspended
     # at a yield inside `except Exception`.
     events = [await anext(transformed) for _ in range(4)]
 
-    await transformed.aclose()
+    await _utils.aclose_if_supported(transformed)
 
     assert events == snapshot(
         [
@@ -554,10 +502,10 @@ async def test_event_stream_aclose_with_tool_call_in_flight():
     request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
     event_stream = DummyUIEventStream(run_input=request)
 
-    transformed = cast('AsyncGenerator[str, None]', event_stream.transform_stream(event_generator()))
+    transformed = event_stream.transform_stream(event_generator())
     events = [await anext(transformed), await anext(transformed)]
 
-    await transformed.aclose()
+    await _utils.aclose_if_supported(transformed)
 
     assert events == snapshot(
         [

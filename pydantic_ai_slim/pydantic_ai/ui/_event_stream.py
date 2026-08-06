@@ -172,126 +172,112 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
         """
-        closing = False
+        async for e in self.before_stream():
+            yield e
+
         try:
-            async for e in self.before_stream():
-                yield e
-
-            try:
-                async for event in stream:
-                    if isinstance(event, PartStartEvent):
-                        async for e in self._turn_to('response'):
-                            yield e
-                    elif isinstance(event, PartEndEvent):
-                        # Only one part is open at a time, so this end is for `_open_part` (or it's already
-                        # `None` for a part kind that isn't tracked); clearing unconditionally is safe either way.
-                        self._open_part = None
-                    elif isinstance(event, ToolCallEvent):
-                        tool_call_id = event.part.tool_call_id
-                        kind: Literal['function', 'output'] = (
-                            'output' if isinstance(event, OutputToolCallEvent) else 'function'
-                        )
-                        self._pending_tool_calls[tool_call_id] = _PendingToolCall(kind, event.part.tool_name)
-                        if kind == 'output':
-                            # The output tool call is now tracked in `_pending_tool_calls`,
-                            # so the `FinalResultEvent` backup used by the error path is no longer needed.
-                            self._final_result_event = None
-                        async for e in self._turn_to('request'):
-                            yield e
-                    elif isinstance(event, AgentRunResultEvent):
-                        result = cast(AgentRunResult[OutputDataT], event.result)
-                        self._result = result
-
-                        async for e in self._turn_to(None):
-                            yield e
-
-                        if on_complete is not None:
-                            if inspect.isasyncgenfunction(on_complete):
-                                async for e in on_complete(result):
-                                    yield e
-                            elif _utils.is_async_callable(on_complete):
-                                await on_complete(result)
-                            else:
-                                await _utils.run_in_executor(on_complete, result)
-                    elif isinstance(event, FinalResultEvent):
-                        self._final_result_event = event
-
-                    elif isinstance(event, ToolResultEvent):
-                        tool_call_id = event.part.tool_call_id
-                        self._pending_tool_calls.pop(tool_call_id, None)
-
-                    async for e in self.handle_event(event):
+            async for event in stream:
+                if isinstance(event, PartStartEvent):
+                    async for e in self._turn_to('response'):
                         yield e
-
-                    # Mark the part open only after its start event has been emitted, so a start hook that
-                    # raises mid-emit doesn't leave the error path closing a part the client never saw.
-                    if isinstance(event, PartStartEvent) and isinstance(
-                        event.part, TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart
-                    ):
-                        self._open_part = event.part
-                        self._open_part_index = event.index
-            except Exception as exc:  # `exc` to avoid shadowing by `async for e in` below
-                # Close the open message part before emitting the error, so a client that aborts at the
-                # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
-                # first: it's a response-side event, whereas the tool-call cleanup below turns to the
-                # request side, and everything after the error chunk is dropped.
-                if (part := self._open_part) is not None:
+                elif isinstance(event, PartEndEvent):
+                    # Only one part is open at a time, so this end is for `_open_part` (or it's already
+                    # `None` for a part kind that isn't tracked); clearing unconditionally is safe either way.
                     self._open_part = None
-                    async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
-                        yield e
-
-                # Close any pending tool calls before emitting the error,
-                # so the UI doesn't show them as still running.
-
-                # Pending output-tool call (stored via FinalResultEvent if the call event hasn't fired yet)
-                if (
-                    self._final_result_event
-                    and (tool_call_id := self._final_result_event.tool_call_id)
-                    and (tool_name := self._final_result_event.tool_name)
-                ):
-                    self._final_result_event = None
-                    self._pending_tool_calls[tool_call_id] = _PendingToolCall('output', tool_name)
-
-                # Pending tool calls
-                for tool_call_id, (kind, tool_name) in self._pending_tool_calls.items():
+                elif isinstance(event, ToolCallEvent):
+                    tool_call_id = event.part.tool_call_id
+                    kind: Literal['function', 'output'] = (
+                        'output' if isinstance(event, OutputToolCallEvent) else 'function'
+                    )
+                    self._pending_tool_calls[tool_call_id] = _PendingToolCall(kind, event.part.tool_name)
+                    if kind == 'output':
+                        # The output tool call is now tracked in `_pending_tool_calls`,
+                        # so the `FinalResultEvent` backup used by the error path is no longer needed.
+                        self._final_result_event = None
                     async for e in self._turn_to('request'):
                         yield e
-                    error_part = ToolReturnPart(
-                        tool_call_id=tool_call_id,
-                        tool_name=tool_name,
-                        content='Tool execution was interrupted by an error.',
-                        outcome='failed',
-                    )
-                    if kind == 'output':
-                        async for e in self.handle_output_tool_result(OutputToolResultEvent(error_part)):
-                            yield e
-                    else:
-                        async for e in self.handle_function_tool_result(FunctionToolResultEvent(error_part)):
-                            yield e
-                self._pending_tool_calls.clear()
+                elif isinstance(event, AgentRunResultEvent):
+                    result = cast(AgentRunResult[OutputDataT], event.result)
+                    self._result = result
 
-                async for e in self.on_error(exc):
+                    async for e in self._turn_to(None):
+                        yield e
+
+                    if on_complete is not None:
+                        if inspect.isasyncgenfunction(on_complete):
+                            async for e in on_complete(result):
+                                yield e
+                        elif _utils.is_async_callable(on_complete):
+                            await on_complete(result)
+                        else:
+                            await _utils.run_in_executor(on_complete, result)
+                elif isinstance(event, FinalResultEvent):
+                    self._final_result_event = event
+
+                elif isinstance(event, ToolResultEvent):
+                    tool_call_id = event.part.tool_call_id
+                    self._pending_tool_calls.pop(tool_call_id, None)
+
+                async for e in self.handle_event(event):
                     yield e
-        except GeneratorExit:
-            # The consumer closed this generator (e.g. `aclose()` or garbage collection), so there's
-            # no one left to receive the closing events, and yielding while `GeneratorExit` propagates
-            # would raise `RuntimeError: async generator ignored GeneratorExit`.
-            closing = True
-            raise
+
+                # Mark the part open only after its start event has been emitted, so a start hook that
+                # raises mid-emit doesn't leave the error path closing a part the client never saw.
+                if isinstance(event, PartStartEvent) and isinstance(
+                    event.part, TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart
+                ):
+                    self._open_part = event.part
+                    self._open_part_index = event.index
+        except Exception as exc:  # `exc` to avoid shadowing by `async for e in` below
+            # Close the open message part before emitting the error, so a client that aborts at the
+            # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
+            # first: it's a response-side event, whereas the tool-call cleanup below turns to the
+            # request side, and everything after the error chunk is dropped.
+            if (part := self._open_part) is not None:
+                self._open_part = None
+                async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
+                    yield e
+
+            # Close any pending tool calls before emitting the error,
+            # so the UI doesn't show them as still running.
+
+            # Pending output-tool call (stored via FinalResultEvent if the call event hasn't fired yet)
+            if (
+                self._final_result_event
+                and (tool_call_id := self._final_result_event.tool_call_id)
+                and (tool_name := self._final_result_event.tool_name)
+            ):
+                self._final_result_event = None
+                self._pending_tool_calls[tool_call_id] = _PendingToolCall('output', tool_name)
+
+            # Pending tool calls
+            for tool_call_id, (kind, tool_name) in self._pending_tool_calls.items():
+                async for e in self._turn_to('request'):
+                    yield e
+                error_part = ToolReturnPart(
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    content='Tool execution was interrupted by an error.',
+                    outcome='failed',
+                )
+                if kind == 'output':
+                    async for e in self.handle_output_tool_result(OutputToolResultEvent(error_part)):
+                        yield e
+                else:
+                    async for e in self.handle_function_tool_result(FunctionToolResultEvent(error_part)):
+                        yield e
+            self._pending_tool_calls.clear()
+
+            async for e in self.on_error(exc):
+                yield e
         finally:
-            # Close the native stream so the underlying agent run doesn't stay suspended until
-            # garbage collection. It may be any `AsyncIterator`, so only close it if possible.
-            # Awaiting (unlike yielding) is allowed while `GeneratorExit` propagates.
-            aclose: Callable[[], Awaitable[None]] | None = getattr(stream, 'aclose', None)
-            if aclose is not None:
-                await aclose()
+            await _utils.aclose_if_supported(stream)
 
-            if not closing:
-                async for e in self._turn_to(None):
-                    yield e
+        async for e in self._turn_to(None):
+            yield e
 
-                async for e in self.after_stream():
-                    yield e
+        async for e in self.after_stream():
+            yield e
 
     async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
         """Fire hooks when turning from request to response or vice versa."""
@@ -660,7 +646,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Args:
             part: The file part.
         """
-        return  # pragma: no cover
+        return
         yield  # Make this an async generator
 
     async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[EventT]:
