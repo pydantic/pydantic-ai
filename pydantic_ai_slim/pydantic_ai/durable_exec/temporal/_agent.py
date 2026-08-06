@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from pydantic_ai.realtime import (
         AudioRetention,
         KnownRealtimeModelName,
+        RealtimeEvent,
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeSession,
@@ -65,7 +66,7 @@ if TYPE_CHECKING:
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _EventStreamHandlerParams:
-    event: _messages.AgentStreamEvent
+    event: _messages.AgentStreamEvent | RealtimeEvent
     serialized_run_context: Any
 
 
@@ -278,7 +279,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             return handler
 
     async def _call_event_stream_handler_activity(
-        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
+        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent | RealtimeEvent]
     ) -> None:
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         async for event in stream:

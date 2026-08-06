@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
+    from pydantic_ai.realtime import RealtimeEvent
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
@@ -162,14 +163,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
         def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
             merged: ModelSettings | None = None
+            # This layering only runs in the classic request pipeline, where `ctx.model_settings`
+            # never holds `RealtimeModelSettings` (realtime sessions resolve settings at connect).
             for entry in settings_chain:
                 # Mutate ctx.model_settings so each dynamic entry sees the
                 # accumulated settings from all prior layers.
-                ctx.model_settings = merge_model_settings(ctx.model_settings, merged)
+                ctx.model_settings = merge_model_settings(cast('ModelSettings | None', ctx.model_settings), merged)
                 resolved = entry(ctx) if callable(entry) else entry
                 merged = merge_model_settings(merged, resolved)
             # Update ctx.model_settings to include the final entry's contribution
-            ctx.model_settings = merge_model_settings(ctx.model_settings, merged)
+            ctx.model_settings = merge_model_settings(cast('ModelSettings | None', ctx.model_settings), merged)
             return merged if merged is not None else ModelSettings()
 
         return resolve
@@ -394,8 +397,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         *,
-        stream: AsyncIterable[AgentStreamEvent],
-    ) -> AsyncIterable[AgentStreamEvent]:
+        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
+    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
         wrapped_streams = [stream]
         for capability in reversed(self.capabilities):
             if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:

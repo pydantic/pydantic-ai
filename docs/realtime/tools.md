@@ -95,7 +95,8 @@ A [capability][pydantic_ai.capabilities.AbstractCapability] attached to the agen
 | Tool validation/execution hooks | Runs around each local function-tool call. |
 | `handle_deferred_tool_calls` | Resolves deferred requests inline. |
 | Graph node, model-request, and output-processing hooks | Do not run; no agent graph or output-processing stage exists. |
-| `before_run`, `after_run`, `wrap_run`, `on_run_error`, `wrap_run_event_stream` | Do not run. The run body is the caller's `async with` block, which `wrap_run` cannot honestly wrap — and the four run hooks stay equivalent, so none fire. Realtime session hooks are planned instead ([#7190](https://github.com/pydantic/pydantic-ai/issues/7190)). |
+| `before_run`, `after_run`, `wrap_run`, `on_run_error` | Run once around the session, with the same close-boundary recovery and result-transformation semantics as `iter()`; a realtime session is a run. |
+| `wrap_run_event_stream` | Wraps the consumer-facing session iterator. It can observe or transform shared [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members and realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members without changing history or tool execution. `event_stream_handler` works through the same stream. |
 
 `get_model_settings()` may run during capability setup, but regular model settings do not configure
 a realtime model. Pass [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] through
@@ -107,7 +108,7 @@ loaded capability's instructions as its result — which works on every provider
 cannot do is advertise *new tools* mid-conversation (the connection's tools are fixed when it
 opens), so opening a session with a `defer_loading=True` capability that contributes tools or
 native tools raises [`UserError`][pydantic_ai.exceptions.UserError] before connecting — accepting
-it would silently provide less than requested. Realtime-specific lifecycle hooks are expected to
+it would silently provide less than requested. Realtime per-turn/exchange hooks are expected to
 widen this boundary in the future; see
 [#7190](https://github.com/pydantic/pydantic-ai/issues/7190) and
 [#7191](https://github.com/pydantic/pydantic-ai/issues/7191). History-processing capabilities also

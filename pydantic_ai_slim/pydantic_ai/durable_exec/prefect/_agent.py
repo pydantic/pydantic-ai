@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from pydantic_ai.realtime import (
         AudioRetention,
         KnownRealtimeModelName,
+        RealtimeEvent,
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeSession,
@@ -177,14 +178,14 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             return handler
 
     async def _call_event_stream_handler_in_flow(
-        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
+        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent | RealtimeEvent]
     ) -> None:
         handler = self._effective_event_stream_handler()
         assert handler is not None
 
         # Create a task to handle each event
         @task(name='Handle Stream Event', **self._event_stream_handler_task_config)
-        async def event_stream_handler_task(event: _messages.AgentStreamEvent) -> None:
+        async def event_stream_handler_task(event: _messages.AgentStreamEvent | RealtimeEvent) -> None:
             async def streamed_response():
                 yield event
 

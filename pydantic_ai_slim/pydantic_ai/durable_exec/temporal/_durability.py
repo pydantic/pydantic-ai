@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, ClassVar, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, cast
 
 from pydantic import ConfigDict, with_config
 from pydantic_core import PydanticSerializationError
@@ -44,6 +44,9 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeEvent
+
 from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
@@ -79,7 +82,7 @@ class _CancelParams:
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _EventStreamHandlerParams:
-    event: AgentStreamEvent
+    event: AgentStreamEvent | RealtimeEvent
     serialized_run_context: Any
 
 
@@ -426,7 +429,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return workflow.in_workflow()
 
-    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+    async def _dispatch_event_stream_event(
+        self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent | RealtimeEvent | RealtimeEvent
+    ) -> None:
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         config: ActivityConfig = {
             'summary': f'handle event: {event.event_kind}',

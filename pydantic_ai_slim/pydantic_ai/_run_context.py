@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+import sys
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
     from .models import AbstractModel
+    from .realtime import RealtimeModelSettings, RealtimeSession
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -116,7 +118,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""
-    model_settings: ModelSettings | None = None
+    realtime_session: RealtimeSession | None = field(default=None, repr=False)
+    """The [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] this run is, once it is connected.
+
+    `None` in classic runs, and during the parts of a realtime run that precede the connection:
+    `before_run`, `wrap_run` before `handler()` starts the session, and instruction resolution.
+    Use [`realtime`][pydantic_ai.tools.RunContext.realtime] to detect a realtime run in those
+    stages. Tools and hooks that run during the live session can use it to e.g.
+    [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] playback or
+    [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content.
+    """
+    model_settings: ModelSettings | RealtimeModelSettings | None = None
     """The resolved model settings for the current run step.
 
     Populated before each model request, after all model settings layers
@@ -124,6 +136,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Available in model request hooks (`before_model_request`, `wrap_model_request`,
     `after_model_request`). Currently `None` in tool hooks, output validators,
     and during agent construction.
+
+    During a realtime session this holds the merged
+    [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was opened
+    with, for the whole session (realtime settings are fixed at connect time).
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.
@@ -208,6 +224,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
     for the full set of currently-callable tools (always-visible plus these).
     Managed by the framework: safe to read, but don't mutate it directly.
     """
+
+    @property
+    def realtime(self) -> bool:
+        """Whether this run is a realtime session, i.e. `model` is the connected `RealtimeModel`.
+
+        Reliable from `before_run` through session close, including instruction resolution — unlike
+        [`realtime_session`][pydantic_ai.tools.RunContext.realtime_session], which is only set once
+        the session is connected. The class is looked up through `sys.modules` rather than imported:
+        if the realtime package was never imported, no realtime model can exist, and a classic run
+        should not pay for (or cycle into) that import.
+        """
+        realtime = sys.modules.get('pydantic_ai.realtime')
+        return realtime is not None and isinstance(self.model, realtime.RealtimeModel)
 
     @property
     def last_attempt(self) -> bool:

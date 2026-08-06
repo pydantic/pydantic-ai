@@ -722,6 +722,7 @@ from pydantic_ai.messages import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from pydantic_ai.realtime import RealtimeEvent
 
 
 @dataclass
@@ -732,8 +733,8 @@ class StreamAuditor(AbstractCapability[Any]):
         self,
         ctx: RunContext[Any],
         *,
-        stream: AsyncIterable[AgentStreamEvent],
-    ) -> AsyncIterable[AgentStreamEvent]:
+        stream: AsyncIterable[AgentStreamEvent | RealtimeEvent],
+    ) -> AsyncIterable[AgentStreamEvent | RealtimeEvent]:
         async for event in stream:
             if isinstance(event, ToolCallEvent):
                 print(f'Tool called: {event.part.tool_name}')
