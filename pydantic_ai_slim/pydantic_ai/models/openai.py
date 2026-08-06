@@ -1916,7 +1916,10 @@ def _trim_messages_before_compaction(messages: list[ModelMessage], system: str) 
 
 
 def _standing_system_prompt_request(prefix: list[ModelMessage]) -> list[ModelRequest]:
-    """The opening request's leading `SystemPromptPart`s, as a request of their own."""
+    """The first request's leading `SystemPromptPart`s, as a request of their own.
+
+    The first `ModelRequest` wherever it appears, since a history may open with a `ModelResponse`.
+    """
     for message in prefix:
         if isinstance(message, ModelRequest):
             opening: list[SystemPromptPart] = []
@@ -1926,7 +1929,6 @@ def _standing_system_prompt_request(prefix: list[ModelMessage]) -> list[ModelReq
                 else:
                     break
             return [ModelRequest(parts=list(opening))] if opening else []
-        break
     return []
 
 
@@ -2097,6 +2099,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
         )
 
+        # Same ordering rule as `_build_responses_request_params`: the introduced-tools derivation
+        # and the mapping must both see the trimmed history, and re-compacting only compacts the
+        # current effective window rather than content an earlier compaction already replaced.
+        messages = _trim_messages_before_compaction(messages, self.system)
         instructions, openai_messages = await self._map_messages(
             messages,
             model_settings,
@@ -2534,6 +2540,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: OpenAIModelProfile,
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
+        # Trim before deriving the wire partition below: `introduced_tool_names` and `_map_messages`
+        # must see the same history, or a tool whose `additional_tools` carrier sits before the
+        # compaction boundary would be filtered from `tools` AND lose its item — vanishing from the
+        # request entirely. With the carrier trimmed, the tool is simply not "introduced" and keeps
+        # its regular `tools` declaration. The trim is idempotent, so `_map_messages` re-applying it
+        # is a no-op.
+        messages = _trim_messages_before_compaction(messages, self.system)
         # A delta must leave `tools` exactly as the previous turn sent it: it's the first cache section,
         # ahead of `instructions` and every input item, so a difference there invalidates the whole cached
         # prefix on the one turn this feature exists to protect — deepest into the conversation, where the

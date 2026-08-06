@@ -541,11 +541,13 @@ def _trim_messages_before_compaction(messages: list[ModelMessage], system: str) 
 
 
 def _standing_system_prompt_request(prefix: list[ModelMessage]) -> list[ModelRequest]:
-    """The opening request's leading `SystemPromptPart`s, as a request of their own.
+    """The first request's leading `SystemPromptPart`s, as a request of their own.
 
-    Only the first request's opening system parts are the standing prompt; mid-conversation
-    `SystemPromptPart`s render inline as conversation content, which the compaction summary
-    replaces, so they are deliberately not preserved.
+    The first `ModelRequest` wherever it appears — matching the mapper's own leading-request
+    definition — since a history may open with a `ModelResponse`. Only that request's opening
+    system parts are the standing prompt; mid-conversation `SystemPromptPart`s render inline as
+    conversation content, which the compaction summary replaces, so they are deliberately not
+    preserved.
     """
     for message in prefix:
         if isinstance(message, ModelRequest):
@@ -556,7 +558,6 @@ def _standing_system_prompt_request(prefix: list[ModelMessage]) -> list[ModelReq
                 else:
                     break
             return [ModelRequest(parts=list(opening))] if opening else []
-        break
     return []
 
 
