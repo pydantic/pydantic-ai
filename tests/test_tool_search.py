@@ -907,6 +907,43 @@ async def test_tool_search_toolset_ranks_undiscovered_matches_first_when_trimmed
 
     assert result == {'discovered_tools': [{'name': 'second_tool'}]}
 
+    # With room for both, the discovered tool is ranked after the undiscovered one rather
+    # than excluded — the corpus never shrinks with discovery.
+    searchable = ToolSearchToolset(wrapped=toolset, max_results=2)
+    search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['tool']}, ctx, search_tool)
+
+    assert result == {'discovered_tools': [{'name': 'second_tool'}, {'name': 'first_tool'}]}
+
+
+async def test_search_corpus_includes_already_discovered_tools() -> None:
+    """The corpus a custom `search_fn` receives never shrinks with discovery: an
+    already-discovered tool stays searchable with no compaction boundary in sight."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def first_tool() -> str:  # pragma: no cover
+        return 'first'
+
+    @toolset.tool_plain(defer_loading=True)
+    def second_tool() -> str:  # pragma: no cover
+        return 'second'
+
+    corpora: list[list[str]] = []
+
+    def search(_ctx: RunContext[None], _queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+        corpora.append(sorted(tool.name for tool in tools))
+        return ['first_tool']
+
+    searchable = ToolSearchToolset(wrapped=toolset, search_fn=search)
+    ctx = _build_run_context(None, discovered_tool_names={'first_tool'})
+    search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
+
+    await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['first']}, ctx, search_tool)
+
+    assert corpora == [['first_tool', 'second_tool']]
+
 
 async def test_tool_search_toolset_discovered_tools_keep_defer_loading():
     """Discovery does not overwrite the tools' authored `defer_loading=True` value."""
@@ -7556,6 +7593,44 @@ async def test_searchable_corpus_survives_discovery_and_compaction() -> None:
 
     assert corpora == [['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c', 'd', 'e']]
     assert executed == ['a']
+
+
+async def test_pre_compaction_tool_stays_callable_without_rediscovery() -> None:
+    """A model that still remembers a pre-compaction tool (e.g. from the summary) can call
+    it directly: the boundary reset hides the schema again but never revokes execution."""
+    toolset = FunctionToolset()
+    executed: list[str] = []
+
+    @toolset.tool_plain(defer_loading=True)
+    def issue_refund() -> str:
+        executed.append('issue_refund')
+        return 'refunded'
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='discover tools')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['refund']}, tool_call_id='s1')]),
+        ModelRequest(
+            parts=[ToolSearchReturnPart(content={'discovered_tools': [{'name': 'issue_refund'}]}, tool_call_id='s1')]
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(content='Summary: refund tooling exists.', provider_name='anthropic'),
+                TextPart('compacted'),
+            ]
+        ),
+    ]
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if not executed:
+            return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[None, str] = Agent(
+        NoNativeToolSearchModel(model_fn), toolsets=[toolset], capabilities=[ToolSearch()], deps_type=type(None)
+    )
+    await agent.run('refund now', message_history=history)
+
+    assert executed == ['issue_refund']
 
 
 async def test_delta_in_history_reveals_a_capability_tool_without_a_load(allow_model_requests: None):
