@@ -3059,7 +3059,7 @@ async def test_run_stream_cancelled():
             {'type': 'tool-input-available', 'input': {'query': 'a'}, 'toolCallId': IsStr(), 'toolName': 'tool'},
             {
                 'type': 'tool-output-available',
-                'output': 'Tool execution was interrupted by cancellation.',
+                'output': 'The tool call was interrupted before a result was produced.',
                 'toolCallId': IsStr(),
             },
             {'type': 'abort', 'reason': 'The agent run was cancelled.'},

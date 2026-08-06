@@ -11,6 +11,7 @@ from pydantic_ai import _utils
 
 from ..exceptions import RunCancelled
 from ..messages import (
+    INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentStreamEvent,
     CompactionPart,
     DeferredToolRequestsEvent,
@@ -282,7 +283,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 error_part = ToolReturnPart(
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
-                    content='Tool execution was interrupted by cancellation.'
+                    content=INTERRUPTED_TOOL_RETURN_CONTENT
                     if cancelled is not None
                     else 'Tool execution was interrupted by an error.',
                     outcome='interrupted' if cancelled is not None else 'failed',

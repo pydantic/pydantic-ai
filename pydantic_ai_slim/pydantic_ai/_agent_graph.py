@@ -2563,8 +2563,6 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
 SYNTHESIZED_TOOL_RETURN_METADATA_KEY = 'pydantic_ai_synthesized_tool_return'
 """Metadata key set to `True` on `ToolReturnPart`s synthesized for tool calls that never received a result."""
 
-_SYNTHESIZED_TOOL_RETURN_CONTENT = 'The tool call was interrupted before a result was produced.'
-
 
 def _dangling_tool_calls_by_response(messages: list[_messages.ModelMessage]) -> dict[int, list[_messages.ToolCallPart]]:
     """Find tool calls that will never receive a result, keyed by the index of their response.
@@ -2741,7 +2739,7 @@ def _repair_dangling_tool_calls(
                     synthesized.append(
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
-                            content=_SYNTHESIZED_TOOL_RETURN_CONTENT,
+                            content=_messages.INTERRUPTED_TOOL_RETURN_CONTENT,
                             tool_call_id=call.tool_call_id,
                             metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
                             timestamp=message.timestamp,

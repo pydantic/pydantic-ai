@@ -1241,6 +1241,12 @@ def parse_tool_kind(value: str) -> ToolPartKind | None:
     return next((kind for kind in _TOOL_PART_KINDS if kind == value), None)
 
 
+INTERRUPTED_TOOL_RETURN_CONTENT = 'The tool call was interrupted before a result was produced.'
+"""Placeholder content for a tool call that was interrupted before producing a result (e.g. by run
+cancellation). Shared between the agent graph's history repair and the UI adapters' stream closeout
+so both synthesize the same `outcome='interrupted'` return."""
+
+
 @dataclass(repr=False)
 class BaseToolReturnPart:
     """Base class for tool return parts."""

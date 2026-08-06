@@ -851,7 +851,7 @@ async def test_run_stream_cancelled_run_closes_tools_as_interrupted():
             '</response>',
             '<request>',
             "<function-tool-call name='tool'>{'query': 'a'}</function-tool-call>",
-            "<function-tool-result name='tool'>Tool execution was interrupted by cancellation.</function-tool-result>",
+            "<function-tool-result name='tool'>The tool call was interrupted before a result was produced.</function-tool-result>",
             "<error type='RunCancelled'>The agent run was cancelled.</error>",
             '</request>',
             '</stream>',
