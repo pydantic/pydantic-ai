@@ -104,6 +104,12 @@ class RunCancellation:
         with self._lock:
             return self._requested
 
+    @property
+    def has_token(self) -> bool:
+        """Whether a [`CancellationToken`][pydantic_ai.CancellationToken] was attached to this run."""
+        with self._lock:
+            return bool(self._tokens)
+
     def bind(self, task: asyncio.Task[object] | None = None) -> None:
         """Bind the task that is currently driving the run.
 

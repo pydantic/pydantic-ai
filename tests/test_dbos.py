@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    CancellationToken,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -2273,6 +2274,24 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
 
     output = await run_durable_agent()
     assert output == 'Echo: Hello DBOS'
+
+
+async def test_dbos_durability_rejects_cancellation_token_in_workflow(dbos: DBOS) -> None:
+    """A same-process `cancellation_token` can't cross the durable boundary, so it's rejected inside
+    a workflow — but the same durable-capable agent still accepts one when run outside a workflow."""
+    agent = Agent(_durability_fn_model, name='durability_cancel_token', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        result = await agent.run('Hello', cancellation_token=CancellationToken())
+        return result.output
+
+    with pytest.raises(UserError, match='`cancellation_token` cannot be used with DBOS durable execution'):
+        await run_durable_agent()
+
+    # Outside a workflow the capability is transparent, so the token works like a normal run.
+    result = await agent.run('Hello', cancellation_token=CancellationToken())
+    assert result.output == 'Echo: Hello'
 
 
 async def test_dbos_durability_registers_legacy_workflows_opt_in(dbos: DBOS) -> None:

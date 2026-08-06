@@ -35,13 +35,18 @@ _KIND_LABELS: dict[RuntimeToolsetKind, str] = {
 }
 
 
+def cancellation_token_unsupported_error(engine: str) -> UserError:
+    """The error raised when a same-process cancellation token meets a durable execution boundary."""
+    return UserError(
+        f'`cancellation_token` cannot be used with {engine} durable execution because it is a same-process '
+        'handle and cannot cross the durable execution boundary. Cancel the durable workflow or flow instead.'
+    )
+
+
 def reject_cancellation_token(cancellation_token: object | None, *, engine: str) -> None:
     """Reject same-process cancellation tokens at a durable execution boundary."""
     if cancellation_token is not None:
-        raise UserError(
-            f'`cancellation_token` cannot be used with {engine} durable execution because it is a same-process '
-            'handle and cannot cross the durable execution boundary. Cancel the durable workflow or flow instead.'
-        )
+        raise cancellation_token_unsupported_error(engine)
 
 
 def _runtime_toolset_kind(toolset: AbstractToolset[Any]) -> RuntimeToolsetKind | None:
