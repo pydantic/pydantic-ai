@@ -76,9 +76,15 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         if capability_id in ctx.available_capability_ids:
             raise ModelRetry(LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE.format(capability_id=capability_id))
 
+        # Sourced through `_collect_instructions` rather than `get_instructions` so a loaded
+        # capability's blocks carry the same `capability:<id>` keys they would have had if the
+        # capability were eager. `InstructionPart.join` below flattens the ids away today, because
+        # a load delivers its instructions as tool-return text rather than as request parts — but
+        # the identity is assigned in one place for both paths instead of two that can drift.
         parts = [
-            InstructionPart(content=instruction, dynamic=True)
-            for instruction in await resolve_instructions(capability.get_instructions(), ctx)
+            InstructionPart(content=content, dynamic=True, id=sourced.id)
+            for sourced in capability._collect_instructions()  # pyright: ignore[reportPrivateUsage]
+            for content in await resolve_instructions(sourced.instruction, ctx)
         ]
 
         parts.extend(await self._collect_owned_toolset_instructions(capability_id, ctx))
@@ -101,5 +107,5 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
 
         parts: list[InstructionPart] = []
         for ts in owned:
-            parts.extend(normalize_toolset_instructions(await ts.wrapped.get_instructions(ctx)))
+            parts.extend(normalize_toolset_instructions(await ts.wrapped.get_instructions(ctx), ts.wrapped.id))
         return parts
