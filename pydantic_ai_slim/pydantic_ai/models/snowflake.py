@@ -39,12 +39,16 @@ __all__ = ('SnowflakeModel', 'SnowflakeModelName', 'SnowflakeModelSettings', 'Sn
 
 LatestSnowflakeModelNames = Literal[
     'claude-4-sonnet',
+    'claude-fable-5',
     'claude-haiku-4-5',
     'claude-opus-4-5',
     'claude-opus-4-6',
     'claude-opus-4-7',
+    'claude-opus-4-8',
+    'claude-opus-5',
     'claude-sonnet-4-5',
     'claude-sonnet-4-6',
+    'claude-sonnet-5',
     'deepseek-r1',
     'llama3.1-405b',
     'llama3.1-70b',
@@ -55,12 +59,16 @@ LatestSnowflakeModelNames = Literal[
     'mistral-large2',
     'openai-gpt-4.1',
     'openai-gpt-5',
+    'openai-gpt-5-6-luna',
+    'openai-gpt-5-6-sol',
+    'openai-gpt-5-6-terra',
     'openai-gpt-5-chat',
     'openai-gpt-5-mini',
     'openai-gpt-5-nano',
     'openai-gpt-5.1',
     'openai-gpt-5.2',
     'openai-gpt-5.4',
+    'openai-gpt-5.5',
     'snowflake-llama-3.3-70b',
 ]
 
