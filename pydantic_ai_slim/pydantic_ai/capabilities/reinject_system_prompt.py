@@ -11,6 +11,7 @@ from .abstract import AbstractCapability
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.settings import ModelSettings
 
 
 @dataclass
@@ -67,7 +68,9 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
             message_history=messages,
             prompt=ctx.prompt,
             usage=ctx.usage,
-            model_settings=ctx.model_settings,
+            # This hook only runs in the classic request pipeline, where `ctx.model_settings`
+            # never holds `RealtimeModelSettings`.
+            model_settings=cast('ModelSettings | None', ctx.model_settings),
         )
         if sys_parts:
             _prepend_to_first_request(messages, sys_parts)

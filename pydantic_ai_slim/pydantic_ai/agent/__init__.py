@@ -6,7 +6,7 @@ import dataclasses
 import functools
 import inspect
 import warnings
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import (
     AbstractAsyncContextManager,
     AsyncExitStack,
@@ -158,6 +158,174 @@ class _ResolvedAgentRetries:
 
     tools: int
     output: int
+
+
+@dataclasses.dataclass(frozen=True)
+class _RunLifecycle:
+    short_circuited: bool
+
+
+@asynccontextmanager
+async def _run_lifecycle_hooks(  # noqa: C901
+    run_capability: AbstractCapability[Any],
+    run_ctx: RunContext[Any],
+    *,
+    build_result: Callable[[], AgentRunResult[Any]],
+    finalize: Callable[[AgentRunResult[Any]], Awaitable[None]],
+    extract_error: Callable[[BaseException], BaseException] | None = None,
+    result_ready: Callable[[], bool] | None = None,
+    restore_context_on: AsyncExitStack | None = None,
+) -> AsyncGenerator[_RunLifecycle]:
+    """Dispatch run hooks around a caller-owned run body.
+
+    `restore_context_on` hands ownership of the propagated-ContextVar restore to the caller's exit
+    stack: registered before the caller pushes later entries (like its toolset), so restore happens
+    in LIFO order after those exit — resources entered inside the propagated context (e.g. the run
+    span set by `Instrumentation.wrap_run`) also *exit* inside it. Without it, this context manager
+    restores on its own exit.
+    """
+    # wrap_run cooperative hand-off protocol:
+    #
+    # 1. _do_run() calls before_run, sets _run_ready, then awaits _run_done.
+    # 2. wrap_run wraps _do_run via the capability middleware chain.
+    # 3. We await either _run_ready (handler started) or _wrap_task completion
+    #    (short-circuit: wrap_run returned without calling handler).
+    # 4. We yield to the caller to execute the run body.
+    # 5. When the caller finishes (or an error occurs), we set _run_done.
+    # 6. _do_run resumes: returns the result (success) or re-raises the error.
+    # 7. If wrap_run catches the error and returns a recovery result, we use it.
+    #    Otherwise the original error propagates.
+    _run_ready = asyncio.Event()
+    _run_done = asyncio.Event()
+    _run_error: BaseException | None = None
+    _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
+
+    async def _do_run() -> AgentRunResult[Any]:
+        nonlocal _wrap_context
+        await run_capability.before_run(run_ctx)
+        # Capture context vars set by wrap_run/before_run so they can be propagated to the
+        # caller's task, where the run body and any child tasks execute.
+        current_ctx = contextvars.copy_context()
+        _wrap_context = [
+            (var, current_ctx[var])
+            for var in current_ctx
+            if var not in outer_context or outer_context[var] is not current_ctx[var]
+        ]
+        _run_ready.set()
+        await _run_done.wait()
+        if _run_error is not None:
+            raise extract_error(_run_error) if extract_error is not None else _run_error
+        if result_ready is not None and not result_ready():
+            # The caller finished without a result (e.g. `break` out of iteration): there is
+            # nothing to return, so park until the wrap task is cancelled below.
+            await asyncio.Future[AgentRunResult[Any]]()
+        return build_result()
+
+    outer_context = contextvars.copy_context()
+    _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
+    # Wait for handler to start or wrap_run to complete (short-circuit).
+    _ready_waiter = asyncio.create_task(_run_ready.wait())
+    try:
+        await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+    except BaseException as exc:
+        # Unblock `_do_run` before draining, mirroring the streaming handoff: if
+        # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
+        # cooperative cancellation) and returned, `_do_run` is parked on
+        # `_run_done.wait()`. Set `_run_error` so the survivor re-raises this error
+        # instead of asserting on a not-yet-produced result, then set `_run_done` so
+        # it can exit and `cancel_and_drain`'s gather can complete (it discards the
+        # survivor's exception). Harmless no-op when `_wrap_task` really died
+        # cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
+        _run_error = exc
+        _run_done.set()
+        await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
+        raise
+    else:
+        await _utils.cancel_and_drain(_ready_waiter)
+
+    # Propagate context vars set by wrap_run/before_run to the caller's task.
+    context_tokens: list[tuple[ContextVar[Any], contextvars.Token[Any]]] = []
+    # Indexing instead of tuple unpacking because pyright can't resolve types through
+    # nonlocal + Optional unpacking.
+    for cv_pair in _wrap_context or ():
+        context_tokens.append((cv_pair[0], cv_pair[0].set(cv_pair[1])))
+
+    def _restore_context_vars() -> None:
+        for var, token in context_tokens:
+            var.reset(token)
+
+    if restore_context_on is not None:
+        restore_context_on.callback(_restore_context_vars)
+
+    async def _finalize_result(result: AgentRunResult[Any]) -> None:
+        nonlocal _run_error
+        result = await run_capability.after_run(run_ctx, result=result)
+        # Every completion path funnels through here — including `wrap_run`/`on_run_error`
+        # recovering from the very `CancelledError` an external cancel delivered. If that
+        # cancellation is still pending on this task, re-assert it rather than let the run
+        # finalize as a success.
+        _utils.raise_if_cancelling()
+        await finalize(result)
+        _run_error = None
+
+    short_circuited = _wrap_task.done() and not _run_ready.is_set()
+    if short_circuited:
+        await _finalize_result(_wrap_task.result())
+
+    try:
+        try:
+            yield _RunLifecycle(short_circuited=short_circuited)
+        except BaseException as exc:
+            _run_error = extract_error(exc) if extract_error is not None else exc
+            # Don't attempt recovery for GeneratorExit/KeyboardInterrupt — awaiting
+            # `_wrap_task` during cleanup could delay shutdown.
+            if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
+                raise
+            # Don't re-raise yet — give wrap_run a chance to recover. If wrap_run catches
+            # the error from handler() and returns a recovery result, it is suppressed.
+        finally:
+            if not short_circuited:
+                _run_done.set()
+                if _run_error is None and (result_ready is None or result_ready()):
+                    await _finalize_result(await _wrap_task)
+                elif _run_error is not None:
+                    # Error path: await wrap_run to see if it recovers. `_do_run()` re-raises
+                    # `_run_error`; if wrap_run catches it and returns a result, recovery succeeds.
+                    try:
+                        await _finalize_result(await _wrap_task)
+                    except BaseException as wrap_exc:
+                        # Attach wrap_run's own errors as context so they're visible in tracebacks
+                        # (but don't mask the original). Skip CancelledError: it's expected
+                        # cancellation propagation, and setting __context__ on it causes hangs on
+                        # Python 3.10.
+                        if not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
+                            # Only fires for bugs in `wrap_run` implementations.
+                            _run_error.__context__ = wrap_exc  # pragma: no cover
+                # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is
+                # always still pending here.
+                elif not _wrap_task.done():  # pragma: no branch
+                    _wrap_task.cancel()
+                    try:
+                        await _wrap_task
+                    except (asyncio.CancelledError, BaseException):
+                        pass
+
+        # If wrap_run didn't recover, give on_run_error a chance.
+        if _run_error is not None:
+            try:
+                result = await run_capability.on_run_error(run_ctx, error=_run_error)
+            except BaseException as on_error_exc:
+                _run_error = on_error_exc
+            else:
+                await _finalize_result(result)
+
+        # If on_run_error didn't recover either, re-raise. In an @asynccontextmanager,
+        # not re-raising suppresses the exception.
+        if _run_error is not None:
+            raise _run_error
+    finally:
+        if restore_context_on is None:
+            _restore_context_vars()
 
 
 def _is_model(value: object) -> TypeIs[models.Model[Any]]:
@@ -1580,162 +1748,38 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Build RunContext for run lifecycle hooks
             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
 
-            # wrap_run cooperative hand-off protocol:
-            #
-            # 1. _do_run() calls before_run, sets _run_ready, then awaits _run_done.
-            # 2. wrap_run wraps _do_run via the capability middleware chain.
-            # 3. We await either _run_ready (handler started) or _wrap_task completion
-            #    (short-circuit: wrap_run returned without calling handler).
-            # 4. We yield agent_run to the caller for iteration.
-            # 5. When the caller finishes (or an error occurs), we set _run_done.
-            # 6. _do_run resumes: returns the result (success) or re-raises the error.
-            # 7. If wrap_run catches the error and returns a recovery result, we use it.
-            #    Otherwise the original error propagates.
-            _run_ready = asyncio.Event()
-            _run_done = asyncio.Event()
-            _run_error: BaseException | None = None
-            _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
+            async def _finalize_result(result: AgentRunResult[Any]) -> None:
+                usage_limits.check_cost(result.usage)
+                agent_run._result_override = result  # pyright: ignore[reportPrivateUsage]
 
-            async def _do_run() -> AgentRunResult[Any]:
-                nonlocal _wrap_context
-                await run_capability.before_run(run_ctx)
-                # Capture context vars set by wrap_run/before_run so
-                # they can be propagated to the outer task where
-                # agent_run.next() (and therefore node hooks) execute.
-                _current_ctx = contextvars.copy_context()
-                _wrap_context = [
-                    (var, _current_ctx[var])
-                    for var in _current_ctx
-                    if var not in _outer_context or _outer_context[var] is not _current_ctx[var]
-                ]
-                _run_ready.set()
-                await _run_done.wait()
-                if _run_error is not None:
-                    # Raise the original node error, not the potentially
-                    # transformed version from context manager __aexit__ chains.
-                    raise agent_run._node_error or _run_error  # pyright: ignore[reportPrivateUsage]
-                r = agent_run.result
-                assert r is not None
-                return r
+            def _extract_error(error: BaseException) -> BaseException:
+                # Use the original node error if available, since context manager __aexit__ chains
+                # (GraphRun → anyio TaskGroup) may transform it into CancelledError or ExceptionGroup.
+                return agent_run._node_error or error  # pyright: ignore[reportPrivateUsage]
 
-            _outer_context = contextvars.copy_context()
-            _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
-            # Wait for handler to start or wrap_run to complete (short-circuit)
-            _ready_waiter = asyncio.create_task(_run_ready.wait())
-            try:
-                await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
-            except BaseException as exc:
-                # Unblock `_do_run` before draining, mirroring the streaming handoff: if
-                # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
-                # cooperative cancellation) and returned, `_do_run` is parked on
-                # `_run_done.wait()`. Set `_run_error` so the survivor re-raises this error
-                # instead of asserting on a not-yet-produced result, then set `_run_done` so
-                # it can exit and `cancel_and_drain`'s gather can complete (it discards the
-                # survivor's exception). Harmless no-op when `_wrap_task` really died
-                # cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
-                _run_error = exc
-                _run_done.set()
-                await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
-                raise
-            else:
-                await _utils.cancel_and_drain(_ready_waiter)
+            def _build_result() -> AgentRunResult[Any]:
+                result = agent_run.result
+                assert result is not None
+                return result
 
-            # Propagate context vars set by wrap_run/before_run to
-            # the outer task so that agent_run.next() (and therefore
-            # node hooks) can see them.
-            _context_tokens: list[tuple[ContextVar[Any], contextvars.Token[Any]]] = []
-            # Note: indexing instead of tuple unpacking because pyright
-            # can't resolve types through nonlocal + Optional unpacking.
-            for _cv_pair in _wrap_context or ():
-                _context_tokens.append((_cv_pair[0], _cv_pair[0].set(_cv_pair[1])))
-
-            # Register context var restore on the stack so it happens in LIFO order
-            # (after toolset exit, before graph run exit).
-            def _restore_context_vars() -> None:
-                for _var, _token in _context_tokens:
-                    _var.reset(_token)
-
-            stack.callback(_restore_context_vars)
-
-            # Enter toolset AFTER context vars are propagated so that
-            # toolset __aenter__/__aexit__ run inside the run span context
-            # (set by the Instrumentation capability's wrap_run).
-            await stack.enter_async_context(toolset)
-
-            async def _finalize_result(r: AgentRunResult[Any]) -> None:
-                """Call after_run, store the result override, and clear any pending error."""
-                nonlocal _run_error
-                r = await run_capability.after_run(run_ctx, result=r)
-                usage_limits.check_cost(r.usage)
-                # Every completion path funnels through here — including `wrap_run`/`on_run_error`
-                # recovering from the very `CancelledError` an external cancel delivered. If that
-                # cancellation is still pending on this task, re-assert it rather than let the run
-                # finalize as a success.
-                _utils.raise_if_cancelling()
-                agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
-                _run_error = None
-
-            _short_circuited = _wrap_task.done() and not _run_ready.is_set()
-            if _short_circuited:
-                await _finalize_result(_wrap_task.result())
-
-            try:
-                yield agent_run
-            except BaseException as _exc:
-                # Use the original node error if available, since context manager
-                # __aexit__ chains (GraphRun → anyio TaskGroup) may transform
-                # the exception (e.g. into CancelledError or ExceptionGroup).
-                _run_error = agent_run._node_error or _exc  # pyright: ignore[reportPrivateUsage]
-                # Don't attempt recovery for GeneratorExit/KeyboardInterrupt —
-                # awaiting _wrap_task during cleanup could delay shutdown.
-                if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
-                    raise
-                # Don't re-raise yet — give wrap_run a chance to recover.
-                # If wrap_run catches the error from handler() and returns
-                # a recovery result, the exception will be suppressed.
-            finally:
-                if agent_run.result is not None:
-                    self._resolve_and_store_metadata(agent_run.ctx, metadata)
-
-                if not _short_circuited:
-                    _run_done.set()
-                    if _run_error is None and agent_run.result is not None:
-                        await _finalize_result(await _wrap_task)
-                    elif _run_error is not None:
-                        # Error path: await wrap_run to see if it recovers.
-                        # _do_run() re-raises _run_error; if wrap_run catches
-                        # it and returns a result, recovery succeeds.
-                        try:
-                            await _finalize_result(await _wrap_task)
-                        except BaseException as _wrap_exc:
-                            # Attach wrap_run's own errors as context so they're
-                            # visible in tracebacks (but don't mask the original).
-                            # Skip CancelledError: it's expected cancellation propagation,
-                            # and setting __context__ on it causes hangs on Python 3.10.
-                            if not isinstance(_wrap_exc, asyncio.CancelledError) and _wrap_exc is not _run_error:
-                                # Only fires for bugs in `wrap_run` implementations.
-                                _run_error.__context__ = _wrap_exc  # pragma: no cover
-                    # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is always still pending here.
-                    elif not _wrap_task.done():  # pragma: no branch
-                        _wrap_task.cancel()
-                        try:
-                            await _wrap_task
-                        except (asyncio.CancelledError, BaseException):
-                            pass
-
-            # If wrap_run didn't recover, give on_run_error a chance.
-            if _run_error is not None:
+            async with _run_lifecycle_hooks(
+                run_capability,
+                run_ctx,
+                build_result=_build_result,
+                finalize=_finalize_result,
+                extract_error=_extract_error,
+                result_ready=lambda: agent_run.result is not None,
+                # Restore on `stack` in LIFO order (after toolset exit, before graph run exit).
+                restore_context_on=stack,
+            ):
+                # Enter toolset AFTER context vars are propagated so that toolset
+                # __aenter__/__aexit__ run inside the run span context.
+                await stack.enter_async_context(toolset)
                 try:
-                    _result = await run_capability.on_run_error(run_ctx, error=_run_error)
-                except BaseException as _on_error_exc:
-                    _run_error = _on_error_exc
-                else:
-                    await _finalize_result(_result)
-
-            # If on_run_error didn't recover either, re-raise.
-            # In an @asynccontextmanager, not re-raising suppresses the exception.
-            if _run_error is not None:
-                raise _run_error
+                    yield agent_run
+                finally:
+                    if agent_run.result is not None:
+                        self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
     def _get_metadata(
         self,
@@ -3023,7 +3067,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return schema
 
     @asynccontextmanager
-    async def _open_realtime_session(
+    async def _open_realtime_session(  # noqa: C901
         self,
         model: RealtimeModel | KnownRealtimeModelName | str,
         *,
@@ -3049,6 +3093,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
         """
         from ..realtime import RealtimeModel, RealtimeSession, infer_realtime_model
+        from ..realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput
 
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
@@ -3180,6 +3225,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 effective_model_settings = model_settings.copy()
             else:
                 effective_model_settings.update(model_settings)
+        # Realtime settings are fixed at connect time, so the merged settings hold for the whole
+        # session — unlike a classic run, where this is re-stamped before each model request.
+        run_context.model_settings = effective_model_settings
 
         # Native (provider built-in) tools, e.g. via `capabilities=[NativeTool(WebSearchTool())]`. Only
         # concrete tools are forwarded; dynamic native-tool functions aren't resolved for realtime. The
@@ -3199,7 +3247,57 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_capability=run_capability,
         )
         toolset = await toolset.for_run(run_context)
-        async with toolset:
+
+        session: RealtimeSession | None = None
+        short_result: AgentRunResult[Any] | None = None
+
+        def _build_session_result() -> AgentRunResult[Any]:
+            assert session is not None
+            return session._build_run_result(result_state)  # pyright: ignore[reportPrivateUsage]
+
+        async def _finalize_session_result(result: AgentRunResult[Any]) -> None:
+            nonlocal short_result
+            if session is None:
+                short_result = result
+            else:
+                session._result = result  # pyright: ignore[reportPrivateUsage]
+
+        async with AsyncExitStack() as session_stack:
+            lifecycle = await session_stack.enter_async_context(
+                _run_lifecycle_hooks(
+                    run_capability,
+                    run_context,
+                    build_result=_build_session_result,
+                    finalize=_finalize_session_result,
+                )
+            )
+            if lifecycle.short_circuited:
+
+                class _SkippedRealtimeConnection(RealtimeConnection):
+                    async def send(self, content: RealtimeInput) -> None:
+                        raise exceptions.UserError('This realtime session was short-circuited before connecting.')
+
+                    def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+                        raise exceptions.UserError('This realtime session was short-circuited before connecting.')
+
+                session = RealtimeSession(
+                    _SkippedRealtimeConnection(),
+                    ToolManager(FunctionToolset()),
+                    model_name=model.model_name,
+                    usage=run_context.usage,
+                    usage_limits=usage_limits,
+                    message_history=message_history,
+                    profile=model_profile,
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                    metadata=run_context.metadata,
+                )
+                assert short_result is not None
+                session._result = short_result  # pyright: ignore[reportPrivateUsage]
+                session._closed = True  # pyright: ignore[reportPrivateUsage]
+                yield session
+                return
+            await session_stack.enter_async_context(toolset)
             tool_manager = await ToolManager[AgentDepsT](
                 toolset, root_capability=run_capability, default_max_retries=max_tool_retries
             ).for_run_step(run_context)
@@ -3293,17 +3391,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model_request_parameters=model_request_parameters,
                     model_settings=effective_model_settings,
                 )
-                # The run-lifecycle hooks (`before_run`, `after_run`, `wrap_run`, `on_run_error`)
-                # deliberately do NOT fire around a session. `wrap_run` cannot be honored honestly —
-                # the "run" is the caller's `async with` body, which the agent cannot hand to a
-                # capability as a wrappable handler (a secondary-task shim would break context
-                # propagation and cancellation, the things wrapping exists for) — and a capability
-                # author must be able to assume the four hooks are equivalent, so none of them run.
-                # Realtime-specific session/exchange hooks are the planned replacement:
-                # https://github.com/pydantic/pydantic-ai/issues/7190
+                run_context.realtime_session = session
                 async with session:
                     yield session
-                session._result = session._build_run_result(result_state)  # pyright: ignore[reportPrivateUsage]
 
     async def __aenter__(self) -> Self:
         """Enter the agent context.

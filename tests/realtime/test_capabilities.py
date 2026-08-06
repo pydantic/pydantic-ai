@@ -10,6 +10,7 @@ capability-function's native tools). Network-free: a fake model records what `co
 
 from __future__ import annotations as _annotations
 
+import contextvars
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 
@@ -20,8 +21,9 @@ from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import NativeTool, WebSearch
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import FunctionToolResultEvent, ModelMessage, ToolReturnPart
+from pydantic_ai.messages import FunctionToolResultEvent, ModelMessage, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeEvent,
@@ -386,52 +388,252 @@ async def test_local_fallback_tool_is_dispatched_through_tool_manager() -> None:
     assert (result_part.tool_name, result_part.content) == ('local_search', 'result for hello')
 
 
-class _LifecycleCapability(AbstractCapability[None]):
-    """Fails the test if any run-lifecycle hook fires around a session.
+async def test_run_lifecycle_hooks_fire_for_a_session() -> None:
+    """Run hooks surround the full session and `wrap_run` cleanup runs when it closes."""
+    calls: list[str] = []
 
-    `wrap_run` has no honest session form — the run body is the caller's `async with` block, which
-    the agent cannot hand to a capability as a wrappable handler — and a capability author must be
-    able to assume the four run hooks are equivalent, so a session runs none of them. Realtime
-    session/exchange hooks are the planned replacement.
-    """
+    class LifecycleCapability(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            assert ctx.realtime
+            calls.append('before_run')
 
-    async def before_run(self, ctx: RunContext[None]) -> None:  # pragma: no cover — must never fire
-        raise AssertionError('`before_run` must not fire for realtime sessions')
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
+            calls.append(f'after_run:{result.output}')
+            return result
 
-    async def after_run(  # pragma: no cover — must never fire
-        self, ctx: RunContext[None], *, result: AgentRunResult[str]
-    ) -> AgentRunResult[str]:
-        raise AssertionError('`after_run` must not fire for realtime sessions')
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+            calls.append('wrap_run:before')
+            try:
+                return await handler()
+            finally:
+                calls.append('wrap_run:finally')
 
-    async def on_run_error(  # pragma: no cover — must never fire
-        self, ctx: RunContext[None], *, error: BaseException
-    ) -> AgentRunResult[str]:
-        raise AssertionError('`on_run_error` must not fire for realtime sessions')
-
-    async def wrap_run(  # pragma: no cover — must never fire
-        self, ctx: RunContext[None], *, handler: WrapRunHandler
-    ) -> AgentRunResult[str]:
-        raise AssertionError('`wrap_run` must not fire for realtime sessions')
-
-
-async def test_run_lifecycle_hooks_do_not_fire_for_a_session() -> None:
-    """A session runs no run-lifecycle hook, but still builds `session.result` on clean exit."""
     model = _RecordingModel(connection_events=[OutputTranscript(text='final answer', is_final=True), ResponseDone()])
-    agent = Agent(capabilities=[_LifecycleCapability()], deps_type=type(None))
+    agent = Agent(capabilities=[LifecycleCapability()], deps_type=type(None))
+
+    async with agent.realtime(model).session() as session:
+        calls.append('session:body')
+        async for _ in session:
+            pass
+
+    assert calls == [
+        'wrap_run:before',
+        'before_run',
+        'session:body',
+        'wrap_run:finally',
+        'after_run:final answer',
+    ]
+    assert session.result is not None
+    assert session.result.output == 'final answer'
+    assert session.result.new_messages() == session.new_messages()
+
+
+async def test_wrap_run_recovers_session_error() -> None:
+    """`wrap_run` recovery suppresses a session error and supplies `session.result`."""
+
+    class RecoveryCapability(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+            try:
+                return await handler()
+            except RuntimeError as error:
+                assert str(error) == 'session failed'
+                return AgentRunResult(output='wrap recovered')
+
+    agent = Agent(capabilities=[RecoveryCapability()], deps_type=type(None))
+
+    async with agent.realtime(_RecordingModel()).session() as session:
+        raise RuntimeError('session failed')
+
+    assert session.result is not None
+    assert session.result.output == 'wrap recovered'
+
+
+async def test_on_run_error_recovers_session_error() -> None:
+    """`on_run_error` recovery suppresses a session error and supplies `session.result`."""
+
+    class RecoveryCapability(AbstractCapability[None]):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            assert str(error) == 'session failed'
+            return AgentRunResult(output='error hook recovered')
+
+    agent = Agent(capabilities=[RecoveryCapability()], deps_type=type(None))
+
+    async with agent.realtime(_RecordingModel()).session() as session:
+        raise RuntimeError('session failed')
+
+    assert session.result is not None
+    assert session.result.output == 'error hook recovered'
+
+
+async def test_unrecovered_session_error_propagates() -> None:
+    """A session error still propagates unchanged when no run hook recovers it."""
+    agent = Agent(deps_type=type(None))
+
+    with pytest.raises(RuntimeError, match='session failed'):
+        async with agent.realtime(_RecordingModel()).session():
+            raise RuntimeError('session failed')
+
+
+async def test_after_run_transforms_session_result() -> None:
+    """An `after_run` result transformation becomes the public `session.result`."""
+
+    class TransformCapability(AbstractCapability[None]):
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
+            return AgentRunResult(output=f'transformed: {result.output}')
+
+    agent = Agent(capabilities=[TransformCapability()], deps_type=type(None))
+    model = _RecordingModel(connection_events=[OutputTranscript(text='answer', is_final=True), ResponseDone()])
 
     async with agent.realtime(model).session() as session:
         async for _ in session:
             pass
 
     assert session.result is not None
-    assert session.result.output == 'final answer'
-    assert session.result.new_messages() == session.new_messages()
+    assert session.result.output == 'transformed: answer'
 
 
-async def test_run_lifecycle_hooks_do_not_fire_on_session_error() -> None:
-    """A session-body failure propagates unchanged; `on_run_error` gets no say."""
-    agent = Agent(capabilities=[_LifecycleCapability()], deps_type=type(None))
+async def test_wrap_run_short_circuits_before_session_connects() -> None:
+    """A `wrap_run` short-circuit returns a closed result-only session without connecting."""
 
-    with pytest.raises(RuntimeError, match='session failed'):
-        async with agent.realtime(_RecordingModel()).session():
-            raise RuntimeError('session failed')
+    class ShortCircuitCapability(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+            return AgentRunResult(output='short-circuited')
+
+    model = _RecordingModel()
+    agent = Agent(capabilities=[ShortCircuitCapability()], deps_type=type(None))
+
+    async with agent.realtime(model).session() as session:
+        assert session.closed
+        assert session.result is not None
+        assert session.result.output == 'short-circuited'
+
+    assert model.instructions is None
+
+
+async def test_wrap_run_context_is_ambient_throughout_session() -> None:
+    """Context set before `handler()` reaches instructions, caller code, and tool execution."""
+    ambient: contextvars.ContextVar[str] = contextvars.ContextVar('realtime_lifecycle_ambient')
+    seen: list[tuple[str, str | None]] = []
+
+    class AmbientCapability(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+            token = ambient.set('managed prompt')
+            try:
+                return await handler()
+            finally:
+                ambient.reset(token)
+
+    agent = Agent(capabilities=[AmbientCapability()], deps_type=type(None))
+
+    @agent.instructions
+    def dynamic_instructions(ctx: RunContext[None]) -> str:
+        seen.append(('instructions', ambient.get(None)))
+        return 'Use the tool.'
+
+    @agent.tool
+    def inspect_context(ctx: RunContext[None]) -> str:
+        seen.append(('tool', ambient.get(None)))
+        return 'done'
+
+    model = _RecordingModel(
+        connection_events=[
+            ToolCall(tool_call_id='tc_1', tool_name='inspect_context', args='{}'),
+            ResponseDone(),
+        ]
+    )
+    async with agent.realtime(model).session() as session:
+        seen.append(('caller', ambient.get(None)))
+        async for _ in session:
+            pass
+
+    assert seen == [
+        ('instructions', 'managed prompt'),
+        ('caller', 'managed prompt'),
+        ('tool', 'managed prompt'),
+    ]
+    assert ambient.get(None) is None
+
+
+async def test_run_context_realtime_is_false_for_classic_run() -> None:
+    """`RunContext.realtime` distinguishes a classic run without importing model internals."""
+
+    class ClassicCapability(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            assert not ctx.realtime
+
+    await Agent(TestModel(), capabilities=[ClassicCapability()], deps_type=type(None)).run('hello')
+
+
+async def test_for_run_state_flows_up_from_session_tool_to_after_run() -> None:
+    """Mutable state on the `for_run` copy carries tool observations back to `after_run`."""
+    checks: list[bool] = []
+
+    class StatefulCapability(AbstractCapability[None]):
+        tool_ran = False
+
+        async def after_tool_execute(
+            self,
+            ctx: RunContext[None],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: dict[str, object],
+            result: object,
+        ) -> object:
+            self.tool_ran = True
+            return result
+
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
+            checks.append(self.tool_ran)
+            return result
+
+    agent = Agent(capabilities=[StatefulCapability()], deps_type=type(None))
+
+    @agent.tool_plain
+    def mark_state() -> str:
+        return 'done'
+
+    model = _RecordingModel(
+        connection_events=[ToolCall(tool_call_id='tc_1', tool_name='mark_state', args='{}'), ResponseDone()]
+    )
+    async with agent.realtime(model).session() as session:
+        async for _ in session:
+            pass
+
+    assert checks == [True]
+
+
+async def test_run_context_exposes_realtime_session_and_merged_settings() -> None:
+    """`ctx.realtime_session` is the live session once connected — `None` before, when only
+    `ctx.realtime` can identify the run — and `ctx.model_settings` holds the merged
+    `RealtimeModelSettings` for the whole session."""
+    settings = RealtimeModelSettings(output_modality='audio')
+    observed: list[object] = []
+
+    class ContextCapability(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            # The session is constructed from the connection, so it cannot exist yet here.
+            assert ctx.realtime
+            assert ctx.realtime_session is None
+            observed.append(dict(ctx.model_settings or {}))
+
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
+            observed.append(ctx.realtime_session)
+            return result
+
+    agent = Agent(capabilities=[ContextCapability()], deps_type=type(None))
+
+    @agent.tool
+    def check_session(ctx: RunContext[None]) -> str:
+        observed.append(ctx.realtime_session)
+        return 'done'
+
+    model = _RecordingModel(
+        settings=settings,
+        connection_events=[ToolCall(tool_call_id='tc_1', tool_name='check_session', args='{}'), ResponseDone()],
+    )
+    async with agent.realtime(model).session() as session:
+        async for _ in session:
+            pass
+
+    assert observed == [{'output_modality': 'audio'}, session, session]
