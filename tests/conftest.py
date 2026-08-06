@@ -881,6 +881,11 @@ def ollama_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def vercel_api_key() -> str:
+    return os.getenv('VERCEL_AI_GATEWAY_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def huggingface_api_key() -> str:
     return os.getenv('HF_TOKEN', 'hf_token')
 
