@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, 
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from functools import cache, cached_property
+from functools import cache, cached_property, wraps
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
 
@@ -276,6 +276,32 @@ class ModelRequestParameters:
         return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_generated_model_request_parameters_init = ModelRequestParameters.__init__
+
+
+@wraps(_generated_model_request_parameters_init)
+def _init_accepting_deferred_capability_ids(
+    self: ModelRequestParameters, *, deferred_capability_ids: set[str] | None = None, **kwargs: Any
+) -> None:
+    # `deferred_capability_ids` shipped as a regular field, so its removal must keep the
+    # constructor argument working through the deprecation period, next to the derived read
+    # property above. An `InitVar` would be the natural spelling, but `dataclasses.replace()` on
+    # Python 3.13+ round-trips init-only variables through `getattr`, which would fire both
+    # deprecation warnings on every internal `replace()` call — so the generated `__init__` is
+    # wrapped instead, and `replace()` never sees the non-field name.
+    if deferred_capability_ids is not None:
+        warnings.warn(
+            '`ModelRequestParameters.deferred_capability_ids` is deprecated: set '
+            '`ToolDefinition.capability_id` and `defer_loading` on the function tools instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+    _generated_model_request_parameters_init(self, **kwargs)
+
+
+ModelRequestParameters.__init__ = _init_accepting_deferred_capability_ids
 
 
 @dataclass(kw_only=True)

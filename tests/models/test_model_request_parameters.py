@@ -1,3 +1,4 @@
+import warnings
 from dataclasses import replace
 from typing import Literal
 
@@ -277,6 +278,25 @@ def test_old_serialized_payload_with_deferred_capability_ids_still_validates():
     dumped = ta.dump_python(ModelRequestParameters(), mode='json')
     dumped['deferred_capability_ids'] = ['refunds']
     ta.validate_python(dumped)
+
+
+def test_deferred_capability_ids_still_accepted_as_a_constructor_argument():
+    """v2.23 shipped the field, so passing it must warn, not raise `TypeError`.
+
+    The value itself is discarded: the framework only ever populated the field from the function
+    tools' own `capability_id`/`defer_loading`, which is what reads now derive from.
+    """
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`ModelRequestParameters\.deferred_capability_ids`'):
+        params = ModelRequestParameters(deferred_capability_ids={'refunds'})  # pyright: ignore[reportCallIssue]
+    with pytest.warns(PydanticAIDeprecationWarning):
+        assert params.deferred_capability_ids == set()
+
+    # The rejected `InitVar` spelling for the shim would leak both deprecation warnings out of
+    # every internal `replace()` call on Python 3.13+, which round-trips init-only variables
+    # through `getattr` — so silence here is part of the contract.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        replace(ModelRequestParameters(), output_mode='tool')
 
 
 def test_declared_tool_defs_never_drops_an_output_tool():

@@ -91,6 +91,43 @@ async def test_item_carried_tool_call_gets_a_synthesized_namespace() -> None:
     assert function_call.get('namespace') == tool.name
 
 
+async def test_duplicate_names_in_one_delta_render_a_single_declaration() -> None:
+    """A name repeated within one part's list is declared once, like a repeat across parts.
+
+    Round-tripped history is free to carry `added=['foo', 'foo']`; the request-level dedupe marks
+    each accepted name as it goes, so a repeat inside a single list collapses too instead of
+    declaring the tool twice in one `additional_tools` item.
+    """
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
+    tool = ToolDefinition(name='foo', parameters_json_schema={'type': 'object', 'properties': {}}, defer_loading=True)
+    _, parameters = model.prepare_request(
+        None, ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
+    )
+
+    _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name, tool.name])])],
+        OpenAIResponsesModelSettings(),
+        parameters,
+    )
+
+    additional_tools = next(item for item in items if item.get('type') == 'additional_tools')
+    assert additional_tools == snapshot(
+        {
+            'type': 'additional_tools',
+            'role': 'developer',
+            'tools': [
+                {
+                    'name': 'foo',
+                    'parameters': {'type': 'object', 'properties': {}, 'additionalProperties': False},
+                    'type': 'function',
+                    'description': None,
+                    'strict': False,
+                }
+            ],
+        }
+    )
+
+
 async def test_stored_reveal_does_not_namespace_plain_tool_call() -> None:
     """Reveal state alone cannot move an ordinary `tools`-array function out of the default namespace.
 

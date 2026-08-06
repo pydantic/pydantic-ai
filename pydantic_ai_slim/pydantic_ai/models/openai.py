@@ -3544,14 +3544,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         dedupe.
         """
         tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
-        renderable = [
-            name
-            for name in tool_names
-            if name not in rendered
-            and name in tool_defs_by_name
-            and model_request_parameters.visibility_of(name) != 'visible'
-        ]
-        rendered.update(renderable)
+        renderable: list[str] = []
+        for name in tool_names:
+            # Marking `rendered` per accepted name (like the Anthropic loop) also dedupes a name
+            # repeated within this part's own list, not just across parts.
+            if (
+                name not in rendered
+                and name in tool_defs_by_name
+                and model_request_parameters.visibility_of(name) != 'visible'
+            ):
+                renderable.append(name)
+                rendered.add(name)
         return responses.response_input_item_param.AdditionalTools(
             type='additional_tools',
             role='developer',
