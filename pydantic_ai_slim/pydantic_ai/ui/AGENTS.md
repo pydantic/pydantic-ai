@@ -10,3 +10,15 @@ The inbound half of that last rule lives in `ag_ui/_forward_compat.py`: AG-UI's 
 Tests for version-gated behavior belong behind `requires_ag_ui('<version>')` in `tests/test_ag_ui.py`, never behind the module-level `imports_successful()` gate: a name that only exists above the floor in that import block skips the entire module on CI's `test-lowest-versions` job, which is the only job that exercises the floor these gates exist for.
 
 `ci.yml` installs only two points on the supported range — the floor, via `test-lowest-versions`, and `uv.lock`'s current pin everywhere else — so a gate whose threshold is off by one version stays green there while raising on real traffic. `.github/workflows/ag-ui-protocol-compat.yml` covers the versions in between: it runs `tests/test_ag_ui.py` against one representative of each behavior band the constants in `ag_ui/_utils.py` define. The invariant is that every band has a version some job installs — the matrix, the floor, or the lock — so adding a constant means adding its version to that matrix unless `ci.yml` already installs it. That exemption is why `INTERRUPTS_VERSION` (0.1.19, `uv.lock`'s current pin) has no leg: a constant is an open-ended lower bound, so the lock covers `[0.1.19, ∞)` and the `0.1.15` leg covers everything below it.
+
+## Adapter properties are shared concepts the adapter itself consumes
+
+An unread field on a protocol's run input is not a gap. `run_input` is public, so every field is already reachable as `adapter.run_input.<field>`; a property that only forwards one adds no capability and takes on a permanent public-API commitment. AG-UI's `context`, `forwardedProps` and `parentRunId` are deliberately left that way — see [7106](https://github.com/pydantic/pydantic-ai/pull/7106#discussion_r3723844005), which closed [7105](https://github.com/pydantic/pydantic-ai/issues/7105) by documenting the wiring instead of exposing `AGUIAdapter.context`.
+
+A field earns an adapter property when **both** hold:
+- the adapter consumes it, feeding it into run args or the event stream — that's what `messages`, `toolset`, `state`, `conversation_id` and `deferred_tool_results` all do
+- it names a concept every UI protocol has, so it can live on `UIAdapter` with one normalized type
+
+One without the other is the trap: a protocol-specific property with a generic name means the day a second protocol grows the same concept, the base-class version can't be added without breaking the first adapter's return type. Normalizing early to dodge that is not the fix either — a shape derived from a single protocol is a guess, and a lossy one when it discards structure the protocol chose (AG-UI's `context` is a `list` of `description`/`value` pairs, and `description` is not unique, so a `dict` silently drops entries).
+
+The agent run is not a sink for the leftovers, either: `RunContext.metadata` is attached to the run span, so routing client-submitted text there by default would put unbounded untrusted content into every user's traces.

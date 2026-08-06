@@ -2158,6 +2158,46 @@ async def test_instrument_all():
     assert get_model() is model
 
 
+class ExplicitPortEmbeddingModel(TestEmbeddingModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:8000/v1'
+
+
+class MalformedPortEmbeddingModel(TestEmbeddingModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:notaport/v1'
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize(
+    'model_type,expected_server_attributes',
+    [
+        pytest.param(
+            ExplicitPortEmbeddingModel,
+            snapshot({'server.address': 'example.com', 'server.port': 8000}),
+            id='explicit-port',
+        ),
+        pytest.param(MalformedPortEmbeddingModel, snapshot({}), id='malformed-port'),
+    ],
+)
+async def test_instrumented_embedding_model_server_attributes(
+    model_type: type[TestEmbeddingModel], expected_server_attributes: dict[str, str | int], capfire: CaptureLogfire
+):
+    """A `base_url` whose port isn't an integer omits the server attributes instead of failing the request.
+
+    `urlparse` accepts the URL and only raises when `hostname`/`port` are read, so this is a unit test:
+    no real provider produces a `base_url` that survives client construction and fails at attribute-building.
+    """
+    model = InstrumentedEmbeddingModel(model_type(), InstrumentationSettings())
+
+    await model.embed('Hello, world!', input_type='query')
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == expected_server_attributes
+
+
 def test_override():
     model = TestEmbeddingModel()
     embedder = Embedder(model)
