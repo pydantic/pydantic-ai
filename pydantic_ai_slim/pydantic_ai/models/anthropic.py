@@ -76,7 +76,7 @@ from ..profiles.anthropic import (
 )
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import ModelSettings, merge_model_settings
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -707,13 +707,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
             )
 
-        thinking_enabled = False
-        if anthropic_thinking := merged.get('anthropic_thinking'):
-            thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
-        elif merged.get('thinking'):
-            thinking_enabled = True
+        # Manual extended thinking (`{'type': 'enabled'}`) is incompatible with Tool Output; adaptive
+        # thinking is compatible, so only `enabled` switches the output mode (and raises on `tool` mode).
+        thinking_type = _effective_thinking_type(
+            merged.get('anthropic_thinking'),
+            merged.get('thinking'),
+            self.profile.get('anthropic_supports_adaptive_thinking', False),
+        )
 
-        if model_request_parameters.output_tools and thinking_enabled:
+        if model_request_parameters.output_tools and thinking_type == 'enabled':
             output_mode = 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
             model_request_parameters = model_request_parameters.with_default_output_mode(output_mode)
             if (
@@ -1449,6 +1451,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         supports_forced_tool_choice = self.profile.get('anthropic_supports_forced_tool_choice', True)
+        supports_adaptive_thinking = self.profile.get('anthropic_supports_adaptive_thinking', False)
 
         tool_choice: BetaToolChoiceParam
 
@@ -1462,6 +1465,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 resolved_tool_choice,
                 "tool_choice='required'",
                 supports_forced_tool_choice=supports_forced_tool_choice,
+                supports_adaptive_thinking=supports_adaptive_thinking,
             )
             tool_choice = {'type': 'any'} if supports else {'type': 'auto'}
         elif isinstance(resolved_tool_choice, tuple):
@@ -1471,6 +1475,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 model_request_parameters,
                 resolved_tool_choice,
                 supports_forced_tool_choice=supports_forced_tool_choice,
+                supports_adaptive_thinking=supports_adaptive_thinking,
             )
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 if supports:
@@ -3515,6 +3520,26 @@ def _map_mcp_server_result_block(
     )
 
 
+def _effective_thinking_type(
+    anthropic_thinking: BetaThinkingConfigParam | None,
+    unified_thinking: ThinkingLevel | None,
+    supports_adaptive_thinking: bool,
+) -> str | None:
+    """Resolve the effective Anthropic thinking type for the output-tool and tool-forcing guards.
+
+    Manual extended thinking (`{'type': 'enabled'}`) is incompatible with forced tool use and Tool
+    Output; adaptive thinking is compatible with both. Unified thinking maps to `adaptive` when the
+    profile advertises it and to `enabled` otherwise — the same mapping `_translate_thinking` uses to
+    build the wire payload. Returns `'enabled'`, `'adaptive'`, or `None` when thinking is off.
+    """
+    if anthropic_thinking:
+        thinking_type = anthropic_thinking.get('type')
+        return thinking_type if thinking_type in ('enabled', 'adaptive') else None
+    if unified_thinking:
+        return 'adaptive' if supports_adaptive_thinking else 'enabled'
+    return None
+
+
 def _support_tool_forcing(
     model_settings: AnthropicModelSettings,
     model_request_parameters: ModelRequestParameters,
@@ -3522,24 +3547,26 @@ def _support_tool_forcing(
     context: str = 'forcing specific tools',
     *,
     supports_forced_tool_choice: bool = True,
+    supports_adaptive_thinking: bool = False,
 ) -> bool:
     """A forced `tool_choice` ('required'/specific tool) isn't always compatible with Anthropic.
 
-    Thinking mode rejects forcing, and some models (e.g. Claude Fable 5, Claude Mythos Preview) reject it unconditionally.
+    Manual extended thinking rejects forcing (adaptive thinking does not), and some models
+    (e.g. Claude Fable 5, Claude Mythos Preview) reject it unconditionally.
     We only raise an error if the user explicitly set a forcing value; a forcing value that came
     from the `tool_choice` resolution logic falls back softly to 'auto'.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
     """
     # Mirror the dual-check pattern from prepare_request(); also check params.thinking
     # since Model.prepare_request strips unified `thinking` from model_settings into params.thinking.
-    thinking_enabled = bool(model_request_parameters.thinking)
-    if not thinking_enabled:
-        if anthropic_thinking := model_settings.get('anthropic_thinking'):
-            thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
-        elif model_settings.get('thinking'):
-            thinking_enabled = True
+    # Only manual extended thinking (`enabled`) is incompatible with forcing; adaptive thinking is fine.
+    thinking_type = _effective_thinking_type(
+        model_settings.get('anthropic_thinking'),
+        model_request_parameters.thinking or model_settings.get('thinking'),
+        supports_adaptive_thinking,
+    )
 
-    if supports_forced_tool_choice and not thinking_enabled:
+    if supports_forced_tool_choice and thinking_type != 'enabled':
         return True
 
     explicit_choice = model_settings.get('tool_choice')
@@ -3547,7 +3574,8 @@ def _support_tool_forcing(
         if not supports_forced_tool_choice:
             raise UserError(f"Anthropic does not support {context} for this model. Use `tool_choice='auto'`.")
         raise UserError(
-            f"Anthropic does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`."
+            f'Anthropic does not support {context} with manual extended thinking. '
+            "Disable thinking or use `tool_choice='auto'`."
         )
 
     if resolved_tool_choice == 'required' or isinstance(resolved_tool_choice, tuple):

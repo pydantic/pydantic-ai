@@ -4725,11 +4725,14 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
     assert kwargs['extra_body'] == {'metadata': {'keep': True}}
 
 
-async def test_anthropic_opus_46_adaptive_thinking_rejects_tool_output(allow_model_requests: None):
-    """Verified in https://logfire-us.pydantic.dev/public-trace/ca9932da-b5ff-46f0-b277-9aeecc5f41e7?spanId=15a32e26f5020e62"""
+async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(allow_model_requests: None):
+    """Adaptive thinking is compatible with Tool Output (manual extended thinking is not).
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/7195.
+    """
     responses = [
         completion_message(
-            [BetaTextBlock(text='Paris', type='text')],
+            [BetaToolUseBlock(id='1', input={'city': 'Paris'}, name='final_result', type='tool_use')],
             usage=BetaUsage(input_tokens=2, output_tokens=1),
         ),
     ]
@@ -4744,8 +4747,8 @@ async def test_anthropic_opus_46_adaptive_thinking_rejects_tool_output(allow_mod
         output_type=ToolOutput(CityLocation),
         model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}),
     )
-    with pytest.raises(UserError, match='Anthropic does not support thinking and output tools at the same time'):
-        await agent.run('What is the capital of France?')
+    result = await agent.run('What is the capital of France?')
+    assert result.output == CityLocation(city='Paris')
 
 
 async def test_multiple_system_prompt_formatting(allow_model_requests: None):

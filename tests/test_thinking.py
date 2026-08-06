@@ -626,10 +626,12 @@ class TestGroqThinkingTranslation:
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 class TestAnthropicUnifiedThinkingConflict:
-    """Test that unified thinking triggers the output tools conflict path in prepare_request."""
+    """Test how unified thinking interacts with the output tools conflict path in prepare_request,
+    distinguishing adaptive thinking (compatible with Tool Output) from manual extended thinking."""
 
-    def test_unified_thinking_with_output_tools_auto_mode(self):
-        """thinking='high' (unified) + output tools + auto mode -> switches to native."""
+    def test_unified_thinking_adaptive_keeps_tool_output_mode(self):
+        """Unified thinking on an adaptive-capable profile maps to adaptive thinking, which is
+        compatible with Tool Output, so auto mode is retained as 'tool' (not switched to native)."""
         model = AnthropicModel.__new__(AnthropicModel)
         model._profile = AnthropicModelProfile(
             supports_thinking=True,
@@ -648,7 +650,31 @@ class TestAnthropicUnifiedThinkingConflict:
         settings = ModelSettings(thinking='high')
 
         _, resolved_params = model.prepare_request(settings, params)
-        # Should have switched from auto to native (since supports_json_schema_output=True)
+        # Adaptive thinking is compatible with output tools, so 'auto' resolves to the profile default 'tool'.
+        assert resolved_params.output_mode == 'tool'
+        assert resolved_params.thinking == 'high'
+
+    def test_unified_thinking_enabled_switches_to_native_output_mode(self):
+        """Unified thinking on a non-adaptive profile maps to manual extended thinking, which IS
+        incompatible with Tool Output, so auto mode switches to native."""
+        model = AnthropicModel.__new__(AnthropicModel)
+        model._profile = AnthropicModelProfile(
+            supports_thinking=True,
+            supports_json_schema_output=True,
+        )
+        model._settings = None
+
+        output_tool = ToolDefinition(name='output', description='', parameters_json_schema={}, kind='output')
+        output_object = OutputObjectDefinition(json_schema={'type': 'object', 'properties': {}})
+        params = ModelRequestParameters(
+            output_tools=[output_tool],
+            output_object=output_object,
+            output_mode='auto',
+        )
+        settings = ModelSettings(thinking='high')
+
+        _, resolved_params = model.prepare_request(settings, params)
+        # Manual extended thinking is incompatible with output tools, so auto switches to native.
         assert resolved_params.output_mode == 'native'
         assert resolved_params.thinking == 'high'
 

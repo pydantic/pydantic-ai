@@ -447,6 +447,11 @@ def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_t
             id='unified_thinking_false_allows_forcing',
         ),
         pytest.param(
+            {'anthropic_thinking': {'type': 'adaptive'}},
+            True,
+            id='provider_specific_adaptive_allows_forcing',
+        ),
+        pytest.param(
             {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}, 'thinking': False},
             False,
             id='provider_specific_takes_precedence',
@@ -457,6 +462,37 @@ def test_support_tool_forcing_thinking_detection(settings: Any, expected: bool):
     """Thinking detection checks anthropic_thinking, unified thinking field, and `params.thinking`."""
     result = anthropic_support_tool_forcing(settings, ModelRequestParameters(), 'required')
     assert result is expected
+
+
+@skip_if_no_anthropic
+@pytest.mark.parametrize(
+    'supports_adaptive_thinking,expected',
+    [
+        pytest.param(True, True, id='adaptive_profile_unified_thinking_allows_forcing'),
+        pytest.param(False, False, id='non_adaptive_profile_unified_thinking_blocks_forcing'),
+    ],
+)
+def test_support_tool_forcing_adaptive_profile_mapping(supports_adaptive_thinking: bool, expected: bool):
+    """Unified thinking maps to adaptive (compatible with forcing) on adaptive-capable profiles and
+    to manual extended thinking (incompatible) otherwise."""
+    settings: AnthropicModelSettings = {'thinking': 'high'}
+    result = anthropic_support_tool_forcing(
+        settings, ModelRequestParameters(), 'required', supports_adaptive_thinking=supports_adaptive_thinking
+    )
+    assert result is expected
+
+
+@skip_if_no_anthropic
+def test_support_tool_forcing_rejects_unsupported_model_with_adaptive_thinking():
+    """Models with supports_forced_tool_choice=False reject explicit forcing even with adaptive thinking."""
+    settings: AnthropicModelSettings = {
+        'anthropic_thinking': {'type': 'adaptive'},
+        'tool_choice': 'required',
+    }
+    with pytest.raises(UserError, match='Anthropic does not support forcing specific tools for this model'):
+        anthropic_support_tool_forcing(
+            settings, ModelRequestParameters(), 'required', supports_forced_tool_choice=False
+        )
 
 
 @pytest.mark.parametrize(
