@@ -279,6 +279,20 @@ async def test_snowflake_llama(allow_model_requests: None, live_provider: Snowfl
     assert result.output == snapshot(CityInfo(city='Mexico City', country='Mexico'))
 
 
+async def test_snowflake_tool_output_unsupported_family(allow_model_requests: None, provider: SnowflakeProvider):
+    """Cortex errors on `tools` for non-OpenAI/Claude families, so the profile disables tool support.
+    Tool-based structured output is then rejected client-side (the default falls back to prompted;
+    see `test_snowflake_llama`), before any request is made."""
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.output import ToolOutput
+
+    model = SnowflakeModel('llama4-maverick', provider=provider)
+    agent = Agent(model, output_type=ToolOutput(CityInfo))
+
+    with pytest.raises(UserError, match='Tool output is not supported by this model'):
+        await agent.run('The capital of Mexico')
+
+
 async def test_snowflake_openai_model(allow_model_requests: None, live_provider: SnowflakeProvider):
     """OpenAI models return a proper `finish_reason` that passes through the coercion unchanged."""
     model = SnowflakeModel('openai-gpt-4.1', provider=live_provider)
