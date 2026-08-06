@@ -519,6 +519,15 @@ def _resolve_anthropic_service_tier(
 
 
 def _trim_messages_before_compaction(messages: list[ModelMessage], system: str) -> list[ModelMessage]:
+    """Drop history the API ignores: everything before the latest same-provider compaction block.
+
+    The standing system prompt is the exception — it is sent as the separate `system` parameter,
+    which the compaction block does not replace, so the opening request's leading
+    `SystemPromptPart`s are carried over. Nothing else from the prefix survives: the API accepts a
+    request whose messages start with the assistant compaction block (live-verified), and keeping
+    e.g. the original first user message can 400 when it carries a `tool_result` whose `tool_use`
+    was trimmed away — validation runs even on content the compaction block makes the model ignore.
+    """
     for message_index in range(len(messages) - 1, -1, -1):
         message = messages[message_index]
         if isinstance(message, ModelResponse):
@@ -526,17 +535,29 @@ def _trim_messages_before_compaction(messages: list[ModelMessage], system: str) 
                 part = message.parts[part_index]
                 if isinstance(part, CompactionPart) and part.provider_name == system:
                     tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
-                    first_user_request = next(
-                        (
-                            candidate
-                            for candidate in messages[:message_index]
-                            if isinstance(candidate, ModelRequest)
-                            and any(isinstance(request_part, UserPromptPart) for request_part in candidate.parts)
-                        ),
-                        None,
-                    )
-                    return [first_user_request, *tail] if first_user_request is not None else tail
+                    standing_prompt = _standing_system_prompt_request(messages[:message_index])
+                    return [*standing_prompt, *tail]
     return messages
+
+
+def _standing_system_prompt_request(prefix: list[ModelMessage]) -> list[ModelRequest]:
+    """The opening request's leading `SystemPromptPart`s, as a request of their own.
+
+    Only the first request's opening system parts are the standing prompt; mid-conversation
+    `SystemPromptPart`s render inline as conversation content, which the compaction summary
+    replaces, so they are deliberately not preserved.
+    """
+    for message in prefix:
+        if isinstance(message, ModelRequest):
+            opening: list[SystemPromptPart] = []
+            for part in message.parts:
+                if isinstance(part, SystemPromptPart):
+                    opening.append(part)
+                else:
+                    break
+            return [ModelRequest(parts=list(opening))] if opening else []
+        break
+    return []
 
 
 @dataclass(init=False)

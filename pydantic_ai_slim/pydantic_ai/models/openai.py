@@ -1889,6 +1889,15 @@ responses_output_text_annotations_ta = TypeAdapter(list[responses.response_outpu
 
 
 def _trim_messages_before_compaction(messages: list[ModelMessage], system: str) -> list[ModelMessage]:
+    """Drop history before the latest same-provider compaction item the request will send.
+
+    Unlike Anthropic, the Responses API processes and bills replayed input items that precede a
+    compaction item (live-verified), so replaying them would defeat compaction entirely. The
+    standing system prompt is the exception: it maps to its own instructions/system item that the
+    compaction item does not replace, so the opening request's leading `SystemPromptPart`s are
+    carried over. Mid-conversation `SystemPromptPart`s render inline as conversation content the
+    compaction summarized, so they are deliberately not preserved.
+    """
     for message_index in range(len(messages) - 1, -1, -1):
         message = messages[message_index]
         if isinstance(message, ModelResponse):
@@ -1900,8 +1909,25 @@ def _trim_messages_before_compaction(messages: list[ModelMessage], system: str) 
                     and part.provider_details
                     and 'encrypted_content' in part.provider_details
                 ):
-                    return [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
+                    tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
+                    standing_prompt = _standing_system_prompt_request(messages[:message_index])
+                    return [*standing_prompt, *tail]
     return messages
+
+
+def _standing_system_prompt_request(prefix: list[ModelMessage]) -> list[ModelRequest]:
+    """The opening request's leading `SystemPromptPart`s, as a request of their own."""
+    for message in prefix:
+        if isinstance(message, ModelRequest):
+            opening: list[SystemPromptPart] = []
+            for part in message.parts:
+                if isinstance(part, SystemPromptPart):
+                    opening.append(part)
+                else:
+                    break
+            return [ModelRequest(parts=list(opening))] if opening else []
+        break
+    return []
 
 
 @dataclass(init=False)
