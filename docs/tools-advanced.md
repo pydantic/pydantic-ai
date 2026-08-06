@@ -410,8 +410,7 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 | [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]`(function_tools=['...'])` | Restrict function tools while auto-including all output tools. |
 
 Tools hidden by [deferred loading](#tool-search) interact with `tool_choice`: a tool that is still
-hidden can't be forced by name (reveal it first — through tool search, `load_capability`, or
-[`ToolReturn.tools`][pydantic_ai.messages.ToolReturn]), and `'required'` raises when every function
+hidden names are ignored when forcing by name, and an explicit choice raises only when every requested tool is hidden. `'required'` raises when every function
 tool is hidden. A tool *declared* with its schema deferred can be forced. On providers that carry
 revealed definitions outside the `tools` list (OpenAI Responses `additional_tools`), a revealed
 tool can't be forced by name either, since by-name forcing can only target declared tools.
@@ -833,17 +832,11 @@ Pydantic AI prefers native search whenever available because the discovery excha
 
 Toolsets that aggregate or wrap deferred definitions can check visibility with [`ctx.is_tool_available(tool_def)`][pydantic_ai.tools.RunContext.is_tool_available] inside `get_tools`. A definition is available when it is not deferred or its name has been revealed in history. Pass the definition the toolset is holding; the name form applies the same test to the current resolved [`ctx.tools`][pydantic_ai.tools.RunContext.tools] snapshot and is intended for model-request hooks and tool execution.
 
-A tool owned by an [on-demand capability](capabilities/on-demand.md) is deferred but not *searchable*: it becomes available by loading its capability, never by the model asking for it. So a run whose deferred tools are all capability-owned advertises no tool search at all — not the native tool, and not the local `search_tools` function, which could only ever report no matches. Loading the capability reveals the tools directly.
-
-A run that also has standalone deferred tools keeps normal model-driven search for those. Capability-owned tools stay off the wire while a search surface is present, so search remains fully native — server-executed strategies included — and no query can return a tool before its capability loads.
-
-In such mixed runs, the capability catalog explicitly steers the model to load a capability rather than search for its tools, and the `search_tools` description states that capability-owned tools are not searchable.
-
-Any tool can reveal deferred tools by returning [`ToolReturn(tools=[...])`][pydantic_ai.messages.ToolReturn]; `load_capability` uses the same mechanism for capability-owned tools. The executor deduplicates names in first-occurrence order and records only additions that were not already revealed as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. The part stores names, not schemas; current tool definitions remain authoritative, and an unknown or already-visible name is a no-op when rendered.
+Tools gated as a bundle are covered by [on-demand capabilities](capabilities/on-demand.md); they are not part of the searchable corpus.
 
 Each recorded reveal also surfaces as a [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] in the agent event stream and as the corresponding persistent Vercel AI data chunk or AG-UI activity snapshot.
 
-Provider adapters project each availability delta onto their supported reveal channel. Anthropic declares each revealed definition in `tools` with `defer_loading=True` — up front in capability-only runs (no search surface can expose them), appended at reveal in mixed runs, which withhold capability-owned definitions until then — and references it from a native `tool_addition` block in the same request. OpenAI Responses carries a revealed definition in an appended `additional_tools` input item: a tool that was never declared travels in the item alone, while a tool already declared as a deferred `tools` entry keeps that entry and the item reveals it. Other models announce the newly available tools when their schemas are already visible, or receive a synthesized tool-search exchange when its result must reveal a withheld schema.
+Provider adapters project each availability delta onto their supported history-based reveal mechanism. Anthropic declares each revealed definition in `tools` with `defer_loading=True` — up front in capability-only runs (no search surface can expose them), appended at reveal in mixed runs, which withhold capability-owned definitions until then — and references it from a native `tool_addition` block in the same request. OpenAI Responses carries a revealed definition in an appended `additional_tools` input item: a tool that was never declared travels in the item alone, while a tool already declared as a deferred `tools` entry keeps that entry and the item reveals it. Other models announce the newly available tools when their schemas are already visible, or receive a synthesized tool-search exchange when its result must reveal a withheld schema.
 
 For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 

@@ -1,6 +1,6 @@
 # On-Demand Capabilities
 
-A multi-workflow agent normally sends every workflow's instructions and tool schemas on every turn, and applies every workflow's settings and hooks for the whole run — even though most requests need just one workflow. That cost grows with each workflow you add: more input tokens, and worse tool selection once the visible tool set passes the ~30–50-tool mark where models start picking the wrong one (the same pressure behind [tool search](../tools-advanced.md#tool-search)).
+A capability is a bundle of instructions and/or tools, optionally with settings and hooks. A multi-workflow agent normally sends every workflow's instructions and tool schemas on every turn, and applies every workflow's settings and hooks for the whole run — even though most requests need just one workflow. That cost grows with each workflow you add: more input tokens, and worse tool selection once the visible tool set passes the ~30–50-tool mark where models start picking the wrong one (the same pressure behind [tool search](../tools-advanced.md#tool-search)).
 
 Mark a [capability](overview.md) with `defer_loading=True` and give it a stable `id`, and it collapses to a one-line catalog entry — its `id` plus an optional `description` — that the model pulls in on demand. Here's the minimal shape:
 
@@ -32,7 +32,7 @@ agent = Agent(
 On the first turn, the refund workflow is collapsed to a catalog entry. The model sees its base instructions, the framework-managed `load_capability` tool, and the catalog appended to the instructions:
 
 ```text
-The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability may have tools; they stay hidden until it is loaded:
 - refunds: Use for refund eligibility, refund status, or processing a refund.
 ```
 
@@ -123,7 +123,7 @@ Several [`RunContext`][pydantic_ai.tools.RunContext] fields expose progressive-d
 - `ctx.loaded_capability_ids` — deferred capability IDs explicitly loaded through the `load_capability` tool, reconstructed from message history and updated when a capability loads during the current step.
 - `ctx.available_capability_ids` — the currently-live capability IDs: always-available capabilities plus `ctx.loaded_capability_ids`.
 - `ctx.capability_loaded` — only meaningful while Pydantic AI is running a capability-owned hook or callback. It is scoped to that capability; deferred hooks and callbacks are skipped until this value would be true.
-- `ctx.discovered_tool_names` — deferred function tools revealed by durable history, whether through tool search or [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn].
+- `ctx.discovered_tool_names` — deferred function tools revealed by durable history, whether through tool search, [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn], or a capability load.
 - `ctx.available_tool_names` — function tool names currently known as available: always-visible tools from the current step's assembled tool manager plus names revealed in history. Early hooks such as `before_run` may see only the history-derived names, or an empty set if none exist yet, before tool definitions have been prepared. See [Hook ordering](../hooks.md#hook-ordering) for how hook timing affects what is populated.
 - `ctx.is_tool_available(tool)` — whether a function tool is currently visible. Wrapping toolsets should pass the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] they hold; model-request hooks and tool execution can pass a name from the current `ctx.tools` snapshot.
 - `ctx.usage_limits` — the [`UsageLimits`][pydantic_ai.usage.UsageLimits] the run is enforcing (defaulting to `UsageLimits()` when none were passed, so it's only `None` outside of a run), alongside `ctx.usage` for the usage so far. A capability can read the run's limits to disclose or adapt to the remaining budget (e.g. budget disclosure) without being configured with a duplicate copy. Treat it as read-only: it's the live object the run enforces against, so mutating a field would change what the run enforces on subsequent requests.
@@ -134,11 +134,11 @@ Loading a capability updates the capability state immediately, but the loaded bu
 
 On-demand capabilities work on every model, and where the provider can express an availability change natively, loading one leaves the prompt prefix intact.
 
-A capability-owned tool is hidden until its capability loads, and it is never searchable — the model reaches it by loading the capability, not by asking for it. The unified rule is that an unrevealed deferred tool stays outside the model's usable context; each provider's reveal channel determines its wire representation. A run whose deferred tools are all capability-owned advertises no tool search.
+A capability-owned tool is hidden until its capability loads, and it is never searchable — the model reaches it by loading the capability, not by asking for it. The unified rule is that an unrevealed deferred tool stays outside the model's usable context; each provider's reveal mechanism determines its wire representation.
 
 - **Anthropic `tool_addition_mode='by_reference'`** references the revealed name in a `tool_addition` block. A capability-only run pre-advertises the definition with `defer_loading=True`; a mixed run with a search surface withholds it, then appends the deferred definition in the same request as the reveal.
 - **OpenAI Responses `tool_addition_mode='with_definitions'`** carries the full revealed definition in an appended `additional_tools` input item and leaves it out of `tools`.
-- **No native addition channel (`tool_addition_mode=None`)** announces `The following tool(s) are now available: {names}` when the schema is visible. It synthesizes a `search_tools` exchange only when a result must reveal a schema that is still withheld.
+- **No provider-native reveal-item support (`tool_addition_mode=None`)** announces `The following tool(s) are now available: {names}` when the schema is visible. It synthesizes a `search_tools` exchange only when a result must reveal a schema that is still withheld.
 
 Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. Capability-owned tools stay off the wire entirely while a search surface is present, so search remains fully native — server-executed where the model supports it — and no query can surface a tool whose capability has not loaded.
 
@@ -151,8 +151,8 @@ Calling the `load_capability` tool reveals capability behavior between requests.
 | What loads | Cache prefix |
 |---|---|
 | Instructions only | **Stable** — instructions land in the message history, not the request prefix. |
-| Function tools with a native addition channel (`tool_addition_mode='by_reference'` or `'with_definitions'`) | **Stable** — deferred Anthropic entries are outside its cache key, and OpenAI Responses appends `additional_tools` without changing `tools[]`. |
-| Function tools with no native addition channel (`tool_addition_mode=None`) | **May break between turns** — function-tool visibility can change as capabilities load. |
+| Function tools with provider-native reveal-item support (`tool_addition_mode='by_reference'` or `'with_definitions'`) | **Stable on Anthropic and OpenAI Responses** — deferred Anthropic entries are outside its cache key, and OpenAI Responses appends `additional_tools` without changing `tools[]`. |
+| Function tools without provider-native reveal-item support (`tool_addition_mode=None`) | **May break between turns** — function-tool visibility can change as capabilities load. |
 | Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
 
 When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model that can express an availability change natively. The provider-specific mechanics that keep the prefix stable live in [Tool search and prompt caching](../tools-advanced.md#tool-search-caching).
