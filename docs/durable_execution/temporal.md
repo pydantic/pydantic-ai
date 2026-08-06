@@ -245,10 +245,13 @@ Because the model stream is consumed inside the activity, cancelling it from the
 
 Whole-run cancellation (see [Cancelling a Run](../agent.md#cancelling-a-run)) follows the same split, with Temporal-specific consequences:
 
-- Calling [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] from workflow code raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] as an ordinary application outcome: a workflow that catches it completes normally rather than ending as *Cancelled*, and the run remains replay-deterministic. An uncaught `RunCancelled` fails the workflow as a typed application error, and the run state does not cross the failure boundary -- catch it inside the workflow if you need [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages].
+- Calling [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] from workflow code raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] as an ordinary application outcome that you should **catch inside the workflow** and turn into a normal completion; the caught run remains replay-deterministic and its state is available via [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages]. Letting `RunCancelled` escape the workflow uncaught is not supported: see the warning below.
 - [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] requires being in the same process as the run, so calling it from a tool running inside an activity raises a clear [`UserError`][pydantic_ai.exceptions.UserError] instead of hanging.
 - [`CancellationToken`][pydantic_ai.CancellationToken] is also same-process state and cannot be passed to a Temporal durable run; use [`DurableRunCancellation`][pydantic_ai.durable_exec.DurableRunCancellation] (below) or cancel the Temporal workflow instead.
 - Cancelling the Temporal workflow itself remains an external cancellation: `CancelledError` keeps propagating and the workflow still ends as *Cancelled*.
+
+!!! warning "Always catch `RunCancelled` inside a durable workflow"
+    First-party cancellation is delivered by cancelling the run's asyncio task, so an *uncaught* `RunCancelled` that fails the workflow is **not replay-safe**: Temporal rejects the replayed activation (`Workflow activation completion failed`), which can wedge the workflow. Catch `RunCancelled` in your `@workflow.run` method and complete normally (or convert it to a separate application error you raise yourself) rather than letting it propagate.
 
 To let an **external** actor (a user hitting "stop") cancel a durable run first-party without tearing down the whole workflow, pass a [`DurableRunCancellation`][pydantic_ai.durable_exec.DurableRunCancellation] capability to the run and trigger it from a [`@workflow.signal`](https://docs.temporal.io/develop/python/message-passing#signals) handler. A signal runs on the workflow event loop and is recorded in history, so the resulting cancellation is deterministic on replay:
 
@@ -281,7 +284,7 @@ class MyAgentWorkflow:
         self.cancellation.cancel()
 ```
 
-An external actor then cancels the run by signalling the workflow: `await handle.signal(MyAgentWorkflow.cancel)`. As with [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] above, catch [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] inside the workflow if you want it to complete normally rather than fail as a typed application error.
+An external actor then cancels the run by signalling the workflow: `await handle.signal(MyAgentWorkflow.cancel)`. As the example shows, catch [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] inside the workflow and complete normally — the same replay requirement as [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] above applies.
 
 `DurableRunCancellation` is engine-agnostic: it captures the run's cancellation controller and exposes a `cancel()` method that each durable engine wires to its own external-cancellation mechanism.
 
