@@ -2031,8 +2031,8 @@ class BaseToolCallPart:
 
         Args:
             raise_if_invalid: If `True`, a `ValueError` or `AssertionError`
-                caused by malformed JSON in `args` will be re-raised.  When
-                `False` (the default), malformed JSON is handled gracefully by
+                caused by malformed or non-object JSON in `args` will be re-raised.  When
+                `False` (the default), such JSON is handled gracefully by
                 returning `{'INVALID_JSON': '<raw args>'}` so that the value
                 can still be sent to a model API (e.g. during a retry flow)
                 without crashing.
@@ -2054,12 +2054,27 @@ class BaseToolCallPart:
         """Return the arguments as a JSON string.
 
         This is just for convenience with models that require JSON strings as input.
+
+        JSON that's malformed or doesn't represent an object is handled gracefully by returning
+        `'{"INVALID_JSON":"<raw args>"}'`, matching [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict],
+        so that the value can still be sent to a model API (e.g. during a retry flow) instead of being rejected
+        by one that requires an object.
+
+        Because of that, this is not the way to render args that are still streaming in: a partial fragment
+        that only becomes valid JSON once the following deltas are concatenated would be degraded to the
+        wrapper. Emit those verbatim instead, as the UI event streams do.
         """
         if not self.args:
             return '{}'
         if isinstance(self.args, str):
-            return self.args
-        return pydantic_core.to_json(self.args).decode()
+            try:
+                if isinstance(pydantic_core.from_json(self.args), dict):
+                    # Returned verbatim rather than re-serialized, as the exact bytes the model produced
+                    # (key order, whitespace) matter for prompt caching.
+                    return self.args
+            except ValueError:
+                pass
+        return pydantic_core.to_json(self.args_as_dict()).decode()
 
     def has_content(self) -> bool:
         """Return `True` if the tool call has content."""

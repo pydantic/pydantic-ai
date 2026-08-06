@@ -252,6 +252,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
     accepted in that mode. When reasoning is enabled (low/medium/high/xhigh), sampling params are not supported.
     Whether the model reasons by default is tracked separately by `openai_reasoning_enabled_by_default`."""
 
+    openai_supports_minimal_reasoning_effort: bool
+    """Whether the model accepts `reasoning_effort='minimal'`. Default: `True`.
+
+    Disabled for GPT-5.6 models, whose documented reasoning efforts exclude `minimal`. When disabled,
+    unified `thinking='minimal'` falls back to `reasoning_effort='low'`.
+    See https://developers.openai.com/api/docs/guides/latest-model.
+    Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged."""
+
     openai_responses_supports_reasoning_mode: bool
     """Whether the Responses API supports `reasoning.mode` (`'standard' | 'pro'`) for this model. Default: `False`.
 
@@ -359,7 +367,6 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # known versions rather than matching open-endedly.
     # See https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints.
     supports_prompt_cache_breakpoints = model_name.startswith('gpt-5.6')
-
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
@@ -382,6 +389,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_responses_supports_reasoning_context=reasoning.supports_context,
         openai_supports_phase=supports_phase,
         openai_supports_prompt_cache_breakpoints=supports_prompt_cache_breakpoints,
+        openai_supports_minimal_reasoning_effort=not model_name.startswith('gpt-5.6'),
         supported_native_tools=supported_native_tools,
         # A Responses request carrying `defer_loading` without `tool_search` is rejected outright:
         # `Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.` Set
