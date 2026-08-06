@@ -350,6 +350,16 @@ class TemporalModel(WrapperModel):
         return current.system
 
     @property
+    def model_id(self) -> str:
+        """Get the ID of the currently active model, rather than the default one's."""
+        current = self._current_model()
+        if isinstance(current, str):
+            # `system` and `model_name` already parse the raw ID, falling back to the default model's
+            # provider when the string names none, so recombining them is the answer here.
+            return f'{self.system}:{self.model_name}'
+        return current.model_id
+
+    @property
     def profile(self) -> ModelProfile:
         """Get the model profile, inferring from raw strings without provider construction.
 
@@ -364,6 +374,15 @@ class TemporalModel(WrapperModel):
             # and this profile is only used for capability checks, not request preparation.
             return infer_model_profile(current)
         return current.profile
+
+    @property
+    def base_url(self) -> str | None:
+        """Get the base URL of the currently active model, rather than the default one's."""
+        current = self._current_model()
+        if isinstance(current, str):
+            # A raw model ID carries no URL, and the default model's would name the wrong server.
+            return None
+        return current.base_url
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         current = self._current_model()
@@ -392,7 +411,11 @@ class TemporalModel(WrapperModel):
 
         return current.prepare_request(model_settings, model_request_parameters)
 
-    def prepare_messages(self, messages: list[ModelMessage]) -> list[ModelMessage]:
+    def prepare_messages(
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters | None = None,
+    ) -> list[ModelMessage]:
         """Pre-process messages using the currently active model's profile.
 
         When `using_model()` selects a registered model, delegate to that concrete model's
@@ -403,7 +426,7 @@ class TemporalModel(WrapperModel):
         current = self._current_model()
         if isinstance(current, str):
             return messages
-        return current.prepare_messages(messages)
+        return current.prepare_messages(messages, model_request_parameters)
 
     def _reprepare_messages(self, params: _RequestParams, model_for_request: Model) -> list[ModelMessage]:
         """Re-run `prepare_messages` against the concrete model, where the workflow couldn't.
@@ -423,7 +446,7 @@ class TemporalModel(WrapperModel):
         if params.model_id is None or params.model_id in self._models_by_id:
             return params.messages
 
-        prepared = model_for_request.prepare_messages(params.messages)
+        prepared = model_for_request.prepare_messages(params.messages, params.model_request_parameters)
         if prepared is params.messages:
             return prepared
         return _clean_message_history(prepared, repair_last_response=True)

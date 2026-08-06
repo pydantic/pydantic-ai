@@ -2536,6 +2536,20 @@ async def test_google_timeout(allow_model_requests: None, google_provider: Googl
         await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
 
 
+async def test_google_timeout_zero_in_config():
+    """An explicit `timeout=0` is forwarded to the SDK config, which VCR does not expose."""
+    m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=GoogleModelSettings(timeout=0),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['http_options']['timeout'] == 0
+
+
 async def test_google_extra_headers(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-1.5-flash', provider=google_provider)
     agent = Agent(m, model_settings=GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))
@@ -6211,6 +6225,22 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
         if '<system>' in part.get('text', '')
     ]
     assert wrapped_texts == ['<system>Now be terse.</system>']
+
+
+async def test_google_system_prompt_after_user_part_stays_in_contents():
+    """An instruction merged into the first request after user content must not rewrite the cache prefix."""
+    model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key='not-used'))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='x'), SystemPromptPart(content='mid')])]
+
+    prepared = model.prepare_messages(messages)
+    system_instruction, contents = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters()
+    )
+
+    assert system_instruction is None
+    assert contents == [
+        {'role': 'user', 'parts': [{'text': 'x'}, {'text': '<system>mid</system>'}]},
+    ]
 
 
 async def test_google_stream_safety_filter(

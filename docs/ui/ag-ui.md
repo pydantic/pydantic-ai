@@ -239,6 +239,65 @@ uvicorn ag_ui_state:app --host 0.0.0.0 --port 9000
 AG-UI frontend tools are seamlessly provided to the Pydantic AI agent, enabling rich
 user experiences with frontend user interfaces.
 
+### Context
+
+Alongside messages, an AG-UI client can send a `context` array of `description`/`value` pairs describing things it considers relevant to the run: the originating platform, the requesting user, or a channel's standing instructions. Every entry is a claim the client made — it can send any `description`/`value` it likes — so they describe a request, they never establish who is making it.
+
+These entries are not passed to the model automatically, and they don't belong in [instructions][pydantic_ai.agent.Agent.instructions]. Instructions carry operator authority — they're treated as *your* instruction to the model — so building them out of text a client sent lets a prompt injection inherit that authority. Delivering them as data denies them that authority but doesn't make them safe: they're still indirect prompt-injection input, so scope and re-authorize side-effecting tools from `deps` your server established, never from an entry's `description` or `value`. See [Mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts) and the [trust model](./overview.md#trust-model-for-client-submitted-messages).
+
+Read the entries off `adapter.run_input.context` and deliver them to the model as **data**. Facts your server established — the authenticated user, the workspace — are what go in instructions:
+
+```py {title="ag_ui_context.py"}
+from dataclasses import dataclass
+
+from ag_ui.core import Context
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+
+@dataclass
+class ChannelDeps:
+    workspace: str  # (1)!
+    context: list[Context]  # (2)!
+
+
+agent = Agent('openai:gpt-5.2', deps_type=ChannelDeps)
+
+
+@agent.instructions
+def workspace(ctx: RunContext[ChannelDeps]) -> str:
+    return f'You are answering in the {ctx.deps.workspace} workspace.'
+
+
+@agent.tool
+def frontend_context(ctx: RunContext[ChannelDeps]) -> list[str]:
+    """Context the frontend says is relevant to this conversation."""
+    return [f'{entry.description}: {entry.value}' for entry in ctx.deps.context]
+
+
+def authenticated_workspace(request: Request) -> str:
+    """Whatever your auth layer already established — a session, a signed token, an API key."""
+    ...
+
+
+async def run_agent(request: Request) -> Response:
+    adapter = await AGUIAdapter.from_request(request, agent=agent)
+    deps = ChannelDeps(workspace=authenticated_workspace(request), context=adapter.run_input.context)
+    return adapter.streaming_response(adapter.run_stream(deps=deps))
+```
+
+1. Established by your server, so it can shape how the agent behaves.
+2. Sent by the client, so it reaches the model as tool output the agent can read — never as an instruction.
+
+To let a client-supplied fact change how the agent behaves, authenticate it first: verify the caller or channel, look up the policy *your* server holds for it, and write the instruction from that. The entry itself stays data.
+
+Anything that isn't meant for the model at all — a Slack channel ID, a locale — is better carried in `forwardedProps`, which the adapter passes through untouched as `adapter.run_input.forwarded_props`. Validating it proves shape, not identity: who the user is, what tenant they're in, and what they're allowed to do come from authenticated server state.
+
+`context`, `forwardedProps` and `parentRunId` are read straight off [`run_input`][pydantic_ai.ui.UIAdapter.run_input] rather than through adapter properties of their own. The adapter's properties — `messages`, `toolset`, `state`, `conversation_id`, `deferred_tool_results` — are the concepts every UI protocol shares and that the adapter itself feeds into the agent run. These three are AG-UI-specific and consumed only by your code, so they stay on the protocol object where their types are the protocol's own.
+
 ### Tool approval (interrupts)
 
 Tools declared with `requires_approval=True` map onto AG-UI's [interrupt-aware run lifecycle](https://docs.ag-ui.com/concepts/interrupts). When the model proposes such a call, the run pauses and the adapter ends the SSE stream with a `RUN_FINISHED` event whose `outcome.type` is `"interrupt"` and whose `outcome.interrupts[]` describes each pending approval. The client renders an approval UI from that list and POSTs the next `RunAgentInput` with a `resume[]` array of `ResumeEntry` items addressing each interrupt.
@@ -372,6 +431,16 @@ Since `app` is an ASGI application, it can be used with any ASGI server:
 ```bash
 uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 ```
+
+### Protocol version compatibility
+
+Pydantic AI supports every `ag-ui-protocol` release from `0.1.10` on, and features added after that floor are gated on the version you have installed rather than requiring an upgrade.
+
+That gate runs in both directions. On the way out, content an older protocol version can't express is downgraded or omitted — see [`AGUIAdapter.ag_ui_version`][pydantic_ai.ui.ag_ui.AGUIAdapter.ag_ui_version] for the negotiated thresholds. On the way in, a message `role` or input content `type` your installed `ag-ui-protocol` has no class for is skipped with a `UserWarning` naming the tag, and the rest of the request runs — so a frontend on a newer protocol version than your server keeps working, minus the content your install has no type for. For instance, a gateway that forwards image attachments as typed multimodal content (`ag-ui-protocol >= 0.1.15`) still delivers the accompanying text to an agent running on an older install.
+
+What gets skipped is decided by the tag alone: any `role` or `type` string the installed models don't declare qualifies, so a client that misspells `"txet"` is skipped with the same warning as one sending genuinely newer content — the server has no way to tell those apart. The skip is scoped to well-formed items: a message must still carry a string `id`, the field every AG-UI message type requires.
+
+Everything else is still rejected with `422 Unprocessable Entity` — a payload that is malformed under a `role` or `type` the install *does* know, a `role` or `type` that isn't a string at all, and a body that isn't valid JSON. If you see the warning and the content was real, upgrading `ag-ui-protocol` is what makes it reach your agent.
 
 ### Trust model
 
