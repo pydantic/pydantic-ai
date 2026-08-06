@@ -622,7 +622,7 @@ async def main():
         await agent.run(message_history=messages)  # (2)!
 ```
 
-1. `cancel()` is idempotent and thread-safe. One token may govern multiple concurrent runs, cancelling all of them.
+1. `cancel()` is idempotent and thread-safe. One token may govern multiple concurrent runs, cancelling all of them. A token is single-use: once cancelled it stays cancelled, and passing an already-cancelled token to a run prevents that run from starting (which also closes the "cancel raced ahead of the run" gap). So mint a fresh token per run or per stop gesture -- reusing one token across a session would cancel every run after the first before it starts.
 2. [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] contains everything completed before cancellation, including completed tool results. Any dangling tool call is [repaired automatically](message-history.md#making-histories-provider-valid) when the history is resumed.
 
 [UI adapter](ui/overview.md) users can persist this resumable history with the `on_cancel` callback.
