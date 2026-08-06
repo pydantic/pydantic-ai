@@ -275,8 +275,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_responses_requires_store_false: bool
     """Whether the Responses API requires `store=False`. Default: `False`.
 
-    Required by the ChatGPT Codex backend, which rejects a stored response with
-    `400 Store must be set to false`. Set by [`CodexProvider`][pydantic_ai.providers.codex.CodexProvider];
+    Required by the OpenAI Codex backend, which rejects a stored response with
+    `400 Store must be set to false`. Set by [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider];
     any `openai_store` a caller sets is overridden rather than passed through, because this is a backend
     rule and not a capability.
 
@@ -288,8 +288,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_responses_requires_stream: bool
     """Whether ordinary Responses API requests must be streamed and aggregated locally. Default: `False`.
 
-    Required by the ChatGPT Codex backend, which only answers streamed Responses requests, and set by
-    [`CodexProvider`][pydantic_ai.providers.codex.CodexProvider]. When set,
+    Required by the OpenAI Codex backend, which only answers streamed Responses requests, and set by
+    [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider]. When set,
     a non-streaming `request()` opens a stream, drains it, and returns the aggregated response, so
     callers see no difference. Resuming a suspended response is still checked first, so a background
     continuation is never re-created as a fresh request.
@@ -298,9 +298,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_responses_supports_input_tokens_count: bool
     """Whether the Responses API serves the `/responses/input_tokens` endpoint. Default: `True`.
 
-    The ChatGPT Codex backend does not route it — the path is answered by the edge with the same
+    The OpenAI Codex backend does not route it — the path is answered by the edge with the same
     challenge page any unknown path gets, so the SDK would surface an HTML body as a `ModelHTTPError`
-    rather than a count. Set to `False` by [`CodexProvider`][pydantic_ai.providers.codex.CodexProvider],
+    rather than a count. Set to `False` by [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider],
     which makes `count_tokens` (reached through `UsageLimits(count_tokens_before_request=True)`) raise
     a `UserError` naming the limitation instead.
     """
@@ -308,12 +308,12 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_responses_compaction_item_type: str
     """The `type` discriminator carried by the compaction item in a `/responses/compact` response. Default: `'compaction'`.
 
-    The ChatGPT Codex backend emits `'compaction_summary'` instead, and returns it after a `message`
+    The OpenAI Codex backend emits `'compaction_summary'` instead, and returns it after a `message`
     item rather than alone, so a client that accepts only the documented spelling reads its own
     successful compaction as a malformed response. The OpenAI SDK models no such variant, so the item
     arrives as a permissively-constructed object and is re-validated against
     `ResponseCompactionItem` once this flag has vouched for the spelling. Set by
-    [`CodexProvider`][pydantic_ai.providers.codex.CodexProvider].
+    [`OpenAICodexProvider`][pydantic_ai.providers.openai_codex.OpenAICodexProvider].
     """
 
     openai_responses_tool_call_ids_are_response_scoped: bool

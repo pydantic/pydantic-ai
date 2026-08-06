@@ -37,7 +37,7 @@ from .._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ..auth.codex import CodexLoginRequiredError
+from ..auth.openai_codex import OpenAICodexLoginRequiredError
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import SuspendedResponseExpired, UserError
 from ..messages import (
@@ -210,13 +210,13 @@ def _map_api_errors(model_name: str) -> Generator[None]:
     except APIConnectionError as e:
         # The SDK wraps everything raised inside `httpx.AsyncClient.send` in `APIConnectionError`,
         # including what an `httpx.Auth` hook of ours raises to tell the user what to do —
-        # `CodexProvider`'s `CodexLoginRequiredError`, which names the command that fixes it.
+        # `OpenAICodexProvider`'s `OpenAICodexLoginRequiredError`, which names the command that fixes it.
         # Only that one is surfaced as itself. Any wider unwrap (`UserError`, or the rest of the
-        # `CodexAuthError` hierarchy) would also catch errors that stand for a transport failure —
-        # an unreachable `auth.openai.com` becomes a `CodexRefreshError` — and re-raising those
+        # `OpenAICodexAuthError` hierarchy) would also catch errors that stand for a transport failure —
+        # an unreachable `auth.openai.com` becomes a `OpenAICodexRefreshError` — and re-raising those
         # stops `FallbackModel`, which falls over on `ModelAPIError`, from falling over on what is
         # genuinely a network error.
-        if isinstance(cause := e.__cause__, CodexLoginRequiredError):
+        if isinstance(cause := e.__cause__, OpenAICodexLoginRequiredError):
             raise cause
         raise ModelAPIError(model_name=model_name, message=e.message) from e
 
@@ -536,7 +536,7 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
 
     Mutates `model_settings`.
 
-    Used by the Cerebras and Codex providers.
+    Used by the Cerebras and OpenAI Codex providers.
     """
     for setting in profile.get('openai_unsupported_model_settings', ()):
         model_settings.pop(setting, None)
@@ -1915,9 +1915,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             'openai',
             'gateway',
             # Named here rather than in `OpenAIResponsesCompatibleProvider`, which also feeds
-            # `OpenAIEmbeddingsCompatibleProvider`: the Codex backend serves the Responses API alone,
+            # `OpenAIEmbeddingsCompatibleProvider`: the OpenAI Codex backend serves the Responses API alone,
             # so `infer_embedding_model` rejects it and the public type has to agree.
-            'codex',
+            'openai-codex',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,

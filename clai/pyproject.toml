@@ -48,9 +48,9 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    # The `codex` group carries the `filelock` that `clai auth login codex` needs to persist
+    # The `openai-codex` group carries the `filelock` that `clai auth login openai-codex` needs to persist
     # credentials; without it the CLI's own documented sign-in command cannot save its result.
-    "pydantic-ai[codex]=={{ version }}",
+    "pydantic-ai[openai-codex]=={{ version }}",
 ]
 
 [tool.hatch.metadata]

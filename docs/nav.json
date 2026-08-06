@@ -53,7 +53,7 @@
         "slug": "models/http-request-retries"
       },
       "models/openai",
-      "models/codex",
+      "models/openai-codex",
       "models/anthropic",
       "models/google",
       "models/xai",

@@ -7,12 +7,12 @@ from unittest.mock import Mock
 import pytest
 from pydantic import SecretStr
 
-from pydantic_ai.auth.codex import (
-    CodexAuthStatus,
-    CodexCredentials,
-    CodexDeviceCode,
-    CodexLogoutResult,
-    CodexOAuthError,
+from pydantic_ai.auth.openai_codex import (
+    OpenAICodexAuthStatus,
+    OpenAICodexCredentials,
+    OpenAICodexDeviceCode,
+    OpenAICodexLogoutResult,
+    OpenAICodexOAuthError,
 )
 
 from ._inline_snapshot import snapshot
@@ -25,8 +25,8 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli auth tests')
 
 
-def _credentials() -> CodexCredentials:
-    return CodexCredentials(
+def _credentials() -> OpenAICodexCredentials:
+    return OpenAICodexCredentials(
         access_token=SecretStr('access-secret'),
         refresh_token=SecretStr('refresh-secret'),
         id_token=SecretStr('id-secret'),
@@ -42,17 +42,17 @@ class FakeAuth:
         self.device_logins = 0
         self.local_only: bool | None = None
 
-    async def login_browser(self, open_url: object) -> CodexCredentials:
+    async def login_browser(self, open_url: object) -> OpenAICodexCredentials:
         self.browser_logins += 1
         assert callable(open_url)
         open_url('https://auth.example/authorize?state=ephemeral-state')
         return _credentials()
 
-    async def login_device(self, show_code: object) -> CodexCredentials:
+    async def login_device(self, show_code: object) -> OpenAICodexCredentials:
         self.device_logins += 1
         assert callable(show_code)
         show_code(
-            CodexDeviceCode(
+            OpenAICodexDeviceCode(
                 verification_url='https://auth.example/device',
                 user_code=SecretStr('ONE-TIME-CODE'),
                 expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
@@ -60,23 +60,23 @@ class FakeAuth:
         )
         return _credentials()
 
-    async def status(self) -> CodexAuthStatus:
-        return CodexAuthStatus(
+    async def status(self) -> OpenAICodexAuthStatus:
+        return OpenAICodexAuthStatus(
             authenticated=True,
             expires_at=datetime(2030, 1, 2, tzinfo=timezone.utc),
             needs_refresh=False,
         )
 
-    async def refresh(self) -> CodexCredentials:
+    async def refresh(self) -> OpenAICodexCredentials:
         return _credentials()
 
-    async def logout(self, *, local_only: bool = False) -> CodexLogoutResult:
+    async def logout(self, *, local_only: bool = False) -> OpenAICodexLogoutResult:
         self.local_only = local_only
-        return CodexLogoutResult(local_credentials_removed=True)
+        return OpenAICodexLogoutResult(local_credentials_removed=True)
 
 
 def _install_fake_auth(monkeypatch: pytest.MonkeyPatch, auth: FakeAuth) -> None:
-    monkeypatch.setattr('pydantic_ai._cli.auth.CodexAuth', lambda: auth)
+    monkeypatch.setattr('pydantic_ai._cli.auth.OpenAICodexAuth', lambda: auth)
 
 
 def test_cli_auth_browser_login(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -85,10 +85,10 @@ def test_cli_auth_browser_login(monkeypatch: pytest.MonkeyPatch, capsys: pytest.
     open_browser = Mock(return_value=True)
     monkeypatch.setattr('pydantic_ai._cli.auth.webbrowser.open', open_browser)
 
-    assert cli(['auth', 'login', 'codex'], prog_name='clai') == 0
+    assert cli(['auth', 'login', 'openai-codex'], prog_name='clai') == 0
 
     output = capsys.readouterr().out
-    assert output == 'Opening a browser to sign in to Codex...\nCodex login complete.\n'
+    assert output == 'Opening a browser to sign in to OpenAI Codex...\nOpenAI Codex login complete.\n'
     assert 'ephemeral-state' not in output
     open_browser.assert_called_once()
     assert auth.browser_logins == 1
@@ -101,10 +101,10 @@ def test_cli_auth_browser_login_prints_url_when_browser_cannot_open(
     _install_fake_auth(monkeypatch, auth)
     monkeypatch.setattr('pydantic_ai._cli.auth.webbrowser.open', Mock(return_value=False))
 
-    assert cli(['auth', 'login', 'codex'], prog_name='clai') == 0
+    assert cli(['auth', 'login', 'openai-codex'], prog_name='clai') == 0
 
     output = capsys.readouterr().out
-    assert 'Open this URL to continue Codex login:' in output
+    assert 'Open this URL to continue OpenAI Codex login:' in output
     assert 'https://auth.example/authorize?state=ephemeral-state' in output
 
 
@@ -112,12 +112,12 @@ def test_cli_auth_device_login(monkeypatch: pytest.MonkeyPatch, capsys: pytest.C
     auth = FakeAuth()
     _install_fake_auth(monkeypatch, auth)
 
-    assert cli(['auth', 'login', 'codex', '--method', 'device']) == 0
+    assert cli(['auth', 'login', 'openai-codex', '--method', 'device']) == 0
 
     output = capsys.readouterr().out
     assert 'https://auth.example/device' in output
     assert 'ONE-TIME-CODE' in output
-    assert 'Codex login complete.' in output
+    assert 'OpenAI Codex login complete.' in output
     assert auth.device_logins == 1
 
 
@@ -127,12 +127,12 @@ def test_cli_auth_status_json_is_secret_free(
     auth = FakeAuth()
     _install_fake_auth(monkeypatch, auth)
 
-    assert cli(['auth', 'status', 'codex', '--json']) == 0
+    assert cli(['auth', 'status', 'openai-codex', '--json']) == 0
 
     output = capsys.readouterr().out
     assert json.loads(output) == snapshot(
         {
-            'provider': 'codex',
+            'provider': 'openai-codex',
             'authenticated': True,
             'expires_at': '2030-01-02T00:00:00Z',
             'needs_refresh': False,
@@ -145,30 +145,30 @@ def test_cli_auth_status_json_is_secret_free(
 @pytest.mark.parametrize(
     ('status', 'expected'),
     [
-        (CodexAuthStatus(authenticated=False), 'Codex authentication: not signed in'),
-        (CodexAuthStatus(authenticated=True), 'Codex authentication: ready (expires unknown)'),
+        (OpenAICodexAuthStatus(authenticated=False), 'OpenAI Codex: not signed in'),
+        (OpenAICodexAuthStatus(authenticated=True), 'OpenAI Codex: ready (expires unknown)'),
         (
-            CodexAuthStatus(
+            OpenAICodexAuthStatus(
                 authenticated=True,
                 expires_at=datetime(2030, 1, 2, tzinfo=timezone.utc),
                 needs_refresh=True,
             ),
-            'Codex authentication: refresh required (expires 2030-01-02T00:00:00+00:00)',
+            'OpenAI Codex: refresh required (expires 2030-01-02T00:00:00+00:00)',
         ),
     ],
 )
 def test_cli_auth_human_status_variants(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    status: CodexAuthStatus,
+    status: OpenAICodexAuthStatus,
     expected: str,
 ) -> None:
     class StatusAuth(FakeAuth):
-        async def status(self) -> CodexAuthStatus:
+        async def status(self) -> OpenAICodexAuthStatus:
             return status
 
     _install_fake_auth(monkeypatch, StatusAuth())
-    assert cli(['auth', 'status', 'codex']) == 0
+    assert cli(['auth', 'status', 'openai-codex']) == 0
     assert capsys.readouterr().out.strip() == expected
 
 
@@ -176,12 +176,12 @@ def test_cli_auth_refresh_and_local_logout(monkeypatch: pytest.MonkeyPatch, caps
     auth = FakeAuth()
     _install_fake_auth(monkeypatch, auth)
 
-    assert cli(['auth', 'refresh', 'codex']) == 0
-    assert cli(['auth', 'logout', 'codex', '--local-only']) == 0
+    assert cli(['auth', 'refresh', 'openai-codex']) == 0
+    assert cli(['auth', 'logout', 'openai-codex', '--local-only']) == 0
 
     output = capsys.readouterr().out
-    assert 'Codex credentials refreshed (expires 2030-01-02T00:00:00+00:00).' in output
-    assert 'Codex logout complete.' in output
+    assert 'OpenAI Codex credentials refreshed (expires 2030-01-02T00:00:00+00:00).' in output
+    assert 'OpenAI Codex logout complete.' in output
     assert auth.local_only is True
     assert 'secret' not in output
 
@@ -190,27 +190,27 @@ def test_cli_auth_logout_warning_without_local_record(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     class LogoutAuth(FakeAuth):
-        async def logout(self, *, local_only: bool = False) -> CodexLogoutResult:
-            return CodexLogoutResult(
+        async def logout(self, *, local_only: bool = False) -> OpenAICodexLogoutResult:
+            return OpenAICodexLogoutResult(
                 local_credentials_removed=False,
-                revocation_error='Upstream Codex token revocation failed.',
+                revocation_error='Upstream OpenAI Codex token revocation failed.',
             )
 
     _install_fake_auth(monkeypatch, LogoutAuth())
-    assert cli(['auth', 'logout', 'codex']) == 0
+    assert cli(['auth', 'logout', 'openai-codex']) == 0
     output = capsys.readouterr().out
-    assert 'Warning: Upstream Codex token revocation failed.' in output
-    assert 'Codex authentication: not signed in' in output
+    assert 'Warning: Upstream OpenAI Codex token revocation failed.' in output
+    assert 'OpenAI Codex: not signed in' in output
 
 
 def test_cli_auth_error_is_rendered_without_traceback(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     class FailingAuth(FakeAuth):
-        async def refresh(self) -> CodexCredentials:
-            raise CodexOAuthError('Codex refresh failed safely.')
+        async def refresh(self) -> OpenAICodexCredentials:
+            raise OpenAICodexOAuthError('OpenAI Codex refresh failed safely.')
 
     _install_fake_auth(monkeypatch, FailingAuth())
 
-    assert cli(['auth', 'refresh', 'codex']) == 1
-    assert capsys.readouterr().out == 'Error: Codex refresh failed safely.\n'
+    assert cli(['auth', 'refresh', 'openai-codex']) == 1
+    assert capsys.readouterr().out == 'Error: OpenAI Codex refresh failed safely.\n'

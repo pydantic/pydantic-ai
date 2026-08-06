@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 
 import httpx
 
-from pydantic_ai.auth.codex import CodexAuth, CodexCredentials, CodexCredentialSource
+from pydantic_ai.auth.openai_codex import OpenAICodexAuth, OpenAICodexCredentials, OpenAICodexCredentialSource
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import ModelProfile, merge_profile
@@ -15,13 +15,13 @@ try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install the `openai` package to use the Codex provider, '
-        'you can use the `codex` optional group — `pip install "pydantic-ai-slim[codex]"`. '
+        'Please install the `openai` package to use the OpenAI Codex provider, '
+        'you can use the `openai-codex` optional group — `pip install "pydantic-ai-slim[openai-codex]"`. '
         'The `openai` group alone omits the `filelock` the default credential store needs.'
     ) from _import_error
 
 # Base URL observed in the pinned official Codex client for ChatGPT-authenticated requests.
-# `CodexProvider.base_url` exposes it, so it stays private rather than becoming the one public
+# `OpenAICodexProvider.base_url` exposes it, so it stays private rather than becoming the one public
 # base-URL constant in any provider module.
 _BASE_URL = httpx.URL('https://chatgpt.com/backend-api/codex')
 _RESPONSES_PATH = f'{_BASE_URL.path}/responses'
@@ -33,12 +33,12 @@ _RESPONSES_PATH = f'{_BASE_URL.path}/responses'
 # User-Agent and identify ourselves through the `originator` header instead.
 
 
-class _CodexHTTPAuth(httpx.Auth):
-    def __init__(self, credential_source: CodexCredentialSource) -> None:
+class _OpenAICodexHTTPAuth(httpx.Auth):
+    def __init__(self, credential_source: OpenAICodexCredentialSource) -> None:
         self._credential_source = credential_source
 
     async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
-        if not self._is_trusted_codex_url(request.url):
+        if not self._is_trusted_openai_codex_url(request.url):
             yield request
             return
 
@@ -61,7 +61,7 @@ class _CodexHTTPAuth(httpx.Auth):
             self._apply(request, credentials)
             yield request
 
-    def _apply(self, request: httpx.Request, credentials: CodexCredentials) -> None:
+    def _apply(self, request: httpx.Request, credentials: OpenAICodexCredentials) -> None:
         request.headers['Authorization'] = f'Bearer {credentials.access_token.get_secret_value()}'
         request.headers['ChatGPT-Account-ID'] = credentials.account_id.get_secret_value()
         request.headers['originator'] = 'pydantic-ai'
@@ -70,7 +70,7 @@ class _CodexHTTPAuth(httpx.Auth):
         else:
             request.headers.pop('X-OpenAI-Fedramp', None)
 
-    def _is_trusted_codex_url(self, url: httpx.URL) -> bool:
+    def _is_trusted_openai_codex_url(self, url: httpx.URL) -> bool:
         raw_path = url.raw_path.partition(b'?')[0]
         path_segments = url.path.split('/')
         return (
@@ -99,23 +99,23 @@ class _CodexHTTPAuth(httpx.Auth):
         )
 
 
-class CodexProvider(Provider[AsyncOpenAI]):
-    """Provider for Codex models accessed with ChatGPT subscription credentials.
+class OpenAICodexProvider(Provider[AsyncOpenAI]):
+    """Provider for OpenAI Codex models accessed with ChatGPT subscription credentials.
 
     Authentication is resolved lazily for each request. Constructing the provider
     never reads credential storage, opens a browser, or starts background work.
 
     Args:
-        credential_source: Application-owned credentials. Defaults to [`CodexAuth`]
-            [pydantic_ai.auth.codex.CodexAuth] and its managed local credential store.
+        credential_source: Application-owned credentials. Defaults to [`OpenAICodexAuth`]
+            [pydantic_ai.auth.openai_codex.OpenAICodexAuth] and its managed local credential store.
         http_client: A dedicated caller-owned HTTP client with no existing auth and
-            `follow_redirects=False`. Codex authentication is installed on this client,
+            `follow_redirects=False`. OpenAI Codex authentication is installed on this client,
             and the provider never closes it.
     """
 
     @property
     def name(self) -> str:
-        return 'codex'
+        return 'openai-codex'
 
     @property
     def base_url(self) -> str:
@@ -139,7 +139,7 @@ class CodexProvider(Provider[AsyncOpenAI]):
                 # `/responses/compact` answers with a `compaction_summary` item, after a `message`
                 # item, where the OpenAI Platform API returns a lone `compaction`.
                 openai_responses_compaction_item_type='compaction_summary',
-                # The Codex backend answers `400 Unsupported parameter` for each of these, so a portable
+                # The OpenAI Codex backend answers `400 Unsupported parameter` for each of these, so a portable
                 # `ModelSettings` that merely sets one would fail every request. Only generic settings are
                 # dropped: `openai_`-prefixed ones are an explicit opt-in into OpenAI semantics, so the
                 # backend error is the more useful outcome there. `openai_store` is the exception —
@@ -151,11 +151,11 @@ class CodexProvider(Provider[AsyncOpenAI]):
     def __init__(
         self,
         *,
-        credential_source: CodexCredentialSource | None = None,
+        credential_source: OpenAICodexCredentialSource | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         if credential_source is None:
-            credential_source = CodexAuth()
+            credential_source = OpenAICodexAuth()
         self._credential_source = credential_source
 
         if http_client is None:
@@ -168,7 +168,7 @@ class CodexProvider(Provider[AsyncOpenAI]):
             if http_client.follow_redirects:
                 raise UserError('`http_client` must have `follow_redirects=False`.')
         # A client the base class recreates after close is re-authenticated through `_set_http_client`.
-        http_client.auth = _CodexHTTPAuth(credential_source)
+        http_client.auth = _OpenAICodexHTTPAuth(credential_source)
 
         # AsyncOpenAI requires a non-empty API key even though the HTTP auth layer
         # replaces the generated Authorization header before every request.
@@ -179,5 +179,5 @@ class CodexProvider(Provider[AsyncOpenAI]):
         )
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        http_client.auth = _CodexHTTPAuth(self._credential_source)
+        http_client.auth = _OpenAICodexHTTPAuth(self._credential_source)
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

@@ -36,7 +36,7 @@ Most providers use an environment variable. For example, OpenAI Platform models 
 export OPENAI_API_KEY='your-api-key-here'
 ```
 
-Providers with managed authentication use `clai auth` instead. See [Codex subscription authentication](#codex-subscription-authentication) below.
+Providers with managed authentication use `clai auth` instead. See [OpenAI Codex subscription authentication](#openai-codex-subscription-authentication) below.
 
 Running `clai` starts an interactive session where you can chat with the AI model. Special commands available in interactive mode:
 
@@ -46,31 +46,31 @@ Running `clai` starts an interactive session where you can chat with the AI mode
 - `/cp`: Copy the last response to clipboard
 - `/usage`: Show cumulative token usage for the session (turns, input, output, requests, tool calls); add `--json` for a single-line JSON object
 
-### Codex subscription authentication
+### OpenAI Codex subscription authentication
 
-A ChatGPT Codex subscription uses managed sign-in instead of `OPENAI_API_KEY`. Sign in through a browser, then select a `codex:` model:
+OpenAI Codex uses managed sign-in through your ChatGPT account instead of `OPENAI_API_KEY`. Sign in through a browser, then select an `openai-codex:` model:
 
 ```bash
-clai auth login codex
-clai --model codex:gpt-5.5
+clai auth login openai-codex
+clai --model openai-codex:gpt-5.5
 ```
 
 For remote or headless environments, use device authorization:
 
 ```bash
-clai auth login codex --method device
+clai auth login openai-codex --method device
 ```
 
 You can inspect or manage the same credentials without displaying secrets:
 
 ```bash
-clai auth status codex
-clai auth status codex --json
-clai auth refresh codex
-clai auth logout codex
+clai auth status openai-codex
+clai auth status openai-codex --json
+clai auth refresh openai-codex
+clai auth logout openai-codex
 ```
 
-See the Codex provider guide for [storage security](models/codex.md#credential-storage-and-security), [application-owned credential sources](models/codex.md#application-owned-credentials-and-persistence), [subscription billing](models/codex.md#codex-and-openai-platform-differences), and [model availability](models/codex.md#sign-in).
+See the OpenAI Codex provider guide for [storage security](models/openai-codex.md#credential-storage-and-security), [application-owned credential sources](models/openai-codex.md#application-owned-credentials-and-persistence), [subscription billing](models/openai-codex.md#differences-from-the-openai-platform-api), and [model availability](models/openai-codex.md#sign-in).
 
 ### CLI Options
 

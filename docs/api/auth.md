@@ -1,29 +1,29 @@
 # `pydantic_ai.auth`
 
-## Codex
+## OpenAI Codex
 
-::: pydantic_ai.auth.codex.CodexAuth
+::: pydantic_ai.auth.openai_codex.OpenAICodexAuth
 
-::: pydantic_ai.auth.codex.CodexCredentials
+::: pydantic_ai.auth.openai_codex.OpenAICodexCredentials
 
-::: pydantic_ai.auth.codex.CodexCredentialSource
+::: pydantic_ai.auth.openai_codex.OpenAICodexCredentialSource
 
-::: pydantic_ai.auth.codex.CodexCredentialStore
+::: pydantic_ai.auth.openai_codex.OpenAICodexCredentialStore
 
-::: pydantic_ai.auth.codex.CodexDeviceCode
+::: pydantic_ai.auth.openai_codex.OpenAICodexDeviceCode
 
-::: pydantic_ai.auth.codex.CodexAuthStatus
+::: pydantic_ai.auth.openai_codex.OpenAICodexAuthStatus
 
-::: pydantic_ai.auth.codex.CodexLogoutResult
+::: pydantic_ai.auth.openai_codex.OpenAICodexLogoutResult
 
-::: pydantic_ai.auth.codex.CodexAuthError
+::: pydantic_ai.auth.openai_codex.OpenAICodexAuthError
 
-::: pydantic_ai.auth.codex.CodexLoginRequiredError
+::: pydantic_ai.auth.openai_codex.OpenAICodexLoginRequiredError
 
-::: pydantic_ai.auth.codex.CodexCredentialsError
+::: pydantic_ai.auth.openai_codex.OpenAICodexCredentialsError
 
-::: pydantic_ai.auth.codex.CodexOAuthError
+::: pydantic_ai.auth.openai_codex.OpenAICodexOAuthError
 
-::: pydantic_ai.auth.codex.CodexRefreshError
+::: pydantic_ai.auth.openai_codex.OpenAICodexRefreshError
 
-::: pydantic_ai.auth.codex.CodexAccountMismatchError
+::: pydantic_ai.auth.openai_codex.OpenAICodexAccountMismatchError

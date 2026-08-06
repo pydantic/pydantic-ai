@@ -95,7 +95,7 @@ _OPENAI_OAUTH_JSON_CREDENTIAL_KEYS = frozenset(
         'user_code',
     }
 )
-_CODEX_SSE_SENSITIVE_KEYS = frozenset({'prompt_cache_key', 'safety_identifier'})
+_OPENAI_CODEX_SSE_SENSITIVE_KEYS = frozenset({'prompt_cache_key', 'safety_identifier'})
 _LEGACY_TOP_LEVEL_CREDENTIAL_KEYS = frozenset({'access_token', 'id_token'})
 
 ALLOWED_HEADERS = {
@@ -308,7 +308,7 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
         request_uri = interaction.get('request', {}).get('uri', '')
         parsed_request_uri = urllib.parse.urlsplit(request_uri) if isinstance(request_uri, str) else None
         openai_oauth = parsed_request_uri is not None and parsed_request_uri.hostname == 'auth.openai.com'
-        codex_responses = (
+        openai_codex_responses = (
             parsed_request_uri is not None
             and parsed_request_uri.scheme == 'https'
             and parsed_request_uri.hostname == 'chatgpt.com'
@@ -361,7 +361,9 @@ def serialize(cassette_dict: Any):  # pragma: lax no cover
                     _store_json_body(kind, data, body, headers, openai_oauth=openai_oauth)
             scrub_form_credentials(data, content_type, openai_oauth=openai_oauth)
             scrub_xml_credentials(data, headers, content_type)
-            scrub_sse_credentials(data, headers, _CODEX_SSE_SENSITIVE_KEYS if codex_responses else frozenset())
+            scrub_sse_credentials(
+                data, headers, _OPENAI_CODEX_SSE_SENSITIVE_KEYS if openai_codex_responses else frozenset()
+            )
             scrub_uri_credentials(data)
 
     # Use our custom dumper

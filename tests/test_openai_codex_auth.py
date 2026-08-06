@@ -20,27 +20,27 @@ from anyio.lowlevel import checkpoint
 from pydantic import SecretStr
 
 from pydantic_ai._utils import BaseExceptionGroup
-from pydantic_ai.auth._codex_oauth import _collapse_single_exception_group  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai.auth.codex import (
-    CodexAccountMismatchError,
-    CodexAuth,
-    CodexCredentials,
-    CodexCredentialsError,
-    CodexDeviceCode,
-    CodexLoginRequiredError,
-    CodexOAuthError,
-    CodexRefreshError,
+from pydantic_ai.auth._openai_codex_oauth import _collapse_single_exception_group  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.auth.openai_codex import (
+    OpenAICodexAccountMismatchError,
+    OpenAICodexAuth,
+    OpenAICodexCredentials,
+    OpenAICodexCredentialsError,
+    OpenAICodexDeviceCode,
+    OpenAICodexLoginRequiredError,
+    OpenAICodexOAuthError,
+    OpenAICodexRefreshError,
 )
 from pydantic_ai.exceptions import UserError
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
 
-# `_codex_store` imports without the `codex` extra; only its locking needs `filelock`.
+# `_openai_codex_store` imports without the `openai-codex` extra; only its locking needs `filelock`.
 with try_import() as file_store_imports_successful:
     import filelock  # pyright: ignore[reportUnusedImport]  # noqa: F401
 
-pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='codex_auth')]
+pytestmark = [pytest.mark.anyio, pytest.mark.xdist_group(name='openai_codex_auth')]
 
 _ACCOUNT_ID = 'account-sensitive-value'
 _ACCESS_TOKEN = 'access-sensitive-value'
@@ -61,9 +61,9 @@ def _tokens(*, account_id: str = _ACCOUNT_ID, expires_in: int = 3600) -> tuple[s
     return access_token, id_token
 
 
-def _credentials(*, expires_in: int = 3600, revision: str = 'revision-1') -> CodexCredentials:
+def _credentials(*, expires_in: int = 3600, revision: str = 'revision-1') -> OpenAICodexCredentials:
     access_token, id_token = _tokens(expires_in=expires_in)
-    return CodexCredentials(
+    return OpenAICodexCredentials(
         access_token=SecretStr(access_token),
         refresh_token=SecretStr(_REFRESH_TOKEN),
         id_token=SecretStr(id_token),
@@ -74,7 +74,7 @@ def _credentials(*, expires_in: int = 3600, revision: str = 'revision-1') -> Cod
 
 
 class MemoryStore:
-    def __init__(self, credentials: CodexCredentials | None = None) -> None:
+    def __init__(self, credentials: OpenAICodexCredentials | None = None) -> None:
         self.credentials = credentials
         self._lock = anyio.Lock()
 
@@ -83,10 +83,10 @@ class MemoryStore:
         async with self._lock:
             yield
 
-    async def load(self) -> CodexCredentials | None:
+    async def load(self) -> OpenAICodexCredentials | None:
         return self.credentials
 
-    async def save(self, credentials: CodexCredentials, *, expected_revision: str | None) -> bool:
+    async def save(self, credentials: OpenAICodexCredentials, *, expected_revision: str | None) -> bool:
         current_revision = self.credentials.revision if self.credentials is not None else None
         if current_revision != expected_revision:
             return False
@@ -101,7 +101,7 @@ class MemoryStore:
 
 
 class CheckpointExitStore(MemoryStore):
-    def __init__(self, credentials: CodexCredentials | None = None) -> None:
+    def __init__(self, credentials: OpenAICodexCredentials | None = None) -> None:
         super().__init__(credentials)
         self.exit_started = anyio.Event()
         self.exit_finished = anyio.Event()
@@ -138,7 +138,7 @@ def test_credentials_repr_and_serialization_are_secret_safe() -> None:
 
 def test_credentials_require_timezone_aware_expiry() -> None:
     with pytest.raises(ValueError, match='timezone-aware'):
-        CodexCredentials(
+        OpenAICodexCredentials(
             access_token=SecretStr('access'),
             refresh_token=SecretStr('refresh'),
             id_token=SecretStr('id'),
@@ -150,7 +150,7 @@ def test_credentials_require_timezone_aware_expiry() -> None:
 
 def test_auth_store_and_path_are_mutually_exclusive(tmp_path: Path) -> None:
     with pytest.raises(UserError, match='mutually exclusive'):
-        CodexAuth(store=MemoryStore(), path=tmp_path / 'auth.json')
+        OpenAICodexAuth(store=MemoryStore(), path=tmp_path / 'auth.json')
 
 
 async def test_memory_store_compare_and_swap_mismatches() -> None:
@@ -171,31 +171,31 @@ async def test_store_context_cannot_suppress_transaction_error() -> None:
             except RuntimeError:
                 pass
 
-        async def load(self) -> CodexCredentials | None:
+        async def load(self) -> OpenAICodexCredentials | None:
             raise RuntimeError('store failure')
 
     with pytest.raises(RuntimeError, match='store failure'):
-        await CodexAuth(store=SuppressingStore()).logout()
+        await OpenAICodexAuth(store=SuppressingStore()).logout()
 
 
 async def test_login_rejects_failed_conditional_save() -> None:
     class RejectingSaveStore(MemoryStore):
-        async def save(self, credentials: CodexCredentials, *, expected_revision: str | None) -> bool:
+        async def save(self, credentials: OpenAICodexCredentials, *, expected_revision: str | None) -> bool:
             return False
 
-    auth = CodexAuth(store=RejectingSaveStore())
-    with pytest.raises(CodexCredentialsError, match='changed while login'):
+    auth = OpenAICodexAuth(store=RejectingSaveStore())
+    with pytest.raises(OpenAICodexCredentialsError, match='changed while login'):
         await auth._replace_after_login(_credentials())  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.skipif(
-    not file_store_imports_successful(), reason='install the `codex` extras to run default file store tests'
+    not file_store_imports_successful(), reason='install the `openai-codex` extras to run default file store tests'
 )
 @pytest.mark.parametrize('method', ['browser', 'device'])
 async def test_login_checks_the_store_before_spending_the_sign_in(method: str, tmp_path: Path) -> None:
     """An unusable store fails before the OAuth round trip rather than after it mints a token.
 
-    Persistence is the only step that can fail for store reasons — a missing `codex` extra, an
+    Persistence is the only step that can fail for store reasons — a missing `openai-codex` extra, an
     unwritable path — so without this check a completed sign-in ends with the user's interaction
     spent and the freshly minted token discarded.
     """
@@ -206,8 +206,8 @@ async def test_login_checks_the_store_before_spending_the_sign_in(method: str, t
         raise AssertionError('no upstream request may be sent before the store is known usable')
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        auth = CodexAuth(path=not_a_directory / 'auth.json', http_client=client)
-        with pytest.raises(CodexCredentialsError, match='Unable to lock'):
+        auth = OpenAICodexAuth(path=not_a_directory / 'auth.json', http_client=client)
+        with pytest.raises(OpenAICodexCredentialsError, match='Unable to lock'):
             if method == 'browser':
                 await auth.login_browser(lambda url: None, timeout=10)
             else:
@@ -215,11 +215,11 @@ async def test_login_checks_the_store_before_spending_the_sign_in(method: str, t
 
 
 @pytest.mark.skipif(
-    not file_store_imports_successful(), reason='install the `codex` extras to run default file store tests'
+    not file_store_imports_successful(), reason='install the `openai-codex` extras to run default file store tests'
 )
 async def test_default_file_store_is_lazy_and_status_reads_selected_path(tmp_path: Path) -> None:
     path = tmp_path / 'credentials' / 'auth.json'
-    auth = CodexAuth(path=path)
+    auth = OpenAICodexAuth(path=path)
     assert not path.parent.exists()
     assert (await auth.status()).authenticated is False
     assert not path.parent.exists()
@@ -227,7 +227,7 @@ async def test_default_file_store_is_lazy_and_status_reads_selected_path(tmp_pat
 
 async def test_valid_and_already_replaced_credentials_do_not_refresh() -> None:
     current = _credentials(revision='current')
-    auth = CodexAuth(store=MemoryStore(current))
+    auth = OpenAICodexAuth(store=MemoryStore(current))
 
     assert await auth.get_credentials() is current
     assert await auth.get_credentials(force_refresh=True, rejected_revision='older') is current
@@ -241,8 +241,8 @@ async def test_valid_and_already_replaced_credentials_do_not_refresh() -> None:
 
 
 async def test_missing_credentials_has_login_guidance() -> None:
-    auth = CodexAuth(store=MemoryStore())
-    with pytest.raises(CodexLoginRequiredError, match=r'clai auth login codex'):
+    auth = OpenAICodexAuth(store=MemoryStore())
+    with pytest.raises(OpenAICodexLoginRequiredError, match=r'clai auth login openai-codex'):
         await auth.get_credentials()
     assert (await auth.status()).model_dump() == snapshot(
         {
@@ -263,13 +263,13 @@ async def test_credentials_that_become_valid_while_locking_are_reused() -> None:
             super().__init__(expired)
             self.loads = 0
 
-        async def load(self) -> CodexCredentials | None:
+        async def load(self) -> OpenAICodexCredentials | None:
             self.loads += 1
             if self.loads == 2:
                 self.credentials = valid
             return self.credentials
 
-    assert await CodexAuth(store=BecomesValidStore()).get_credentials() is valid
+    assert await OpenAICodexAuth(store=BecomesValidStore()).get_credentials() is valid
 
 
 async def test_concurrent_refresh_is_single_flight_and_preserves_omitted_tokens() -> None:
@@ -292,8 +292,8 @@ async def test_concurrent_refresh_is_single_flight_and_preserves_omitted_tokens(
 
     store = MemoryStore(current)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        auth = CodexAuth(store=store, http_client=client)
-        results: list[CodexCredentials] = []
+        auth = OpenAICodexAuth(store=store, http_client=client)
+        results: list[OpenAICodexCredentials] = []
 
         async def resolve() -> None:
             results.append(await auth.get_credentials())
@@ -323,8 +323,8 @@ async def test_rejected_revision_is_refreshed_only_once_concurrently() -> None:
 
     store = MemoryStore(current)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        auth = CodexAuth(store=store, http_client=client)
-        results: list[CodexCredentials] = []
+        auth = OpenAICodexAuth(store=store, http_client=client)
+        results: list[OpenAICodexCredentials] = []
 
         async def recover() -> None:
             results.append(await auth.get_credentials(force_refresh=True, rejected_revision='rejected-revision'))
@@ -354,7 +354,7 @@ async def test_cancellation_during_refresh_still_persists_rotated_token() -> Non
     scopes: list[anyio.CancelScope] = []
     completed = False
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        auth = CodexAuth(store=store, http_client=client)
+        auth = OpenAICodexAuth(store=store, http_client=client)
 
         async def rotate() -> None:
             nonlocal completed
@@ -377,12 +377,12 @@ async def test_cancellation_during_refresh_still_persists_rotated_token() -> Non
 
 
 class BlockingSaveStore(CheckpointExitStore):
-    def __init__(self, credentials: CodexCredentials) -> None:
+    def __init__(self, credentials: OpenAICodexCredentials) -> None:
         super().__init__(credentials)
         self.save_started = anyio.Event()
         self.allow_save = anyio.Event()
 
-    async def save(self, credentials: CodexCredentials, *, expected_revision: str | None) -> bool:
+    async def save(self, credentials: OpenAICodexCredentials, *, expected_revision: str | None) -> bool:
         self.save_started.set()
         await self.allow_save.wait()
         return await super().save(credentials, expected_revision=expected_revision)
@@ -399,7 +399,7 @@ async def test_cancellation_after_refresh_response_still_completes_save() -> Non
         return httpx.Response(200, json={'access_token': refreshed_access_token})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        auth = CodexAuth(store=store, http_client=client)
+        auth = OpenAICodexAuth(store=store, http_client=client)
 
         async def rotate() -> None:
             nonlocal completed
@@ -427,7 +427,7 @@ async def test_cancellation_after_refresh_response_still_completes_save() -> Non
 
 async def test_refresh_and_save_has_bounded_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     current = _credentials(expires_in=-60)
-    monkeypatch.setattr('pydantic_ai.auth.codex._REFRESH_AND_SAVE_TIMEOUT', 0.01)
+    monkeypatch.setattr('pydantic_ai.auth.openai_codex._REFRESH_AND_SAVE_TIMEOUT', 0.01)
 
     async def handle(request: httpx.Request) -> httpx.Response:
         await anyio.sleep_forever()
@@ -435,8 +435,8 @@ async def test_refresh_and_save_has_bounded_timeout(monkeypatch: pytest.MonkeyPa
 
     store = MemoryStore(current)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        with pytest.raises(CodexRefreshError, match='timed out'):
-            await CodexAuth(store=store, http_client=client).refresh()
+        with pytest.raises(OpenAICodexRefreshError, match='timed out'):
+            await OpenAICodexAuth(store=store, http_client=client).refresh()
 
     assert store.credentials is current
 
@@ -455,8 +455,8 @@ async def test_refresh_rejects_new_access_token_conflicting_with_retained_id_tok
 
     store = MemoryStore(current)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        with pytest.raises(CodexAccountMismatchError, match='different ChatGPT account'):
-            await CodexAuth(store=store, http_client=client).refresh()
+        with pytest.raises(OpenAICodexAccountMismatchError, match='different ChatGPT account'):
+            await OpenAICodexAuth(store=store, http_client=client).refresh()
 
     assert store.credentials is current
 
@@ -470,8 +470,8 @@ async def test_refresh_rejects_account_switch_without_replacing_credentials() ->
 
     store = MemoryStore(current)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        auth = CodexAuth(store=store, http_client=client)
-        with pytest.raises(CodexAccountMismatchError, match='different ChatGPT account'):
+        auth = OpenAICodexAuth(store=store, http_client=client)
+        with pytest.raises(OpenAICodexAccountMismatchError, match='different ChatGPT account'):
             await auth.refresh()
 
     assert store.credentials is current
@@ -480,11 +480,11 @@ async def test_refresh_rejects_account_switch_without_replacing_credentials() ->
 @pytest.mark.parametrize(
     ('status_code', 'body', 'error_type', 'message'),
     [
-        (401, {}, CodexLoginRequiredError, 'login codex'),
-        (400, {'error': 'refresh_token_reused'}, CodexLoginRequiredError, 'login codex'),
-        (500, {}, CodexRefreshError, 'refresh failed'),
-        (200, [], CodexRefreshError, 'invalid refresh response'),
-        (200, {'access_token': 'not-a-jwt'}, CodexRefreshError, 'invalid JWT'),
+        (401, {}, OpenAICodexLoginRequiredError, 'login openai-codex'),
+        (400, {'error': 'refresh_token_reused'}, OpenAICodexLoginRequiredError, 'login openai-codex'),
+        (500, {}, OpenAICodexRefreshError, 'refresh failed'),
+        (200, [], OpenAICodexRefreshError, 'invalid refresh response'),
+        (200, {'access_token': 'not-a-jwt'}, OpenAICodexRefreshError, 'invalid JWT'),
     ],
 )
 async def test_refresh_maps_protocol_failures_to_typed_errors(
@@ -500,11 +500,11 @@ async def test_refresh_maps_protocol_failures_to_typed_errors(
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
         with pytest.raises(error_type, match=message):
-            await CodexAuth(store=MemoryStore(current), http_client=client).refresh()
+            await OpenAICodexAuth(store=MemoryStore(current), http_client=client).refresh()
 
 
 async def test_refresh_uses_existing_account_when_new_tokens_omit_account_claims() -> None:
-    current = CodexCredentials(
+    current = OpenAICodexCredentials(
         access_token=SecretStr(_jwt({'exp': int((datetime.now(timezone.utc) - timedelta(minutes=1)).timestamp())})),
         refresh_token=SecretStr(_REFRESH_TOKEN),
         id_token=SecretStr(_jwt({})),
@@ -519,7 +519,7 @@ async def test_refresh_uses_existing_account_when_new_tokens_omit_account_claims
         return httpx.Response(200, json={'access_token': refreshed_access})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        refreshed = await CodexAuth(store=MemoryStore(current), http_client=client).refresh()
+        refreshed = await OpenAICodexAuth(store=MemoryStore(current), http_client=client).refresh()
 
     assert refreshed.account_id.get_secret_value() == _ACCOUNT_ID
     assert refreshed.account_is_fedramp is True
@@ -532,8 +532,8 @@ async def test_refresh_rejects_expired_or_incomplete_success_response() -> None:
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        with pytest.raises(CodexRefreshError, match='without a usable access token'):
-            await CodexAuth(store=MemoryStore(current), http_client=client).refresh()
+        with pytest.raises(OpenAICodexRefreshError, match='without a usable access token'):
+            await OpenAICodexAuth(store=MemoryStore(current), http_client=client).refresh()
 
 
 @pytest.mark.parametrize('operation', ['refresh', 'revoke'])
@@ -547,13 +547,13 @@ async def test_oauth_refresh_and_revoke_never_follow_redirects(operation: str) -
 
     store = MemoryStore(current)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle), follow_redirects=True) as client:
-        auth = CodexAuth(store=store, http_client=client)
+        auth = OpenAICodexAuth(store=store, http_client=client)
         if operation == 'refresh':
-            with pytest.raises(CodexRefreshError, match='refresh failed'):
+            with pytest.raises(OpenAICodexRefreshError, match='refresh failed'):
                 await auth.refresh()
         else:
             result = await auth.logout()
-            assert result.revocation_error == 'Upstream Codex token revocation failed.'
+            assert result.revocation_error == 'Upstream OpenAI Codex token revocation failed.'
 
     assert len(requests) == 1
 
@@ -566,8 +566,8 @@ async def test_refresh_network_error_does_not_retain_refresh_token() -> None:
         raise httpx.ConnectError(f'failed with {sentinel}', request=request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        with pytest.raises(CodexRefreshError) as exc_info:
-            await CodexAuth(store=MemoryStore(current), http_client=client).refresh()
+        with pytest.raises(OpenAICodexRefreshError) as exc_info:
+            await OpenAICodexAuth(store=MemoryStore(current), http_client=client).refresh()
 
     assert sentinel not in ''.join(traceback.format_exception(exc_info.value))
 
@@ -606,9 +606,9 @@ async def test_device_login_pending_then_success(
     verifier = 'device-verifier'
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
     poll_count = 0
-    shown: list[CodexDeviceCode] = []
+    shown: list[OpenAICodexDeviceCode] = []
     sleep = AsyncMock()
-    monkeypatch.setattr('pydantic_ai.auth._codex_oauth._sleep', sleep)
+    monkeypatch.setattr('pydantic_ai.auth._openai_codex_oauth._sleep', sleep)
 
     def handle(request: httpx.Request) -> httpx.Response:
         nonlocal poll_count
@@ -642,7 +642,7 @@ async def test_device_login_pending_then_success(
     store = MemoryStore()
     started_at = datetime.now(timezone.utc)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        credentials = await CodexAuth(store=store, http_client=client).login_device(shown.append, timeout=1800)
+        credentials = await OpenAICodexAuth(store=store, http_client=client).login_device(shown.append, timeout=1800)
 
     assert credentials is store.credentials
     assert shown[0].verification_url == 'https://auth.openai.com/codex/device'
@@ -669,8 +669,8 @@ async def test_device_login_rejects_invalid_start_responses(status_code: int, bo
         return httpx.Response(status_code, json=body)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        with pytest.raises(CodexOAuthError, match=message):
-            await CodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
+        with pytest.raises(OpenAICodexOAuthError, match=message):
+            await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
 
 
 @pytest.mark.parametrize(
@@ -702,8 +702,8 @@ async def test_device_login_rejects_terminal_poll_responses(status_code: int, bo
         return httpx.Response(status_code, json=body)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        with pytest.raises(CodexOAuthError, match=message):
-            await CodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
+        with pytest.raises(OpenAICodexOAuthError, match=message):
+            await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
 
 
 async def test_device_login_handles_slow_down_and_authorization_pending(
@@ -714,7 +714,7 @@ async def test_device_login_handles_slow_down_and_authorization_pending(
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
     poll_count = 0
     sleep = AsyncMock()
-    monkeypatch.setattr('pydantic_ai.auth._codex_oauth._sleep', sleep)
+    monkeypatch.setattr('pydantic_ai.auth._openai_codex_oauth._sleep', sleep)
 
     def handle(request: httpx.Request) -> httpx.Response:
         nonlocal poll_count
@@ -743,7 +743,7 @@ async def test_device_login_handles_slow_down_and_authorization_pending(
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        await CodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
+        await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
 
     assert [call.args for call in sleep.await_args_list] == [(6.0,), (6.0,)]
 
@@ -760,9 +760,9 @@ async def test_browser_login_starts_listener_before_presenting_url() -> None:
         )
 
     store = MemoryStore()
-    credentials: CodexCredentials | None = None
+    credentials: OpenAICodexCredentials | None = None
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as auth_client:
-        auth = CodexAuth(store=store, http_client=auth_client)
+        auth = OpenAICodexAuth(store=store, http_client=auth_client)
         async with anyio.create_task_group() as task_group:
 
             async def send_callback(callback_url: str) -> None:
@@ -826,8 +826,8 @@ async def test_browser_oauth_error_callback_is_terminal() -> None:
             response = await callback_client.get(callback_url)
             assert response.status_code == 400
 
-    with pytest.raises(CodexOAuthError, match='was not completed'):
-        await CodexAuth(store=MemoryStore()).login_browser(open_url, timeout=5)
+    with pytest.raises(OpenAICodexOAuthError, match='was not completed'):
+        await OpenAICodexAuth(store=MemoryStore()).login_browser(open_url, timeout=5)
 
 
 @pytest.mark.parametrize(
@@ -851,8 +851,8 @@ async def test_browser_login_reports_token_exchange_failures(
             assert response.status_code == 500
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as auth_client:
-        with pytest.raises(CodexOAuthError, match=message):
-            await CodexAuth(store=MemoryStore(), http_client=auth_client).login_browser(open_url, timeout=5)
+        with pytest.raises(OpenAICodexOAuthError, match=message):
+            await OpenAICodexAuth(store=MemoryStore(), http_client=auth_client).login_browser(open_url, timeout=5)
 
 
 async def test_oauth_code_exchange_never_follows_redirects() -> None:
@@ -869,8 +869,8 @@ async def test_oauth_code_exchange_never_follows_redirects() -> None:
             assert (await callback_client.get(callback_url)).status_code == 500
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth), follow_redirects=True) as client:
-        with pytest.raises(CodexOAuthError, match='exchange failed'):
-            await CodexAuth(store=MemoryStore(), http_client=client).login_browser(open_url, timeout=5)
+        with pytest.raises(OpenAICodexOAuthError, match='exchange failed'):
+            await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_browser(open_url, timeout=5)
 
     assert len(requests) == 1
 
@@ -907,8 +907,8 @@ async def test_browser_login_rejects_incomplete_token_claims(
             assert (await callback_client.get(callback_url)).status_code == 500
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as client:
-        with pytest.raises(CodexOAuthError, match=message):
-            await CodexAuth(store=MemoryStore(), http_client=client).login_browser(open_url, timeout=5)
+        with pytest.raises(OpenAICodexOAuthError, match=message):
+            await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_browser(open_url, timeout=5)
 
 
 @pytest.mark.parametrize('conflict', ['account', 'fedramp'])
@@ -951,8 +951,8 @@ async def test_browser_login_rejects_conflicting_token_account_claims(conflict: 
             assert (await callback_client.get(callback_url)).status_code == 500
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as client:
-        with pytest.raises(CodexOAuthError, match=r'different ChatGPT accounts|disagree'):
-            await CodexAuth(store=MemoryStore(), http_client=client).login_browser(open_url, timeout=5)
+        with pytest.raises(OpenAICodexOAuthError, match=r'different ChatGPT accounts|disagree'):
+            await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_browser(open_url, timeout=5)
 
 
 async def test_browser_login_rejects_invalid_jwt_claims() -> None:
@@ -975,8 +975,8 @@ async def test_browser_login_rejects_invalid_jwt_claims() -> None:
             assert (await callback_client.get(callback_url)).status_code == 500
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as client:
-        with pytest.raises(CodexOAuthError, match='invalid JWT claims'):
-            await CodexAuth(store=MemoryStore(), http_client=client).login_browser(open_url, timeout=5)
+        with pytest.raises(OpenAICodexOAuthError, match='invalid JWT claims'):
+            await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_browser(open_url, timeout=5)
 
 
 async def test_browser_login_uses_allowlisted_fallback_port() -> None:
@@ -998,23 +998,23 @@ async def test_browser_login_uses_allowlisted_fallback_port() -> None:
 
     occupied = await anyio.create_tcp_listener(local_host='127.0.0.1', local_port=1455)
     async with occupied, httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as auth_client:
-        await CodexAuth(store=MemoryStore(), http_client=auth_client).login_browser(open_url, timeout=5)
+        await OpenAICodexAuth(store=MemoryStore(), http_client=auth_client).login_browser(open_url, timeout=5)
 
 
 async def test_browser_login_fails_when_both_callback_ports_are_unavailable() -> None:
     first = await anyio.create_tcp_listener(local_host='127.0.0.1', local_port=1455)
     second = await anyio.create_tcp_listener(local_host='127.0.0.1', local_port=1457)
     async with first, second:
-        with pytest.raises(CodexOAuthError, match='Unable to bind'):
-            await CodexAuth(store=MemoryStore()).login_browser(lambda url: None, timeout=5)
+        with pytest.raises(OpenAICodexOAuthError, match='Unable to bind'):
+            await OpenAICodexAuth(store=MemoryStore()).login_browser(lambda url: None, timeout=5)
 
 
 async def test_browser_login_reports_presentation_failure() -> None:
     def fail(authorization_url: str) -> None:
         raise RuntimeError('presentation failed')
 
-    with pytest.raises(CodexOAuthError, match='Unable to open or present'):
-        await CodexAuth(store=MemoryStore()).login_browser(fail, timeout=5)
+    with pytest.raises(OpenAICodexOAuthError, match='Unable to open or present'):
+        await OpenAICodexAuth(store=MemoryStore()).login_browser(fail, timeout=5)
 
 
 async def test_browser_login_runs_sync_presentation_callback_in_worker_thread() -> None:
@@ -1036,7 +1036,9 @@ async def test_browser_login_runs_sync_presentation_callback_in_worker_thread() 
             assert response.status == 200
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle_auth)) as auth_client:
-        credentials = await CodexAuth(store=MemoryStore(), http_client=auth_client).login_browser(open_url, timeout=5)
+        credentials = await OpenAICodexAuth(store=MemoryStore(), http_client=auth_client).login_browser(
+            open_url, timeout=5
+        )
 
     assert credentials.account_id.get_secret_value() == _ACCOUNT_ID
     assert callback_threads and callback_threads[0] != main_thread
@@ -1049,18 +1051,18 @@ async def test_device_login_reports_presentation_failure() -> None:
             json={'device_auth_id': 'device-id', 'user_code': 'USER-CODE', 'interval': 1},
         )
 
-    def fail(code: CodexDeviceCode) -> None:
+    def fail(code: OpenAICodexDeviceCode) -> None:
         raise RuntimeError('presentation failed')
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        with pytest.raises(CodexOAuthError, match='Unable to present'):
-            await CodexAuth(store=MemoryStore(), http_client=client).login_device(fail)
+        with pytest.raises(OpenAICodexOAuthError, match='Unable to present'):
+            await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(fail)
 
 
 @pytest.mark.parametrize('timeout', [0.01, 1800])
 async def test_device_polling_respects_effective_timeout(timeout: float, monkeypatch: pytest.MonkeyPatch) -> None:
     if timeout > 900:
-        monkeypatch.setattr('pydantic_ai.auth._codex_oauth._DEVICE_CODE_LIFETIME', 0.01)
+        monkeypatch.setattr('pydantic_ai.auth._openai_codex_oauth._DEVICE_CODE_LIFETIME', 0.01)
 
     def handle(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith('/deviceauth/usercode'):
@@ -1071,8 +1073,10 @@ async def test_device_polling_respects_effective_timeout(timeout: float, monkeyp
         return httpx.Response(403)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        with pytest.raises(CodexOAuthError, match='timed out'):
-            await CodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None, timeout=timeout)
+        with pytest.raises(OpenAICodexOAuthError, match='timed out'):
+            await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(
+                lambda code: None, timeout=timeout
+            )
 
 
 @pytest.mark.parametrize('method', ['browser', 'device'])
@@ -1094,8 +1098,8 @@ async def test_sync_presentation_callback_cannot_defeat_login_timeout(method: st
     started_at = anyio.current_time()
     try:
         async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-            auth = CodexAuth(store=MemoryStore(), http_client=client)
-            with pytest.raises(CodexOAuthError, match='timed out'):
+            auth = OpenAICodexAuth(store=MemoryStore(), http_client=client)
+            with pytest.raises(OpenAICodexOAuthError, match='timed out'):
                 if method == 'browser':
                     await auth.login_browser(block_callback, timeout=0.05)
                 else:
@@ -1109,7 +1113,7 @@ async def test_sync_presentation_callback_cannot_defeat_login_timeout(method: st
 
 @pytest.mark.parametrize('timeout', [0, -1, float('nan'), float('inf')])
 async def test_login_timeout_must_be_finite_and_positive(timeout: float) -> None:
-    auth = CodexAuth(store=MemoryStore())
+    auth = OpenAICodexAuth(store=MemoryStore())
     with pytest.raises(UserError, match='finite and positive'):
         await auth.login_browser(lambda url: None, timeout=timeout)
     with pytest.raises(UserError, match='finite and positive'):
@@ -1123,8 +1127,8 @@ async def test_oauth_validation_error_does_not_retain_secret_in_exception_chain(
         return httpx.Response(200, content=json.dumps({'access_token': sentinel, 'unexpected': sentinel}))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        with pytest.raises(CodexOAuthError) as exc_info:
-            await CodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
+        with pytest.raises(OpenAICodexOAuthError) as exc_info:
+            await OpenAICodexAuth(store=MemoryStore(), http_client=client).login_device(lambda code: None)
 
     error = exc_info.value
     rendered = ''.join(traceback.format_exception(error))
@@ -1146,7 +1150,7 @@ async def test_logout_cancellation_waits_for_delete_and_custom_lock_release() ->
         return httpx.Response(200)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        auth = CodexAuth(store=store, http_client=client)
+        auth = OpenAICodexAuth(store=store, http_client=client)
 
         async def logout() -> None:
             nonlocal completed
@@ -1171,7 +1175,7 @@ async def test_logout_cancellation_waits_for_delete_and_custom_lock_release() ->
 
 
 async def test_logout_without_credentials_is_idempotent() -> None:
-    result = await CodexAuth(store=MemoryStore()).logout()
+    result = await OpenAICodexAuth(store=MemoryStore()).logout()
     assert result.local_credentials_removed is False
     assert result.upstream_revoked is False
 
@@ -1186,7 +1190,7 @@ async def test_logout_reports_successful_upstream_revocation() -> None:
 
     store = MemoryStore(_credentials())
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        result = await CodexAuth(store=store, http_client=client).logout()
+        result = await OpenAICodexAuth(store=store, http_client=client).logout()
 
     assert store.credentials is None
     assert result.upstream_revoked is True
@@ -1206,9 +1210,9 @@ async def test_logout_always_removes_local_credentials(local_only: bool) -> None
 
     store = MemoryStore(_credentials())
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        result = await CodexAuth(store=store, http_client=client).logout(local_only=local_only)
+        result = await OpenAICodexAuth(store=store, http_client=client).logout(local_only=local_only)
 
     assert store.credentials is None
     assert result.local_credentials_removed is True
     assert revoke_requests == (0 if local_only else 1)
-    assert result.revocation_error == (None if local_only else 'Upstream Codex token revocation failed.')
+    assert result.revocation_error == (None if local_only else 'Upstream OpenAI Codex token revocation failed.')

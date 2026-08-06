@@ -235,7 +235,7 @@ def test_scrub_xml_credentials_skips_non_credentials_xml():
     assert data['body']['string'] == '<Response>ok</Response>'
 
 
-def test_codex_oauth_credentials_are_recursively_scrubbed() -> None:
+def test_openai_codex_oauth_credentials_are_recursively_scrubbed() -> None:
     secrets = {
         'access_token': 'access-secret',
         'refresh_token': 'refresh-secret',
@@ -273,7 +273,7 @@ def test_codex_oauth_credentials_are_recursively_scrubbed() -> None:
     assert output.count('scrubbed') >= len(secrets) + 3
 
 
-def test_codex_sse_identifiers_are_recursively_scrubbed() -> None:
+def test_openai_codex_sse_identifiers_are_recursively_scrubbed() -> None:
     cassette: dict[str, Any] = {
         'interactions': [
             {
@@ -310,7 +310,7 @@ def test_codex_sse_identifiers_are_recursively_scrubbed() -> None:
     assert deserialized['interactions'][0]['response']['headers']['content-length'] == [str(len(body.encode('utf-8')))]
 
 
-def test_codex_sse_scrubbing_handles_noops_and_missing_content_length() -> None:
+def test_openai_codex_sse_scrubbing_handles_noops_and_missing_content_length() -> None:
     """Exercise serializer-only edge cases that VCR replay does not run."""
     cassette: dict[str, Any] = {
         'interactions': [

@@ -22,14 +22,14 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, SecretStr, Vali
 from .._utils import BaseExceptionGroup
 from ..exceptions import UserError
 from ..models import create_async_http_client
-from .codex import (
-    CodexAccountMismatchError,
-    CodexAuthError,
-    CodexCredentials,
-    CodexDeviceCode,
-    CodexLoginRequiredError,
-    CodexOAuthError,
-    CodexRefreshError,
+from .openai_codex import (
+    OpenAICodexAccountMismatchError,
+    OpenAICodexAuthError,
+    OpenAICodexCredentials,
+    OpenAICodexDeviceCode,
+    OpenAICodexLoginRequiredError,
+    OpenAICodexOAuthError,
+    OpenAICodexRefreshError,
 )
 
 _ISSUER = 'https://auth.openai.com'
@@ -55,7 +55,7 @@ _ModelT = TypeVar('_ModelT', bound=BaseModel)
 _CallbackT = TypeVar('_CallbackT')
 
 
-class _TokenAccountMismatchError(CodexOAuthError):
+class _TokenAccountMismatchError(OpenAICodexOAuthError):
     pass
 
 
@@ -146,7 +146,7 @@ class _JwtClaims(BaseModel):
     auth: _AuthClaims | None = Field(default=None, validation_alias='https://api.openai.com/auth')
 
 
-class CodexOAuthClient:
+class OpenAICodexOAuthClient:
     def __init__(self, http_client: httpx.AsyncClient | None) -> None:
         self._http_client = http_client
 
@@ -155,7 +155,7 @@ class CodexOAuthClient:
         open_url: Callable[[str], object | Awaitable[object]],
         *,
         timeout: float,
-    ) -> CodexCredentials:
+    ) -> OpenAICodexCredentials:
         _validate_timeout(timeout)
         listener, port = await self._bind_callback_listener()
         verifier = _base64url(secrets.token_bytes(64))
@@ -183,8 +183,10 @@ class CodexOAuthClient:
             )
         )
 
-        result_send, result_receive = anyio.create_memory_object_stream[CodexCredentials | CodexAuthError](1)
-        result: CodexCredentials | CodexAuthError | None = None
+        result_send, result_receive = anyio.create_memory_object_stream[OpenAICodexCredentials | OpenAICodexAuthError](
+            1
+        )
+        result: OpenAICodexCredentials | OpenAICodexAuthError | None = None
         async with self._client() as client, listener, result_send, result_receive:
 
             async def handle(connection: SocketStream) -> None:
@@ -211,28 +213,28 @@ class CodexOAuthClient:
                                 # than chained: an arbitrary browser-launcher failure can carry the
                                 # authorization URL, whose `state` and PKCE challenge would then land
                                 # in logs and tracebacks. `from None` also clears `__context__`.
-                                raise CodexOAuthError(
-                                    'Unable to open or present the Codex authorization URL.'
+                                raise OpenAICodexOAuthError(
+                                    'Unable to open or present the OpenAI Codex authorization URL.'
                                 ) from None
                             result = await result_receive.receive()
                     except TimeoutError:
-                        raise CodexOAuthError('Codex browser authorization timed out.') from None
+                        raise OpenAICodexOAuthError('OpenAI Codex browser authorization timed out.') from None
                     finally:
                         task_group.cancel_scope.cancel()
 
-        if isinstance(result, CodexAuthError):
+        if isinstance(result, OpenAICodexAuthError):
             raise result
         # The receive above always assigns a result
         if result is None:  # pragma: no cover
-            raise CodexOAuthError('Codex browser authorization did not complete.')
+            raise OpenAICodexOAuthError('OpenAI Codex browser authorization did not complete.')
         return result
 
     async def login_device(
         self,
-        show_code: Callable[[CodexDeviceCode], object | Awaitable[object]],
+        show_code: Callable[[OpenAICodexDeviceCode], object | Awaitable[object]],
         *,
         timeout: float,
-    ) -> CodexCredentials:
+    ) -> OpenAICodexCredentials:
         _validate_timeout(timeout)
         effective_timeout = min(timeout, _DEVICE_CODE_LIFETIME)
         async with self._client() as client:
@@ -243,11 +245,15 @@ class CodexOAuthClient:
                 json={'client_id': _CLIENT_ID},
             )
             if response.status_code == 404:
-                raise CodexOAuthError('Codex device authorization is not enabled for this account or workspace.')
+                raise OpenAICodexOAuthError(
+                    'OpenAI Codex device authorization is not enabled for this account or workspace.'
+                )
             if not response.is_success:
-                raise CodexOAuthError('Unable to start Codex device authorization.')
-            start = self._validate_response(response, _DeviceStartResponse, 'Codex returned an invalid device code.')
-            device_code = CodexDeviceCode(
+                raise OpenAICodexOAuthError('Unable to start OpenAI Codex device authorization.')
+            start = self._validate_response(
+                response, _DeviceStartResponse, 'OpenAI Codex returned an invalid device code.'
+            )
+            device_code = OpenAICodexDeviceCode(
                 verification_url=_DEVICE_VERIFICATION_URL,
                 user_code=start.user_code,
                 expires_at=start.expires_at or datetime.now(timezone.utc) + timedelta(seconds=_DEVICE_CODE_LIFETIME),
@@ -261,7 +267,9 @@ class CodexOAuthClient:
                     except Exception:
                         # Discarded rather than chained for the same reason as in `login_browser`: the
                         # callback is user-supplied and its exception can carry the one-time user code.
-                        raise CodexOAuthError('Unable to present the Codex device authorization code.') from None
+                        raise OpenAICodexOAuthError(
+                            'Unable to present the OpenAI Codex device authorization code.'
+                        ) from None
                     while True:
                         response = await self._send(
                             client,
@@ -276,12 +284,14 @@ class CodexOAuthClient:
                             poll = self._validate_response(
                                 response,
                                 _DevicePollResponse,
-                                'Codex returned an invalid device authorization result.',
+                                'OpenAI Codex returned an invalid device authorization result.',
                             )
                             verifier = poll.code_verifier.get_secret_value()
                             expected_challenge = _base64url(hashlib.sha256(verifier.encode()).digest())
                             if not secrets.compare_digest(expected_challenge, poll.code_challenge.get_secret_value()):
-                                raise CodexOAuthError('Codex device authorization returned inconsistent PKCE values.')
+                                raise OpenAICodexOAuthError(
+                                    'OpenAI Codex device authorization returned inconsistent PKCE values.'
+                                )
                             return await self._exchange_code(
                                 client,
                                 code=poll.authorization_code,
@@ -291,9 +301,9 @@ class CodexOAuthClient:
 
                         error_code = self._error_code(response)
                         if error_code in ('access_denied', 'authorization_declined'):
-                            raise CodexOAuthError('Codex device authorization was declined.')
+                            raise OpenAICodexOAuthError('OpenAI Codex device authorization was declined.')
                         if error_code in ('expired_token', 'device_code_expired'):
-                            raise CodexOAuthError('The Codex device authorization code expired.')
+                            raise OpenAICodexOAuthError('The OpenAI Codex device authorization code expired.')
                         if error_code == 'slow_down':
                             interval += 5
                             await _sleep(interval)
@@ -301,11 +311,11 @@ class CodexOAuthClient:
                         if response.status_code in (403, 404) or error_code == 'authorization_pending':
                             await _sleep(interval)
                             continue
-                        raise CodexOAuthError('Codex device authorization failed.')
+                        raise OpenAICodexOAuthError('OpenAI Codex device authorization failed.')
             except TimeoutError:
-                raise CodexOAuthError('Codex device authorization timed out.') from None
+                raise OpenAICodexOAuthError('OpenAI Codex device authorization timed out.') from None
 
-    async def refresh(self, current: CodexCredentials) -> CodexCredentials:
+    async def refresh(self, current: OpenAICodexCredentials) -> OpenAICodexCredentials:
         # A JSON body, not the `application/x-www-form-urlencoded` one RFC 6749 §6 mandates: this
         # endpoint is the ChatGPT service's, and the official Codex client posts JSON to it. The
         # deviation is deliberate and pinned by the tests; sending a form body here is not a fix.
@@ -322,8 +332,8 @@ class CodexOAuthClient:
                     },
                     timeout=_REQUEST_TIMEOUT,
                 )
-        except CodexOAuthError:
-            raise CodexRefreshError('Unable to reach the Codex authentication service.') from None
+        except OpenAICodexOAuthError:
+            raise OpenAICodexRefreshError('Unable to reach the OpenAI Codex authentication service.') from None
         if not response.is_success:
             error_code = self._error_code(response)
             if response.status_code == 401 or error_code in {
@@ -331,14 +341,14 @@ class CodexOAuthClient:
                 'refresh_token_reused',
                 'refresh_token_invalidated',
             }:
-                raise CodexLoginRequiredError(
-                    'Codex credentials can no longer be refreshed. Run `clai auth login codex` again.'
+                raise OpenAICodexLoginRequiredError(
+                    'OpenAI Codex credentials can no longer be refreshed. Run `clai auth login openai-codex` again.'
                 )
-            raise CodexRefreshError('Codex credential refresh failed.')
+            raise OpenAICodexRefreshError('OpenAI Codex credential refresh failed.')
 
         try:
             refreshed = self._validate_response(
-                response, _RefreshResponse, 'Codex returned an invalid refresh response.'
+                response, _RefreshResponse, 'OpenAI Codex returned an invalid refresh response.'
             )
             access_token = refreshed.access_token or current.access_token
             refresh_token = refreshed.refresh_token or current.refresh_token
@@ -351,17 +361,17 @@ class CodexOAuthClient:
                 fallback_fedramp=current.account_is_fedramp,
             )
         except _TokenAccountMismatchError:
-            raise CodexAccountMismatchError(
-                'Codex credentials changed to a different ChatGPT account. '
+            raise OpenAICodexAccountMismatchError(
+                'OpenAI Codex credentials changed to a different ChatGPT account. '
                 'Sign in again to select the account explicitly.'
             ) from None
-        except CodexOAuthError as error:
-            raise CodexRefreshError(str(error)) from None
+        except OpenAICodexOAuthError as error:
+            raise OpenAICodexRefreshError(str(error)) from None
         if credentials.expires_at <= datetime.now(timezone.utc):
-            raise CodexRefreshError('Codex returned a refresh response without a usable access token.')
+            raise OpenAICodexRefreshError('OpenAI Codex returned a refresh response without a usable access token.')
         return credentials
 
-    async def revoke(self, credentials: CodexCredentials) -> None:
+    async def revoke(self, credentials: OpenAICodexCredentials) -> None:
         # JSON rather than the form encoding RFC 7009 §2.1 mandates, for the same reason as `refresh`.
         async with self._client() as client:
             response = await self._send(
@@ -376,7 +386,7 @@ class CodexOAuthClient:
                 timeout=_REVOCATION_TIMEOUT,
             )
         if not response.is_success:
-            raise CodexOAuthError('Codex token revocation failed.')
+            raise OpenAICodexOAuthError('OpenAI Codex token revocation failed.')
 
     async def _bind_callback_listener(self) -> tuple[MultiListener[SocketStream], int]:
         last_error: OSError | None = None
@@ -391,8 +401,8 @@ class CodexOAuthClient:
                 last_error = error
             else:
                 return listener, port
-        raise CodexOAuthError(
-            'Unable to bind the Codex login callback on localhost ports 1455 or 1457.'
+        raise OpenAICodexOAuthError(
+            'Unable to bind the OpenAI Codex login callback on localhost ports 1455 or 1457.'
         ) from last_error
 
     async def _handle_callback(
@@ -403,10 +413,10 @@ class CodexOAuthClient:
         redirect_uri: str,
         verifier: str,
         expected_state: str,
-    ) -> CodexCredentials | CodexAuthError | None:
+    ) -> OpenAICodexCredentials | OpenAICodexAuthError | None:
         try:
             target = await _read_request_target(connection)
-        except CodexOAuthError:
+        except OpenAICodexOAuthError:
             await _send_callback_response(connection, 400, 'Invalid authorization callback.')
             return None
 
@@ -421,7 +431,7 @@ class CodexOAuthClient:
             await _send_callback_response(connection, 400, 'Authorization state mismatch.')
             return None
         if _single_query_value(query, 'error') is not None:
-            error = CodexOAuthError('Codex authorization was not completed.')
+            error = OpenAICodexOAuthError('OpenAI Codex authorization was not completed.')
             await _send_callback_response(connection, 400, 'Authorization was not completed.')
             return error
         code = _single_query_value(query, 'code')
@@ -436,7 +446,7 @@ class CodexOAuthClient:
                 redirect_uri=redirect_uri,
                 verifier=verifier,
             )
-        except CodexAuthError as error:
+        except OpenAICodexAuthError as error:
             await _send_callback_response(connection, 500, 'Authorization could not be completed.')
             return error
         await _send_callback_response(connection, 200, 'Authorization complete. You can return to the terminal.')
@@ -449,7 +459,7 @@ class CodexOAuthClient:
         code: SecretStr,
         redirect_uri: str,
         verifier: str,
-    ) -> CodexCredentials:
+    ) -> OpenAICodexCredentials:
         response = await self._send(
             client,
             'POST',
@@ -463,8 +473,8 @@ class CodexOAuthClient:
             },
         )
         if not response.is_success:
-            raise CodexOAuthError('Codex authorization-code exchange failed.')
-        tokens = self._validate_response(response, _TokenResponse, 'Codex returned an invalid token response.')
+            raise OpenAICodexOAuthError('OpenAI Codex authorization-code exchange failed.')
+        tokens = self._validate_response(response, _TokenResponse, 'OpenAI Codex returned an invalid token response.')
         return self._credentials_from_tokens(
             access_token=tokens.access_token,
             refresh_token=tokens.refresh_token,
@@ -479,17 +489,17 @@ class CodexOAuthClient:
         id_token: SecretStr,
         fallback_account_id: SecretStr | None = None,
         fallback_fedramp: bool = False,
-    ) -> CodexCredentials:
+    ) -> OpenAICodexCredentials:
         access_claims = _decode_jwt(access_token, _JwtClaims)
         id_claims = _decode_jwt(id_token, _JwtClaims)
         account_claims = [claims for claims in (access_claims.auth, id_claims.auth) if claims is not None]
         account_ids = {claims.chatgpt_account_id for claims in account_claims if claims.chatgpt_account_id}
         fallback_id = fallback_account_id.get_secret_value() if fallback_account_id is not None else None
         if len(account_ids) > 1 or (fallback_id is not None and account_ids and fallback_id not in account_ids):
-            raise _TokenAccountMismatchError('Codex tokens identify different ChatGPT accounts or workspaces.')
+            raise _TokenAccountMismatchError('OpenAI Codex tokens identify different ChatGPT accounts or workspaces.')
         account_id = next(iter(account_ids), fallback_id)
         if not account_id:
-            raise CodexOAuthError('Codex credentials do not identify a ChatGPT account or workspace.')
+            raise OpenAICodexOAuthError('OpenAI Codex credentials do not identify a ChatGPT account or workspace.')
 
         fedramp_values = {
             claims.chatgpt_account_is_fedramp
@@ -499,16 +509,16 @@ class CodexOAuthClient:
         if len(fedramp_values) > 1 or (
             fallback_id is not None and fedramp_values and fallback_fedramp not in fedramp_values
         ):
-            raise _TokenAccountMismatchError('Codex tokens disagree about the ChatGPT account environment.')
+            raise _TokenAccountMismatchError('OpenAI Codex tokens disagree about the ChatGPT account environment.')
         account_is_fedramp = next(iter(fedramp_values), fallback_fedramp)
         if access_claims.exp is None:
-            raise CodexOAuthError('Codex access token does not include an expiration time.')
+            raise OpenAICodexOAuthError('OpenAI Codex access token does not include an expiration time.')
         try:
             expires_at = datetime.fromtimestamp(access_claims.exp, timezone.utc)
         except (OverflowError, OSError, ValueError) as error:
-            raise CodexOAuthError('Codex access token has an invalid expiration time.') from error
+            raise OpenAICodexOAuthError('OpenAI Codex access token has an invalid expiration time.') from error
 
-        return CodexCredentials(
+        return OpenAICodexCredentials(
             access_token=access_token,
             refresh_token=refresh_token,
             id_token=id_token,
@@ -528,13 +538,13 @@ class CodexOAuthClient:
         # Raised outside the `except` block on purpose: `from None` only clears `__cause__`,
         # while `__context__` would still hold the `ValidationError` whose payload carries the
         # raw token. Raising here leaves `__context__` empty, which the secret-leak tests assert.
-        raise CodexOAuthError(message) from None
+        raise OpenAICodexOAuthError(message) from None
 
     def _error_code(self, response: httpx.Response) -> str | None:
         """Return the lower-cased error code, as the official client's own classifier does.
 
         Every caller compares the result against literals, so normalizing once here is what keeps a
-        cased variant from downgrading a terminal `CodexLoginRequiredError` into a retry that can
+        cased variant from downgrading a terminal `OpenAICodexLoginRequiredError` into a retry that can
         never succeed, or a `slow_down` into an unrecognized failure.
         """
         try:
@@ -559,7 +569,7 @@ class CodexOAuthClient:
             return await client.request(method, url, json=json, data=data, timeout=timeout, follow_redirects=False)
         except httpx.HTTPError:
             pass
-        raise CodexOAuthError('Unable to reach the Codex authentication service.') from None
+        raise OpenAICodexOAuthError('Unable to reach the OpenAI Codex authentication service.') from None
 
     @asynccontextmanager
     async def _client(self) -> AsyncGenerator[httpx.AsyncClient]:
@@ -573,7 +583,7 @@ class CodexOAuthClient:
 def _decode_jwt(token: SecretStr, model: type[_ModelT]) -> _ModelT:
     parts = token.get_secret_value().split('.')
     if len(parts) != 3 or any(not part for part in parts):
-        raise CodexOAuthError('Codex returned a token with an invalid JWT format.')
+        raise OpenAICodexOAuthError('OpenAI Codex returned a token with an invalid JWT format.')
     payload = parts[1]
     try:
         decoded = base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4))
@@ -582,7 +592,7 @@ def _decode_jwt(token: SecretStr, model: type[_ModelT]) -> _ModelT:
         pass
     else:
         return claims
-    raise CodexOAuthError('Codex returned a token with invalid JWT claims.') from None
+    raise OpenAICodexOAuthError('OpenAI Codex returned a token with invalid JWT claims.') from None
 
 
 def _base64url(value: bytes) -> str:
@@ -593,18 +603,18 @@ async def _read_request_target(connection: SocketStream) -> str:
     request = bytearray()
     while b'\r\n\r\n' not in request:
         if len(request) >= 16_384:
-            raise CodexOAuthError('The Codex authorization callback request was too large.')
+            raise OpenAICodexOAuthError('The OpenAI Codex authorization callback request was too large.')
         try:
             request.extend(await connection.receive(4096))
         except anyio.EndOfStream as error:
-            raise CodexOAuthError('The Codex authorization callback ended unexpectedly.') from error
+            raise OpenAICodexOAuthError('The OpenAI Codex authorization callback ended unexpectedly.') from error
     try:
         first_line = bytes(request).split(b'\r\n', 1)[0].decode('ascii')
         method, target, protocol = first_line.split(' ', 2)
     except (UnicodeDecodeError, ValueError) as error:
-        raise CodexOAuthError('The Codex authorization callback was malformed.') from error
+        raise OpenAICodexOAuthError('The OpenAI Codex authorization callback was malformed.') from error
     if method != 'GET' or not protocol.startswith('HTTP/1.'):
-        raise CodexOAuthError('The Codex authorization callback used an unsupported request method.')
+        raise OpenAICodexOAuthError('The OpenAI Codex authorization callback used an unsupported request method.')
     return target
 
 

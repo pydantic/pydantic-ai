@@ -1,4 +1,4 @@
-"""Core authentication lifecycle for Codex subscriptions.
+"""Core authentication lifecycle for OpenAI Codex subscriptions.
 
 The CLI is deliberately not imported here. Applications can use the same login,
 refresh, status, and logout operations with their own interaction and storage.
@@ -23,32 +23,32 @@ _REFRESH_SKEW = timedelta(minutes=5)
 _REFRESH_AND_SAVE_TIMEOUT = 60
 
 
-class CodexAuthError(UserError):
-    """Base class for Codex authentication errors."""
+class OpenAICodexAuthError(UserError):
+    """Base class for OpenAI Codex authentication errors."""
 
 
-class CodexLoginRequiredError(CodexAuthError):
-    """Raised when no usable Codex subscription credentials are available."""
+class OpenAICodexLoginRequiredError(OpenAICodexAuthError):
+    """Raised when no usable OpenAI Codex subscription credentials are available."""
 
 
-class CodexCredentialsError(CodexAuthError):
-    """Raised when Codex credentials cannot be loaded or stored safely."""
+class OpenAICodexCredentialsError(OpenAICodexAuthError):
+    """Raised when OpenAI Codex credentials cannot be loaded or stored safely."""
 
 
-class CodexOAuthError(CodexAuthError):
-    """Raised when a Codex login or logout protocol operation fails."""
+class OpenAICodexOAuthError(OpenAICodexAuthError):
+    """Raised when a OpenAI Codex login or logout protocol operation fails."""
 
 
-class CodexRefreshError(CodexAuthError):
-    """Raised when Codex credentials cannot be refreshed."""
+class OpenAICodexRefreshError(OpenAICodexAuthError):
+    """Raised when OpenAI Codex credentials cannot be refreshed."""
 
 
-class CodexAccountMismatchError(CodexRefreshError):
+class OpenAICodexAccountMismatchError(OpenAICodexRefreshError):
     """Raised when refreshing credentials would switch ChatGPT accounts."""
 
 
-class CodexCredentials(BaseModel):
-    """A complete, immutable Codex credential snapshot.
+class OpenAICodexCredentials(BaseModel):
+    """A complete, immutable OpenAI Codex credential snapshot.
 
     Token and account values use [`SecretStr`][pydantic.types.SecretStr], so normal
     representations and serialization do not reveal them. Credential stores must
@@ -85,7 +85,7 @@ class CodexCredentials(BaseModel):
         return self.expires_at > datetime.now(timezone.utc) + skew
 
 
-class CodexDeviceCode(BaseModel):
+class OpenAICodexDeviceCode(BaseModel):
     """UI-safe information needed to complete device authorization."""
 
     model_config = ConfigDict(frozen=True, extra='forbid', hide_input_in_errors=True)
@@ -95,8 +95,8 @@ class CodexDeviceCode(BaseModel):
     expires_at: datetime
 
 
-class CodexAuthStatus(BaseModel):
-    """Secret-free status for managed Codex credentials."""
+class OpenAICodexAuthStatus(BaseModel):
+    """Secret-free status for managed OpenAI Codex credentials."""
 
     model_config = ConfigDict(frozen=True, extra='forbid', hide_input_in_errors=True)
 
@@ -106,8 +106,8 @@ class CodexAuthStatus(BaseModel):
     account_is_fedramp: bool = False
 
 
-class CodexLogoutResult(BaseModel):
-    """Result of removing managed Codex credentials."""
+class OpenAICodexLogoutResult(BaseModel):
+    """Result of removing managed OpenAI Codex credentials."""
 
     model_config = ConfigDict(frozen=True, extra='forbid', hide_input_in_errors=True)
 
@@ -116,24 +116,24 @@ class CodexLogoutResult(BaseModel):
     revocation_error: str | None = None
 
 
-class CodexCredentialSource(Protocol):
-    """Resolve one coherent credential snapshot for a Codex request."""
+class OpenAICodexCredentialSource(Protocol):
+    """Resolve one coherent credential snapshot for a OpenAI Codex request."""
 
     async def get_credentials(
         self, *, force_refresh: bool = False, rejected_revision: str | None = None
-    ) -> CodexCredentials:
+    ) -> OpenAICodexCredentials:
         """Return credentials, optionally replacing the version rejected by the service.
 
         `rejected_revision` may only be passed together with `force_refresh=True`, and names the
-        [`revision`][pydantic_ai.auth.codex.CodexCredentials.revision] that received an unauthorized
+        [`revision`][pydantic_ai.auth.openai_codex.OpenAICodexCredentials.revision] that received an unauthorized
         response. When the active revision no longer matches it, another actor has already replaced
         that version and the replacement should be returned instead of rotating again.
         """
         ...
 
 
-class CodexCredentialStore(Protocol):
-    """Persistence boundary for concurrency-safe Codex credential rotation.
+class OpenAICodexCredentialStore(Protocol):
+    """Persistence boundary for concurrency-safe OpenAI Codex credential rotation.
 
     `exclusive()` must prevent another actor sharing the same logical record from
     rotating it until the context exits. File stores can use a process lock;
@@ -141,14 +141,14 @@ class CodexCredentialStore(Protocol):
     """
 
     def exclusive(self) -> AbstractAsyncContextManager[None]:
-        """Acquire exclusive ownership of the active Codex credential record."""
+        """Acquire exclusive ownership of the active OpenAI Codex credential record."""
         ...
 
-    async def load(self) -> CodexCredentials | None:
+    async def load(self) -> OpenAICodexCredentials | None:
         """Load the active credential snapshot, if present."""
         ...
 
-    async def save(self, credentials: CodexCredentials, *, expected_revision: str | None) -> bool:
+    async def save(self, credentials: OpenAICodexCredentials, *, expected_revision: str | None) -> bool:
         """Conditionally replace the active snapshot.
 
         Return `False` when the active revision differs from `expected_revision`.
@@ -161,8 +161,8 @@ class CodexCredentialStore(Protocol):
         ...
 
 
-class CodexAuth(CodexCredentialSource):
-    """Manage Codex subscription login, persistence, refresh, and logout.
+class OpenAICodexAuth(OpenAICodexCredentialSource):
+    """Manage OpenAI Codex subscription login, persistence, refresh, and logout.
 
     Constructing this object performs no file, network, browser, or background-task
     work. The default file store is opened only by an explicit operation or request.
@@ -177,22 +177,22 @@ class CodexAuth(CodexCredentialSource):
     def __init__(
         self,
         *,
-        store: CodexCredentialStore | None = None,
+        store: OpenAICodexCredentialStore | None = None,
         path: Path | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         if store is not None and path is not None:
             raise UserError('`store` and `path` are mutually exclusive')
         if store is None:
-            from ._codex_store import FileCodexCredentialStore
+            from ._openai_codex_store import OpenAICodexFileCredentialStore
 
-            store = FileCodexCredentialStore(path)
+            store = OpenAICodexFileCredentialStore(path)
         self._store = store
         self._http_client = http_client
 
     async def get_credentials(
         self, *, force_refresh: bool = False, rejected_revision: str | None = None
-    ) -> CodexCredentials:
+    ) -> OpenAICodexCredentials:
         """Return current credentials and safely rotate them when required.
 
         `rejected_revision` identifies the credential version that received an
@@ -221,7 +221,7 @@ class CodexAuth(CodexCredentialSource):
                     with anyio.fail_after(_REFRESH_AND_SAVE_TIMEOUT):
                         resolved = await self._refresh_and_save(current)
                 except TimeoutError:
-                    raise CodexRefreshError('Codex credential refresh timed out.') from None
+                    raise OpenAICodexRefreshError('OpenAI Codex credential refresh timed out.') from None
 
         # Deliver cancellation only after a rotated token is durably stored and the
         # exclusive store context has released its lock.
@@ -233,50 +233,50 @@ class CodexAuth(CodexCredentialSource):
         open_url: Callable[[str], object | Awaitable[object]],
         *,
         timeout: float = 300,
-    ) -> CodexCredentials:
+    ) -> OpenAICodexCredentials:
         """Complete browser PKCE login and persist the resulting credentials.
 
         The loopback listener is active before `open_url` is called. The callback is
         responsible only for presenting or opening the supplied URL.
         """
-        from ._codex_oauth import CodexOAuthClient
+        from ._openai_codex_oauth import OpenAICodexOAuthClient
 
         await self._check_store_ready()
-        credentials = await CodexOAuthClient(self._http_client).login_browser(open_url, timeout=timeout)
+        credentials = await OpenAICodexOAuthClient(self._http_client).login_browser(open_url, timeout=timeout)
         await self._replace_after_login(credentials)
         return credentials
 
     async def login_device(
         self,
-        show_code: Callable[[CodexDeviceCode], object | Awaitable[object]],
+        show_code: Callable[[OpenAICodexDeviceCode], object | Awaitable[object]],
         *,
         timeout: float = 900,
-    ) -> CodexCredentials:
+    ) -> OpenAICodexCredentials:
         """Complete device authorization and persist the resulting credentials."""
-        from ._codex_oauth import CodexOAuthClient
+        from ._openai_codex_oauth import OpenAICodexOAuthClient
 
         await self._check_store_ready()
-        credentials = await CodexOAuthClient(self._http_client).login_device(show_code, timeout=timeout)
+        credentials = await OpenAICodexOAuthClient(self._http_client).login_device(show_code, timeout=timeout)
         await self._replace_after_login(credentials)
         return credentials
 
-    async def status(self) -> CodexAuthStatus:
+    async def status(self) -> OpenAICodexAuthStatus:
         """Return secret-free status without refreshing credentials."""
         credentials = await self._store.load()
         if credentials is None:
-            return CodexAuthStatus(authenticated=False)
-        return CodexAuthStatus(
+            return OpenAICodexAuthStatus(authenticated=False)
+        return OpenAICodexAuthStatus(
             authenticated=True,
             expires_at=credentials.expires_at,
             needs_refresh=not credentials.is_valid(),
             account_is_fedramp=credentials.account_is_fedramp,
         )
 
-    async def refresh(self) -> CodexCredentials:
+    async def refresh(self) -> OpenAICodexCredentials:
         """Force the same safe refresh used for request-time unauthorized recovery."""
         return await self.get_credentials(force_refresh=True)
 
-    async def logout(self, *, local_only: bool = False) -> CodexLogoutResult:
+    async def logout(self, *, local_only: bool = False) -> OpenAICodexLogoutResult:
         """Remove local credentials, attempting verified upstream revocation first.
 
         Revocation is best effort, matching the official Codex client. Local removal
@@ -285,25 +285,25 @@ class CodexAuth(CodexCredentialSource):
         async with self._exclusive_transaction():
             credentials = await self._store.load()
             if credentials is None:
-                result = CodexLogoutResult(local_credentials_removed=False)
+                result = OpenAICodexLogoutResult(local_credentials_removed=False)
             else:
                 revoked = False
                 revocation_error: str | None = None
                 try:
                     if not local_only:
-                        from ._codex_oauth import CodexOAuthClient
+                        from ._openai_codex_oauth import OpenAICodexOAuthClient
 
-                        await CodexOAuthClient(self._http_client).revoke(credentials)
+                        await OpenAICodexOAuthClient(self._http_client).revoke(credentials)
                         revoked = True
-                except CodexAuthError:
-                    revocation_error = 'Upstream Codex token revocation failed.'
+                except OpenAICodexAuthError:
+                    revocation_error = 'Upstream OpenAI Codex token revocation failed.'
                 finally:
                     removed = await self._store.delete(expected_revision=credentials.revision)
 
                 # An exclusive store must make this unreachable
                 if not removed:  # pragma: no cover
-                    raise CodexCredentialsError('Codex credentials changed while they were being removed.')
-                result = CodexLogoutResult(
+                    raise OpenAICodexCredentialsError('OpenAI Codex credentials changed while they were being removed.')
+                result = OpenAICodexLogoutResult(
                     local_credentials_removed=True,
                     upstream_revoked=revoked,
                     revocation_error=revocation_error,
@@ -317,7 +317,7 @@ class CodexAuth(CodexCredentialSource):
 
         A login that completes upstream and then cannot be persisted discards a freshly minted
         token for nothing. Taking and releasing the lock up front surfaces both reasons that can
-        happen: the default store needs the `codex` extra, and any store can be unwritable.
+        happen: the default store needs the `openai-codex` extra, and any store can be unwritable.
         """
         async with self._store.exclusive():
             pass
@@ -336,29 +336,29 @@ class CodexAuth(CodexCredentialSource):
             else:
                 await exclusive.__aexit__(None, None, None)
 
-    async def _refresh_and_save(self, current: CodexCredentials) -> CodexCredentials:
-        from ._codex_oauth import CodexOAuthClient
+    async def _refresh_and_save(self, current: OpenAICodexCredentials) -> OpenAICodexCredentials:
+        from ._openai_codex_oauth import OpenAICodexOAuthClient
 
-        refreshed = await CodexOAuthClient(self._http_client).refresh(current)
+        refreshed = await OpenAICodexOAuthClient(self._http_client).refresh(current)
         saved = await self._store.save(refreshed, expected_revision=current.revision)
         # An exclusive store must make this unreachable
         if not saved:  # pragma: no cover
-            raise CodexCredentialsError('Codex credentials changed while they were being refreshed.')
+            raise OpenAICodexCredentialsError('OpenAI Codex credentials changed while they were being refreshed.')
         return refreshed
 
-    async def _load_required(self) -> CodexCredentials:
+    async def _load_required(self) -> OpenAICodexCredentials:
         credentials = await self._store.load()
         if credentials is None:
-            raise CodexLoginRequiredError(
-                'Codex subscription login is required. Run `clai auth login codex` or inject a credential source.'
+            raise OpenAICodexLoginRequiredError(
+                'OpenAI Codex subscription login is required. Run `clai auth login openai-codex` or inject a credential source.'
             )
         return credentials
 
-    async def _replace_after_login(self, credentials: CodexCredentials) -> None:
+    async def _replace_after_login(self, credentials: OpenAICodexCredentials) -> None:
         async with self._exclusive_transaction():
             current = await self._store.load()
             expected_revision = current.revision if current is not None else None
             saved = await self._store.save(credentials, expected_revision=expected_revision)
             if not saved:
-                raise CodexCredentialsError('Codex credentials changed while login was being saved.')
+                raise OpenAICodexCredentialsError('OpenAI Codex credentials changed while login was being saved.')
         await checkpoint()

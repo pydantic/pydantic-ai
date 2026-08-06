@@ -18,7 +18,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
-    from pydantic_ai.providers.codex import CodexProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
@@ -33,6 +32,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.nebius import NebiusProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.together import TogetherProvider
@@ -42,7 +42,7 @@ with try_import() as imports_successful:
     test_infer_provider_params = [
         ('anthropic', AnthropicProvider, 'ANTHROPIC_API_KEY'),
         ('cohere', CohereProvider, 'CO_API_KEY'),
-        ('codex', CodexProvider, None),
+        ('openai-codex', OpenAICodexProvider, None),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
         ('openrouter', OpenRouterProvider, 'OPENROUTER_API_KEY'),
         ('vercel', VercelProvider, 'VERCEL_AI_GATEWAY_API_KEY'),

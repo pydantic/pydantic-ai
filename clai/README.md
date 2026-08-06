@@ -20,7 +20,7 @@ Most providers use an environment variable. For example, OpenAI Platform models 
 export OPENAI_API_KEY='your-api-key-here'
 ```
 
-Providers with managed authentication use `clai auth` instead. See [Codex subscription authentication](#codex-subscription-authentication) below.
+Providers with managed authentication use `clai auth` instead. See [OpenAI Codex subscription authentication](#openai-codex-subscription-authentication) below.
 
 Then with [`uvx`](https://docs.astral.sh/uv/guides/tools/), run:
 
@@ -51,13 +51,13 @@ Either way, running `clai` will start an interactive session where you can chat 
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
 - `/cp`: Copy the last response to clipboard
 
-### Codex subscription authentication
+### OpenAI Codex subscription authentication
 
-A ChatGPT Codex subscription uses managed sign-in instead of `OPENAI_API_KEY`. Sign in through a browser, then select a `codex:` model:
+OpenAI Codex uses managed sign-in through your ChatGPT account instead of `OPENAI_API_KEY`. Sign in through a browser, then select an `openai-codex:` model:
 
 ```bash
-uvx clai auth login codex
-uvx clai --model codex:gpt-5.5
+uvx clai auth login openai-codex
+uvx clai --model openai-codex:gpt-5.5
 ```
 
 ## Help

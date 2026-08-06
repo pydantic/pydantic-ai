@@ -111,9 +111,9 @@ TEST_CASES = [
     ),
     pytest.param(
         {},
-        'codex:gpt-5.5',
+        'openai-codex:gpt-5.5',
         'gpt-5.5',
-        'codex',
+        'openai-codex',
         'openai',
         OpenAIResponsesModel,
     ),
