@@ -223,9 +223,11 @@ async def _run_lifecycle_hooks(  # noqa: C901
         await _run_done.wait()
         if _run_error is not None:
             raise extract_error(_run_error) if extract_error is not None else _run_error
-        if result_ready is not None and not result_ready():
+        if result_ready is not None and not result_ready():  # pragma: no cover
             # The caller finished without a result (e.g. `break` out of iteration): there is
-            # nothing to return, so park until the wrap task is cancelled below.
+            # nothing to return, so park until the wrap task is cancelled below. Normally the
+            # cancellation is delivered at this task's resume point before this line runs, so
+            # it's only reached if a `wrap_run` implementation absorbed the cancellation.
             await asyncio.Future[AgentRunResult[Any]]()
         return build_result()
 
@@ -3280,13 +3282,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             )
             if lifecycle.short_circuited:
-
+                # The session below is yielded closed, so `_ensure_not_closed` rejects every public
+                # entry point before the connection is touched; these raises are defense-in-depth
+                # for the abstract methods the base class requires.
                 class _SkippedRealtimeConnection(RealtimeConnection):
                     async def send(self, content: RealtimeInput) -> None:
-                        raise exceptions.UserError('This realtime session was short-circuited before connecting.')
+                        raise exceptions.UserError(  # pragma: no cover
+                            'This realtime session was short-circuited before connecting.'
+                        )
 
                     def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-                        raise exceptions.UserError('This realtime session was short-circuited before connecting.')
+                        raise exceptions.UserError(  # pragma: no cover
+                            'This realtime session was short-circuited before connecting.'
+                        )
 
                 session = RealtimeSession(
                     _SkippedRealtimeConnection(),

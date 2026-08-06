@@ -665,7 +665,7 @@ async def test_session_stream_wrapper_closes_after_early_break() -> None:
     model = _RecordingModel(connection_events=[OutputTranscript(text='hello'), ResponseDone()])
 
     async with agent.realtime(model).session() as session:
-        async for event in session:
+        async for event in session:  # pragma: no branch
             assert isinstance(event, PartStartEvent)
             break
 
