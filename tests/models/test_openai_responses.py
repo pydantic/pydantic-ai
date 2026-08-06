@@ -13364,6 +13364,73 @@ async def test_openai_responses_standing_prompt_survives_response_first_history(
     )
 
 
+async def test_openai_responses_conversation_id_recovered_across_compaction(allow_model_requests: None):
+    """`openai_conversation_id='auto'` still finds the conversation ID carried by a response the
+    trim drops: server-side state is resolved from the untrimmed history, while the mapped input
+    is the trimmed window."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('first turn'),
+        ModelResponse(
+            parts=[TextPart(content='ok')],
+            provider_name='openai',
+            provider_details={'conversation_id': 'conv_123'},
+        ),
+        ModelRequest.user_text_prompt('second turn'),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content=None, provider_name='openai', provider_details={'encrypted_content': 'encrypted'}
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    await model.request(
+        messages,
+        OpenAIResponsesModelSettings(openai_conversation_id='auto'),
+        ModelRequestParameters(),
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert request_kwargs['conversation'] == snapshot('conv_123')
+    assert request_kwargs['input'] == snapshot(
+        [
+            {'id': None, 'encrypted_content': 'encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
+async def test_openai_responses_standing_instructions_survive_compaction(allow_model_requests: None):
+    """A direct `Model.request()` call whose only instructions live before the boundary keeps them:
+    the standing-prompt request carries the latest prefix instructions, so the last-two-requests
+    fallback still finds them when the trailing request is tool-return-only."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='dropped')], instructions='Standing instructions.'),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content=None, provider_name='openai', provider_details={'encrypted_content': 'encrypted'}
+                ),
+                ToolCallPart(tool_name='do_thing', args={}, tool_call_id='call-1'),
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='do_thing', content='done', tool_call_id='call-1')]),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert request_kwargs['instructions'] == snapshot('Standing instructions.')
+
+
 async def test_openai_responses_compaction_composes_with_auto_chain_boundary(allow_model_requests: None):
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
     messages: list[ModelMessage] = [

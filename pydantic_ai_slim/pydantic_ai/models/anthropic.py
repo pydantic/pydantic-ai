@@ -535,30 +535,38 @@ def _trim_messages_before_compaction(messages: list[ModelMessage], system: str) 
                 part = message.parts[part_index]
                 if isinstance(part, CompactionPart) and part.provider_name == system:
                     tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
-                    standing_prompt = _standing_system_prompt_request(messages[:message_index])
+                    standing_prompt = _standing_prompt_request(messages[:message_index])
                     return [*standing_prompt, *tail]
     return messages
 
 
-def _standing_system_prompt_request(prefix: list[ModelMessage]) -> list[ModelRequest]:
-    """The first request's leading `SystemPromptPart`s, as a request of their own.
+def _standing_prompt_request(prefix: list[ModelMessage]) -> list[ModelRequest]:
+    """The standing prompt from the dropped prefix, as a request of its own.
 
-    The first `ModelRequest` wherever it appears — matching the mapper's own leading-request
-    definition — since a history may open with a `ModelResponse`. Only that request's opening
-    system parts are the standing prompt; mid-conversation `SystemPromptPart`s render inline as
-    conversation content, which the compaction summary replaces, so they are deliberately not
-    preserved.
+    System parts come from the first `ModelRequest` wherever it appears — matching the mapper's
+    own leading-request definition, since a history may open with a `ModelResponse`. Instructions
+    come from the latest prefix request that carried any: that's what the instruction fallback for
+    direct `Model.request()` callers would otherwise have recovered from the dropped history, and
+    a kept-tail request carrying its own instructions still wins, being more recent.
+    Mid-conversation `SystemPromptPart`s render inline as conversation content, which the
+    compaction summary replaces, so they are deliberately not preserved.
     """
+    opening: list[SystemPromptPart] = []
     for message in prefix:
         if isinstance(message, ModelRequest):
-            opening: list[SystemPromptPart] = []
             for part in message.parts:
                 if isinstance(part, SystemPromptPart):
                     opening.append(part)
                 else:
                     break
-            return [ModelRequest(parts=list(opening))] if opening else []
-    return []
+            break
+    instructions = next(
+        (m.instructions for m in reversed(prefix) if isinstance(m, ModelRequest) and m.instructions is not None),
+        None,
+    )
+    if not opening and instructions is None:
+        return []
+    return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
 @dataclass(init=False)

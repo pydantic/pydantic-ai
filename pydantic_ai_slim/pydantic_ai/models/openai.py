@@ -1910,26 +1910,35 @@ def _trim_messages_before_compaction(messages: list[ModelMessage], system: str) 
                     and 'encrypted_content' in part.provider_details
                 ):
                     tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
-                    standing_prompt = _standing_system_prompt_request(messages[:message_index])
+                    standing_prompt = _standing_prompt_request(messages[:message_index])
                     return [*standing_prompt, *tail]
     return messages
 
 
-def _standing_system_prompt_request(prefix: list[ModelMessage]) -> list[ModelRequest]:
-    """The first request's leading `SystemPromptPart`s, as a request of their own.
+def _standing_prompt_request(prefix: list[ModelMessage]) -> list[ModelRequest]:
+    """The standing prompt from the dropped prefix, as a request of its own.
 
-    The first `ModelRequest` wherever it appears, since a history may open with a `ModelResponse`.
+    System parts come from the first `ModelRequest` wherever it appears (a history may open with a
+    `ModelResponse`); instructions from the latest prefix request that carried any — what the
+    instruction fallback for direct `Model.request()` callers would otherwise have recovered from
+    the dropped history. A kept-tail request carrying its own instructions still wins.
     """
+    opening: list[SystemPromptPart] = []
     for message in prefix:
         if isinstance(message, ModelRequest):
-            opening: list[SystemPromptPart] = []
             for part in message.parts:
                 if isinstance(part, SystemPromptPart):
                     opening.append(part)
                 else:
                     break
-            return [ModelRequest(parts=list(opening))] if opening else []
-    return []
+            break
+    instructions = next(
+        (m.instructions for m in reversed(prefix) if isinstance(m, ModelRequest) and m.instructions is not None),
+        None,
+    )
+    if not opening and instructions is None:
+        return []
+    return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
 @dataclass(init=False)
@@ -2540,13 +2549,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: OpenAIModelProfile,
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
-        # Trim before deriving the wire partition below: `introduced_tool_names` and `_map_messages`
-        # must see the same history, or a tool whose `additional_tools` carrier sits before the
-        # compaction boundary would be filtered from `tools` AND lose its item — vanishing from the
+        # The wire partition below must be derived from the trimmed history — the same view
+        # `_map_messages` renders — or a tool whose `additional_tools` carrier sits before the
+        # compaction boundary would be filtered from `tools` AND lose its item, vanishing from the
         # request entirely. With the carrier trimmed, the tool is simply not "introduced" and keeps
-        # its regular `tools` declaration. The trim is idempotent, so `_map_messages` re-applying it
-        # is a no-op.
-        messages = _trim_messages_before_compaction(messages, self.system)
+        # its regular `tools` declaration. Deliberately a separate variable: `messages` itself stays
+        # untrimmed for `_resolve_server_side_state`, which recovers conversation/response IDs from
+        # responses the trim would drop; `_map_messages` applies the same idempotent trim to
+        # whatever slice that resolution hands it.
+        trimmed_messages = _trim_messages_before_compaction(messages, self.system)
         # A delta must leave `tools` exactly as the previous turn sent it: it's the first cache section,
         # ahead of `instructions` and every input item, so a difference there invalidates the whole cached
         # prefix on the one turn this feature exists to protect — deepest into the conversation, where the
@@ -2562,7 +2573,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # - A tool without it was never declared — either the model has no deferred-tool support, or its
         #   corpus is empty and the API won't take `defer_loading` without `tool_search` — so it can't
         #   join `tools` now, that being the prefix growing, and travels only in the item.
-        introduced_tool_names = _introduced_tool_names(messages, profile, model_request_parameters)
+        introduced_tool_names = _introduced_tool_names(trimmed_messages, profile, model_request_parameters)
         wire_request_parameters = model_request_parameters
         if introduced_tool_names:
             wire_request_parameters = replace(
