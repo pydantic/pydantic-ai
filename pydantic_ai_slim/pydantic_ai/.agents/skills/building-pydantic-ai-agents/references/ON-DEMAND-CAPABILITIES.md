@@ -4,11 +4,11 @@ Read this file when designing progressive disclosure of any kind, when an agent 
 
 ## Mental Model
 
-Capabilities on demand are bundle-level progressive disclosure for Pydantic AI. The model initially sees a compact catalog of deferred capability `id` values, plus `description` values when provided, and the framework-managed `load_capability` tool. When the model calls `load_capability(id)`, Pydantic AI returns that capability's instructions; its function tools, native tools, and model settings are reflected on the next model request, and its hooks can fire for later hook points in the run.
+Capabilities — instructions and/or tools, optionally with settings and hooks — can be loaded on demand for bundle-level progressive disclosure in Pydantic AI. The model initially sees a compact catalog of deferred capability `id` values, plus `description` values when provided, and the framework-managed `load_capability` tool. When the model calls `load_capability(id)`, Pydantic AI returns that capability's instructions; its function tools, native tools, and model settings are reflected on the next model request, and its hooks can fire for later hook points in the run.
 
 Loaded function tools are recorded in durable message history with `ToolAvailabilityDeltaPart`. `load_capability` does this through the same public mechanism available to user tools: `ToolReturn(tools=[...])`. The executor deduplicates names in first-occurrence order, omits names already revealed, and places the delta immediately after the tool return in the same request. Treat it as framework control state: it records additions only, while current tool definitions remain authoritative. Unknown and already-visible names are no-ops when rendered.
 
-The unified rule is: an unrevealed deferred tool stays outside the model's usable context, and each provider's addition channel determines its wire representation. Provider adapters project the recorded control state without changing history:
+The unified rule is: an unrevealed deferred tool stays outside the model's usable context, and each provider's history-item reveal mechanism determines its wire representation. Provider adapters project the recorded control state without changing history:
 
 - `tool_addition_mode='by_reference'`: Anthropic emits `tool_addition` with a `tool_reference`. Capability-only runs pre-advertise the definition with `defer_loading=True`; mixed runs with a search surface withhold it until reveal, then append the deferred definition and reference it in the same request.
 - `tool_addition_mode='with_definitions'`: first-party OpenAI Responses emits an appended `additional_tools` item containing the complete definition and does not add it to `tools`.

@@ -321,7 +321,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         yield ActivitySnapshotEvent(
             message_id=str(uuid4()),
             activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
-            content={'added': part.added, 'tool_call_id': part.tool_call_id},
+            content={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
         )
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:

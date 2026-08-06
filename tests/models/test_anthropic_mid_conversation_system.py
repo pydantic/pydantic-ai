@@ -796,7 +796,7 @@ async def test_native_tool_availability_delta(allow_model_requests: None, anthro
         [
             ModelRequest(parts=[UserPromptPart(content='I need help with a refund for order A-4417.')]),
             ModelResponse(parts=[TextPart(content='I can check that.')]),
-            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'])]),
         ],
         None,
         ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool()]),
@@ -845,7 +845,7 @@ async def test_tool_availability_delta_raises_on_a_model_that_cannot_render_it(a
             [
                 ModelRequest(parts=[UserPromptPart(content='Help with a refund.')]),
                 ModelResponse(parts=[TextPart(content='Sure.')]),
-                ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['always_ready'])]),
+                ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['always_ready'])]),
             ],
             ModelRequestParameters(function_tools=[ToolDefinition(name='always_ready')]),
             AnthropicModelSettings(),
@@ -903,12 +903,15 @@ def test_cache_point_ending_a_request_covers_the_tool_availability_change():
                 ModelResponse(parts=[TextPart('answer')]),
                 ModelRequest(
                     parts=[
-                        ToolAvailabilityDeltaPart(added=['lookup_refund_policy']),
+                        ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy']),
                         UserPromptPart(['context', CachePoint()]),
                     ]
                 ),
             ],
-            ModelRequestParameters(function_tools=[ToolDefinition(name='lookup_refund_policy')]),
+            ModelRequestParameters(
+                function_tools=[ToolDefinition(name='lookup_refund_policy')],
+                tool_visibility={'lookup_refund_policy': 'deferred'},
+            ),
             AnthropicModelSettings(),
         )
     )
@@ -934,9 +937,9 @@ def test_tool_availability_delta_ignores_visible_unknown_and_duplicate_tools() -
     _, anthropic_messages = asyncio.run(
         model._map_message(  # pyright: ignore[reportPrivateUsage]
             [
-                ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['hidden', 'hidden', 'visible', 'missing'])]),
+                ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden', 'hidden', 'visible', 'missing'])]),
                 ModelResponse(parts=[TextPart(content='ok')]),
-                ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['hidden'])]),
+                ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden'])]),
             ],
             ModelRequestParameters(
                 function_tools=[
@@ -958,16 +961,11 @@ def test_tool_availability_delta_ignores_visible_unknown_and_duplicate_tools() -
     assert additions == ['hidden']
 
 
-@pytest.mark.parametrize(
-    'tool_choice',
-    [['hidden'], ['visible', 'hidden']],
-    ids=['single', 'multi'],
-)
-def test_hidden_tool_choice_is_rejected_before_anthropic_mapping(tool_choice: list[str]) -> None:
+def test_hidden_tool_choice_is_rejected_before_anthropic_mapping() -> None:
     model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='not-used'))
-    with pytest.raises(UserError, match='hidden until revealed'):
+    with pytest.raises(UserError, match=r'All requested tools.*currently hidden'):
         model._prepare_tools_and_tool_choice(  # pyright: ignore[reportPrivateUsage]
-            AnthropicModelSettings(tool_choice=tool_choice),
+            AnthropicModelSettings(tool_choice=['hidden']),
             ModelRequestParameters(
                 function_tools=[
                     ToolDefinition(name='visible'),

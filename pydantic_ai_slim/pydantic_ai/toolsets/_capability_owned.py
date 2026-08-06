@@ -80,10 +80,10 @@ def is_gated_by_deferred_capability(ctx: RunContext[Any], tool_def: ToolDefiniti
     )
 
 
-def legacy_tool_defs_for_loaded_capabilities(
+def tool_defs_from_pre_definition_load_returns(
     ctx: RunContext[Any], tool_defs: Iterable[ToolDefinition]
 ) -> dict[str, ToolDefinition]:
-    """Derive revealed definitions for histories whose capability loads predate availability deltas."""
+    """Reconstruct definitions for histories serialized before load returns carried tool definitions."""
     result: dict[str, ToolDefinition] = {}
     for tool_def in tool_defs:
         capability_id = tool_def.capability_id

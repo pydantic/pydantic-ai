@@ -1727,7 +1727,9 @@ class ToolAvailabilityDeltaPart:
     https://github.com/pydantic/pydantic-ai/issues/6985.
     """
 
-    added: list[str] = field(default_factory=lambda: [])
+    tools_added: Annotated[
+        list[str], pydantic.Field(validation_alias=pydantic.AliasChoices('tools_added', 'added'))
+    ] = field(default_factory=lambda: [])
     """Names of tools that became available."""
 
     tool_call_id: str | None = None
@@ -1743,7 +1745,7 @@ class ToolAvailabilityDeltaPart:
         already visible in the request's tool definitions, and a run where the model suddenly can
         call something is unreadable without them.
         """
-        changes = ', '.join(f'+{name}' for name in self.added)
+        changes = ', '.join(f'+{name}' for name in self.tools_added)
         return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {changes}')]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -3587,7 +3589,12 @@ class FunctionToolResultEvent(ToolResultEvent):
 
 @dataclass(repr=False, kw_only=True)
 class ToolAvailabilityDeltaEvent:
-    """An event indicating tools were made available mid-run, carrying the recorded delta part."""
+    """An event indicating tools were made available mid-run, carrying the recorded delta part.
+
+    This is request-side because the delta is created while executing a tool, after response-part
+    streaming has finished. It records the post-dedup change, while `ToolReturnPart.tools` preserves
+    the caller's pre-dedup intent, and is emitted for capability loads as well as tool returns.
+    """
 
     part: ToolAvailabilityDeltaPart
     """The tool availability delta part that will be recorded in message history."""

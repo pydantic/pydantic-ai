@@ -197,7 +197,7 @@ async def test_tool_availability_delta_uses_additional_tools(allow_model_request
     )
 
     await model.request(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])],
         None,
         ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool(optional=True)]),
     )
@@ -235,7 +235,7 @@ async def test_tool_availability_delta_uses_additional_tools(allow_model_request
 async def test_tool_availability_delta_ignores_visible_and_unknown_tools() -> None:
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='not-used'))
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['always_ready', 'missing'])])],
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['always_ready', 'missing'])])],
         OpenAIResponsesModelSettings(),
         ModelRequestParameters(
             function_tools=[ToolDefinition(name='always_ready')],
@@ -274,7 +274,7 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
         ),
     )
     await model.request(
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])],
         OpenAIResponsesModelSettings(tool_choice=tool_choice),
         parameters,
     )
@@ -283,32 +283,6 @@ async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
     assert request_kwargs['tool_choice'] == expected
     assert [tool['name'] for tool in request_kwargs['tools']] == ['always_ready']
     assert request_kwargs['input'][0]['type'] == 'additional_tools'
-
-
-@pytest.mark.parametrize(
-    'tool_choice',
-    [['lookup_refund_policy'], ['always_ready', 'lookup_refund_policy']],
-    ids=['single', 'multi'],
-)
-async def test_tool_availability_delta_rejects_named_tool_choice(
-    allow_model_requests: None, tool_choice: list[str]
-) -> None:
-    """The revealed tool travels via `additional_tools`, so by-name forcing can't target it.
-
-    The error says so precisely: the tool is not hidden — it was revealed — but its definition
-    is outside the provider's `tools` list on this API shape.
-    """
-    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='not-used'))
-    tool = ToolDefinition(name='lookup_refund_policy', defer_loading=True)
-    with pytest.raises(UserError, match=r"revealed outside the provider's `tools` list"):
-        await model.request(
-            [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
-            OpenAIResponsesModelSettings(tool_choice=tool_choice),
-            ModelRequestParameters(
-                function_tools=[tool, ToolDefinition(name='always_ready')],
-                revealed_tool_names={tool.name},
-            ),
-        )
 
 
 async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):
@@ -2952,7 +2926,7 @@ def test_model_profile_strict_not_supported():
     )
 
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
-    tool_param = m._map_tool_definition(my_tool, 'visible')  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, visibility='visible')  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {
@@ -2972,7 +2946,7 @@ def test_model_profile_strict_not_supported():
             openai_model_profile('gpt-4o'), OpenAIModelProfile(openai_supports_strict_tool_definition=False)
         ),
     )
-    tool_param = m._map_tool_definition(my_tool, 'visible')  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, visibility='visible')  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {

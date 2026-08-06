@@ -274,23 +274,7 @@ RAISES_CASES = [
             'tool_visibility': {'hidden': 'withheld'},
             'allow_text_output': True,
         },
-        match=r"hidden until revealed: \['hidden'\]",
-    ),
-    dict(
-        # A `via_channel` tool is revealed, not hidden — the model can call it — but its
-        # definition travels outside the provider's `tools` list, so by-name forcing can't
-        # target it and the error must say so rather than misdiagnose it as unrevealed.
-        id='multi_with_via_channel',
-        tool_choice=['visible', 'hidden'],
-        params_kwargs={
-            'function_tools': [
-                make_tool('visible'),
-                make_tool('hidden'),
-            ],
-            'tool_visibility': {'visible': 'visible', 'hidden': 'via_channel'},
-            'allow_text_output': True,
-        },
-        match=r"revealed outside the provider's `tools` list.*\['hidden'\]",
+        match=r"All requested tools.*currently hidden: \['hidden'\]",
     ),
     dict(
         # `required` with every function tool withheld would put `required` next to an empty
@@ -318,6 +302,15 @@ def test_resolve_tool_choice_allows_deferred_declaration() -> None:
         allow_text_output=True,
     )
     assert resolve_tool_choice({'tool_choice': ['corpus_tool']}, params) == 'required'
+
+
+def test_resolve_tool_choice_filters_hidden_names_when_one_is_available() -> None:
+    params = ModelRequestParameters(
+        function_tools=[make_tool('visible'), make_tool('hidden')],
+        tool_visibility={'visible': 'visible', 'hidden': 'via_history'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ['visible', 'hidden']}, params) == ('required', {'visible'})
 
 
 @pytest.mark.parametrize('case', RAISES_CASES, ids=lambda c: c['id'])

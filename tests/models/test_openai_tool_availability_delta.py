@@ -81,7 +81,7 @@ async def test_item_carried_tool_call_gets_a_synthesized_namespace() -> None:
 
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         [
-            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
             ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args={}, tool_call_id='call-1')]),
         ],
         OpenAIResponsesModelSettings(),
@@ -107,7 +107,7 @@ async def test_duplicate_names_in_one_delta_render_a_single_declaration() -> Non
     )
 
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name, tool.name])])],
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name, tool.name])])],
         OpenAIResponsesModelSettings(),
         parameters,
     )
@@ -136,7 +136,7 @@ async def test_delta_naming_a_withheld_tool_does_not_smuggle_its_schema() -> Non
     On the direct `Model.request` path, a history delta can name a tool the caller-authored
     parameters keep `'withheld'` (its name absent from `revealed_tool_names`). Rendering it here
     would declare the schema the request just withheld, and make the tool callable on top.
-    `'deferred'` and `'via_channel'` names still render — for those the item is the reveal
+    `'deferred'` and `'via_history'` names still render — for those the item is the reveal
     mechanism itself.
     """
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
@@ -145,7 +145,7 @@ async def test_delta_naming_a_withheld_tool_does_not_smuggle_its_schema() -> Non
     assert parameters.visibility_of(tool.name) == 'withheld'
 
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])],
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])],
         OpenAIResponsesModelSettings(),
         parameters,
     )
@@ -159,7 +159,7 @@ async def test_pre_compaction_reveal_is_withheld_without_additional_tools() -> N
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
     tool = ToolDefinition(name='foo', parameters_json_schema={'type': 'object', 'properties': {}}, defer_loading=True)
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
         ModelResponse(parts=[CompactionPart(content=None, id='cmp_1', provider_name='openai')]),
     ]
     _, parameters = model.prepare_request(
@@ -230,7 +230,7 @@ async def test_unsupported_model_raises_rather_than_emitting_the_item() -> None:
 
     with pytest.raises(UserError, match='prepare_messages'):
         await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-            [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])])],
+            [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'])])],
             OpenAIResponsesModelSettings(),
             ModelRequestParameters(function_tools=[refund_tool()]),
         )
@@ -242,7 +242,7 @@ async def test_supported_model_calls_additional_tool(
     """A supported model acts on the native item and calls a tool absent from top-level `tools`."""
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
     tool = refund_tool()
-    # The agent-reachable shape: only a *deferred, revealed* tool travels `via_channel`. A plain
+    # The agent-reachable shape: only a *deferred, revealed* tool travels `via_history`. A plain
     # visible tool would occupy an ordinary `tools` entry and render no item at all.
     tool.defer_loading = True
     # The same *resolved* parameters the request goes out with: `prepare_messages` decides how to
@@ -261,7 +261,7 @@ async def test_supported_model_calls_additional_tool(
                 ]
             ),
             ModelResponse(parts=[TextPart(content='I will load the refund capability.')]),
-            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
         ],
         parameters,
     )
@@ -337,7 +337,7 @@ async def test_unsupported_model_calls_the_tool_the_announcement_revealed(
                 ]
             ),
             ModelResponse(parts=[TextPart(content='I will load the refund capability.')]),
-            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name], tool_call_id='load-refunds')]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name], tool_call_id='load-refunds')]),
         ],
         parameters,
     )
@@ -366,7 +366,7 @@ async def test_openai_live_delta_preserves_the_warmed_cache_prefix(
     before: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Reply only with: ready')])]
 
     warm_response = await model.request(before, None, parameters)
-    after = [*before, warm_response, ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])])]
+    after = [*before, warm_response, ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])]
     await model.request(after, None, parameters)
 
     assert len(cast(Any, vcr).requests) == 2

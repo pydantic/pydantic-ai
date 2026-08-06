@@ -5361,7 +5361,7 @@ async def test_tool_availability_delta_event_stream_handler(
 
     assert [event for event in events if isinstance(event, ToolAvailabilityDeltaEvent)] == [
         ToolAvailabilityDeltaEvent(
-            part=ToolAvailabilityDeltaPart(added=['hidden_tool'], tool_call_id='pyd_ai_tool_call_id__ret_a')
+            part=ToolAvailabilityDeltaPart(tools_added=['hidden_tool'], tool_call_id='pyd_ai_tool_call_id__ret_a')
         )
     ]
 

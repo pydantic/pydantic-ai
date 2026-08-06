@@ -53,29 +53,17 @@ def resolve_tool_choice(  # noqa: C901
 
     available_tools = set(model_request_parameters.tool_defs.keys())
 
-    def _check_hidden_tools(chosen_tool_names: set[str]) -> None:
-        withheld = {
-            tool.name
-            for tool in model_request_parameters.function_tools
-            if tool.name in chosen_tool_names and model_request_parameters.visibility_of(tool.name) == 'withheld'
-        }
-        if withheld:
+    def _filter_hidden_tools(chosen_tool_names: set[str]) -> set[str]:
+        function_tool_names = {tool.name for tool in model_request_parameters.function_tools}
+        declared_function_tool_names = {tool.name for tool in model_request_parameters.declared_function_tools}
+        hidden_tool_names = function_tool_names - declared_function_tool_names
+        filtered = chosen_tool_names - hidden_tool_names
+        if not filtered and chosen_tool_names:
             raise UserError(
-                f'Tools in `tool_choice` are hidden until revealed: {sorted(withheld)}. '
-                'Reveal them with tool search, `load_capability`, or `ToolReturn.tools` before forcing them.'
+                f'All requested tools in `tool_choice` are currently hidden: {sorted(chosen_tool_names)}. '
+                'Reveal at least one with tool search, `load_capability`, or `ToolReturn.tools`.'
             )
-        # A `via_channel` tool IS revealed — the model can call it — but its definition travels
-        # outside the provider's `tools` list, and by-name forcing can only target declared tools.
-        via_channel = {
-            tool.name
-            for tool in model_request_parameters.function_tools
-            if tool.name in chosen_tool_names and model_request_parameters.visibility_of(tool.name) == 'via_channel'
-        }
-        if via_channel:
-            raise UserError(
-                f"Tools in `tool_choice` are revealed outside the provider's `tools` list and cannot be "
-                f'forced by name on this provider: {sorted(via_channel)}.'
-            )
+        return filtered
 
     def _check_invalid_tools(chosen_tool_names: set[str], available_tools: set[str], *, available_label: str) -> None:
         invalid = chosen_tool_names - available_tools
@@ -146,7 +134,7 @@ def resolve_tool_choice(  # noqa: C901
         _check_invalid_tools(chosen_set, available_tools, available_label='Available tools')
         # A deferred declaration is already on the wire and remains callable; only tools absent
         # from the wire cannot be forced by name.
-        _check_hidden_tools(chosen_set)
+        chosen_set = _filter_hidden_tools(chosen_set)
 
         if chosen_set == available_tools:
             return 'required'
@@ -170,7 +158,7 @@ def resolve_tool_choice(  # noqa: C901
             all_function_tool_names,
             available_label='Available function tools',
         )
-        _check_hidden_tools(chosen_function_set)
+        chosen_function_set = _filter_hidden_tools(chosen_function_set)
 
         allowed_tools = chosen_function_set | output_tool_names
         mode: Literal['auto', 'required'] = 'auto' if allow_direct_output else 'required'

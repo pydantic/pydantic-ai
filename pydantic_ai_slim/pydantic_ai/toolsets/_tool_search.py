@@ -215,41 +215,40 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     the one definition of the boundary — so locating it costs a cheap reverse
     `isinstance` pass rather than parsing history the boundary would reset anyway.
     """
-    discovered: set[str] = set()
+    return set(discovered_tool_names_in_order(messages))
+
+
+def discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[str, ...]:
+    """Return discovered names in first-appearance order for byte-stable provider tool segments.
+
+    Scans only the [`compacted_window`][pydantic_ai.messages.compacted_window], so both the
+    reveal set and the wire ordering derive from what the model can actually see.
+    """
+    discovered: dict[str, None] = {}
     for msg in compacted_window(messages):
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if isinstance(part, ToolAvailabilityDeltaPart):
-                    discovered.update(part.added)
+                    discovered.update(dict.fromkeys(part.tools_added))
                 elif isinstance(part, ToolSearchReturnPart):
-                    _collect_typed(part.content, discovered)
+                    discovered.update(dict.fromkeys(match['name'] for match in part.discovered_tools))
                 elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
                     # Legacy histories carry discoveries on `metadata['discovered_tools']`
                     # rather than typed content. Narrowing tool_name + metadata shape avoids
                     # surfacing a user-defined `search_tools` whose metadata has no legacy
                     # shape.
-                    _collect_legacy(part.metadata, discovered)
+                    try:
+                        validated = _LEGACY_METADATA_TA.validate_python(part.metadata)
+                    except ValidationError:
+                        continue
+                    discovered.update(dict.fromkeys(validated['discovered_tools']))
         elif isinstance(msg, ModelResponse):
             for part in msg.parts:
                 if isinstance(part, NativeToolSearchReturnPart):
-                    _collect_typed(part.content, discovered)
+                    discovered.update(dict.fromkeys(match['name'] for match in part.discovered_tools))
         else:
             assert_never(msg)
-    return discovered
-
-
-def _collect_typed(content: ToolSearchReturnContent, discovered: set[str]) -> None:
-    """Add discovered tool names from a validated `ToolSearchReturnContent`."""
-    discovered.update(match['name'] for match in content['discovered_tools'])
-
-
-def _collect_legacy(metadata: Any, discovered: set[str]) -> None:
-    """Backward-compat reader for the pre-typed-content metadata sideband."""
-    try:
-        validated = _LEGACY_METADATA_TA.validate_python(metadata)
-    except ValidationError:
-        return
-    discovered.update(validated['discovered_tools'])
+    return tuple(discovered)
 
 
 @dataclass(kw_only=True)

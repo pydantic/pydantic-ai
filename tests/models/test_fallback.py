@@ -212,7 +212,7 @@ async def test_fallback_reprojects_anthropic_delta_to_openai_announcement(allow_
     )
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='start')]),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
     ]
 
     await model.request(history, None, parameters)
@@ -250,7 +250,7 @@ async def test_fallback_reprojects_openai_delta_to_anthropic_tool_addition(allow
     )
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='start')]),
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool.name])]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
     ]
 
     await model.request(history, None, parameters)

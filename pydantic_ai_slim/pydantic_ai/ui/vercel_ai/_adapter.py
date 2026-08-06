@@ -642,7 +642,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     DataUIPart(
                         type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
                         data={
-                            'added': part.added,
+                            'added': part.tools_added,
                             'tool_call_id': part.tool_call_id,
                         },
                     )

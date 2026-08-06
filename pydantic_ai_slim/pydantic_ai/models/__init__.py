@@ -71,7 +71,8 @@ from ..profiles import (
     DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     ModelProfile,
     ModelProfileSpec,
-    _translate_legacy_profile_keys,  # pyright: ignore[reportPrivateUsage]
+    ToolAdditionMode,
+    ToolDeferralMode,
     merge_profile,
 )
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
@@ -147,14 +148,14 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
     ],
 )
 
-ToolVisibility = Literal['visible', 'deferred', 'withheld', 'via_channel']
+ToolVisibility = Literal['visible', 'deferred', 'withheld', 'via_history']
 """How a function tool is represented on the request a provider actually receives.
 
 - `'visible'`: an ordinary entry in the provider's `tools` collection, schema included.
 - `'deferred'`: a declared `tools` entry whose schema is withheld behind the provider's
   schema-deferral flag until something reveals it.
 - `'withheld'`: absent from the request entirely.
-- `'via_channel'`: absent from the `tools` collection; the full definition travels on the
+- `'via_history'`: absent from the `tools` collection; the full definition travels on the
   provider's mid-conversation tool-addition channel instead.
 
 Resolved per tool name into [`ModelRequestParameters.tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility]."""
@@ -178,6 +179,8 @@ class ModelRequestParameters:
     """
     revealed_tool_names: set[str] = field(default_factory=set[str], repr=False)
     """Names history has revealed so far, derived from the outgoing message list before each request.
+
+    Discovered means evidenced by history; revealed means represented on this request's wire state.
 
     Input to visibility resolution: `ToolDefinition.defer_loading` records what the author asked
     for and stays set after a reveal, so this answers the separate question of what the model can
@@ -211,13 +214,18 @@ class ModelRequestParameters:
     after checking that the model's profile supports thinking.
     """
 
-    def visibility_of(self, tool_name: str) -> ToolVisibility | None:
+    def visibility_of(self, tool_name: str) -> ToolVisibility:
         """The resolved [`ToolVisibility`][pydantic_ai.models.ToolVisibility] for `tool_name`.
 
-        `None` when the parameters are unresolved, or for a name without an entry (output tools,
-        unknown names) — which every consumer treats like `'visible'`.
+        For parameters constructed directly rather than resolved by [`Model.prepare_request`][pydantic_ai.models.Model.prepare_request],
+        deferred function tools default to `'withheld'` and every other name defaults to `'visible'`.
         """
-        return (self.tool_visibility or {}).get(tool_name)
+        if visibility := (self.tool_visibility or {}).get(tool_name):
+            return visibility
+        # `tool_defs` is a cached dict, so the fallback stays O(1) — adapters call this in
+        # per-tool loops.
+        tool_def = self.tool_defs.get(tool_name)
+        return 'withheld' if tool_def is not None and tool_def.defer_loading else 'visible'
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
@@ -237,7 +245,7 @@ class ModelRequestParameters:
     def declared_function_tools(self) -> list[ToolDefinition]:
         """Function tools represented in the provider's ordinary `tools` collection."""
         return [
-            tool for tool in self.function_tools if self.visibility_of(tool.name) not in ('withheld', 'via_channel')
+            tool for tool in self.function_tools if self.visibility_of(tool.name) not in ('withheld', 'via_history')
         ]
 
     @property
@@ -379,7 +387,7 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
 class Model(ABC, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
-    supported_tool_deferral_modes: ClassVar[frozenset[str]] = frozenset()
+    supported_tool_deferral_modes: ClassVar[frozenset[ToolDeferralMode]] = frozenset()
     """`tool_deferral_mode` values this adapter's renderer implements.
 
     A profile may claim a mode for the model family, but the claim only takes effect when the
@@ -387,7 +395,7 @@ class Model(ABC, Generic[InterfaceClient]):
     subclass that declares nothing (the default) never resolves tools to a wire shape it cannot
     render, no matter what a pass-through vendor profile claims.
     """
-    supported_tool_addition_modes: ClassVar[frozenset[str]] = frozenset()
+    supported_tool_addition_modes: ClassVar[frozenset[ToolAdditionMode]] = frozenset()
     """`tool_addition_mode` values this adapter's renderer implements. See `supported_tool_deferral_modes`."""
 
     _provider: Provider[InterfaceClient]
@@ -436,13 +444,13 @@ class Model(ABC, Generic[InterfaceClient]):
         return self._settings
 
     @property
-    def tool_deferral_mode(self) -> Literal['standalone', 'with_tool_search'] | None:
+    def tool_deferral_mode(self) -> ToolDeferralMode | None:
         """The effective schema-deferral mode: the profile's claim, if this adapter renders it."""
         mode = self.profile.get('tool_deferral_mode')
         return mode if mode in self.supported_tool_deferral_modes else None
 
     @property
-    def tool_addition_mode(self) -> Literal['by_reference', 'with_definitions'] | None:
+    def tool_addition_mode(self) -> ToolAdditionMode | None:
         """The effective tool-addition mode: the profile's claim, if this adapter renders it."""
         mode = self.profile.get('tool_addition_mode')
         return mode if mode in self.supported_tool_addition_modes else None
@@ -834,8 +842,9 @@ class Model(ABC, Generic[InterfaceClient]):
         # sends: rule 1 must not drop a local fallback for a native tool that just left.
         supported_ids = {t.unique_id for t in supported_natives}
 
-        can_defer = self._can_defer_tool_schemas(supported_natives)
+        can_defer = self._can_withhold_tool_schemas(supported_natives)
         tool_addition_mode = self.tool_addition_mode
+        tool_search_on_wire = any(isinstance(native, ToolSearchTool) for native in supported_natives)
 
         function_tools: list[ToolDefinition] = []
         visibility_by_name: dict[str, ToolVisibility] = {}
@@ -855,14 +864,14 @@ class Model(ABC, Generic[InterfaceClient]):
                     visibility = 'deferred'
                 elif revealed:
                     if tool_addition_mode == 'with_definitions':
-                        visibility = 'via_channel'
+                        visibility = 'via_history'
                     elif can_defer:
                         visibility = 'deferred'
                     else:
                         visibility = 'visible'
                 elif corpus_member:
                     visibility = 'withheld'
-                elif any(isinstance(native, ToolSearchTool) for native in supported_natives):
+                elif tool_search_on_wire:
                     # A hidden non-corpus tool must stay off any wire carrying a search surface,
                     # since server-side search indexes the request's deferred tool declarations.
                     visibility = 'withheld'
@@ -885,7 +894,7 @@ class Model(ABC, Generic[InterfaceClient]):
             tool_visibility=visibility_by_name,
         )
 
-    def _can_defer_tool_schemas(self, native_tools: Sequence[AbstractNativeTool]) -> bool:
+    def _can_withhold_tool_schemas(self, native_tools: Sequence[AbstractNativeTool]) -> bool:
         """Whether this request can declare a function tool while withholding its schema.
 
         `'standalone'` always permits it. `'with_tool_search'` permits it only when a
@@ -976,9 +985,7 @@ class Model(ABC, Generic[InterfaceClient]):
         if user is None:
             pass
         elif callable(user):
-            # New v2 form: (default profile) -> final profile. The result bypasses `merge_profile`,
-            # so translate deprecated key spellings here too.
-            resolved = _translate_legacy_profile_keys(user(resolved))
+            resolved = user(resolved)
         else:
             # Partial dict — merge on top
             resolved = merge_profile(resolved, user)
@@ -2084,7 +2091,9 @@ def _replace_tool_search_exchanges_with_deltas(
             ]
         else:
             parts = [
-                ToolAvailabilityDeltaPart(added=translated_call_ids[part.tool_call_id], tool_call_id=part.tool_call_id)
+                ToolAvailabilityDeltaPart(
+                    tools_added=translated_call_ids[part.tool_call_id], tool_call_id=part.tool_call_id
+                )
                 if (
                     isinstance(part, ToolReturnPart)
                     and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
@@ -2143,7 +2152,7 @@ def _announce_tool_availability_delta_messages(
                 replacement_parts.append(part)
                 continue
             # A delta that adds nothing has nothing to announce, so it drops out entirely.
-            added = [name for name in part.added if available_tool_names is None or name in available_tool_names]
+            added = [name for name in part.tools_added if available_tool_names is None or name in available_tool_names]
             if added:
                 replacement_parts.append(
                     SystemPromptPart(
@@ -2214,7 +2223,7 @@ def _synthesize_tool_availability_delta_messages(
             if not isinstance(part, ToolAvailabilityDeltaPart):
                 pending.append(part)
                 continue
-            added = [name for name in part.added if available_tool_names is None or name in available_tool_names]
+            added = [name for name in part.tools_added if available_tool_names is None or name in available_tool_names]
             if not added:
                 continue
 

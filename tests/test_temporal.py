@@ -9616,7 +9616,7 @@ async def test_durability_tool_reveals_survive_workflow_and_activity(allow_model
         for part in message.parts
         if isinstance(part, ToolAvailabilityDeltaPart)
     ]
-    assert [(part.added, part.tool_call_id) for part in deltas] == [
+    assert [(part.tools_added, part.tool_call_id) for part in deltas] == [
         (['durability_refund'], 'load'),
         (['durability_hidden'], 'open'),
     ]
@@ -9655,7 +9655,7 @@ def _cross_model_reveal_primary(messages: list[ModelMessage], info: AgentInfo) -
         return ModelResponse(
             parts=[ToolCallPart('load_capability', {'id': 'cross-model-billing'}, tool_call_id='load')]
         )
-    assert [(part.added, part.tool_call_id) for part in deltas] == [(['cross_model_refund'], 'load')]
+    assert [(part.tools_added, part.tool_call_id) for part in deltas] == [(['cross_model_refund'], 'load')]
     return ModelResponse(parts=[TextPart('capability loaded')], usage=RequestUsage(input_tokens=1, output_tokens=1))
 
 
