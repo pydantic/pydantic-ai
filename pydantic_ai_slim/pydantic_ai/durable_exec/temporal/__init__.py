@@ -26,6 +26,7 @@ from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
+from ._event_stream import stream_agent_events, workflow_stream_event_handler
 from ._logfire import LogfirePlugin
 from ._payload_converter import PydanticAIPayloadConverter
 from ._run_context import TemporalRunContext
@@ -42,6 +43,8 @@ __all__ = [
     'TemporalWrapperToolset',
     'PydanticAIWorkflow',
     'PydanticAIPayloadConverter',
+    'workflow_stream_event_handler',
+    'stream_agent_events',
 ]
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
