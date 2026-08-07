@@ -682,9 +682,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         was_cancelled_response = isinstance(response_id, str) and response_id == self._cancelled_response_id
         self._close_cancelled_response(response_id)
         # OpenAI response events always carry an ID. Keep the ID-less fallback for compatible protocol
-        # implementations and defensive unit inputs that predate response tracking.
+        # implementations and defensive unit inputs that predate response tracking. An *unknown* active
+        # id matches too — the window between `response.create` and its `response.created`, which a
+        # protocol clone that omits the id never leaves — since a done that can't be proven stale must
+        # still settle the response, exactly as `superseded` below refuses to prove staleness from it.
         matches_active_response = not isinstance(response_id, str) or (
-            self._response_active and response_id == self._active_response_id
+            self._response_active and self._active_response_id in (None, response_id)
         )
         # Superseded only when a *different, known* response is active — a late/cancelled completion after
         # a new turn began. When the active id is unknown (`None`, e.g. an id-less `response.created`), this
@@ -762,6 +765,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         assert self._dial is not None
         try:
             self._ws = await self._dial()
+            # A `response.create` deferred behind the response that died with the socket will never be
+            # released by that response's `response.done`, so replay it on the fresh socket (which has
+            # just replayed the call) rather than dropping it and leaving the session waiting for a turn
+            # that can never start. Sent inside this guard because the new socket can drop before the
+            # frame reaches it, which has to consume an attempt like any other failed reconnect.
+            replay_response = self._pending_response
+            self._clear_active_response()
+            # A fresh socket also drops anything the old one was still holding for us.
+            self._cancelled_response_id = None
+            if replay_response:
+                await self._request_response()
+            # Cleared only once the replay is on the wire, so a send that failed above leaves the
+            # request queued for the next attempt instead of losing it.
+            self._pending_response = False
         except (websockets.WebSocketException, OSError, TimeoutError, RealtimeHandshakeError):
             # Expected dial/handshake failures: protocol/connection errors, network failures (DNS,
             # refused, reset), the handshake timeout, and a re-dial the server rejected with an `error`
@@ -770,17 +787,6 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # may still succeed. Anything else is a bug in `dial()` and propagates rather than
             # masquerading as a failed reconnect.
             return False
-        # A `response.create` deferred behind the response that died with the socket will never be
-        # released by that response's `response.done`, so replay it on the fresh socket (which has just
-        # replayed the call) rather than dropping it and leaving the session waiting for a turn that can
-        # never start.
-        replay_response = self._pending_response
-        self._clear_active_response()
-        # A fresh socket also drops anything the old one was still holding for us.
-        self._pending_response = False
-        self._cancelled_response_id = None
-        if replay_response:
-            await self._request_response()
         return True
 
     def _clear_active_response(self) -> None:

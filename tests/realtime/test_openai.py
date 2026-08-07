@@ -2691,6 +2691,60 @@ async def test_reconnect_replays_a_deferred_response_request() -> None:
 
 
 @pytest.mark.anyio
+async def test_reconnect_replay_failure_consumes_an_attempt() -> None:
+    # The replayed `response.create` goes out on a socket that has only just come up, which can drop
+    # before the frame reaches it. That has to look like any other failed reconnect — consuming an
+    # attempt and ending in a non-recoverable session error — rather than escaping the reconnect loop,
+    # which runs outside `__aiter__`'s transport guard.
+    class _SendFailsWebSocket(FakeWebSocket):
+        async def send(self, data: str) -> None:
+            raise ConnectionResetError('connection reset by peer')
+
+    dials = 0
+
+    async def dial() -> Any:
+        nonlocal dials
+        dials += 1
+        return _SendFailsWebSocket([])
+
+    conn = OpenAIRealtimeConnection(
+        DroppingWebSocket([]),  # type: ignore[arg-type]
+        dial=dial,
+        reconnect=rt_openai.ReconnectPolicy(max_attempts=2, base_delay=0.0, jitter=False),
+    )
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._pending_response = True  # pyright: ignore[reportPrivateUsage]
+
+    events = [e async for e in conn]
+    assert dials == 2
+    # Still queued, so a later attempt would replay it rather than silently losing the turn.
+    assert conn._pending_response is True  # pyright: ignore[reportPrivateUsage]
+    assert len(events) == 1
+    error = events[0]
+    assert isinstance(error, RealtimeSessionErrorEvent)
+    assert error.recoverable is False
+    assert 'reconnect failed' in error.message
+
+
+@pytest.mark.anyio
+async def test_response_done_settles_a_response_whose_id_was_never_announced() -> None:
+    # Between `response.create` and its `response.created`, the active response has no id — and a
+    # protocol clone that omits the id from `response.created` never leaves that window. A terminal
+    # naming a response we can't prove is stale must still settle it; otherwise `_response_active`
+    # stays set for the life of the connection and the model never speaks again.
+    frame = json.dumps({'type': 'response.done', 'response': {'id': 'resp_1', 'status': 'completed', 'output': []}})
+    ws = FakeWebSocket([frame])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    assert conn._active_response_id is None  # pyright: ignore[reportPrivateUsage]
+
+    await collect_codec_events(conn)
+    assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
+    await conn._request_response()  # pyright: ignore[reportPrivateUsage]
+    assert ws.sent == [json.dumps({'type': 'response.create'})]
+
+
+@pytest.mark.anyio
 async def test_malformed_response_done_still_releases_the_response() -> None:
     # A `response.done` whose `response` payload is the wrong shape fails to map, which surfaces as a
     # recoverable frame error. The frame is still the only terminal that response will ever get, so the
