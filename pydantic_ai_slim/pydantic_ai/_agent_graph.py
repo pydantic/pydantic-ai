@@ -1969,6 +1969,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 elif isinstance(part, _messages.CompactionPart):
                     if part.content:
                         compaction_text += part.content
+                elif isinstance(part, _messages.SpeechPart):
+                    # No standard model produces realtime audio parts, but a custom model (e.g. a
+                    # `FunctionModel` bridging one) can. Its transcript is the response's text —
+                    # `ModelResponse.text` already reads it that way — so treat it like a `TextPart`
+                    # rather than judging the response empty and forcing a retry.
+                    text += part.content
                 else:
                     assert_never(part)
 
