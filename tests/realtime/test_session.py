@@ -5341,14 +5341,18 @@ async def test_parallel_ordered_events_are_not_stranded_by_a_failing_sibling() -
     # The buffer is released from the tool task's done-callback, which runs even when the tool raised,
     # so a sibling that produces no events can't leave the batch waiting forever.
     agent: Agent[None, str] = Agent()
+    fine_finished = asyncio.Event()
 
     @agent.tool_plain
     async def boom() -> str:
+        # Fail only once the sibling has fully run: `fine`'s buffered events are then waiting on this
+        # first-in-order call to settle, which is exactly the state a hung release would strand.
+        await fine_finished.wait()
         raise RuntimeError('tool exploded')
 
     @agent.tool_plain
     async def fine() -> str:
-        await asyncio.sleep(0.05)
+        fine_finished.set()
         return 'fine'
 
     conn = FakeRealtimeConnection(
