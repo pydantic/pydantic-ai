@@ -131,6 +131,9 @@ constraint-dependencies = [
     # Security-driven floors for purely transitive deps. Each line lifts the
     # minimum to the first patched release flagged by Dependabot so we don't
     # have to wait for upstream packages to bump.
+    # Moved here from the (otherwise unused) examples dependency that carried it (#6562):
+    # `mcp` is now purely transitive via fastmcp.
+    "mcp>=1.28.1",
     "urllib3>=2.7.0",
     "idna>=3.15",
     "cryptography>=48.0.1",
