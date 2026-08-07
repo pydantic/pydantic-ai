@@ -254,6 +254,7 @@ CASES = [
                 'return_value': {**REDACTED_IMAGE, 'vendor_metadata': {'thumbnail': REDACTED_IMAGE}},
                 'content': ['here it is', REDACTED_IMAGE],
                 'metadata': {'img': REDACTED_IMAGE},
+                'tools': None,
                 'kind': 'tool-return',
             }
         ),
@@ -538,6 +539,37 @@ def test_binary_nested_in_a_user_type_is_not_redacted(capfire: CaptureLogfire) -
     assert IMAGE.base64 in json.dumps(final_result)
 
 
+def test_redacted_tool_return_keeps_the_tools_it_made_available(capfire: CaptureLogfire) -> None:
+    """Redacting a `ToolReturn` must not drop the deferred tools it revealed.
+
+    `ToolReturn.tools` names the tools the call made available, and telemetry is where that
+    reveal is observable — dropping it would hide why a later tool call became legal.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('gen_image', {})])
+        return ModelResponse(parts=[TextPart('a kiwi')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=False))],
+        name='agent',
+    )
+
+    @agent.tool_plain
+    def gen_image() -> ToolReturn:
+        return ToolReturn(return_value='done', metadata={'img': IMAGE}, tools=['lookup_refund_policy'])
+
+    agent.run_sync('make an image')
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    tool_spans = json.dumps([span['attributes'] for span in spans if span['name'] == 'execute_tool gen_image'])
+    assert 'lookup_refund_policy' in tool_spans
+    # The binary the same `ToolReturn` carried is still redacted.
+    assert IMAGE.base64 not in tool_spans
+
+
 def test_redacted_shapes_keep_every_field_but_the_data() -> None:
     """A field added to a redacted type has to be added to its redacted shape too.
 
@@ -547,7 +579,7 @@ def test_redacted_shapes_keep_every_field_but_the_data() -> None:
     dumped = ModelMessagesTypeAdapter.dump_python([ModelRequest(parts=[UserPromptPart(content=[IMAGE])])], mode='json')
     assert set(dumped[0]['parts'][0]['content'][0]) == set(REDACTED_IMAGE) | {'data'}
 
-    assert {f.name for f in fields(ToolReturn)} == {'return_value', 'content', 'metadata', 'kind'}
+    assert {f.name for f in fields(ToolReturn)} == {'return_value', 'content', 'metadata', 'tools', 'kind'}
     assert {f.name for f in fields(DeferredToolRequests)} == {'calls', 'approvals', 'metadata'}
 
 
