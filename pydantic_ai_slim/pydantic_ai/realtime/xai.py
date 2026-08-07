@@ -16,10 +16,11 @@ conversion, server-VAD config, and the WebSocket connection itself — and diver
   [`RealtimeModelProfile.supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation]
   is `False` while cancellation-based interruption still works.
 
-Requires the `websockets` package (the `realtime` optional group) and `xai-sdk` (the `xai` group, for
-[`XaiProvider`][pydantic_ai.providers.xai.XaiProvider]):
+Requires the `websockets` package (the `realtime` optional group), `xai-sdk` (the `xai` group, for
+[`XaiProvider`][pydantic_ai.providers.xai.XaiProvider]), and `openai` (the `openai` group, whose SDK
+supplies the event types the shared OpenAI codec is built on):
 
-    pip install "pydantic-ai-slim[realtime,xai]"
+    pip install "pydantic-ai-slim[realtime,xai,openai]"
 """
 
 from __future__ import annotations as _annotations
@@ -42,8 +43,10 @@ try:
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install the `websockets` package to use the xAI Grok Voice realtime model, '
-        'you can use the `realtime` and `xai` optional groups - `pip install "pydantic-ai-slim[realtime,xai]"`'
+        'Please install the `websockets` and `openai` packages to use the xAI Grok Voice realtime model '
+        '(`openai` supplies the event types of the OpenAI codec this provider reuses), you can use the '
+        '`realtime`, `xai`, and `openai` optional groups - '
+        '`pip install "pydantic-ai-slim[realtime,xai,openai]"`'
     ) from _import_error
 
 from .._instrumentation import get_instructions
@@ -174,6 +177,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         reconnect: ReconnectPolicy | None = None,
         input_transcription_enabled: bool = True,
         model_name: str | None = None,
+        model_name_getter: Callable[[], str | None] | None = None,
         conversation_id: str | None = None,
         replayed_items: list[ConversationItemCreated] | None = None,
     ) -> None:
@@ -183,6 +187,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             reconnect=reconnect,
             input_transcription_enabled=input_transcription_enabled,
             model_name=model_name,
+            model_name_getter=model_name_getter,
         )
         self._restores_state_on_reconnect = True
         self._conversation_id = conversation_id
@@ -220,12 +225,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
 
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return map_event(data)
-
-    async def _attempt_reconnect(self) -> bool:
-        try:
-            return await super()._attempt_reconnect()
-        except RealtimeHandshakeError:
-            return False
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         async for event in super().__aiter__():
@@ -271,6 +270,10 @@ class XaiRealtimeModel(RealtimeModel):
     def __post_init__(self, provider: XaiProvider | str) -> None:
         if isinstance(provider, str):
             provider = cast('XaiProvider', infer_provider(provider))
+        if provider.name != 'xai':
+            # Reading the xAI-specific `api_key`/`api_host` off a foreign provider below would fail with
+            # an `AttributeError` naming a field the user never heard of, instead of the real mistake.
+            raise UserError(f"`XaiRealtimeModel` requires an `XaiProvider` or `provider='xai'`; got {provider.name!r}.")
         api_key = provider.api_key
         if not api_key:
             raise UserError(
@@ -437,6 +440,10 @@ class XaiRealtimeModel(RealtimeModel):
                 reconnect=self.reconnect,
                 input_transcription_enabled=transcription_enabled,
                 model_name=server_model,
+                # A re-dial's `session.created` updates `server_model`, so read it through the closure
+                # rather than snapshotting it here: xAI substitutes its current default for any slug,
+                # and after a reconnect that can be a different model than the one that started.
+                model_name_getter=lambda: server_model,
                 conversation_id=conversation_id,
                 replayed_items=replayed_items,
             )

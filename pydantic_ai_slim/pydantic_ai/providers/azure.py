@@ -26,12 +26,19 @@ if TYPE_CHECKING:
 
 try:
     from openai import AsyncAzureOpenAI
-    from openai.lib.azure import API_KEY_SENTINEL
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the Azure provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+try:
+    from openai.lib.azure import API_KEY_SENTINEL as _api_key_sentinel
+except ImportError:  # pragma: no cover
+    # An SDK internal, imported separately from the guard above and compared by value below: if a
+    # future `openai` release moves or renames it, Entra detection degrades (a key-less Entra client
+    # reads as having one) instead of failing every Azure user with a misleading "install `openai`".
+    _api_key_sentinel = None
 
 
 class AzureProvider(Provider[AsyncOpenAI]):
@@ -60,9 +67,17 @@ class AzureProvider(Provider[AsyncOpenAI]):
 
     @property
     def api_key(self) -> str:
-        """The Azure resource key used for API-key-authenticated transports."""
+        """The Azure resource key, for transports that authenticate with one.
+
+        Raises [`UserError`][pydantic_ai.exceptions.UserError] when the provider has no key, i.e. it
+        was built from a Microsoft Entra ID client (`azure_ad_token` / `azure_ad_token_provider`).
+        """
         if self._api_key is None:
-            raise UserError('Azure OpenAI realtime requires API-key authentication.')
+            raise UserError(
+                '`AzureProvider` has no API key: it was configured with Microsoft Entra ID '
+                'authentication (`azure_ad_token` / `azure_ad_token_provider`). Pass `api_key` (or set '
+                '`AZURE_OPENAI_API_KEY`) to use a transport that authenticates with the resource key.'
+            )
         return self._api_key
 
     @staticmethod
@@ -200,7 +215,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
             # but the SDK still fills `api_key` with a truthy placeholder. Treat it as absent, so
             # `api_key` raises its usual explanatory error instead of realtime sending the placeholder
             # as a credential and getting an opaque auth failure back.
-            self._api_key = None if openai_client.api_key is API_KEY_SENTINEL else openai_client.api_key or None
+            self._api_key = None if openai_client.api_key == _api_key_sentinel else openai_client.api_key or None
         else:
             azure_endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT')
             if not azure_endpoint:

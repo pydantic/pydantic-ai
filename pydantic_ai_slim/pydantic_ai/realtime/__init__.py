@@ -15,7 +15,7 @@ into the shared message/part event vocabulary from [`pydantic_ai.messages`][pyda
 ...), re-exported here for convenience, plus the realtime control-plane events defined below.
 """
 
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from typing_extensions import TypeAliasType
 
@@ -61,9 +61,6 @@ from ._base import (
     WebRTCSession,
 )
 from ._session import RealtimeSession
-
-if TYPE_CHECKING:
-    from .azure import AzureRealtimeModel as AzureRealtimeModel
 
 KnownRealtimeModelName = TypeAliasType(
     'KnownRealtimeModelName',
@@ -123,14 +120,6 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
         '`xai`, and `google`, or `gateway/openai` / `gateway/google` to route OpenAI or Gemini Live '
         'realtime through the Pydantic AI Gateway.'
     )
-
-
-def __getattr__(name: str) -> object:
-    if name == 'AzureRealtimeModel':
-        from .azure import AzureRealtimeModel
-
-        return AzureRealtimeModel
-    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
 __all__ = (

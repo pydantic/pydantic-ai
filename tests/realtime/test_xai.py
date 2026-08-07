@@ -11,7 +11,7 @@ import base64
 import json
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -53,6 +53,7 @@ from .ws_helpers import collect_codec_events, collect_session_events
 with try_import() as imports_successful:
     from xai_sdk import AsyncClient
 
+    from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.xai import XaiProvider
     from pydantic_ai.realtime import xai as rt_xai
     from pydantic_ai.realtime.xai import XaiRealtimeConnection, XaiRealtimeModel, map_event
@@ -495,7 +496,8 @@ class _DropAfterHandshake(FakeWebSocket):
 
     async def __aiter__(self) -> AsyncIterator[Any]:
         raise rt_xai.websockets.ConnectionClosed(None, None)
-        yield  # pragma: no cover  (makes this an async generator)
+        # Unreachable; it is what makes this an async generator.
+        yield  # pragma: no cover
 
 
 class _DropAfterFrames(FakeWebSocket):
@@ -929,6 +931,43 @@ async def test_provider_str_resolves_key_from_env(monkeypatch: pytest.MonkeyPatc
     async with _connect(model, 'hi'):
         pass
     assert fake_connect.headers == {'Authorization': 'Bearer env-key'}
+
+
+def test_non_xai_provider_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A foreign provider (instance or `provider='...'` string) must fail fast with a clear `UserError`,
+    # rather than an `AttributeError` about an xAI-only field the user never set — matching how
+    # `AzureRealtimeModel` rejects a non-Azure provider.
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    with pytest.raises(UserError, match='requires an `XaiProvider`'):
+        XaiRealtimeModel('grok-voice-latest', provider='openai')
+    with pytest.raises(UserError, match='requires an `XaiProvider`'):
+        XaiRealtimeModel('grok-voice-latest', provider=cast('Any', OpenAIProvider(api_key='x')))
+
+
+@pytest.mark.anyio
+async def test_reconnect_reports_the_newly_served_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    # xAI substitutes its current default for any slug, so a re-dial can land on a different model than
+    # the one that started the session. `model_name` reads the latest `session.created` through the
+    # dial closure; snapshotting it at construction would keep reporting the original forever.
+    def _session_created(model_name: str) -> str:
+        return json.dumps({'type': 'session.created', 'session': {'model': model_name}})
+
+    connects = iter(
+        [
+            FakeConnect(FakeWebSocket([_session_created('grok-voice-1.0'), _updated()])),
+            FakeConnect(FakeWebSocket([_session_created('grok-voice-2.0'), _updated()])),
+        ]
+    )
+
+    def connect(url: str, *, additional_headers: dict[str, str] | None = None) -> FakeConnect:
+        return next(connects)(url, additional_headers=additional_headers)
+
+    monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
+
+    async with _connect(_model(), 'x') as conn:
+        assert conn.model_name == 'grok-voice-1.0'
+        assert await conn._attempt_reconnect() is True  # pyright: ignore[reportPrivateUsage]
+        assert conn.model_name == 'grok-voice-2.0'
 
 
 def test_provider_from_xai_client_without_exposed_key_raises() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, InitVar, dataclass, field
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 from urllib.parse import urlparse, urlunparse
 
 from anyio.to_thread import run_sync
@@ -17,9 +17,21 @@ from ..tools import ToolDefinition
 from ._base import RealtimeModelSettings, WebRTCAnswer
 from ._openai_protocol import with_realtime_query
 from ._openai_webrtc import relay_sdp_offer as _relay_sdp_offer
-from .openai import OpenAIRealtimeModel
+from .openai import OpenAIRealtimeConnection, OpenAIRealtimeModel
 
-__all__ = ('AzureRealtimeModel', 'AzureTokenCredential')
+__all__ = ('AzureRealtimeModel', 'AzureRealtimeConnection', 'AzureTokenCredential')
+
+
+class AzureRealtimeConnection(OpenAIRealtimeConnection):
+    """A live WebSocket connection to Azure OpenAI's realtime API.
+
+    Reuses [`OpenAIRealtimeConnection`][pydantic_ai.realtime.openai.OpenAIRealtimeConnection] for the
+    shared GA wire protocol, naming Azure as the vendor so a connection that drops or rejects content
+    doesn't send someone debugging an Azure session to OpenAI's status page.
+    """
+
+    _provider_name = 'azure'
+    _provider_label = 'Azure OpenAI Realtime'
 
 
 class _AccessToken(Protocol):
@@ -56,6 +68,8 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
     locked to managed identity). For browser WebRTC the browser still only ever receives the short-lived
     ephemeral secret, never the Entra token or the API key.
     """
+
+    _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = AzureRealtimeConnection
 
     _: KW_ONLY
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'azure'

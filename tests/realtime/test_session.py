@@ -1050,6 +1050,38 @@ async def test_input_transcription_failure_ends_the_part_it_opened() -> None:
     assert ended['B'] == started['B']
 
 
+async def test_input_transcription_failure_ignores_already_closed_items() -> None:
+    """A duplicate or late transcription-error event for a closed item must not re-open it.
+
+    Regression: `_finalize_failed_user_item` lacked `_handle_input_transcript`'s closed-item guard, so a
+    stray error for an already finalized (or already failed) item minted a fresh blank `SpeechPart` with
+    a new part index and recorded a second user turn in history.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello from A', is_final=True, item_id='A'),
+            RealtimeInputTranscriptionErrorEvent(message='late error for finalized item', item_id='A'),
+            InputTranscript(text='partial B', is_final=False, item_id='B'),
+            RealtimeInputTranscriptionErrorEvent(message='failed', item_id='B'),
+            RealtimeInputTranscriptionErrorEvent(message='duplicate failure', item_id='B'),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    events = await collect_events(session)
+
+    ended = [e.part.id for e in events if isinstance(e, PartEndEvent) and isinstance(e.part, SpeechPart)]
+    assert ended == ['A', 'B']
+    user_parts = [
+        part for message in session.new_messages() if isinstance(message, ModelRequest) for part in message.parts
+    ]
+    assert user_parts == [
+        SpeechPart(speaker='user', transcript='hello from A', id='A'),
+        SpeechPart(speaker='user', id='B'),
+    ]
+
+
 @pytest.mark.parametrize('item_id', [None, 'user-1'])
 async def test_input_transcription_failure_retained_audio_fallback(item_id: str | None) -> None:
     conn = FakeRealtimeConnection([RealtimeInputTranscriptionErrorEvent(message='failed', item_id=item_id)])
@@ -3910,13 +3942,39 @@ def _grounding_parts() -> list[NativeToolCallPart | NativeToolReturnPart]:
 
 
 def _native_part_events(
-    parts: list[NativeToolCallPart | NativeToolReturnPart],
+    parts: list[NativeToolCallPart | NativeToolReturnPart], *, first_index: int = 0
 ) -> list[PartStartEvent | PartEndEvent]:
+    """Start/end pairs for native-tool parts, numbered from `first_index`.
+
+    A connection numbers these from its own counter (so the default `0`), while the session remaps
+    them onto its session-unique allocator before forwarding — hence the two numberings.
+    """
     return [
         event
-        for index, part in enumerate(parts)
+        for index, part in enumerate(parts, start=first_index)
         for event in (PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part))
     ]
+
+
+async def test_native_part_end_without_a_start_gets_an_index_of_its_own() -> None:
+    # A `PartEndEvent` the session never saw a start for closes nothing, so it must not inherit the
+    # connection's index: that index isn't session-unique and would name a live part — here the
+    # assistant's speech part, which also holds index 0.
+    part = _grounding_parts()[0]
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='It is sunny in Rome', is_final=True),
+            PartEndEvent(index=0, part=part),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
+    events = await collect_events(session)
+
+    speech_indexes = {event.index for event in events if isinstance(event, PartStartEvent)}
+    orphan = next(event for event in events if isinstance(event, PartEndEvent) and event.part == part)
+    assert speech_indexes == {0}
+    assert orphan.index not in speech_indexes
 
 
 async def test_grounding_streams_and_folds_native_tool_parts() -> None:
@@ -3941,7 +3999,11 @@ async def test_grounding_streams_and_folds_native_tool_parts() -> None:
                 speaker='assistant', transcript_delta='It is sunny in Rome', transcript='It is sunny in Rome'
             ),
         ),
-        *_native_part_events(grounding),
+        # The connection numbered these `0` and `1` from its own counter, which would have collided
+        # with the speech part's index `0` above — a repeated index *replaces* the part at it, so a
+        # consumer keyed on the index would have shown the search in place of the model's answer. The
+        # session remaps them onto its own allocator, which had already handed `0` to the speech part.
+        *_native_part_events(grounding, first_index=1),
         PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='It is sunny in Rome')),
         RealtimeTurnCompleteEvent(),
     ]

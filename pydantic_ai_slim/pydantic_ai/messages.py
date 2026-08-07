@@ -2525,8 +2525,10 @@ class ModelResponse:
       The agent graph will automatically send a continuation request.
       Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
       or return background/async responses (e.g. OpenAI background mode).
-    - `'interrupted'` — Streaming was explicitly cancelled before the model finished generating.
-      Set when a streaming response is cancelled via `StreamedResponse.cancel()`.
+    - `'interrupted'` — Generation was explicitly stopped before the model finished.
+      Set when a streaming response is cancelled via `StreamedResponse.cancel()`, and when a realtime
+      turn is cut off by a barge-in or `RealtimeSession.interrupt()` — in which case the cut-off point
+      is recorded on the last [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms].
     """
 
     def __post_init__(self) -> None:

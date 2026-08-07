@@ -32,7 +32,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import RealtimeModelProfile, RealtimeTurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
@@ -401,12 +401,13 @@ def test_profile_allow_seeding() -> None:
         supports_webrtc=False,
         supports_seeding_images=True,
         supports_seeding_audio=False,
-        supports_thinking=True,  # the default native-audio model supports a thinking config
+        supports_thinking=True,  # every current Gemini Live model takes a thinking config
         # Supported, not enabled: gates the opt-in `google_async_tool_calls` setting.
         supports_async_tool_calls=True,
         # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
         supports_tool_return_schema=True,
-        supported_native_tools=frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
+        # Search grounding only: Live models reject or silently ignore code execution and URL context.
+        supported_native_tools=frozenset({WebSearchTool}),
         audio_input_sample_rate=16000,
         audio_output_sample_rate=24000,
     )
