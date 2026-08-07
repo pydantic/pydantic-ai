@@ -3844,32 +3844,39 @@ async def test_orphaned_reveal_evidence_stripped_by_cleanup_does_not_count_as_re
     assert seen == [set()]
 
 
-async def test_model_calling_a_withheld_tool_executes_without_revealing_it() -> None:
-    """Calling a hidden tool by (guessed) name executes it and authors no reveal.
+async def test_model_calling_a_withheld_tool_is_refused_and_reveals_nothing() -> None:
+    """Calling a hidden tool by (guessed) name is refused, and authors no reveal.
 
-    Pins the documented no-trust-boundary stance: hiding is prompt engineering, not access
-    control, so execution is accepted — but execution is not discovery, and the tool stays off
-    the wire afterwards.
+    Hiding is now an availability gate, not just prompt engineering: a tool the model was never
+    shown cannot be executed by guessing its name. The refusal is a retry pointing at search, and
+    a refused call is not a discovery, so the tool stays off the wire afterwards.
     """
     wire_tools: list[list[str]] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         wire_tools.append(sorted(tool.name for tool in info.function_tools))
-        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
-            return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='guess')])
-        return ModelResponse(parts=[TextPart('done')])
+        if list(iter_message_parts(messages, ModelRequest, RetryPromptPart)):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='guess')])
 
     agent = Agent(FunctionModel(model_fn))
 
     @agent.tool_plain(defer_loading=True)
     def hidden_tool() -> str:
-        return 'secret'
+        return 'secret'  # pragma: no cover
 
     result = await agent.run('guess the hidden tool')
 
     assert result.output == 'done'
     returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
-    assert [(part.tool_name, part.content) for part in returns] == [('hidden_tool', 'secret')]
+    assert returns == []
+    retries = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+    assert [str(part.content) for part in retries] == snapshot(
+        [
+            "Tool 'hidden_tool' is not available yet: search for it first, then call it once the "
+            'search result has shown you its schema.'
+        ]
+    )
     deltas = [
         part
         for message in result.all_messages()

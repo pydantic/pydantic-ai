@@ -37,7 +37,7 @@ from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.capability import Capability
 from pydantic_ai.capabilities.combined import CombinedCapability
-from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CompactionPart,
@@ -1393,13 +1393,12 @@ async def test_tool_manager_with_tool_search_toolset_marks_corpus():
     assert 'get_weather' in local_names
     assert 'search_tools' in local_names
 
-    # Undiscovered deferred tools are still dispatchable through the toolset under their
-    # real name — the wire-side filtering in `prepare_request` decides whether the
-    # model can see them, but `ToolManager` doesn't gatekeep dispatch on that.
-    result = await run_step_toolset.handle_call(
-        ToolCallPart(tool_name='calculate_mortgage', args={'principal': 100.0, 'rate': 5.0, 'years': 30})
-    )
-    assert 'Mortgage calculated' in str(result)
+    # An undiscovered deferred tool is in the dispatch dict but not callable: `ToolManager`
+    # gates on availability, so the model is told to search rather than that it doesn't exist.
+    with pytest.raises(ToolRetryError, match='is not available yet'):
+        await run_step_toolset.handle_call(
+            ToolCallPart(tool_name='calculate_mortgage', args={'principal': 100.0, 'rate': 5.0, 'years': 30})
+        )
 
     # The local search_tools function is also dispatchable.
     result = await run_step_toolset.handle_call(ToolCallPart(tool_name='search_tools', args={'queries': ['mortgage']}))
@@ -1657,11 +1656,11 @@ async def test_tool_search_toolset_marks_corpus_with_native():
 
 
 async def test_tool_search_toolset_dispatches_by_plain_name_via_tool_manager():
-    """The provider calls a deferred tool by its plain name and `ToolManager`
+    """Once discovered, the provider calls a deferred tool by its plain name and `ToolManager`
     dispatches directly via the dict key (also the plain name)."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
-    ctx = _build_run_context(None)
+    ctx = _build_run_context(None, discovered_tool_names={'calculate_mortgage'})
 
     tool_manager = ToolManager(searchable)
     run_step_toolset = await tool_manager.for_run_step(ctx)
