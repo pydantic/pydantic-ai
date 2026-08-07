@@ -12,6 +12,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from uuid import uuid4
 
 from ..._utils import now_utc
+from ..._uuid import uuid7
 from ...exceptions import RunCancelled
 from ...messages import (
     FunctionToolResultEvent,
@@ -91,7 +92,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     _: KW_ONLY
 
-    thread_id: str = field(default_factory=lambda: str(uuid4()))
+    thread_id: str = field(default_factory=lambda: str(uuid7()))
     """The thread ID to report on `RUN_STARTED` and `RUN_FINISHED`.
 
     Taken from [`run_input`][pydantic_ai.ui.UIEventStream.run_input] when one is given. Without a
@@ -99,7 +100,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     default to a new UUID.
     """
 
-    run_id: str = field(default_factory=lambda: str(uuid4()))
+    run_id: str = field(default_factory=lambda: str(uuid7()))
     """The run ID to report on `RUN_STARTED` and `RUN_FINISHED`.
 
     Taken from [`run_input`][pydantic_ai.ui.UIEventStream.run_input] when one is given. Without a
