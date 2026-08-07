@@ -37,9 +37,12 @@ from .._instrumentation import (
     safe_to_json,
     serialize_any,
 )
-from .._tool_execution import build_tool_return_part
+from .._tool_execution import (
+    _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
+    build_tool_return_part,
+)
 from .._utils import aclose_all, cancel_and_drain, fill_run_metadata
-from ..exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError, UserError
+from ..exceptions import ApprovalRequired, CallDeferred, RunCancelled, ToolFailedError, ToolRetryError, UserError
 from ..messages import (
     BinaryContent,
     DeferredToolRequestsEvent,
@@ -282,14 +285,45 @@ def _build_session_tool_return(
         tool_kind=tool_def.tool_kind if tool_def else None,
     )
     if tools_added:
-        # The connection's tools are fixed when it opens, so a reveal can never reach the
-        # provider; failing loudly beats silently providing less than the tool requested.
-        raise UserError(
-            f'Realtime sessions cannot reveal tools mid-session, so `ToolReturn.tools` from '
-            f'tool {call_part.tool_name!r} cannot be honored: the connection advertises a fixed '
-            'tool list from the moment it opens.'
-        )
+        # Mirrors the graph (`_tool_execution._call_tool`), which rejects only a name owned by an
+        # unloaded capability and treats every other name — a typo, an already-visible tool — as a
+        # silent no-op. Killing the session over any reveal at all was harsher than the graph *and*
+        # unreachable-by-design harshness: a session refuses `defer_loading=True` tools and
+        # tool-contributing deferred capabilities when it opens, so it holds nothing that a reveal
+        # could have surfaced. Nothing is silently lost by dropping the request here.
+        _reject_unloaded_capability_reveals(tools_added, tool_manager)
     return result_part, user_content
+
+
+def _unsettled_call_return(call: ToolCall, error: ApprovalRequired | CallDeferred | RunCancelled) -> ToolReturnPart:
+    """The failed return a session answers with when a tool call couldn't settle normally.
+
+    Both cases are ones the graph resolves by ending or isolating the run, which a live conversation
+    can't do — so each becomes a deliberate explanation the model can voice, marked `'failed'` rather
+    than left at the default `'success'`. Recording a refusal as a successful return would be a
+    misleading audit trail: `all_messages()` handed to `Agent.run` would read it as a tool that ran.
+    """
+    if isinstance(error, RunCancelled):
+        # A sub-agent run awaited inside this tool cancelled *itself*. As in a graph run
+        # (`_tool_execution._call_tool`), a `RunCancelled` seen inside a tool body is always a nested
+        # run's: this session's own cancellation arrives as `CancelledError`, which `_run_tool`
+        # re-raises untouched. So isolate it and keep the conversation alive, rather than tearing the
+        # session down over a sub-agent's decision. See https://github.com/pydantic/pydantic-ai/issues/7199.
+        content = f'The sub-agent run was cancelled: {error}'
+    else:
+        # `handle_call` already gave the `HandleDeferredToolCalls` capability handler the chance to
+        # resolve the deferral inline (approve, deny, retry, or substitute a result); reaching here
+        # means no handler resolved it. The graph's fallback — pausing the run with a
+        # `DeferredToolRequests` output — has no realtime analog (a live conversation can't wait for an
+        # out-of-band result, and the provider expects an answer on the string-only tool channel).
+        reason = 'requires approval' if isinstance(error, ApprovalRequired) else 'runs externally'
+        content = f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a realtime session.'
+    return ToolReturnPart(
+        tool_name=call.tool_name,
+        content=content,
+        tool_call_id=call.tool_call_id,
+        outcome='failed',
+    )
 
 
 def _is_user_speech_request(message: ModelMessage) -> bool:
@@ -595,6 +629,9 @@ class RealtimeSession:
         # released the moment `handle_call` settles (the same event-loop segment that records a
         # success), so a burst of parallel calls can't each clear a limit only one of them fits under.
         self._tool_calls_in_flight = 0
+        # `parallel_ordered_events` buffers: call-order index -> the events that call produced.
+        self._ordered_tool_events: dict[int, list[RealtimeEvent]] = {}
+        self._next_tool_order_index = 0
         self._asap_drain_deferred = False
         self._asap_drain_ready = False
         self._pump_task: asyncio.Task[None] | None = None
@@ -2236,6 +2273,9 @@ class RealtimeSession:
         call_part: ToolCallPart,
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
+        *,
+        run_step: int,
+        reserved_budget: bool,
     ) -> _SettledToolResult:
         # No `execute_tool` span is created here: the `execute_tool` span is owned by the
         # `Instrumentation` capability's `wrap_tool_execute` hook, which `Agent.realtime`
@@ -2268,10 +2308,8 @@ class RealtimeSession:
                     # already handed out — `replace()` below keeps the same list object — see the update
                     # too.
                     ctx.messages[:] = self.all_messages()
-                    if ctx.run_step < self._tool_run_step:
-                        self._tool_manager = await self._tool_manager.for_run_step(
-                            replace(ctx, run_step=self._tool_run_step)
-                        )
+                    if ctx.run_step < run_step:
+                        self._tool_manager = await self._tool_manager.for_run_step(replace(ctx, run_step=run_step))
                 # Pin the step-synchronized manager for this call: a concurrent tool task can swap
                 # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
                 # so re-reading the attribute there could run against a different run-step's manager.
@@ -2292,21 +2330,8 @@ class RealtimeSession:
             # providers have no native failed-tool flag.
             result_part = e.tool_failed
             user_content = None
-        except (ApprovalRequired, CallDeferred) as e:
-            # `handle_call` already gave the `HandleDeferredToolCalls` capability handler the
-            # chance to resolve the deferral inline (approve, deny, retry, or substitute a
-            # result); reaching here means no handler resolved it. The graph's fallback — pausing
-            # the run with a `DeferredToolRequests` output — has no realtime analog (a live
-            # conversation can't wait for an out-of-band result, and the provider expects an
-            # answer on the string-only tool channel), so answer with a deliberate explanation —
-            # rather than a leaked exception repr — that the model can voice, keeping the
-            # conversation flowing.
-            reason = 'requires approval' if isinstance(e, ApprovalRequired) else 'runs externally'
-            result_part = ToolReturnPart(
-                tool_name=call.tool_name,
-                content=f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a realtime session.',
-                tool_call_id=call.tool_call_id,
-            )
+        except (ApprovalRequired, CallDeferred, RunCancelled) as e:
+            result_part = _unsettled_call_return(call, e)
             user_content = None
         else:
             result_part, user_content = _build_session_tool_return(tool_result, call_part, tool_manager)
@@ -2314,8 +2339,10 @@ class RealtimeSession:
             # The call has settled: on success `handle_call` has already recorded it on
             # `usage.tool_calls` in this same event-loop segment (so no limit check can observe the
             # reservation and the recorded call at once), and on failure or cancellation there is
-            # nothing to count.
-            self._tool_calls_in_flight -= 1
+            # nothing to count. Released only if it was claimed — a declaratively deferred call takes
+            # no reservation, so decrementing here would drive the counter negative and under-project
+            # every concurrent call.
+            self._tool_calls_in_flight -= int(reserved_budget)
 
         if isinstance(result_part, RetryPromptPart):
             output = result_part.model_response()
@@ -2465,10 +2492,22 @@ class RealtimeSession:
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         completion: asyncio.Event,
+        *,
+        run_step: int,
+        reserved_budget: bool,
+        order_index: int,
+        ordered_events: bool,
     ) -> None:
         """Run a tool and feed its completion (or failure) back through the queue."""
         try:
-            result_part, content = await self._execute_tool(call, call_part, validation_done, execution_prerequisites)
+            result_part, content = await self._execute_tool(
+                call,
+                call_part,
+                validation_done,
+                execution_prerequisites,
+                run_step=run_step,
+                reserved_budget=reserved_budget,
+            )
         except asyncio.CancelledError:
             raise
         except BaseException as e:
@@ -2483,8 +2522,16 @@ class RealtimeSession:
             self._tool_completion_events.discard(completion)
             # Settled (completed, failed, or cancelled): no longer cancellable by `ToolCallCancelled`.
             self._pending_tool_calls.pop(call_part.tool_call_id, None)
-        for event in self._complete_tool_call(call_part, result_part, content):
-            await self._queue.put(event)
+        events = self._complete_tool_call(call_part, result_part, content)
+        if ordered_events:
+            # Held until nothing is still running, then released in call order — the graph waits for a
+            # whole segment (`ALL_COMPLETED`) and replays it by index for the same reason. The release
+            # is driven from `_tool_task_done`, which runs even for a tool that raised or was
+            # cancelled, so a failed sibling can't strand the batch.
+            self._ordered_tool_events[order_index] = events
+        else:
+            for event in events:
+                await self._queue.put(event)
         if self._asap_drain_deferred and not self._tool_calls_awaiting_usage:
             await self._drain_pending_messages('asap')
 
@@ -2496,55 +2543,112 @@ class RealtimeSession:
         # retrieved" warning at GC, silently losing the enqueued message with no signal to the consumer.
         if not task.cancelled() and (error := task.exception()) is not None:
             self._queue.put_nowait(error)
+        self._release_ordered_tool_events()
         # Wake the queue reader so it can finish once both the pump and the last tool are done.
         self._queue.put_nowait(self._queue_changed)
+
+    def _release_ordered_tool_events(self) -> None:
+        """Emit `parallel_ordered_events` results in call order, once nothing is still running.
+
+        Called from every tool task's done-callback, so the last one to settle — successful, failed, or
+        cancelled — flushes the batch, and a tool that never produced events can't hold it back.
+        """
+        if self._tool_completion_events or not self._ordered_tool_events:
+            return
+        for order_index in sorted(self._ordered_tool_events):
+            for event in self._ordered_tool_events[order_index]:
+                self._queue.put_nowait(event)
+        self._ordered_tool_events.clear()
 
     async def _handle_pump_event(
         self,
         event: RealtimeCodecEvent,
     ) -> bool:
         """Process one upstream event onto the queue; return `True` to stop the pump (a limit tripped)."""
+        if isinstance(event, ToolCall):
+            if self._accept_item(event.item_id, event.tool_call_id):
+                await self._dispatch_tool_call(event)
+            return False
+        return await self._handle_non_tool_pump_event(event)
+
+    async def _dispatch_tool_call(self, event: ToolCall) -> None:
+        """Fold a tool call into the response and start its background task."""
+        # A declaratively deferred call (`requires_approval=True`, an external tool) is resolved by
+        # a handler or refused — it never reaches the tool body and so never increments
+        # `usage.tool_calls`. The graph leaves those out of its own pre-check projection
+        # (`_tool_execution` builds `function_indices` from `('function', 'unknown')`), so charging
+        # the budget for one here could trip the limit over a call that costs nothing. An unknown
+        # tool name *is* charged, exactly as `'unknown'` is projected there.
+        tool_def = self._tool_manager.get_tool_def(event.tool_name)
+        reserves_budget = tool_def is None or not tool_def.defer
+        if reserves_budget:
+            self._check_tool_call_limit()
+            self._tool_calls_in_flight += 1
+        # Captured at dispatch so every call from one response runs at the step in effect when the
+        # response produced them, the way a graph run's whole batch shares the step advanced before
+        # its request. Read at execution time instead, a call held behind a `sequential` barrier
+        # could observe a later response's advance and land a step ahead of its own batch.
+        tool_run_step = self._tool_run_step
+        call_part = ToolCallPart(
+            tool_name=event.tool_name,
+            args=event.args,
+            tool_call_id=event.tool_call_id,
+            id=event.item_id,
+            provider_name=self._provider_name if event.item_id is not None else None,
+        )
+        for out in self._handle_tool_call_part(
+            call_part,
+            response_usage_follows=event.response_usage_follows,
+        ):
+            await self._queue.put(out)
+        mode = self._tool_manager.get_parallel_execution_mode()
+        is_barrier = mode == 'sequential' or self._tool_manager.is_sequential(call_part)
+        # `parallel_ordered_events` keeps calls concurrent but hands their result events to the
+        # consumer in the order the model asked for them. Claimed here, at dispatch, because that
+        # is the order — the graph replays a segment's events by index for the same reason. Only
+        # the events are held back: the provider still gets each result the moment it lands, and
+        # history is already assembled in call order by `_insert_tool_return`, exactly as the graph
+        # keeps `output_parts` in emission order whatever the mode.
+        order_index = self._next_tool_order_index
+        self._next_tool_order_index += 1
+        completion = asyncio.Event()
+        if is_barrier:
+            execution_prerequisites = tuple(self._tool_completion_events)
+            self._last_tool_barrier = completion
+        elif self._last_tool_barrier is not None:
+            execution_prerequisites = (self._last_tool_barrier,)
+        else:
+            execution_prerequisites = ()
+        self._tool_completion_events.add(completion)
+        validation_done = asyncio.Event()
+        task = asyncio.create_task(
+            self._run_tool(
+                event,
+                call_part,
+                validation_done,
+                execution_prerequisites,
+                completion,
+                run_step=tool_run_step,
+                reserved_budget=reserves_budget,
+                order_index=order_index,
+                ordered_events=mode == 'parallel_ordered_events',
+            )
+        )
+        self._background_tasks.add(task)
+        self._pending_tool_calls[call_part.tool_call_id] = (task, call_part)
+        task.add_done_callback(self._tool_task_done)
+        await validation_done.wait()
+
+    async def _handle_non_tool_pump_event(self, event: RealtimeCodecEvent) -> bool:
+        """Process an upstream event other than a tool call; return `True` to stop the pump."""
+        # `_handle_pump_event` routes every `ToolCall` to `_dispatch_tool_call`, so the remaining union
+        # is what `_translate_event` accepts; asserted rather than re-tested so a future codec event
+        # that slips past the dispatcher fails loudly instead of reaching the wrong translator.
+        assert not isinstance(event, ToolCall)
         if isinstance(event, ConversationCreated):
             return False
         if isinstance(event, ConversationItemCreated):
             self._handle_conversation_item(event)
-            return False
-        if isinstance(event, ToolCall):
-            if not self._accept_item(event.item_id, event.tool_call_id):
-                return False
-            self._check_tool_call_limit()
-            self._tool_calls_in_flight += 1
-            call_part = ToolCallPart(
-                tool_name=event.tool_name,
-                args=event.args,
-                tool_call_id=event.tool_call_id,
-                id=event.item_id,
-                provider_name=self._provider_name if event.item_id is not None else None,
-            )
-            for out in self._handle_tool_call_part(
-                call_part,
-                response_usage_follows=event.response_usage_follows,
-            ):
-                await self._queue.put(out)
-            mode = self._tool_manager.get_parallel_execution_mode()
-            is_barrier = mode == 'sequential' or self._tool_manager.is_sequential(call_part)
-            completion = asyncio.Event()
-            if is_barrier:
-                execution_prerequisites = tuple(self._tool_completion_events)
-                self._last_tool_barrier = completion
-            elif self._last_tool_barrier is not None:
-                execution_prerequisites = (self._last_tool_barrier,)
-            else:
-                execution_prerequisites = ()
-            self._tool_completion_events.add(completion)
-            validation_done = asyncio.Event()
-            task = asyncio.create_task(
-                self._run_tool(event, call_part, validation_done, execution_prerequisites, completion)
-            )
-            self._background_tasks.add(task)
-            self._pending_tool_calls[call_part.tool_call_id] = (task, call_part)
-            task.add_done_callback(self._tool_task_done)
-            await validation_done.wait()
             return False
         if isinstance(event, ToolCallCancelled):
             for tool_call_id in event.tool_call_ids:

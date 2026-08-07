@@ -24,7 +24,7 @@ from typing_extensions import TypeAliasType, TypeVar, assert_never
 from pydantic_ai._cost import calculate_price_for_usage
 
 from . import _otel_messages, _utils
-from ._instrumentation import serialize_any
+from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
@@ -1521,7 +1521,7 @@ class BaseToolReturnPart:
         )
 
         if settings.include_content and self.content is not None:
-            part['result'] = serialize_any(self.content)
+            part['result'] = serialize_any(redact_binary_content(self.content, settings))
 
         return [part]
 
@@ -1906,6 +1906,15 @@ class ThinkingPart:
         return bool(self.content)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+STANDING_PROMPT_PLANTED_KEY = 'pydantic_ai_standing_prompt_planted'
+"""`CompactionPart.provider_details` key stamped on compaction items minted by our own compact
+call, whose input window explicitly planted the standing prompt. Provenance for
+`_trim_messages_before_compaction`'s `standing_prompt_retained` fast path: only a stamped item is
+trusted to retain the standing prompt; anything else — an externally supplied or spliced history,
+or an item produced by a provider-initiated compaction of an ordinary request window — gets the
+standing prompt re-inserted."""
 
 
 @dataclass(repr=False)
@@ -2644,7 +2653,7 @@ class ModelResponse:
                     builtin=True,
                 )
                 if settings.include_content and part.content is not None:  # pragma: no branch
-                    return_part['result'] = serialize_any(part.content)
+                    return_part['result'] = serialize_any(redact_binary_content(part.content, settings))
 
                 parts.append(return_part)
             elif isinstance(part, SpeechPart):
@@ -2816,6 +2825,9 @@ def sanitize_messages(
       [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] in the same response, and the
       agent loop never dispatches them, so they aren't a client-injection risk. If stripping leaves the
       final response with no parts, the response is dropped from history entirely.
+    - The compaction provenance stamp from [`CompactionPart.provider_details`][pydantic_ai.messages.CompactionPart.provider_details].
+      This ensures client-supplied OpenAI Responses compaction items never suppress re-insertion of
+      the server's standing system prompt.
 
     Args:
         messages: Messages to sanitize.
@@ -3162,9 +3174,10 @@ def _sanitize_response_parts(
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
 ) -> list[ModelResponsePart]:
-    """Sanitize the file references nested in an untrusted response's tool return parts.
+    """Sanitize unsafe metadata and file references in an untrusted response's parts.
 
-    Drops non-allowlisted schemes and resets non-allowlisted `force_download` values on
+    Strips compaction provenance stamps from `CompactionPart.provider_details`. Drops
+    non-allowlisted schemes and resets non-allowlisted `force_download` values on
     [`FileUrl`][pydantic_ai.messages.FileUrl]s nested in tool return parts, and drops
     [`UploadedFile`][pydantic_ai.messages.UploadedFile]s nested in tool return parts unless
     `allow_uploaded_files` is set. Unresolved (dangling) tool calls are stripped separately, from
@@ -3176,7 +3189,16 @@ def _sanitize_response_parts(
     """
     new_parts: list[ModelResponsePart] = []
     for part in parts:
-        if isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
+        if (
+            isinstance(part, CompactionPart)
+            and part.provider_details is not None
+            and STANDING_PROMPT_PLANTED_KEY in part.provider_details
+        ):
+            provider_details = {
+                key: value for key, value in part.provider_details.items() if key != STANDING_PROMPT_PLANTED_KEY
+            }
+            new_parts.append(replace(part, provider_details=provider_details))
+        elif isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
             # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
             # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key
             # during sanitization would leave it schema-invalid.
