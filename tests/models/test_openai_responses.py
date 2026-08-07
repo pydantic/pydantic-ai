@@ -13553,6 +13553,31 @@ async def test_openai_responses_foreign_compaction_does_not_trim(allow_model_req
     )
 
 
+async def test_openai_responses_compaction_without_encrypted_content_does_not_trim(allow_model_requests: None):
+    """A compaction part the Responses API render skips must not act as a trim boundary either."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('keep before unrenderable boundary'),
+        ModelResponse(
+            parts=[CompactionPart(content='summary without payload', provider_name='openai'), TextPart(content='keep text')],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    assert mapped == snapshot(
+        [
+            {'role': 'user', 'content': 'keep before unrenderable boundary'},
+            {'role': 'assistant', 'content': 'keep text'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
 async def test_openai_responses_without_compaction_maps_unchanged(allow_model_requests: None):
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
     messages: list[ModelMessage] = [
