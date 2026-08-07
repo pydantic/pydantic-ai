@@ -7264,46 +7264,40 @@ class TestPrepareToolsHook:
         assert 'desc_A_B' in result.output
 
 
-class TestUnloadedCapabilityPreparesOwnTools:
-    """A deferred capability governs its own tools even while it counts as unloaded.
+class TestUnavailableCapabilityToolsAreNotCallable:
+    """A deferred capability's tools cannot be called until the capability is available.
 
-    Capability-owned tools stay directly callable while their capability is unloaded (reveal
-    evidence with no load pair, or a load pair reset at a `CompactionPart` boundary), so an
-    owner's `prepare_tools` filter has to keep applying to them — otherwise a direct call
-    reaches a tool the owner meant to filter, harden, or gate.
+    Availability is the gate: the capability's instructions and hooks arrive as a bundle when it
+    loads, so calling one of its tools earlier would run it without the context the model was meant
+    to have read first. The refusal is a retry the model can act on, not an "unknown tool" dead end.
     """
 
     @staticmethod
-    def _guarded_capability(seen: list[tuple[bool | None, list[str]]]) -> Capability[Any]:
-        class GuardedCap(Capability[Any]):
-            async def prepare_tools(
-                self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
-            ) -> list[ToolDefinition]:
-                seen.append((ctx.capability_loaded, sorted(td.name for td in tool_defs)))
-                return [td for td in tool_defs if td.name != 'secret_op']
-
-        return GuardedCap(
+    def _guarded_capability() -> Capability[Any]:
+        return Capability[Any](
             id='guarded',
             description='Guarded tools.',
             toolsets=[FunctionToolset([secret_op])],
             defer_loading=True,
         )
 
-    async def test_never_loaded_capability_filters_its_own_tool(self):
-        """A direct call to an unloaded capability's tool hits the owner's filter."""
-        seen: list[tuple[bool | None, list[str]]] = []
-        agent = Agent(FunctionModel(_call_secret_op), capabilities=[self._guarded_capability(seen)])
+    async def test_never_loaded_capability_tool_is_refused(self):
+        """A direct call to an unloaded capability's tool is refused, and says how to fix it."""
+        agent = Agent(FunctionModel(_call_secret_op), capabilities=[self._guarded_capability()])
 
         result = await agent.run('hello')
 
-        assert result.output == snapshot("BLOCKED: Unknown tool name: 'secret_op'. Available tools: 'load_capability'")
-        # The hook ran while unloaded, seeing only the tool the capability itself owns.
-        assert seen == [(False, ['secret_op']), (False, ['secret_op'])]
+        assert result.output == snapshot(
+            "BLOCKED: Tool 'secret_op' is not available yet: it belongs to capability 'guarded'. "
+            'Call `load_capability` for it first, then call the tool on a later turn, once the '
+            "capability's instructions are in view."
+        )
 
-    async def test_capability_filters_its_own_tool_after_compaction(self):
-        """A `CompactionPart` resets the load state, and the owner's filter still applies."""
-        seen: list[tuple[bool | None, list[str]]] = []
-        agent = Agent(FunctionModel(_load_compact_then_call_secret_op), capabilities=[self._guarded_capability(seen)])
+    async def test_capability_tool_is_refused_again_after_compaction(self):
+        """A `CompactionPart` resets the load state, so the tool needs loading again."""
+        agent = Agent(
+            FunctionModel(_load_compact_then_call_secret_op), capabilities=[self._guarded_capability()]
+        )
 
         @agent.tool_plain
         def ping() -> str:
@@ -7311,46 +7305,25 @@ class TestUnloadedCapabilityPreparesOwnTools:
 
         result = await agent.run('hello')
 
-        assert result.output == snapshot(
-            "BLOCKED: Unknown tool name: 'secret_op'. Available tools: 'load_capability', 'ping'"
-        )
-        # Loaded once (whole function-tool list), then unloaded again past the boundary
-        # (own tool only) — and filtering held in both states.
-        assert (True, ['ping', 'secret_op']) in seen
-        assert seen[-1] == (False, ['secret_op'])
+        assert 'is not available yet' in result.output
 
-    async def test_unloaded_capability_cannot_reach_other_tools(self):
-        """While unloaded, the hook sees only its own tools and cannot touch unrelated ones."""
-        seen: list[tuple[bool | None, list[str]]] = []
-
-        class GrabEverythingCap(Capability[Any]):
-            async def prepare_tools(
-                self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
-            ) -> list[ToolDefinition]:
-                seen.append((ctx.capability_loaded, sorted(td.name for td in tool_defs)))
-                return []
-
-        greedy = GrabEverythingCap(
-            id='greedy',
-            description='Greedy.',
-            toolsets=[FunctionToolset([secret_op])],
-            defer_loading=True,
-        )
+    async def test_unavailable_capability_tool_is_not_advertised(self):
+        """The tool is withheld as well as uncallable — never visible-but-unusable."""
+        advertised: list[list[str]] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response(f'tools: {sorted(t.name for t in info.function_tools)}')
+            advertised.append(sorted(t.name for t in info.function_tools))
+            return make_text_response('done')
 
-        agent = Agent(FunctionModel(model_fn), capabilities=[greedy])
+        agent = Agent(FunctionModel(model_fn), capabilities=[self._guarded_capability()])
 
         @agent.tool_plain
         def untouched() -> str:
             return 'safe'  # pragma: no cover
 
-        result = await agent.run('hello')
+        await agent.run('hello')
 
-        # Returning [] dropped only its own tool; `untouched` and `load_capability` survive.
-        assert result.output == "tools: ['load_capability', 'untouched']"
-        assert seen == [(False, ['secret_op'])]
+        assert advertised == snapshot([['load_capability', 'untouched']])
 
 
 class TestPrepareOutputToolsHook:

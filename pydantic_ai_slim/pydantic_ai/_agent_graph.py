@@ -6,7 +6,7 @@ import inspect
 import time
 from asyncio import Task
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -808,11 +808,23 @@ async def _prepare_request_parameters(
         # path in `Model.prepare_request`.
         native_tools = [t for t in native_tools if not (isinstance(t, ToolSearchTool) and t.optional)]
 
+    deferred_capability_ids = {
+        capability_id
+        for capability_id, capability in run_context.capabilities.items()
+        if capability.defer_loading is True
+    }
+
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
+        deferred_capability_ids=deferred_capability_ids,
         # Preserve discovered names that aren't in the current definitions.
-        revealed_tool_names=run_context.discovered_tool_names,
+        revealed_tool_names=_revealable_tool_names(
+            run_context.discovered_tool_names,
+            function_tools,
+            deferred_capability_ids=deferred_capability_ids,
+            loaded_capability_ids=run_context.loaded_capability_ids,
+        ),
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_schema.object_def,
@@ -2367,17 +2379,52 @@ def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAg
     ctx.deps.discovered_tool_names.update(discovered_tool_names)
 
 
+def _revealable_tool_names(
+    discovered: Iterable[str],
+    function_tools: Iterable[ToolDefinition],
+    *,
+    deferred_capability_ids: set[str],
+    loaded_capability_ids: set[str],
+) -> set[str]:
+    """Drop reveals whose owning capability is not available yet.
+
+    A reveal only says a tool's schema may go to the model; it cannot stand in for loading the
+    capability that owns it, whose instructions and hooks come as a bundle. Without this, any
+    `ToolAvailabilityDeltaPart` in history — including one a user's own tool or a client authored —
+    would advertise a capability's tool while `ToolManager` still refuses to run it, which is the
+    worst of both worlds: visible and uncallable.
+
+    Only *deferred* capabilities gate their tools this way. An always-on capability's search-gated
+    tool is revealed by discovery alone, which is why this needs `deferred_capability_ids` read from
+    the capability instances rather than a guess from the tool definitions.
+    """
+    owner_by_name = {
+        tool_def.name: tool_def.capability_id for tool_def in function_tools if tool_def.capability_id is not None
+    }
+    unavailable = deferred_capability_ids - loaded_capability_ids
+    return {name for name in discovered if owner_by_name.get(name) not in unavailable}
+
+
 def _with_outgoing_reveal_state(
     parameters: models.ModelRequestParameters, messages: list[_messages.ModelMessage]
 ) -> models.ModelRequestParameters:
     """Make per-request reveal state match the history that will be sent to the model.
 
-    Deliberately not gated on capability-load markers from the same history: history is the trust
-    boundary (whoever can fabricate a reveal can fabricate the load exchange too), and eager
-    capabilities' search-gated tools are revealed with no load marker ever appearing —
-    `test_delta_in_history_reveals_a_capability_tool_without_a_load` pins the decision.
+    Gated on the same availability rule as the run-level state: a reveal naming a tool whose
+    deferred capability this history does not show as loaded is dropped, so a fabricated or
+    replayed delta cannot advertise a tool `ToolManager` would then refuse to run. An always-on
+    capability's search-gated tools are unaffected — they carry no load marker by design, and
+    `deferred_capability_ids` is read from the capability instances, so they are not in it.
     """
-    return replace(parameters, revealed_tool_names=parse_discovered_tools(messages))
+    return replace(
+        parameters,
+        revealed_tool_names=_revealable_tool_names(
+            parse_discovered_tools(messages),
+            parameters.function_tools,
+            deferred_capability_ids=parameters.deferred_capability_ids,
+            loaded_capability_ids=parse_loaded_capabilities(messages),
+        ),
+    )
 
 
 def build_validation_context(
