@@ -3,9 +3,11 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import gc
 import json
 import random
 import re
+import weakref
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
@@ -47,6 +49,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
     AudioInput,
+    RealtimeModelProfile,
     RealtimeResponseInterruptedEvent,
     RealtimeSession,
     RealtimeSessionReconnectEvent,
@@ -335,6 +338,20 @@ def test_schema_drops_false_any_of_member() -> None:
     assert schema.properties['value'].any_of == [genai_types.Schema(type=genai_types.Type.STRING)]  # type: ignore[index]
 
 
+def test_schema_handles_boolean_property_schemas() -> None:
+    # JSON Schema allows a property's schema to be a boolean, which `Schema` can't express: `True`
+    # accepts anything (the unconstrained schema) and `False` accepts nothing (the property is
+    # dropped). Walking into one used to raise `AttributeError` while preparing the declaration.
+    schema = rt_google._schema_from_json_schema(  # pyright: ignore[reportPrivateUsage]
+        {'type': 'object', 'properties': {'anything': True, 'nothing': False, 'named': {'type': 'string'}}}
+    )
+
+    assert schema.properties == {
+        'anything': genai_types.Schema(),
+        'named': genai_types.Schema(type=genai_types.Type.STRING),
+    }
+
+
 def test_schema_flattens_all_of_instead_of_erasing_it() -> None:
     """`Schema` can't express an intersection; its members merge rather than vanish.
 
@@ -583,6 +600,47 @@ def test_ws_trace_context_injects_and_restores_headers() -> None:
         assert headers == {'user-agent': 'solo'}
 
 
+def test_ws_trace_context_does_not_duplicate_a_differently_cased_header() -> None:
+    # Header names are case-insensitive and `websockets` stores them that way, so a client already
+    # carrying `Traceparent` must not gain a second, lowercase one — the handshake can be rejected for
+    # the duplicate (the same hazard `_single_ws_user_agent` reconciles for `User-Agent`).
+    pytest.importorskip('opentelemetry.sdk')
+    from types import SimpleNamespace
+
+    from opentelemetry.sdk.trace import TracerProvider
+
+    headers = {'Traceparent': 'preset'}
+    client = SimpleNamespace(_api_client=SimpleNamespace(_http_options=SimpleNamespace(headers=headers)))
+    tracer = TracerProvider().get_tracer('test')
+    with tracer.start_as_current_span('root'):
+        with rt_google._ws_trace_context(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
+            assert headers == {'Traceparent': 'preset'}
+    assert headers == {'Traceparent': 'preset'}
+
+
+def test_ws_connect_lock_is_per_event_loop() -> None:
+    # The lock is process-wide by intent (it guards a replacement of the `google.genai.live.ws_connect`
+    # module global), but an `anyio.Lock` binds to the loop it is first used on, so one shared instance
+    # would break an app that opens sessions from more than one runtime. Deliberately a sync test: it
+    # needs to own the loops. Within one loop the same lock still serializes every handshake, and the
+    # `RunVar` holding them is weak-keyed on the loop, so a torn-down loop's lock isn't retained.
+    refs: list[weakref.ReferenceType[Any]] = []
+
+    async def take_lock() -> Any:
+        lock = rt_google._ws_connect_lock()  # pyright: ignore[reportPrivateUsage]
+        assert rt_google._ws_connect_lock() is lock  # pyright: ignore[reportPrivateUsage]
+        refs.append(weakref.ref(lock))
+        return lock
+
+    first = asyncio.run(take_lock())
+    second = asyncio.run(take_lock())
+    assert second is not first
+
+    del first, second
+    gc.collect()
+    assert [ref() for ref in refs] == [None, None]
+
+
 def test_ws_trace_context_noop_without_http_options() -> None:
     # A custom/fake client without the SDK's private HTTP options simply skips injection.
     from types import SimpleNamespace
@@ -703,8 +761,10 @@ async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyP
 
 async def test_gateway_url_rewrite_leaves_other_urls_alone() -> None:
     # TEMPORARY, with `_ws_gateway_url_rewrite`: the rewrite only fires on the Vertex Bidi path it
-    # exists to reshape. Any other URI (a gateway route that already speaks the realtime path, or a
-    # non-Vertex dial) passes through untouched, so the patch can't corrupt a URL it doesn't own.
+    # exists to reshape, *under this session's own gateway route*. Any other URI passes through
+    # untouched — a gateway route that already speaks the realtime path, and (because the patched
+    # `live.ws_connect` is a process global that unrelated `google-genai` code enters too) a Bidi dial
+    # belonging to another client, which would otherwise be sent to this session's endpoint and model.
     dialed: list[str] = []
 
     async def _fake_ws_connect(uri: str, *args: Any, **kwargs: Any) -> None:
@@ -712,15 +772,26 @@ async def test_gateway_url_rewrite_leaves_other_urls_alone() -> None:
 
     from google.genai import live
 
+    bidi_path = '/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent'
     original = live.ws_connect
     live.ws_connect = _fake_ws_connect
     try:
-        with rt_google._ws_gateway_url_rewrite('gemini-live-2.5-flash'):  # pyright: ignore[reportPrivateUsage]
+        with rt_google._ws_gateway_url_rewrite(  # pyright: ignore[reportPrivateUsage]
+            'gemini-live-2.5-flash', 'https://gateway.pydantic.dev/proxy/google-vertex'
+        ):
             await live.ws_connect('wss://gateway.pydantic.dev/proxy/openai/v1/realtime?model=gpt-realtime')
+            await live.ws_connect(f'wss://us-central1-aiplatform.googleapis.com{bidi_path}')
+            await live.ws_connect(f'wss://gateway.pydantic.dev/proxy/google-vertex{bidi_path}')
     finally:
         live.ws_connect = original
 
-    assert dialed == snapshot(['wss://gateway.pydantic.dev/proxy/openai/v1/realtime?model=gpt-realtime'])
+    assert dialed == snapshot(
+        [
+            'wss://gateway.pydantic.dev/proxy/openai/v1/realtime?model=gpt-realtime',
+            'wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent',
+            'wss://gateway.pydantic.dev/proxy/google-vertex/v1/realtime?model=gemini-live-2.5-flash',
+        ]
+    )
 
 
 async def test_non_gateway_handshake_has_no_bearer_auth(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -771,7 +842,14 @@ def test_profile() -> None:
         True,
         False,
     )
-    assert profile.get('supported_native_tools') == frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
+    # Search grounding only, on every Live model: code execution is rejected outright by the
+    # native-audio models (verified live: `1007 Code Execution tool is not supported for this model`)
+    # and URL context is accepted but never actually grounds, so neither is advertised and a
+    # `local=` fallback is used instead.
+    assert profile.get('supported_native_tools') == frozenset({WebSearchTool})
+    assert GoogleRealtimeModel('gemini-3.1-flash-live-preview').profile.get('supported_native_tools') == frozenset(
+        {WebSearchTool}
+    )
     # The default model is native-audio, the only Gemini family that honors `NON_BLOCKING`.
     # Supported is not the same as enabled: it gates the opt-in `google_async_tool_calls` setting.
     assert profile.get('supports_async_tool_calls') is True
@@ -844,9 +922,20 @@ def test_config_google_thinking_config_wins_over_unified_thinking() -> None:
     assert config.thinking_config == genai_types.ThinkingConfig(thinking_budget=512)
 
 
-def test_config_thinking_on_non_thinking_model_is_ignored() -> None:
-    # A non-native-audio Gemini Live model doesn't report thinking support, so it is silently dropped.
+def test_config_thinking_on_non_thinking_model_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every current Gemini Live model takes a thinking config (verified live), but the setting stays
+    # profile-gated so a future model that can't reason silently falls back to its default rather than
+    # failing the handshake on a config it rejects.
     model = GoogleRealtimeModel('gemini-live-2.5-flash-preview', settings=GoogleRealtimeModelSettings(thinking='high'))
+
+    def no_thinking_profile(model_name: str) -> RealtimeModelProfile:
+        return RealtimeModelProfile()
+
+    monkeypatch.setattr(
+        type(model._provider),  # pyright: ignore[reportPrivateUsage]
+        'realtime_model_profile',
+        staticmethod(no_thinking_profile),
+    )
     config = model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     assert config.thinking_config is None
 
@@ -2055,6 +2144,55 @@ async def test_reconnect_closes_orphaned_turn_opened_by_a_tool_call() -> None:
         RealtimeSessionReconnectEvent(state_restored=True),
         OutputTranscript(text='back', is_final=True),
     ]
+
+
+async def test_reconnect_without_state_abandons_outstanding_tool_calls() -> None:
+    # With no resumption handle the re-dialed session is a brand new one that never issued the calls
+    # the lost session did, so a tool task still running against one would send its result back
+    # against an id Gemini doesn't know. They are abandoned the way Gemini's own
+    # `tool_call_cancellation` abandons a call, so each still gets a matching return in history.
+    tool_call = genai_types.LiveServerMessage(
+        tool_call=genai_types.LiveServerToolCall(
+            function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+        )
+    )
+    s1 = _RecordingSession([[tool_call]])
+    dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
+    )
+
+    events = [e async for e in conn]
+
+    assert events[:5] == [
+        ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}'),
+        ToolCallCancelled(tool_call_ids=['c1']),
+        ResponseDone(interrupted=True),
+        RealtimeSessionReconnectEvent(state_restored=False),
+        OutputTranscript(text='back', is_final=True),
+    ]
+    assert conn._tool_calls == {}  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_reconnect_with_restored_state_keeps_outstanding_tool_calls() -> None:
+    # A resumption handle means the same server-side session continues, so it still knows the call:
+    # the running tool task's result is deliverable and the call must not be abandoned.
+    tool_call = genai_types.LiveServerMessage(
+        tool_call=genai_types.LiveServerToolCall(
+            function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+        )
+    )
+    s1 = _RecordingSession([[tool_call]])
+    dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
+    )
+    conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
+
+    events = [e async for e in conn]
+
+    assert not any(isinstance(event, ToolCallCancelled) for event in events)
+    assert conn._tool_calls == {'c1': ('get_weather', 'c1')}  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None:

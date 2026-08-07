@@ -156,8 +156,8 @@ produces one response modality per session, and natively accepts live video fram
 configuration through [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings] —
 shared turn-taking via [`TurnDetection`][pydantic_ai.realtime.TurnDetection], with finer Gemini-specific
 control via [`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD] in `google_vad` plus
-`google_activity_handling`/`google_turn_coverage`, voice via `google_voice` or
-[`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker],
+`google_activity_handling`/`google_turn_coverage`, voice via `google_voice` or a
+[`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker] in `google_multi_speaker`,
 and long-session [`ContextCompression`][pydantic_ai.realtime.google.ContextCompression] — with
 resilience via session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] on the model.
 
@@ -176,8 +176,9 @@ mapping, seeding, the WebSocket connection). Turn-taking uses the shared
 server-VAD control, `xai_turn_detection` accepts
 [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] and fully overrides the shared setting. It
 diverges only where xAI does: it supports
-cancellation-based interruption but not output truncation, has no image input, and surfaces input
-transcription at the end of each user turn. Authentication comes from an
+cancellation-based interruption but not output truncation, has no image input, and streams input
+transcription as cumulative snapshots that may revise earlier text, rather than as incremental deltas.
+Authentication comes from an
 [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider], mirroring [`XaiModel`][pydantic_ai.models.xai.XaiModel].
 
 ::: pydantic_ai.realtime.xai

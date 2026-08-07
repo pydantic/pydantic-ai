@@ -110,16 +110,20 @@ def realtime_websocket_url(base_url: str, *, model: str | None = None, call_id: 
     Swaps the HTTP scheme for the WebSocket one and appends the `realtime` path, so the default
     OpenAI base URL `https://api.openai.com/v1/` yields `wss://api.openai.com/v1/realtime`. The
     path lands *before* any query string the base URL carries, rather than being appended after it
-    into the wrong endpoint; `model`/`call_id` are then merged in by `with_realtime_query`.
+    into the wrong endpoint. A fragment is likewise split off first, so it can't swallow the path
+    into the client-side part of the URL. `model`/`call_id` are merged in by `with_realtime_query`.
     """
-    url, _, query = base_url.partition('?')
+    url, _, fragment = base_url.partition('#')
+    url, _, query = url.partition('?')
     url = url.rstrip('/')
     if url.startswith('https://'):
         url = 'wss://' + url[len('https://') :]
     elif url.startswith('http://'):
         url = 'ws://' + url[len('http://') :]
     url = f'{url}/realtime'
-    return with_realtime_query(f'{url}?{query}' if query else url, model=model, call_id=call_id)
+    url = f'{url}?{query}' if query else url
+    url = f'{url}#{fragment}' if fragment else url
+    return with_realtime_query(url, model=model, call_id=call_id)
 
 
 def with_realtime_query(websocket_url: str, *, model: str | None = None, call_id: str | None = None) -> str:
@@ -127,16 +131,21 @@ def with_realtime_query(websocket_url: str, *, model: str | None = None, call_id
 
     Takes the URL as already derived — a provider whose realtime path doesn't follow from its HTTP
     base URL (Azure OpenAI derives it from the resource endpoint) builds that part itself — and
-    preserves any query the URL already carries. `model` opens a new session; `call_id` attaches a
-    control-plane (sideband) connection to a WebRTC call that already exists, which carries its own
-    model.
+    preserves any query and fragment it already carries. `model` opens a new session; `call_id`
+    attaches a control-plane (sideband) connection to a WebRTC call that already exists, which
+    carries its own model.
+
+    The fragment is split off first so the parameters land in the query rather than in the
+    client-side part of the URL, which the handshake would never send.
     """
-    url, _, query = websocket_url.partition('?')
+    url, _, fragment = websocket_url.partition('#')
+    url, _, query = url.partition('?')
     for name, value in (('model', model), ('call_id', call_id)):
         if value is not None:
             param = f'{name}={quote(value, safe="")}'
             query = f'{query}&{param}' if query else param
-    return f'{url}?{query}' if query else url
+    url = f'{url}?{query}' if query else url
+    return f'{url}#{fragment}' if fragment else url
 
 
 AUTO_TRANSCRIPTION_MODEL = 'auto'

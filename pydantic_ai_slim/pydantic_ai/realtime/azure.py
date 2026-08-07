@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, InitVar, dataclass, field
-from typing import Any, Protocol, cast
+from typing import Any, ClassVar, Protocol, cast
 from urllib.parse import urlencode, urlparse, urlunparse
 
 from anyio.to_thread import run_sync
@@ -39,7 +39,24 @@ from ._openai_protocol import (
 from ._openai_webrtc import relay_sdp_offer as _relay_sdp_offer
 from .openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 
-__all__ = ('AzureRealtimeModel', 'AzureRealtimeModelSettings', 'AzureTokenCredential')
+__all__ = (
+    'AzureRealtimeModel',
+    'AzureRealtimeConnection',
+    'AzureRealtimeModelSettings',
+    'AzureTokenCredential',
+)
+
+
+class AzureRealtimeConnection(OpenAIRealtimeConnection):
+    """A live WebSocket connection to Azure OpenAI's realtime API.
+
+    Reuses [`OpenAIRealtimeConnection`][pydantic_ai.realtime.openai.OpenAIRealtimeConnection] for the
+    shared GA wire protocol, naming Azure as the vendor so a connection that drops or rejects content
+    doesn't send someone debugging an Azure session to OpenAI's status page.
+    """
+
+    _provider_name = 'azure'
+    _provider_label = 'Azure OpenAI Realtime'
 
 
 class _AccessToken(Protocol):
@@ -116,8 +133,12 @@ def _map_voice_live_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     return _map_openai_event(data)
 
 
-class _AzureRealtimeConnection(OpenAIRealtimeConnection):
-    """An Azure realtime connection supporting Voice Live's beta text events."""
+class _VoiceLiveRealtimeConnection(AzureRealtimeConnection):
+    """An Azure realtime connection supporting Voice Live's beta text events.
+
+    Subclasses the GA Azure connection rather than the OpenAI one so a Voice Live session that drops or
+    rejects content names Azure too.
+    """
 
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return _map_voice_live_event(data)
@@ -144,6 +165,8 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
     become the default Azure realtime path. -->
     <!-- TODO(voice-live): Auto-routing Voice-Live-exclusive model names requires an agreed model/path map. -->
     """
+
+    _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = AzureRealtimeConnection
 
     _: KW_ONLY
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'azure'
@@ -207,7 +230,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
     def _webrtc_calls_url(self) -> str:
         # `webrtcfilter=on` restricts the events forwarded to the browser data channel to a safe subset,
         # keeping the session instructions and tool traffic on the server's control connection only.
-        return f'{self._webrtc_http_base()}realtime/calls?webrtcfilter=on'
+        return self._webrtc_url('realtime/calls', webrtcfilter='on')
 
     async def answer_webrtc_offer(
         self,
@@ -308,8 +331,9 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
 
     def _connection_class(self, model_settings: OpenAIRealtimeModelSettings) -> type[OpenAIRealtimeConnection]:
         if model_settings.get('azure_voice_live'):
-            return _AzureRealtimeConnection
-        return OpenAIRealtimeConnection
+            return _VoiceLiveRealtimeConnection
+        # The GA path: `_connection_type`, i.e. the Azure-labeled connection.
+        return super()._connection_class(model_settings)
 
     async def _auth_headers(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> dict[str, str]:
         if (credential := self.credential) is not None:
