@@ -974,7 +974,7 @@ async def test_run_stream_on_error_not_called_for_success_or_cancellation() -> N
     cancel_agent = Agent(model=TestModel())
 
     @cancel_agent.tool
-    async def cancel_tool(ctx: RunContext, query: str) -> str:  # pragma: no cover
+    async def cancel_tool(ctx: RunContext, query: str) -> str:
         ctx.cancel()
         return ''
 
