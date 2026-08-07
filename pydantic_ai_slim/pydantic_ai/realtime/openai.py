@@ -16,7 +16,7 @@ import json
 import math
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import KW_ONLY, InitVar, dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from typing_extensions import TypeAliasType
@@ -76,6 +76,7 @@ from ._base import (
     RealtimeConnection,
     RealtimeInput,
     RealtimeModel,
+    RealtimeModelProfileSpec,
     RealtimeModelSettings,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
@@ -798,7 +799,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._generated_audio_bytes = 0
 
 
-@dataclass
+@dataclass(init=False)
 class OpenAIRealtimeModel(RealtimeModel):
     """OpenAI Realtime API model.
 
@@ -816,6 +817,11 @@ class OpenAIRealtimeModel(RealtimeModel):
         model: The model name, e.g. `gpt-realtime` or `gpt-realtime-2.1-mini`.
         provider: The provider to use for authentication and the base URL. Defaults to `'openai'`.
             Azure OpenAI is not supported (its realtime endpoint uses a different URL and auth scheme).
+        profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
+            merged over the provider's — a partial dict, or a callable taking the resolved profile and
+            returning the one to use. Mirrors `profile=` on a standard
+            [`Model`][pydantic_ai.models.Model], and is the escape hatch when a model name doesn't
+            identify the model (e.g. an Azure deployment named something other than its model).
         reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
             recover from a dropped connection. With no policy, the low-level connection reports a
             non-recoverable session error; `RealtimeSession` raises
@@ -828,12 +834,31 @@ class OpenAIRealtimeModel(RealtimeModel):
 
     model: str = 'gpt-realtime'
     _: KW_ONLY
-    provider: InitVar[Provider[AsyncOpenAI] | str] = 'openai'
     settings: RealtimeModelSettings | None = None
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
 
-    def __post_init__(self, provider: Provider[AsyncOpenAI] | str) -> None:
+    # Written out rather than generated because `profile` has to be an init argument while
+    # `RealtimeModel.profile` stays the *resolved* profile, exactly as on a standard `Model` — a
+    # dataclass field of that name would shadow the property.
+    def __init__(
+        self,
+        model: str = 'gpt-realtime',
+        *,
+        provider: Provider[AsyncOpenAI] | str = 'openai',
+        settings: RealtimeModelSettings | None = None,
+        profile: RealtimeModelProfileSpec | None = None,
+        reconnect: ReconnectPolicy | None = None,
+    ) -> None:
+        self.model = model
+        self.settings = settings
+        self.reconnect = reconnect
+        self._profile = profile
+        self._provider = self._resolve_provider(provider)
+
+    @staticmethod
+    def _resolve_provider(provider: Provider[AsyncOpenAI] | str) -> Provider[AsyncOpenAI]:
+        """Resolve the `provider=` argument; a protocol clone (Azure) overrides which providers it takes."""
         if isinstance(provider, str):
             provider = cast('Provider[AsyncOpenAI]', infer_provider(provider))
         if provider.name == 'azure':
@@ -842,7 +867,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 'different URL and authentication scheme. Use `AzureRealtimeModel` (or the '
                 '`azure:` prefix) for Azure OpenAI realtime.'
             )
-        self._provider = provider
+        return provider
 
     @property
     def client(self) -> AsyncOpenAI:

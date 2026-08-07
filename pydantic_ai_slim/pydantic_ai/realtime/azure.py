@@ -2,7 +2,7 @@
 
 from __future__ import annotations as _annotations
 
-from dataclasses import KW_ONLY, InitVar, dataclass
+from dataclasses import dataclass
 from typing import ClassVar
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -11,6 +11,7 @@ from openai import AsyncOpenAI
 from ..exceptions import UserError
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
+from ._base import RealtimeModelProfileSpec, RealtimeModelSettings, ReconnectPolicy
 from .openai import OpenAIRealtimeConnection, OpenAIRealtimeModel
 
 __all__ = ('AzureRealtimeModel', 'AzureRealtimeConnection')
@@ -28,7 +29,7 @@ class AzureRealtimeConnection(OpenAIRealtimeConnection):
     _provider_label = 'Azure OpenAI Realtime'
 
 
-@dataclass
+@dataclass(init=False)
 class AzureRealtimeModel(OpenAIRealtimeModel):
     """Azure OpenAI realtime model using the OpenAI GA protocol.
 
@@ -39,15 +40,38 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
 
     _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = AzureRealtimeConnection
 
-    _: KW_ONLY
-    provider: InitVar[Provider[AsyncOpenAI] | str] = 'azure'
+    def __init__(
+        self,
+        model: str = 'gpt-realtime',
+        *,
+        provider: Provider[AsyncOpenAI] | str = 'azure',
+        settings: RealtimeModelSettings | None = None,
+        profile: RealtimeModelProfileSpec | None = None,
+        reconnect: ReconnectPolicy | None = None,
+    ) -> None:
+        """Create an Azure OpenAI realtime model.
 
-    def __post_init__(self, provider: Provider[AsyncOpenAI] | str) -> None:
+        Args:
+            model: The Azure *deployment* name, which is what the realtime URL and the profile lookup
+                use. Azure deployments are conventionally named after their model; when yours isn't,
+                `profile` is how to correct the facts inferred from the name.
+            provider: The provider supplying the resource endpoint and API key. Defaults to `'azure'`.
+            settings: Model settings used as defaults for realtime sessions.
+            profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
+                merged over the provider's — a partial dict, or a callable taking the resolved profile
+                and returning the one to use.
+            reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to
+                transparently recover from a dropped connection.
+        """
+        super().__init__(model, provider=provider, settings=settings, profile=profile, reconnect=reconnect)
+
+    @staticmethod
+    def _resolve_provider(provider: Provider[AsyncOpenAI] | str) -> AzureProvider:
         if isinstance(provider, str):
             provider = AzureProvider.for_realtime() if provider == 'azure' else infer_provider(provider)
         if not isinstance(provider, AzureProvider):
             raise UserError("`AzureRealtimeModel` requires an `AzureProvider` or `provider='azure'`.")
-        self._provider = provider
+        return provider
 
     @property
     def _azure_provider(self) -> AzureProvider:
