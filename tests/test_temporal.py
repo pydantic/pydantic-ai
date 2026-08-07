@@ -80,6 +80,7 @@ from pydantic_ai.capabilities import (
     ProcessHistory,
     ResolveModelId,
     Toolset,
+    WebSearch,
     WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -6733,6 +6734,42 @@ def test_durability_requires_agent_name():
     durability = TemporalDurability()
     with pytest.raises(UserError, match='unique `name`'):
         Agent(_durability_fn_model, capabilities=[durability])
+
+
+def test_durability_leaf_toolset_without_id_points_at_capability_id():
+    """The id-less leaf error names the capability `id` that fixes it.
+
+    A `NativeOrLocalTool` capability contributes a `FunctionToolset` stamped with the capability's
+    own `id`, which defaults to `None` — so the fix is to set `id=` on the capability, not on a
+    toolset the user never constructed.
+
+    Not a VCR test: both halves are settled at `Agent(...)` construction time, before any model
+    request, so there is no provider interaction to record.
+
+    Regression for https://github.com/pydantic/pydantic-ai/issues/7109.
+    """
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow. Set it on the toolset itself with `FunctionToolset(id=...)` or `MCPToolset(..., id=...)`, or, when the toolset is contributed by a capability, set the capability's `id` (for example, `WebSearch(local='duckduckgo', id='search')` or `MCP(url='...', id='...')`)."
+        ),
+    ):
+        Agent(
+            _durability_fn_model, name='web_search', capabilities=[WebSearch(local='duckduckgo'), TemporalDurability()]
+        )
+
+    agent = Agent(
+        _durability_fn_model,
+        name='web_search',
+        capabilities=[WebSearch(local='duckduckgo', id='search'), TemporalDurability()],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in bound.temporal_activities
+    }
+    assert 'agent__web_search__toolset__search__call_tool' in activity_names
 
 
 def test_durability_explicit_name_overrides_agent_name_and_supports_unnamed_agent():
