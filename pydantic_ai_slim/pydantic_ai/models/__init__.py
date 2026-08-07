@@ -1934,6 +1934,14 @@ def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
     part it wouldn't send must not act as a boundary either.
 
     The standing prompt survives via `_standing_prompt_request`; nothing else from the prefix does.
+    On OpenAI, re-inserting it is defense-in-depth rather than the sole carrier: the compaction blob
+    demonstrably retains leading `system` input items — even a latent directive that never fired
+    before the boundary governs post-compaction replies without the item being re-sent
+    (live-verified) — but that retention is an undocumented property of the encrypted blob, and a
+    blob whose compacted window never contained the standing prompt (e.g. a history started
+    elsewhere) can't supply it. On Anthropic it is load-bearing: the top-level `system` parameter is
+    rebuilt from the opening `SystemPromptPart`s on every request, so trimming them away would
+    silently drop the standing prompt from all subsequent requests.
     The Messages API accepts a request whose messages start with the assistant compaction block
     (live-verified), and keeping e.g. the original first user message can 400 when it carries a
     `tool_result` whose `tool_use` was trimmed away — validation runs even on ignored content.
