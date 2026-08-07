@@ -137,6 +137,13 @@ class AgentRunEvents(
 
     The handle can cancel the whole run and exposes its live messages and usage after iteration has
     started. After successful completion, `result` contains the final run result.
+
+    `cancel()` and the state accessors (`all_messages()`, `new_messages()`, `usage`) require the run
+    to be driven through the standard [`Agent.iter()`][pydantic_ai.agent.Agent.iter] path, which binds
+    the run to this handle. The built-in `Agent` and the durable wrapper agents do this; a custom
+    [`AbstractAgent`][pydantic_ai.agent.AbstractAgent] subclass whose `run()`/`iter()` chain doesn't
+    consume that binding gets a `cancel()` that silently no-ops and state accessors that raise
+    `UserError`, even after iteration has started.
     """
 
     def __init__(self, run_agent: _RunStreamEventsRunner[OutputDataT]) -> None:
