@@ -4177,7 +4177,11 @@ async def test_builtin_tool_call() -> None:
 
 
 async def test_event_stream_without_run_input() -> None:
-    """`AGUIEventStream` can be used as a pure encoder outside an HTTP request, with explicit run identity."""
+    """`AGUIEventStream` can be used as a pure encoder outside an HTTP request, with explicit run identity.
+
+    Not a VCR test: constructing an event stream and encoding events never reaches a model, so
+    there is no provider interaction to record.
+    """
 
     async def event_generator():
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))
@@ -4211,6 +4215,44 @@ async def test_event_stream_without_run_input() -> None:
             },
         ]
     )
+
+
+async def test_event_stream_run_identity() -> None:
+    """The run identity ladder: `run_input` wins, then explicit fields, then a fresh UUID per stream.
+
+    Not a VCR test: no model is involved, and the invariant is that two encoder-only streams never
+    share a run identity, which a single recorded exchange couldn't express anyway. The distinctness
+    assertions are what a `default_factory` collapsing into a shared class-level default would break;
+    coverage can't catch that, since the factory line runs on every construction either way.
+    """
+    run_input = create_input(thread_id='thread_1')
+    assert AGUIEventStream(run_input).thread_id == 'thread_1'
+
+    # `run_input` wins over explicitly passed values rather than falling back to them.
+    from_run_input = AGUIEventStream(run_input, thread_id='ignored', run_id='ignored')
+    assert (from_run_input.thread_id, from_run_input.run_id) == (run_input.thread_id, run_input.run_id)
+
+    defaulted, other = AGUIEventStream(), AGUIEventStream()
+    assert defaulted.run_input is None
+    assert defaulted.thread_id != defaulted.run_id
+    assert (defaulted.thread_id, defaulted.run_id) != (other.thread_id, other.run_id)
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in defaulted.encode_stream(defaulted.transform_stream(event_generator()))
+    ]
+    lifecycle = [event for event in events if event['type'] in ('RUN_STARTED', 'RUN_FINISHED')]
+
+    # The same identity has to reach the frontend on both lifecycle events, so a client can correlate
+    # them — and so a resume after an interrupt outcome routes back to the run that paused.
+    assert [(event['threadId'], event['runId']) for event in lifecycle] == [
+        (defaulted.thread_id, defaulted.run_id),
+        (defaulted.thread_id, defaulted.run_id),
+    ]
 
 
 async def test_event_stream_back_to_back_text():

@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Iterable
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from uuid import uuid4
 
 from ..._utils import now_utc
+from ..._uuid import uuid7
 from ...exceptions import RunCancelled
 from ...messages import (
     FunctionToolResultEvent,
@@ -89,18 +90,29 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     ag_ui_version: str = DEFAULT_AG_UI_VERSION
 
-    thread_id: str = field(default_factory=lambda: str(uuid4()))
-    """The thread ID to emit on `RunStartedEvent` and `RunFinishedEvent`.
+    _: KW_ONLY
 
-    Taken from `run_input` when one is available; otherwise it can be passed explicitly to
-    correlate an encoder-only stream with a thread, and defaults to a new UUID.
+    thread_id: str = field(default_factory=lambda: str(uuid7()))
+    """The AG-UI thread ID to emit on `RunStartedEvent` and `RunFinishedEvent`.
+
+    This is the protocol's own [`RunAgentInput.thread_id`][pydantic_ai.ui.ag_ui.RunAgentInput], not the
+    agent run's conversation ID.
+
+    `run_input` takes precedence: when one is available this is overwritten with its `thread_id`, even if
+    a value was passed explicitly. Otherwise it can be passed explicitly to correlate an encoder-only
+    stream with a thread, and defaults to a new UUID.
     """
 
-    run_id: str = field(default_factory=lambda: str(uuid4()))
-    """The run ID to emit on `RunStartedEvent` and `RunFinishedEvent`.
+    run_id: str = field(default_factory=lambda: str(uuid7()))
+    """The AG-UI run ID to emit on `RunStartedEvent` and `RunFinishedEvent`.
 
-    Taken from `run_input` when one is available; otherwise it can be passed explicitly to
-    correlate an encoder-only stream with a run, and defaults to a new UUID.
+    This is the protocol's own [`RunAgentInput.run_id`][pydantic_ai.ui.ag_ui.RunAgentInput], distinct from
+    the agent run's `run_id` on [`UIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream]; the two are
+    never fed into each other.
+
+    `run_input` takes precedence: when one is available this is overwritten with its `run_id`, even if a
+    value was passed explicitly. Otherwise it can be passed explicitly to correlate an encoder-only stream
+    with a run, and defaults to a new UUID.
     """
 
     _use_reasoning: bool = field(default=False, init=False)

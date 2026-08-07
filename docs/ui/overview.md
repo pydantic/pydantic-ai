@@ -110,7 +110,13 @@ def encode_events(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str]:
     return event_stream.encode_stream(event_stream.transform_stream(events))
 ```
 
-[`AGUIEventStream`][pydantic_ai.ui.ag_ui.AGUIEventStream] identifies the run in the events it emits, so pass it `thread_id` and `run_id` to correlate the stream with the run it's encoding; they default to new UUIDs.
+The [AG-UI](ag-ui.md) equivalent, [`AGUIEventStream`][pydantic_ai.ui.ag_ui.AGUIEventStream], identifies the run in the events it emits, so pass it `thread_id` and `run_id` to correlate the stream with the run it's encoding. They default to new UUIDs, and a `run_input` takes precedence over both when one is available.
+
+!!! warning "Pass explicit IDs when the stream can be interrupted or replayed"
+    The defaults are generated per [`AGUIEventStream`][pydantic_ai.ui.ag_ui.AGUIEventStream] instance, so two instances never share a run identity. Pass IDs derived from the run itself in either of these cases:
+
+    - The stream can end in an [interrupt](ag-ui.md#tool-approval-interrupts), whose `thread_id` and `run_id` the frontend sends back to resume. If the paused and resumed segments are encoded by different instances, one logical run reaches the frontend under two identities.
+    - The events are encoded inside [durable execution](../durable_execution/overview.md) workflow code rather than at the subscriber, since that code re-runs on replay and a defaulted UUID changes each time.
 
 ## Trust model for client-submitted messages
 
