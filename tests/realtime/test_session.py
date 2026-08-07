@@ -37,6 +37,7 @@ from pydantic_ai.messages import (
     DeferredToolResultsEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -5068,6 +5069,31 @@ async def test_agent_realtime_session_dynamic_instructions() -> None:
         _ = [e async for e in session]
     # Static literal then dynamic function, double-newline separated — same as `run`/`iter`.
     assert model.last_instructions == 'Base\n\nDynamic'
+
+
+async def test_agent_realtime_session_sorts_static_instructions_before_dynamic() -> None:
+    """A static toolset `InstructionPart` sorts before dynamic agent instructions, like `run`/`iter`.
+
+    Regression: the session joined instruction parts in assembly order, so a toolset's static
+    instruction landed after dynamic agent instruction functions instead of in the cacheable
+    static prefix that classic runs build via `InstructionPart.sorted`.
+    """
+
+    class StaticInstructionsToolset(FunctionToolset[object]):
+        async def get_instructions(self, ctx: RunContext[object]) -> list[InstructionPart]:
+            return [InstructionPart(content='Static toolset', dynamic=False)]
+
+    agent: Agent[None, str] = Agent(instructions='Base')
+
+    @agent.instructions
+    def extra() -> str:
+        return 'Dynamic'
+
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, toolsets=[StaticInstructionsToolset()]).session() as session:
+        _ = [e async for e in session]
+    assert model.last_instructions == 'Base\n\nStatic toolset\n\nDynamic'
 
 
 async def test_agent_realtime_session_dynamic_instructions_see_message_history() -> None:

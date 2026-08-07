@@ -335,6 +335,28 @@ async def test_capability_native_tool_without_override_reaches_session() -> None
     assert any(isinstance(t, WebSearchTool) for t in model.native_tools)
 
 
+async def test_dynamic_native_tool_function_resolves_at_connect() -> None:
+    """A dynamic native-tool function resolves against the connect-time context, like `run`/`iter`.
+
+    Regression: dynamic native-tool functions (`NativeTool(callable)`) were silently dropped from
+    realtime sessions — only concrete `AbstractNativeTool` instances survived. They now resolve once
+    at connect, like dynamic instructions: a session's tool list is fixed from the moment the
+    connection opens.
+    """
+
+    def make_web_search(ctx: RunContext[None]) -> WebSearchTool:
+        return WebSearchTool()
+
+    async def make_none(ctx: RunContext[None]) -> None:
+        return None  # a dynamic native tool resolving to None contributes nothing
+
+    agent = Agent()
+    model = _RecordingModel(supported_native_tools=frozenset({WebSearchTool}))
+    await _drain(agent, model, capabilities=[NativeTool(make_web_search), NativeTool(make_none)])
+    assert model.native_tools is not None
+    assert [type(t) for t in model.native_tools] == [WebSearchTool]
+
+
 async def test_unsupported_capability_native_tool_raises_before_connect() -> None:
     """An unsupported native tool with no local fallback fails up front, before connecting.
 

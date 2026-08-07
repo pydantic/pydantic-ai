@@ -17,7 +17,7 @@ from contextvars import ContextVar
 from copy import copy
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeGuard, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer
@@ -3305,15 +3305,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # session — unlike a classic run, where this is re-stamped before each model request.
         run_context.model_settings = effective_model_settings
 
-        # Native (provider built-in) tools, e.g. via `capabilities=[NativeTool(WebSearchTool())]`. Only
-        # concrete tools are forwarded; dynamic native-tool functions aren't resolved for realtime. The
-        # auto-injected optional `ToolSearchTool` is dropped (mirroring the graph) — there's no
-        # tool-search corpus and realtime providers don't support it. The helper already folded in
-        # `override(native_tools=...)` and any per-call capability native tools.
-        def _keep_native(tool: AgentNativeTool[AgentDepsT]) -> TypeGuard[AbstractNativeTool]:
-            return isinstance(tool, AbstractNativeTool) and not (isinstance(tool, ToolSearchTool) and tool.optional)
-
-        native_tools = [t for t in resolved_caps.native_tools if _keep_native(t)]
+        # Native (provider built-in) tools, e.g. via `capabilities=[NativeTool(WebSearchTool())]`. Dynamic
+        # native-tool functions are resolved once against the connect-time context — like dynamic
+        # instructions, since a session's tool list is fixed from the moment the connection opens. The
+        # auto-injected optional `ToolSearchTool` is dropped (mirroring the graph's corpus-empty drop):
+        # there's no tool-search corpus and realtime providers don't support it. The helper already
+        # folded in `override(native_tools=...)` and any per-call capability native tools.
+        # KEEP IN SYNC with the graph's resolution in `_prepare_request_parameters`.
+        native_tools: list[AbstractNativeTool] = []
+        for native_tool in resolved_caps.native_tools:
+            if not isinstance(native_tool, AbstractNativeTool):
+                resolved_native = native_tool(run_context)
+                if inspect.isawaitable(resolved_native):
+                    resolved_native = await resolved_native
+                if resolved_native is None:
+                    continue
+                native_tool = resolved_native
+            if not (isinstance(native_tool, ToolSearchTool) and native_tool.optional):
+                native_tools.append(native_tool)
         model_profile = model.profile
 
         toolset = self._get_toolset(
@@ -3404,7 +3413,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instruction_parts.extend(
                 _instructions.normalize_toolset_instructions(await tool_manager.toolset.get_instructions(run_context))
             )
-            resolved_instructions = _messages.InstructionPart.join(instruction_parts)
+            resolved_instructions = _messages.InstructionPart.join(_messages.InstructionPart.sorted(instruction_parts))
             request_messages = [
                 *(message_history or ()),
                 _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),
