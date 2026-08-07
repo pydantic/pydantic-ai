@@ -15,7 +15,7 @@ from collections.abc import (
 )
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Any, Literal, cast, get_args, overload
 
@@ -102,7 +102,7 @@ from ..profiles.openai import (
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingLevel
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -888,6 +888,15 @@ def _resolve_openai_service_tier(
     return OMIT
 
 
+def _resolve_prompt_cache_retention(
+    default_settings: ModelSettings | None, model_settings: ModelSettings | None
+) -> timedelta | None:
+    settings = merge_model_settings(default_settings, model_settings) or {}
+    if settings.get('openai_prompt_cache_retention') == '24h':
+        return timedelta(hours=24)
+    return None
+
+
 @dataclass(init=False)
 class OpenAIChatModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI API.
@@ -946,6 +955,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def model_name(self) -> OpenAIModelName:
         """The model name."""
         return self._model_name
+
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Resolve the extended prompt cache retention requested by OpenAI settings."""
+        return _resolve_prompt_cache_retention(self.settings, model_settings)
 
     @property
     def system(self) -> str:
@@ -1951,6 +1964,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def model_name(self) -> OpenAIModelName:
         """The model name."""
         return self._model_name
+
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Resolve the extended prompt cache retention requested by OpenAI settings."""
+        return _resolve_prompt_cache_retention(self.settings, model_settings)
 
     @property
     def system(self) -> str:

@@ -2322,6 +2322,21 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     return run_context
 
 
+def run_cancelled_snapshot(
+    message: str, state: GraphAgentState, deps: GraphAgentDeps[Any, Any]
+) -> exceptions.RunCancelled:
+    """Build a `RunCancelled` carrying a detached snapshot of the run's current state."""
+    return exceptions.RunCancelled(
+        message,
+        messages=state.message_history,
+        new_message_index=deps.new_message_index,
+        usage=state.usage,
+        metadata=state.metadata,
+        run_id=state.run_id,
+        conversation_id=state.conversation_id,
+    )
+
+
 def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
     """Refresh the history-derived loaded capability ids from the current graph state."""
     # The `load_capability` tool (and therefore any `LoadCapability*` history parts) only exists
