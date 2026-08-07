@@ -5742,6 +5742,7 @@ async def test_tool_search_toolset_uses_custom_parameter_description() -> None:
     cap = ToolSearch(parameter_description='custom queries hint')
     base_toolset = _create_function_toolset()
     wrapped = cap.get_wrapper_toolset(base_toolset)
+    assert wrapped is not None
     ctx = _build_run_context(None)
     tools = await wrapped.get_tools(ctx)
     search_tool = tools[_SEARCH_TOOLS_NAME]
