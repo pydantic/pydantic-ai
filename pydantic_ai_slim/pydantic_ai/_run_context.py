@@ -109,16 +109,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""
-    realtime_session: RealtimeSession | None = field(default=None, repr=False)
-    """The [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] this run is, once it is connected.
-
-    `None` in classic runs, and during the parts of a realtime run that precede the connection:
-    `before_run`, `wrap_run` before `handler()` starts the session, and instruction resolution.
-    Use [`realtime`][pydantic_ai.tools.RunContext.realtime] to detect a realtime run in those
-    stages. Tools and hooks that run during the live session can use it to e.g.
-    [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] playback or
-    [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content.
-    """
     model_settings: ModelSettings | RealtimeModelSettings | None = None
     """The resolved model settings for the current run step.
 
@@ -181,6 +171,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     Not available in `TemporalRunContext` — it is not serializable across
     Temporal activity boundaries.
+    """
+
+    realtime_session: RealtimeSession | None = field(default=None, repr=False)
+    """The [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] this run is, once it is connected.
+
+    `None` in classic runs, and during the parts of a realtime run that precede the connection:
+    `before_run`, `wrap_run` before `handler()` starts the session, and instruction resolution.
+    Use [`realtime`][pydantic_ai.tools.RunContext.realtime] to detect a realtime run in those
+    stages. Tools and hooks that run during the live session can use it to e.g.
+    [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] playback or
+    [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content.
     """
 
     root_capability: AbstractCapability[RunContextAgentDepsT] | None = None
