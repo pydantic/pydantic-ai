@@ -324,14 +324,35 @@ def _map_usage(
 ) -> RequestUsage:
     """Map Google embedding response to RequestUsage.
 
-    Note: The Gemini API doesn't return token usage information.
-    Google Cloud (formerly known as Vertex AI) returns token_count in embedding statistics.
+    Google Cloud (formerly known as Vertex AI) returns token_count in each
+    embedding's statistics. The Gemini API returns usageMetadata in the HTTP
+    response body, but the google-genai SDK currently discards it when
+    constructing EmbedContentResponse (only headers are kept in
+    sdk_http_response). When the SDK surfaces the body, this function
+    automatically picks up promptTokenCount from usageMetadata.
     """
     total_tokens = 0
+
+    # Vertex AI path: token_count in per-embedding statistics.
     if response.embeddings:  # pragma: no branch
         for emb in response.embeddings:
             if emb.statistics and emb.statistics.token_count:
-                # Requires Vertex AI.
                 total_tokens += int(emb.statistics.token_count)  # pragma: lax no cover
+
+    # Gemini API fallback: parse usageMetadata from the raw response body.
+    # The google-genai SDK sets sdk_http_response.body when it preserves the
+    # full HTTP payload (currently it only sets headers, so body is None).
+    # This path activates automatically once the SDK surfaces the body.
+    if total_tokens == 0 and response.sdk_http_response and response.sdk_http_response.body:
+        try:
+            import json as _json
+
+            body = _json.loads(response.sdk_http_response.body)
+            usage_metadata = body.get('usageMetadata', {})
+            prompt_token_count = usage_metadata.get('promptTokenCount', 0)
+            if prompt_token_count:
+                total_tokens = int(prompt_token_count)
+        except (ValueError, TypeError, AttributeError):  # pragma: no cover
+            pass
 
     return RequestUsage(input_tokens=total_tokens)
