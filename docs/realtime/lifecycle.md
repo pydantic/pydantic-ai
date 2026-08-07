@@ -121,6 +121,52 @@ WebRTC sideband; use a relay or media room for those.
 
 The runnable [realtime WebRTC example](../examples/realtime-webrtc.md) shows the whole flow end to end.
 
+#### Trust model: what the browser can see and do
+
+On a sideband the browser is a **peer on the same provider session**, not a client of your backend. It
+holds its own data channel to the provider, and that channel carries client events in both directions
+by design: the browser can send
+[`session.update`, `conversation.item.create` and `response.create`](https://platform.openai.com/docs/guides/realtime-conversations)
+just as your backend can, so it can replace the instructions and `tool_choice` your agent resolved, or
+ask for a response of its own. OpenAI's own realtime console installs a function tool this way.
+Session configuration attached to an ephemeral secret is documented as overridable by the client
+connection too, so [`create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret]
+behaves the same way.
+
+The session's resolved instructions and tool definitions are visible to the browser as well, in the
+provider's `session.created` and `session.updated` events. Azure OpenAI relays offers with
+`webrtcfilter=on`, which withholds those from the browser's data channel (see the
+[Azure page](azure.md#browser-webrtc-and-microsoft-entra-id)); it filters only what is sent *to* the
+browser, and OpenAI has no equivalent.
+
+What follows from that is specific to a sideband: **tool calls execute on your backend, with your
+[dependencies](../dependencies.md)** — so any tool registered on a sideband session is reachable by
+that call's end user. Two habits follow:
+
+- **Authorize inside the tool, against `deps`.** The identity you attached when opening the session is
+  the thing to check, because it is the only part of the exchange the browser cannot influence.
+  Instructions are visible to the browser *and* replaceable by it, so they shape behavior, not
+  permissions.
+- **Keep sensitive workflows off the call.** Hand off to a standard agent run
+  ([History and handoff](history.md#handing-off-to-a-text-agent)) for work that shouldn't be reachable
+  from the session at all.
+
+[Approval-gated tools](tools.md#deferred-and-approval-required-tools) are not a substitute for either.
+Approval guards against the *model* acting without sign-off; a policy handler resolving calls inline is
+not an authorization boundary against the caller, the same distinction the
+[UI adapter trust model](../ui/overview.md#trust-model-for-client-submitted-messages) draws.
+
+!!! note "This is the boundary WebRTC already draws, not a vulnerability"
+    A browser holding an ephemeral secret can create and configure provider sessions on its own, so a
+    sideband does not widen what it can reach — it is the same trust boundary as the browser talking to
+    the provider directly, and your provider API key stays on the server either way (with
+    [`answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] the browser never
+    receives a token at all). What the sideband adds is your tools, which is why they are the part to
+    authorize. This mirrors the
+    [trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history):
+    a report that a browser can rewrite its own session's instructions or ask for a response describes
+    this boundary working as designed.
+
 #### Knowing when the model is speaking
 
 An ordinary session sees the model's audio go by, so it knows when the model is talking. A sideband
