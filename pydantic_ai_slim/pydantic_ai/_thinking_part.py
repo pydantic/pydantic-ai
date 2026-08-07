@@ -2,6 +2,28 @@ from __future__ import annotations as _annotations
 
 from pydantic_ai import TextPart, ThinkingPart
 
+FOREIGN_THINKING_NOTE = 'carried over from earlier in this conversation'
+
+
+def render_foreign_thinking(content: str) -> str:
+    """Render a `ThinkingPart` that can't be sent back through the model's own native reasoning channel.
+
+    Such a part reaches this fallback when it has no signature (a model's own reasoning round-tripped
+    through storage, or a provider like xAI that returns reasoning unsigned by default) or was produced by
+    a different provider (e.g. another model in a `FallbackModel` chain). It is wrapped in a `<thinking>` tag
+    carrying an explicit note rather than the profile's native, unannotated `<thinking>` tags: providers like
+    Anthropic document that bare `<thinking>` tags in the prompt get generalized into the model's own output,
+    so re-rendering the reasoning in that native format teaches the model to leak it into user-visible
+    answers. The note only states that the reasoning is carried over from earlier in the conversation — true
+    whether it's the model's own unsigned reasoning replayed to it or another model's — which keeps the block
+    transparent to the model and marks it as context rather than a format to imitate. The source is
+    deliberately not named.
+    """
+    # A literal `</thinking>` in the reasoning would close the wrapper early and spill the remainder as
+    # plain assistant text; neutralize it so the whole part stays inside the annotated block.
+    content = content.replace('</thinking>', '<\\/thinking>')
+    return f'<thinking note="{FOREIGN_THINKING_NOTE}">\n{content}\n</thinking>'
+
 
 def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str, str]) -> list[ThinkingPart | TextPart]:
     """Split a string into text and thinking parts.
