@@ -4,6 +4,10 @@
     "items": [
       "index",
       "install",
+      {
+        "label": "V1 → V2 Migration Map",
+        "slug": "migration"
+      },
       "help",
       "troubleshooting",
       {
@@ -38,7 +42,15 @@
         "slug": "agent-spec"
       },
       "message-history",
-      "direct"
+      "direct",
+      {
+        "label": "Retries",
+        "slug": "retries"
+      },
+      {
+        "label": "Timeouts",
+        "slug": "timeouts"
+      }
     ]
   },
   {
@@ -178,41 +190,41 @@
         "slug": "capabilities/process-event-stream"
       },
       {
-        "label": "Durable Execution",
-        "items": [
-          {
-            "label": "Overview",
-            "slug": "durable_execution/overview"
-          },
-          {
-            "label": "Temporal",
-            "slug": "durable_execution/temporal"
-          },
-          {
-            "label": "DBOS",
-            "slug": "durable_execution/dbos"
-          },
-          {
-            "label": "Prefect",
-            "slug": "durable_execution/prefect"
-          },
-          {
-            "label": "Restate",
-            "slug": "durable_execution/restate"
-          },
-          {
-            "label": "Kitaru",
-            "slug": "durable_execution/kitaru"
-          },
-          {
-            "label": "Apache Airflow",
-            "slug": "durable_execution/airflow"
-          }
-        ]
-      },
-      {
         "label": "Third-Party Capabilities",
         "slug": "capabilities/third-party"
+      }
+    ]
+  },
+  {
+    "label": "Durable Execution",
+    "items": [
+      {
+        "label": "Overview",
+        "slug": "durable_execution/overview"
+      },
+      {
+        "label": "Temporal",
+        "slug": "durable_execution/temporal"
+      },
+      {
+        "label": "DBOS",
+        "slug": "durable_execution/dbos"
+      },
+      {
+        "label": "Prefect",
+        "slug": "durable_execution/prefect"
+      },
+      {
+        "label": "Restate",
+        "slug": "durable_execution/restate"
+      },
+      {
+        "label": "Kitaru",
+        "slug": "durable_execution/kitaru"
+      },
+      {
+        "label": "Apache Airflow",
+        "slug": "durable_execution/airflow"
       }
     ]
   },
@@ -576,7 +588,10 @@
     "label": "Project",
     "items": [
       "contributing",
-      "changelog",
+      {
+        "label": "Upgrade Guide",
+        "slug": "changelog"
+      },
       {
         "label": "Version Policy",
         "slug": "version-policy"
