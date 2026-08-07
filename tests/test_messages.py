@@ -2378,8 +2378,8 @@ def test_tool_result_event_tool_name():
     assert retry_event.tool_call_id == 'call_2'
     assert retry_event.tool_name == 'search'
 
-    output_retry = RetryPromptPart(content='invalid output', tool_call_id='call_3')
+    output_retry = RetryPromptPart(content='invalid output', tool_name='final_result', tool_call_id='call_3')
     output_event = OutputToolResultEvent(part=output_retry)
     assert output_event.tool_call_id == 'call_3'
-    assert output_event.tool_name is None
+    assert output_event.tool_name == 'final_result'
 

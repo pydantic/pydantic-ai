@@ -3646,13 +3646,15 @@ class ToolResultEvent:
         return self.part.tool_call_id
 
     @property
-    def tool_name(self) -> str | None:
-        """The name of the tool that was called, if known.
+    def tool_name(self) -> str:
+        """The name of the tool that was called.
 
-        Always set for [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. May be `None` for a
-        [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] used for output-validation retries
-        (not a tool call).
+        Always set for [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. For a
+        [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], this is the name of the tool
+        call that failed and should be retried — `ToolResultEvent` never wraps a retry without a
+        tool name.
         """
+        assert self.part.tool_name is not None
         return self.part.tool_name
 
     __repr__ = _utils.dataclasses_no_defaults_repr
