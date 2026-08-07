@@ -156,7 +156,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield text
 
     async def cancel(self) -> None:
-        """Cancel the stream, stopping token generation and closing the underlying connection."""
+        """Cancel the stream, stopping token generation and closing the underlying connection.
+
+        This stops only the current model response; the run continues. To end the whole run,
+        use [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] or
+        [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel].
+        """
         await self._raw_stream_response.cancel()
 
     async def drain(self) -> None:
@@ -777,6 +782,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
         The interrupted response state is recorded in the message history so that
         `all_messages()` includes it.
+
+        This stops only the current model response; the run continues. To end the whole run,
+        use [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] or
+        [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel].
         """
         if self._stream_response is not None:  # pragma: no branch
             await self._stream_response.cancel()

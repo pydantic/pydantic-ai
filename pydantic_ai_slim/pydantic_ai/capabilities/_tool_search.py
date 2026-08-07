@@ -4,13 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from .._run_context import AgentDepsT, RunContext
-from ..messages import (
-    ModelRequest,
-    ToolAvailabilityDeltaPart,
-)
 from ..native_tools._tool_search import (
     ToolSearchFunc,
     ToolSearchNativeStrategy,
@@ -28,8 +24,8 @@ from ..tools import (
     ToolDefinition,  # pyright: ignore[reportUnusedImport]  # noqa: F401  (resolves forward ref)
 )
 from ..toolsets import AbstractToolset
-from ..toolsets._capability_owned import tool_defs_for_loaded_capabilities
 from ..toolsets._tool_search import ToolSearchToolset, keywords_search_fn
+from ._deferred_capabilities import record_loaded_capability_tools
 from .abstract import AbstractCapability, CapabilityOrdering
 
 if TYPE_CHECKING:
@@ -214,13 +210,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
         # present in tool-search history (`ctx.discovered_tool_names`), so we don't
         # duplicate an existing exchange. `discovered_tool_names` is the clean history
         # field (`in_history`), which keeps this append collapse-proof.
-        loaded = tool_defs_for_loaded_capabilities(ctx, request_context.model_request_parameters.function_tools)
-        newly_loaded = [tool_def for name, tool_def in loaded.items() if name not in ctx.discovered_tool_names]
-        if not newly_loaded:
-            return request_context
+        return record_loaded_capability_tools(ctx, request_context)
 
-        newly_loaded = sorted(newly_loaded, key=lambda td: td.name)
-        request_context.messages.append(
-            ModelRequest(parts=[ToolAvailabilityDeltaPart(added=[tool_def.name for tool_def in newly_loaded])])
-        )
-        return request_context
+    function_tool_name: ClassVar[str] = 'search_tools'
+    """Reserved name of the local function tool used when tool search runs client-side."""
