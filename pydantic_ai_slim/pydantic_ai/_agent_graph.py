@@ -71,6 +71,7 @@ from .tools import (
 if TYPE_CHECKING:
     from .agent import Agent
     from .models.instrumented import InstrumentationSettings
+    from .sandboxes import Sandbox
 
 __all__ = (
     'GraphAgentState',
@@ -411,6 +412,10 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     # would silently break in-step capability loads / tool reveals.
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
+
+    # Resolved once before the graph starts; never changes during the run.
+    sandbox: Sandbox
+    run_state_key: object = dataclasses.field(repr=False)
 
     native_tools: list[AgentNativeTool[DepsT]] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
@@ -2258,6 +2263,8 @@ async def _select_model(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Dep
     selection_ctx = models.ModelSelectionContext(
         agent=agent,
         deps=ctx.deps.user_deps,
+        run_id=ctx.state.run_id,
+        conversation_id=ctx.state.conversation_id,
         model=ctx.deps.model,
         run_step=ctx.state.run_step,
         # The current request has already been appended, but selection describes the model
@@ -2303,6 +2310,8 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _cancellation=ctx.deps.cancellation,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
+        sandbox=ctx.deps.sandbox,
+        _run_state_key=ctx.deps.run_state_key,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared

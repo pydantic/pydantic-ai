@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 
@@ -10,6 +11,7 @@ from typing_extensions import deprecated
 
 from pydantic_ai import _utils
 from pydantic_ai._instructions import AgentInstructions
+from pydantic_ai._run_context import RunPreparationContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
@@ -38,6 +40,7 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
+    from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector
     from pydantic_graph import End
 
 # --- Handler type aliases for use in hook method signatures ---
@@ -51,6 +54,7 @@ NodeResult: TypeAlias = '_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResu
 
 WrapRunHandler: TypeAlias = 'Callable[[], Awaitable[AgentRunResult[Any]]]'
 """Handler type for [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]."""
+
 
 WrapNodeRunHandler: TypeAlias = 'Callable[[_agent_graph.AgentNode[AgentDepsT, Any]], Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]]]'
 """Handler type for [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run]."""
@@ -412,6 +416,15 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return native tools to register with the agent."""
         return []
 
+    def get_sandbox_connectors(self) -> Sequence[SandboxConnector]:
+        """Return connectors for re-opening sandboxes by reference.
+
+        Connectors keep worker-side configuration and credentials out of
+        [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]. When several connectors claim the same
+        provider, the latest connector in the resolved capability chain wins.
+        """
+        return ()
+
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.
 
@@ -430,6 +443,47 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
         [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset],
         or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
+        """
+        return None
+
+    def get_sandbox(
+        self, ctx: RunPreparationContext[AgentDepsT]
+    ) -> AbstractAsyncContextManager[SandboxBackend] | SandboxBackend | None:
+        """Return a [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] for this run.
+
+        Consulted once per run, only when no `sandbox=` was passed to the run method (the run
+        argument wins and this hook is then never called). Among capabilities, the supplier latest
+        in the resolved chain wins; capabilities that do not override this method do not contribute, and
+        [deferred][pydantic_ai.capabilities.AbstractCapability.defer_loading] capabilities are
+        never consulted. When no capability contributes, the run falls back to a fresh local
+        sandbox on supported platforms.
+
+        This is called on the agent-level capability instance before
+        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]. The context contains
+        the agent, dependencies, message history, usage, run and conversation IDs, and only the
+        model or sandbox explicitly supplied to the run. The resolved sandbox is attached to the
+        [`RunContext`][pydantic_ai.tools.RunContext] passed to `for_run` and every later hook.
+        A capability materialized only by a capability function or `for_run` replacement is too
+        late to supply a sandbox; the supplier must exist on the pre-`for_run` capability tree.
+
+        The return value selects the lifecycle:
+
+        - **Return a context manager** (e.g. the result of an `@asynccontextmanager` factory) for
+          a run-managed sandbox. The run enters it when the run starts and exits it when the run
+          ends — exactly like a capability
+          [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset] — so
+          [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox] is live from `before_run` through
+          `after_run`/`on_run_error`, and teardown is guaranteed even when the run fails to start.
+        - **Return the backend itself** for a warm sandbox shared across runs: it is never entered
+          or exited — even when the backend also implements the async context manager protocol —
+          so it keeps running and its lifecycle stays with the capability.
+
+        Bare backends and values yielded by context managers are wrapped once in the rich
+        [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade before being exposed as `ctx.sandbox`;
+        serving an existing facade passes it through unchanged.
+
+        Override this method only in a capability that supplies a sandbox; the inherited
+        implementation returns `None`.
         """
         return None
 
@@ -470,6 +524,44 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         return tool_defs
 
     # --- Run lifecycle hooks ---
+
+    def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
+        """Bracket the complete lifecycle of an [`iter()`][pydantic_ai.agent.Agent.iter] run.
+
+        This context-manager-shaped hook is typically implemented with
+        `@contextlib.asynccontextmanager`. The run enters the returned manager on its own
+        exit stack, so it can observe entry, exit, and any exception that propagates through
+        the manager's `__aexit__`. Unlike
+        [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run], it receives no
+        `handler` and has no control-flow power: it cannot short-circuit, replace, or retry
+        the run. Suppressing the run's exception (catching around `yield` without
+        re-raising) is a contract violation the run detects: it raises
+        [`UserError`][pydantic_ai.exceptions.UserError] with the suppressed error as its
+        cause. An exception raised by the hook's own cleanup propagates under normal
+        context-manager semantics, exactly like a toolset or sandbox teardown error.
+
+        This hook is invoked on the agent-level capability instance **before**
+        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]. It must not store
+        per-run state on `self`: the per-run capability instance does not exist yet. Use
+        `ctx.run_id` as the correlation point when state needs to bridge this hook and per-run
+        hooks, as [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] does.
+
+        The hook is entered before model and sandbox resolution, capability and toolset `for_run`,
+        resource entry, and graph construction. It exits after the entire run, including
+        `after_run`/`on_run_error` and resource teardown. Multiple hooks follow middleware order:
+        the first capability is entered first and exits last, matching `wrap_run`.
+
+        `ctx.model` and `ctx.sandbox` contain only values explicitly supplied to the run (including
+        overrides); configured and capability-contributed values are resolved inside this hook's
+        scope. Use `wrap_run` for anything that needs the assembled run.
+
+        Deferred capabilities are always excluded from this chain, including capabilities
+        already loaded in resumed message history. This matches
+        [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] because
+        the chain is entered once at run start.
+
+        """
+        return nullcontext()
 
     async def before_run(
         self,

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
+from pydantic_ai._run_context import RunPreparationContext
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
@@ -40,6 +42,7 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
+    from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector
     from pydantic_graph import End
 
 
@@ -249,6 +252,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 native_tools.append(deferred_native_tool)
         return native_tools
 
+    def get_sandbox_connectors(self) -> Sequence[SandboxConnector]:
+        connectors: list[SandboxConnector] = []
+        for capability in self.capabilities:
+            connectors.extend(capability.get_sandbox_connectors())
+        return connectors
+
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset
         any_wrapped = False
@@ -258,6 +267,21 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 wrapped = result
                 any_wrapped = True
         return wrapped if any_wrapped else None
+
+    def get_sandbox(
+        self, ctx: RunPreparationContext[AgentDepsT]
+    ) -> AbstractAsyncContextManager[SandboxBackend] | SandboxBackend | None:
+        # The capability latest in the resolved chain wins, matching the reversed dispatch of
+        # `after_run`/`get_wrapper_toolset` and the later-wins model-settings merge.
+        # Deferred capabilities are skipped: their contributions are inert until loaded, and
+        # the run's sandbox is resolved once, before the first model request.
+        for capability in reversed(self.capabilities):
+            if capability.defer_loading is True:
+                continue
+            served_sandbox = capability.get_sandbox(ctx)
+            if served_sandbox is not None:
+                return served_sandbox
+        return None
 
     # --- Tool preparation hooks ---
 
@@ -282,6 +306,29 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return tool_defs
 
     # --- Run lifecycle hooks ---
+
+    def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
+        # Deferred capabilities are always excluded, even when already loaded from resumed history.
+        capabilities = [
+            capability
+            for capability in self.capabilities
+            if capability.defer_loading is not True
+            and type(capability).wrap_entire_run is not AbstractCapability.wrap_entire_run
+        ]
+        if not capabilities:
+            return nullcontext()
+        return self._wrap_entire_run(ctx, capabilities)
+
+    @asynccontextmanager
+    async def _wrap_entire_run(
+        self,
+        ctx: RunPreparationContext[AgentDepsT],
+        capabilities: Sequence[AbstractCapability[AgentDepsT]],
+    ) -> AsyncGenerator[None]:
+        async with AsyncExitStack() as stack:
+            for capability in capabilities:
+                await stack.enter_async_context(capability.wrap_entire_run(ctx))
+            yield
 
     async def before_run(
         self,

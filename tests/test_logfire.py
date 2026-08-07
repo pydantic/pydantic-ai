@@ -1,7 +1,10 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+import asyncio
+from collections.abc import AsyncGenerator, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Literal
 
 import pytest
@@ -15,19 +18,22 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RunPreparationContext,
     TextPart,
     ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.sandboxes import LocalSandbox, SandboxBackend
 from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -501,6 +507,40 @@ def test_logfire_explicit_run_id(get_logfire_summary: Callable[[], LogfireSummar
         attrs for attrs in summary.attributes.values() if attrs.get('gen_ai.operation.name') == 'invoke_agent'
     )
     assert agent_run_attrs['gen_ai.agent.call.id'] == 'run-from-api-42'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_logfire_concurrent_runs_with_same_explicit_run_id_keep_separate_state(
+    capfire: CaptureLogfire,
+) -> None:
+    both_started = asyncio.Event()
+    started = 0
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal started
+        started += 1
+        if started == 2:
+            both_started.set()
+        await both_started.wait()
+        prompt_part = messages[0].parts[0]
+        assert isinstance(prompt_part, UserPromptPart)
+        return ModelResponse(parts=[TextPart(f'output:{prompt_part.content}')])
+
+    agent = Agent(
+        model=FunctionModel(model_function),
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+    first, second = await asyncio.gather(
+        agent.run('first', run_id='shared-run-id'),
+        agent.run('second', run_id='shared-run-id'),
+    )
+    assert {first.output, second.output} == {'output:first', 'output:second'}
+
+    spans = strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True))
+    run_spans = [span for span in spans if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent']
+    assert {span['attributes']['final_result'] for span in run_spans} == {'output:first', 'output:second'}
+    assert {span['attributes']['gen_ai.agent.call.id'] for span in run_spans} == {'shared-run-id'}
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -3143,6 +3183,183 @@ async def test_run_stream(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_agent_span_brackets_sandbox_lifecycle_and_recovery(capfire: CaptureLogfire, tmp_path: Path) -> None:
+    @dataclass
+    class TracedSandbox(AbstractCapability[Any]):
+        def get_sandbox(self, ctx: RunPreparationContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
+            @asynccontextmanager
+            async def serve() -> AsyncGenerator[SandboxBackend]:
+                backend = LocalSandbox(tmp_path)
+                with logfire.span('sandbox_setup'):  # pyright: ignore[reportPossiblyUnboundVariable]
+                    await backend.__aenter__()
+                try:
+                    yield backend
+                finally:
+                    with logfire.span('sandbox_teardown'):  # pyright: ignore[reportPossiblyUnboundVariable]
+                        await backend.__aexit__(None, None, None)
+
+            return serve()
+
+    agent = Agent(
+        TestModel(),
+        name='sandbox_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), TracedSandbox()],
+    )
+    result = await agent.run('Hello')
+    assert result.output == 'success (no tool calls)'
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_span = next(span for span in spans if span['name'] == 'invoke_agent sandbox_agent')
+    child_spans = [
+        span
+        for span in spans
+        if span['parent'] is not None
+        and span['parent']['trace_id'] == agent_span['context']['trace_id']
+        and span['parent']['span_id'] == agent_span['context']['span_id']
+    ]
+    assert [span['name'] for span in child_spans] == ['sandbox_setup', 'chat test', 'sandbox_teardown']
+    assert agent_span['attributes']['final_result'] == 'success (no tool calls)'
+    assert agent_span['attributes']['pydantic_ai.all_messages']
+    assert agent_span['attributes']['gen_ai.aggregated_usage.input_tokens'] == 51
+    assert agent_span['attributes']['gen_ai.aggregated_usage.output_tokens'] == 4
+
+    capfire.exporter.clear()
+
+    @dataclass
+    class RecoverError(AbstractCapability[Any]):
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            return AgentRunResult(output='recovered')
+
+    def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('model exploded')
+
+    recovered_agent = Agent(
+        FunctionModel(fail),
+        name='recovered_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RecoverError()],
+    )
+    recovered = await recovered_agent.run('Hello')
+    assert recovered.output == 'recovered'
+
+    recovered_spans = capfire.exporter.exported_spans_as_dict()
+    recovered_agent_span = next(span for span in recovered_spans if span['name'] == 'invoke_agent recovered_agent')
+    assert recovered_agent_span['attributes']['final_result'] == 'recovered'
+    assert 'events' not in recovered_agent_span
+    assert 'logfire.level_num' not in recovered_agent_span['attributes']
+
+    capfire.exporter.clear()
+
+    failed_agent = Agent(
+        FunctionModel(fail),
+        name='failed_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+    with pytest.raises(RuntimeError, match='model exploded'):
+        await failed_agent.run('Hello', metadata={'env': 'failed'})
+
+    failed_spans = capfire.exporter.exported_spans_as_dict()
+    failed_agent_span = next(span for span in failed_spans if span['name'] == 'invoke_agent failed_agent')
+    assert 'final_result' not in failed_agent_span['attributes']
+    assert failed_agent_span['attributes']['pydantic_ai.all_messages'] == IsJson(
+        snapshot([{'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}])
+    )
+    assert failed_agent_span['attributes']['metadata'] == '{"env":"failed"}'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_agent_span_records_context_when_wrap_run_skips_before_run(capfire: CaptureLogfire) -> None:
+    @dataclass
+    class ShortCircuit(AbstractCapability[Any]):
+        async def wrap_run(
+            self,
+            ctx: RunContext[Any],
+            *,
+            handler: WrapRunHandler,
+        ) -> AgentRunResult[Any]:
+            return AgentRunResult(output='short-circuited')
+
+    short_circuited_agent = Agent(
+        TestModel(),
+        name='short_circuited_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), ShortCircuit()],
+    )
+    result = await short_circuited_agent.run('Hello')
+    assert result.output == 'short-circuited'
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_span = next(span for span in spans if span['name'] == 'invoke_agent short_circuited_agent')
+    assert agent_span['attributes']['model_name'] == 'test'
+
+    capfire.exporter.clear()
+
+    @dataclass
+    class FailBeforeHandler(AbstractCapability[Any]):
+        async def wrap_run(
+            self,
+            ctx: RunContext[Any],
+            *,
+            handler: WrapRunHandler,
+        ) -> AgentRunResult[Any]:
+            raise RuntimeError('wrap_run failed')
+
+    failed_agent = Agent(
+        TestModel(),
+        name='failed_before_handler_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), FailBeforeHandler()],
+    )
+    with pytest.raises(RuntimeError, match='wrap_run failed'):
+        await failed_agent.run('Hello', metadata={'env': 'failed'})
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_span = next(span for span in spans if span['name'] == 'invoke_agent failed_before_handler_agent')
+    assert agent_span['attributes']['metadata'] == '{"env":"failed"}'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_run_span_end_attribute_failure_does_not_break_the_run(
+    capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Span-end attribute recording is best-effort: it runs while the exit stack unwinds,
+    where a raised exception would mask the run's own result or error. The failure can't
+    be triggered through the public API (it only fires on internal serialization bugs),
+    so patch the private helper directly to pin the defensive branch."""
+
+    def broken_end_attributes(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise ValueError('attribute serialization bug')
+
+    monkeypatch.setattr(Instrumentation, '_run_span_end_attributes', broken_end_attributes)
+    agent = Agent(TestModel(), capabilities=[Instrumentation(settings=InstrumentationSettings())])
+    with pytest.warns(RuntimeWarning, match='Failed to record agent run span attributes'):
+        result = await agent.run('Hello')
+    assert result.output == 'success (no tool calls)'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_agent_span_captures_after_run_replacement(capfire: CaptureLogfire) -> None:
+    @dataclass
+    class ReplaceResult(AbstractCapability[Any]):
+        async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            return replace(result, output='replaced')
+
+    agent = Agent(
+        TestModel(),
+        name='replaced_agent',
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), ReplaceResult()],
+    )
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'replaced'
+    spans = capfire.exporter.exported_spans_as_dict()
+    agent_span = next(span for span in spans if span['name'] == 'invoke_agent replaced_agent')
+    assert agent_span['attributes']['final_result'] == 'replaced'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_run_stream_sync(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
     my_agent = Agent(model=TestModel(), capabilities=[Instrumentation()])
 
@@ -3741,6 +3958,36 @@ def test_agent_with_user_provided_instrumented_model(
     settings = InstrumentationSettings()
     agent = Agent(model=InstrumentedModel(TestModel(), settings))
 
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('success (no tool calls)')
+
+    summary = get_logfire_summary()
+    assert summary.traces == snapshot(
+        [
+            {
+                'id': 0,
+                'name': 'invoke_agent agent',
+                'message': 'agent run',
+                'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+            }
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_agent_with_capability_contributed_instrumented_model(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    from pydantic_ai.models.instrumented import InstrumentedModel
+
+    settings = InstrumentationSettings()
+
+    @dataclass
+    class InstrumentedModelCapability(AbstractCapability[Any]):
+        def get_model(self) -> InstrumentedModel:
+            return InstrumentedModel(TestModel(), settings)
+
+    agent = Agent(None, capabilities=[InstrumentedModelCapability()])
     result = agent.run_sync('Hello')
     assert result.output == snapshot('success (no tool calls)')
 

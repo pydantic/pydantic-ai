@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from typing import Any, ClassVar
 
 from typing_extensions import Self
 
-from pydantic_ai._run_context import set_current_run_context
+from pydantic_ai._run_context import RunPreparationContext, set_current_run_context
 from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -18,6 +18,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
@@ -60,6 +61,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     _durable_unit_noun: ClassVar[str]
     _durable_container_noun: ClassVar[str]
     _tool_config_key: ClassVar[str | None] = None
+    _sandbox_unavailable_reason: ClassVar[str | None] = None
+    _live_sandbox_error: ClassVar[str | None] = None
 
     name: str
     """Unique name used to identify the agent's durable units (activities/steps/tasks). Defaults to the agent's `name`."""
@@ -68,12 +71,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self,
         *,
         models: Mapping[str, Model] | None = None,
+        sandbox_connectors: Sequence[SandboxConnector] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         name: str | None = None,
     ) -> None:
         self.name: str = name or ''
         self._agent: AbstractAgent[Any, Any] | None = None
         self._extra_models: dict[str, Model] = dict(models) if models else {}
+        self._sandbox_connectors = tuple(sandbox_connectors or ())
         self._models_by_id: dict[str, Model] = {}
         self._event_stream_handler = event_stream_handler
         self._process_event_stream = ProcessEventStream(event_stream_handler) if event_stream_handler else None
@@ -276,6 +281,30 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         return toolset.visit_and_replace(swap)
 
+    def get_sandbox(self, ctx: RunPreparationContext[AgentDepsT]) -> SandboxBackend | None:
+        # This is a conditional supplier: outside the durable context, `None` leaves normal
+        # sandbox resolution untouched. An explicitly ordered later supplier can still win,
+        # because that is the user's choice and normal latest-supplier precedence still applies.
+        if self._sandbox_unavailable_reason is not None and self.in_durable_context:
+            return UnavailableSandbox(reason=self._sandbox_unavailable_reason)
+        return None
+
+    def get_sandbox_connectors(self) -> Sequence[SandboxConnector]:
+        """Return the worker-side sandbox connectors registered for this durability capability."""
+        return self._sandbox_connectors
+
+    def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
+        """Reject non-policy live sandbox run arguments before entering a durable container."""
+        sandbox_identity = ctx.sandbox.durable_identity() if ctx.sandbox is not None else None
+        if (
+            self._live_sandbox_error is not None
+            and self.in_durable_context
+            and sandbox_identity is not None
+            and not isinstance(sandbox_identity, (SandboxRef, UnavailableSandbox))
+        ):
+            raise UserError(self._live_sandbox_error)
+        return nullcontext()
+
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost: durable dispatch must be the last wrapper around the model handler so every
         # other capability's contribution is already applied inside the durable unit.
@@ -462,7 +491,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         root_capability = run_context.root_capability
         # The boundary carries both.
         if agent is not None and root_capability is not None:  # pragma: no branch
-            resolution_ctx = ModelResolutionContext(agent=agent, deps=run_context.deps)
+            resolution_ctx = ModelResolutionContext(
+                agent=agent,
+                deps=run_context.deps,
+                run_id=run_context.run_id,
+                conversation_id=run_context.conversation_id,
+            )
             # Exceptions raised by user resolvers in the chain propagate unchanged;
             # only the `infer_model` backstop below gets the translated error.
             resolved = await root_capability.resolve_model_id(resolution_ctx, model_id=model_id)

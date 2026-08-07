@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -25,6 +26,7 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     time_to_first_chunk_ctx,
 )
+from pydantic_ai._run_context import get_run_state_key
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -42,17 +44,19 @@ from .abstract import (
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapOutputProcessHandler,
-    WrapRunHandler,
     WrapToolExecuteHandler,
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai._run_context import RunContext
+    from opentelemetry.trace import Span
+
+    from pydantic_ai._run_context import RunContext, RunPreparationContext
     from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
     from pydantic_ai.tools import AgentDepsT
+    from pydantic_ai.usage import RunUsage
 
 
 def _default_settings() -> InstrumentationSettings:
@@ -63,11 +67,29 @@ def _default_settings() -> InstrumentationSettings:
 
 
 @dataclass
+class _RunState:
+    new_message_index: int
+    run_span: Span
+    metadata: dict[str, Any] | None = None
+    last_result: AgentRunResult[Any] | None = None
+    last_messages: list[ModelMessage] | None = None
+    last_model_request_parameters: ModelRequestParameters | None = None
+    last_formatted_instructions: str | None | Unset = UNSET
+    variable_instructions: bool = False
+    message_json_cache: MessageJsonCache = field(default_factory=MessageJsonCache)
+    """Per-run cache of input messages' serialized OTel JSON fragments (see `MessageJsonCache`)."""
+
+
+@dataclass
 class Instrumentation(AbstractCapability[Any]):
     """Capability that instruments agent runs with OpenTelemetry/Logfire tracing.
 
     When added to an agent via `capabilities=[Instrumentation(...)]`, this capability
     creates OpenTelemetry spans for the agent run, model requests, and tool executions.
+
+    An `Instrumentation` capability materialized only during `for_run` can instrument model
+    requests and tools, but cannot create the agent-run span because the whole-run hook has
+    already been entered. Configure it on the agent-level capability tree for full tracing.
 
     Other capabilities can add attributes to these spans using the OpenTelemetry API
     (`opentelemetry.trace.get_current_span().set_attribute(key, value)`).
@@ -83,30 +105,16 @@ class Instrumentation(AbstractCapability[Any]):
     """OTel/Logfire instrumentation settings. Defaults to `InstrumentationSettings()`,
     which uses the global `TracerProvider` (typically configured by `logfire.configure()`)."""
 
-    # Per-run state (set in `for_run`, mutated by `wrap_model_request`). `for_run`
-    # returns a shallow copy via `replace(self)` for per-run isolation. These fields
-    # are updated as the run progresses and assume sequential model requests within
-    # a run — if the agent loop ever issues concurrent model requests, accesses to
-    # these fields would race.
-    _agent_name: str = field(default='agent', repr=False, init=False)
-    _new_message_index: int = field(default=0, repr=False, init=False)
-    _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
-    _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
-    _last_formatted_instructions: str | None | Unset = field(default=UNSET, repr=False, init=False)
-    """Last formatted instructions sent to the model, or `UNSET` before the first request."""
-    _variable_instructions: bool = field(default=False, repr=False, init=False)
-    """Whether agent-level instructions varied across requests in this run."""
-    _message_json_cache: MessageJsonCache = field(default_factory=MessageJsonCache, repr=False, init=False)
-    """Per-run cache of input messages' serialized OTel JSON fragments (see `MessageJsonCache`).
-    `for_run`'s `replace(self)` re-runs the factory, so each run starts with an empty cache
-    that's discarded when the run ends."""
-    # Resolved once from `self.settings.version` in `__post_init__` and preserved across
-    # `dataclasses.replace` calls in `for_run` (which only touches init=True fields).
+    _runs: dict[object, _RunState] = field(default_factory=dict[object, _RunState], repr=False, init=False)
+    """Per-run state shared by the agent-level instance and its `for_run` copies."""
+    # Resolved from `self.settings.version` whenever `__post_init__` runs, including on
+    # the per-run copy created by `dataclasses.replace`.
     _instrumentation_names: InstrumentationNames = field(
         default_factory=lambda: InstrumentationNames.for_version(DEFAULT_INSTRUMENTATION_VERSION),
         repr=False,
         init=False,
     )
+    _fallback_message_json_cache: MessageJsonCache | None = field(default=None, repr=False, init=False)
 
     def __post_init__(self) -> None:
         self._instrumentation_names = InstrumentationNames.for_version(self.settings.version)
@@ -137,84 +145,77 @@ class Instrumentation(AbstractCapability[Any]):
         return cls(settings=InstrumentationSettings(**kwargs))
 
     async def for_run(self, ctx: RunContext[Any]) -> Instrumentation:
-        """Return a fresh copy for per-run state isolation."""
+        """Return a fresh copy for per-run state isolation and record the resolved run context."""
         inst = replace(self)
-        inst._agent_name = (ctx.agent.name if ctx.agent else None) or 'agent'
-        inst._new_message_index = len(ctx.messages)
+        inst._runs = self._runs
+        inst._record_run_context(ctx)
         return inst
 
     # ------------------------------------------------------------------
-    # wrap_run — agent run span
+    # wrap_entire_run — agent run span
     # ------------------------------------------------------------------
 
-    async def wrap_run(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        handler: WrapRunHandler,
-    ) -> AgentRunResult[Any]:
+    @asynccontextmanager
+    async def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AsyncGenerator[None]:
+        """Keep resource setup, execution, recovery, and teardown inside the agent-run span."""
         settings = self.settings
         names = self._instrumentation_names
-        agent_name = self._agent_name
+        agent_name = ctx.agent.name or 'agent'
 
         span_attributes: dict[str, Any] = {
             'model_name': ctx.model.model_name if ctx.model else 'no-model',
             'agent_name': agent_name,
             'gen_ai.agent.name': agent_name,
-            'gen_ai.agent.call.id': ctx.run_id or '',
-            'gen_ai.conversation.id': ctx.conversation_id or '',
+            'gen_ai.agent.call.id': ctx.run_id,
+            'gen_ai.conversation.id': ctx.conversation_id,
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
 
-        if ctx.agent is not None:  # pragma: no branch
-            rendered = ctx.agent.render_description(ctx.deps)
-            if rendered is not None:
-                span_attributes['gen_ai.agent.description'] = rendered
+        rendered = ctx.agent.render_description(ctx.deps)
+        if rendered is not None:
+            span_attributes['gen_ai.agent.description'] = rendered
 
         with settings.tracer.start_as_current_span(
             names.get_agent_run_span_name(agent_name),
             attributes=span_attributes,
         ) as span:
+            run_state = _RunState(new_message_index=len(ctx.messages), run_span=span)
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
-            otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
-            otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id or '', context=otel_ctx)
+            otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id, context=otel_ctx)
+            otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id, context=otel_ctx)
             token = _otel_attach(otel_ctx)
-            result: AgentRunResult[Any] | None = None
+            self._runs[get_run_state_key(ctx)] = run_state
             try:
-                result = await handler()
-
-                if settings.include_content and span.is_recording():
-                    span.set_attribute(
-                        'final_result',
-                        (
-                            result.output
-                            if isinstance(result.output, str)
-                            else safe_to_json(serialize_any(redact_binary_content(result.output, settings))).decode()
-                        ),
-                    )
-
-                return result
+                yield
             finally:
                 _otel_detach(token)
+                self._runs.pop(get_run_state_key(ctx), None)
                 if span.is_recording():
-                    # Get current messages and metadata from the result (which holds the up-to-date state).
-                    # ctx.messages/ctx.metadata may be stale because the run state is mutated during execution.
-                    if result is not None:
-                        message_history = result.all_messages()
-                        metadata = result.metadata
-                    else:
-                        # On error, use the last messages seen during model requests.
-                        message_history = self._last_messages or ctx.messages
-                        metadata = ctx.metadata
-                    span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
-                    if result is not None:
+                    # Best effort: this runs while the exit stack unwinds, where a raised
+                    # exception would mask the run's own error. Telemetry must never do that.
+                    try:
+                        result = run_state.last_result
+                        if result is not None:
+                            message_history, metadata = result.all_messages(), result.metadata
+                        else:
+                            message_history, metadata = run_state.last_messages or ctx.messages, run_state.metadata
+                        span.set_attributes(
+                            self._run_span_end_attributes(ctx.usage, run_state, message_history, metadata)
+                        )
+                    except Exception as attribute_error:
+                        warnings.warn(
+                            f'Failed to record agent run span attributes: {attribute_error!r}',
+                            RuntimeWarning,
+                            stacklevel=1,
+                        )
+                    if run_state.last_result is not None:
                         # One O(history) pass per run: turn any silent staleness the per-request
                         # fragment cache may have recorded into a loud signal. Skipped when the run
                         # errored: with warnings configured as errors, warning here in the `finally`
                         # would displace the propagating run exception.
-                        if self._message_json_cache and has_stale_message_json(
-                            settings, message_history, self._message_json_cache
+                        if run_state.message_json_cache and has_stale_message_json(
+                            settings, run_state.last_result.all_messages(), run_state.message_json_cache
                         ):
                             warnings.warn(
                                 'In-place mutation of messages already in the history was detected during this run: '
@@ -225,17 +226,43 @@ class Instrumentation(AbstractCapability[Any]):
                                 MessageHistoryMutatedWarning,
                             )
 
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Record the resolved model once run assembly is complete."""
+        self._record_run_context(ctx)
+
+    async def after_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        result: AgentRunResult[Any],
+    ) -> AgentRunResult[Any]:
+        """Run last (outermost capability, reversed dispatch) to capture replacements and recoveries."""
+        run_state = self._run_state(ctx)
+        if run_state is None:
+            return result
+        run_state.last_result = result
+        span = run_state.run_span
+        if self.settings.include_content and span.is_recording():
+            span.set_attribute(
+                'final_result',
+                result.output
+                if isinstance(result.output, str)
+                else safe_to_json(serialize_any(redact_binary_content(result.output, self.settings))).decode(),
+            )
+        return result
+
     def _run_span_end_attributes(
         self,
-        ctx: RunContext[Any],
+        usage: RunUsage,
+        run_state: _RunState,
         message_history: list[ModelMessage],
         metadata: dict[str, Any] | None,
     ) -> dict[str, str | int | float | bool]:
         """Compute the end-of-run span attributes."""
         settings = self.settings
-        new_message_index = self._new_message_index
+        new_message_index = run_state.new_message_index
 
-        last_instructions = get_instructions(message_history, self._last_model_request_parameters)
+        last_instructions = get_instructions(message_history, run_state.last_model_request_parameters)
         attrs: dict[str, Any] = {
             'pydantic_ai.all_messages': safe_to_json(
                 settings.messages_to_otel_messages(list(message_history))
@@ -246,7 +273,7 @@ class Instrumentation(AbstractCapability[Any]):
         if new_message_index > 0:
             attrs['pydantic_ai.new_message_index'] = new_message_index
 
-        if self._variable_instructions:
+        if run_state.variable_instructions:
             attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
@@ -255,10 +282,10 @@ class Instrumentation(AbstractCapability[Any]):
         usage_attrs = (
             {
                 k.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): v
-                for k, v in ctx.usage.opentelemetry_attributes().items()
+                for k, v in usage.opentelemetry_attributes().items()
             }
             if settings.use_aggregated_usage_attribute_names
-            else ctx.usage.opentelemetry_attributes()
+            else usage.opentelemetry_attributes()
         )
 
         return {
@@ -275,6 +302,16 @@ class Instrumentation(AbstractCapability[Any]):
             ).decode(),
         }
 
+    def _run_state(self, ctx: RunContext[Any]) -> _RunState | None:
+        return self._runs.get(get_run_state_key(ctx))
+
+    def _record_run_context(self, ctx: RunContext[Any]) -> None:
+        run_state = self._run_state(ctx)
+        if run_state is None:
+            return
+        run_state.metadata = ctx.metadata
+        run_state.run_span.set_attribute('model_name', ctx.model.model_name)
+
     # ------------------------------------------------------------------
     # wrap_model_request — model request span
     # ------------------------------------------------------------------
@@ -288,27 +325,36 @@ class Instrumentation(AbstractCapability[Any]):
     ) -> ModelResponse:
         # Track the latest messages so _run_span_end_attributes has them on error paths
         # (ctx.messages may be stale because UserPromptNode replaces the list reference).
-        self._last_messages = request_context.messages
+        run_state = self._run_state(ctx)
+        if run_state is not None:
+            run_state.last_messages = request_context.messages
 
-        with open_model_request_span(self.settings, request_context, message_json_cache=self._message_json_cache) as (
+        if run_state is not None:
+            message_json_cache = run_state.message_json_cache
+        else:
+            message_json_cache = self._fallback_message_json_cache = (
+                self._fallback_message_json_cache or MessageJsonCache()
+            )
+        with open_model_request_span(self.settings, request_context, message_json_cache=message_json_cache) as (
             finish,
             prepared_request_context,
         ):
-            # Stash for `_run_span_end_attributes`: feeding the parameters into
-            # `get_instructions` lets it use the canonical `instruction_parts` source
-            # (which includes prompted-output template instructions and is properly sorted)
-            # instead of falling back to reading `ModelRequest.instructions` from history.
-            self._last_model_request_parameters = prepared_request_context.model_request_parameters
+            if run_state is not None:
+                # Stash for `_run_span_end_attributes`: feeding the parameters into
+                # `get_instructions` lets it use the canonical `instruction_parts` source
+                # (which includes prompted-output template instructions and is properly sorted)
+                # instead of falling back to reading `ModelRequest.instructions` from history.
+                run_state.last_model_request_parameters = prepared_request_context.model_request_parameters
 
-            # Track whether the fully formatted instructions (including prompted-output schemas) vary across requests.
-            # This does an apples-to-apples comparison of the final payload sent to the model.
-            current_instructions = get_instructions(
-                request_context.messages, prepared_request_context.model_request_parameters
-            )
-            if not isinstance(self._last_formatted_instructions, Unset):
-                if current_instructions != self._last_formatted_instructions:
-                    self._variable_instructions = True
-            self._last_formatted_instructions = current_instructions
+                # Track whether the fully formatted instructions (including prompted-output schemas) vary across requests.
+                # This does an apples-to-apples comparison of the final payload sent to the model.
+                current_instructions = get_instructions(
+                    request_context.messages, prepared_request_context.model_request_parameters
+                )
+                if not isinstance(run_state.last_formatted_instructions, Unset):
+                    if current_instructions != run_state.last_formatted_instructions:
+                        run_state.variable_instructions = True
+                run_state.last_formatted_instructions = current_instructions
 
             response = await handler(request_context)
             # For streaming requests, the agent graph's handler reports TTFT through
