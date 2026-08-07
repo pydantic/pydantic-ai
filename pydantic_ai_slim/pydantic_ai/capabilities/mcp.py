@@ -116,7 +116,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         Returns `None` only when there's nothing to derive from — no `id`, no native `MCPServerTool`,
         and `url is None` (e.g. a non-URL `local=` client that carries its own connection).
         """
-        if self.id:
+        if self.id is not None:
             return self.id
         # An explicit `native=MCPServerTool(id=...)` carries its own id; key off it so the local
         # fallback's `unless_native` marker matches the native tool that's actually advertised.

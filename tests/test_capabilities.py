@@ -8704,6 +8704,8 @@ class TestMCPCapability:
             (MCP[object](url='https://mcp.example.com/api'), 'mcp.example.com-api'),
             # explicit id wins
             (MCP[object](url='https://mcp.example.com/api', id='docs'), 'docs'),
+            # `None` is the only "unset" marker, so a falsy but explicit id is not derived over
+            (MCP[object](url='https://mcp.example.com/api', id=''), ''),
             # native MCPServerTool id is reused for the local fallback
             (
                 MCP[object](

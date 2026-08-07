@@ -32,9 +32,10 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     Or subclassed to set defaults by overriding `_default_native`, `_default_local`,
     `_default_toolset_id`, and `_requires_native`.
     The built-in [`WebSearch`][pydantic_ai.capabilities.WebSearch],
-    [`WebFetch`][pydantic_ai.capabilities.WebFetch], and
-    [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] capabilities
-    are all subclasses.
+    [`WebFetch`][pydantic_ai.capabilities.WebFetch],
+    [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration],
+    [`XSearch`][pydantic_ai.capabilities.XSearch], and
+    [`MCP`][pydantic_ai.capabilities.MCP] capabilities are all subclasses.
     """
 
     native: AgentNativeTool[AgentDepsT] | bool = True
