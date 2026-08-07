@@ -88,6 +88,8 @@ binding the agent's session configuration (instructions, tools, voice, VAD) serv
   that negotiates the WebRTC call itself, when you don't relay the SDP through your backend.
 
 ```python
+import asyncio
+
 from pydantic_ai import Agent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
@@ -98,10 +100,15 @@ realtime = agent.realtime(OpenAIRealtimeModel('gpt-realtime'))
 # In your `POST /offer` handler, `sdp_offer` is the browser's SDP offer (the request body):
 async def handle_offer(sdp_offer: str) -> str:
     answer = await realtime.answer_webrtc_offer(sdp_offer)
-    # Return `answer.sdp` to the browser, then run the agent over the sideband:
-    async with realtime.session(provider_session=answer.session) as session:
-        async for event in session:
-            ...
+
+    async def run_sideband() -> None:
+        async with realtime.session(provider_session=answer.session) as session:
+            async for event in session:
+                ...
+
+    # The browser applies the answer as its remote description before any media flows, so the sideband
+    # runs as a background task and the handler returns the answer straight away.
+    asyncio.create_task(run_sideband())
     return answer.sdp
 ```
 

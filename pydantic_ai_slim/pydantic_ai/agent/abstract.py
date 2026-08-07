@@ -2148,7 +2148,9 @@ class AgentRealtime(Generic[AgentDepsT]):
 
         This delegates to
         [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer], which is implemented
-        by the OpenAI and Azure OpenAI realtime models. Other models raise `NotImplementedError`.
+        by the OpenAI and Azure OpenAI realtime models. Other models raise
+        [`UserError`][pydantic_ai.exceptions.UserError]; branch on
+        [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] to check up front.
         """
         async with self._agent._resolve_realtime_session(  # pyright: ignore[reportPrivateUsage]
             self._model,
@@ -2184,7 +2186,8 @@ class AgentRealtime(Generic[AgentDepsT]):
 
         This delegates to [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret],
         which is implemented by the OpenAI and Azure OpenAI realtime models. Other models raise
-        `NotImplementedError`.
+        [`UserError`][pydantic_ai.exceptions.UserError]; branch on
+        [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] to check up front.
 
         Args:
             expires_after_seconds: Requested lifetime of the client secret in seconds. The provider may

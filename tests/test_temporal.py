@@ -2845,6 +2845,17 @@ async def test_temporal_agent_realtime_session_in_workflow():
                 pass  # pragma: no cover
 
 
+async def test_temporal_agent_realtime_signaling_in_workflow():
+    # Browser-call signaling issues a live provider request, so it is guarded like a session: the two
+    # helpers reach the agent through `_resolve_realtime_session`, which the wrapper guards too.
+    with patch.object(workflow, 'in_workflow', return_value=True):
+        realtime = simple_temporal_agent.realtime(cast('Any', object()))
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            await realtime.answer_webrtc_offer('v=0')
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            await realtime.create_client_secret()
+
+
 class _FakeRealtimeConnection(RealtimeConnection):
     async def send(self, content: Any) -> None: ...  # pragma: no cover
 

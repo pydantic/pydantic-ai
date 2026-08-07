@@ -5,7 +5,7 @@ latency) while a **Pydantic AI sideband** on the server runs the agent's tools, 
 keeps the API key off the client.
 
 This is the recommended topology for browser voice agents (see the
-[realtime guide](https://ai.pydantic.dev/realtime/#browser--webrtc)). The server never sits in the
+[realtime guide](https://ai.pydantic.dev/realtime/lifecycle/#browser-webrtc)). The server never sits in the
 audio path — it is the control plane:
 
 ```
