@@ -2979,6 +2979,9 @@ def _bare_local(query: str) -> str:
     [
         pytest.param(WebSearch[object](local=_bare_local), 'web_search', None, id='web_search'),
         pytest.param(WebSearch[object](local=_bare_local, id='custom'), 'custom', 'custom', id='web_search-override'),
+        # `None` is the only "unset" marker anywhere in the capability id machinery, so a falsy but
+        # explicit id is a user choice and is not replaced by the default.
+        pytest.param(WebSearch[object](local=_bare_local, id=''), '', '', id='web_search-empty-override'),
         pytest.param(WebFetch[object](local=_bare_local), 'web_fetch', None, id='web_fetch'),
         pytest.param(WebFetch[object](local=_bare_local, id='custom'), 'custom', 'custom', id='web_fetch-override'),
         pytest.param(

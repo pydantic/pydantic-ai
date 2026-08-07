@@ -196,7 +196,10 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         toolset: AbstractToolset[AgentDepsT] = (
             cast(AbstractToolset[AgentDepsT], local)
             if isinstance(local, AbstractToolset)
-            else FunctionToolset([cast(Tool[AgentDepsT], local)], id=self.id or self._default_toolset_id())
+            else FunctionToolset(
+                [cast(Tool[AgentDepsT], local)],
+                id=self.id if self.id is not None else self._default_toolset_id(),
+            )
         )
 
         if self.native is not False:
