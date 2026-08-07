@@ -74,7 +74,7 @@ def _context_subtree_spans() -> typing.Generator[list[ReadableSpan] | SpanTreeRe
         with _set_exporter_context_id() as context_id:
             yield spans
     finally:
-        if context_id is not None:
+        if context_id is not None:  # pragma: no cover
             result = exporter.get_finished_spans(context_id)
             exporter.clear(context_id)
             spans.extend(result)
