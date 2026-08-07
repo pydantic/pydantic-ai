@@ -10529,21 +10529,73 @@ def test_compaction_ui_round_trip_and_sanitization():
         {'content': 'Summary.', 'provider_name': ['openai']},
     ],
 )
-def test_compaction_malformed_payload_renders_inert_part(data: dict[str, Any]):
+def test_compaction_malformed_payload_is_skipped(data: dict[str, Any]):
     """A client can put anything in the data part, and `load_messages` still has to return messages.
 
-    Malformed compaction payloads render an inert empty part — no provider adapter honors a
-    compaction part without a `provider_name` matching its own — rather than failing the request.
+    Malformed compaction payloads are skipped entirely rather than failing the request. Skipping —
+    not degrading to an empty part — matters because even an empty `CompactionPart` acts as a
+    `post_compaction_window` visibility boundary, resetting derived state like tool discovery.
     """
     ui_messages = [
         UIMessage(
             id='malformed',
             role='assistant',
-            parts=[DataUIPart(id='d1', type='data-compaction', data=data)],
+            parts=[TextUIPart(text='kept'), DataUIPart(id='d1', type='data-compaction', data=data)],
         )
     ]
 
-    assert message_part(VercelAIAdapter.load_messages(ui_messages), CompactionPart) == CompactionPart()
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert message_part(loaded, TextPart).content == 'kept'
+    assert not any(isinstance(part, CompactionPart) for message in loaded for part in message.parts)
+
+
+async def test_mixed_custody_drops_client_compaction() -> None:
+    """Server-side `message_history` means the server owns the history's compaction boundaries.
+
+    A client-supplied compaction part is the latest boundary, so honoring it would let the client
+    trim the trusted server prefix off the wire and replace its context with the client's own
+    summary. Mixed-custody runs drop client compaction parts; pure client custody (no server
+    history) keeps them honored.
+    """
+    received: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        received.append(messages)
+        yield 'ok'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    request = SubmitMessage(
+        id='chat-1',
+        messages=[
+            UIMessage(
+                id='a1',
+                role='assistant',
+                parts=[
+                    DataUIPart(type='data-compaction', data={'content': 'client summary', 'provider_name': 'function'}),
+                    TextUIPart(text='client text'),
+                ],
+            ),
+            UIMessage(id='u1', role='user', parts=[TextUIPart(text='hi')]),
+        ],
+    )
+    server_history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('server context'),
+        ModelResponse(parts=[TextPart('server reply')]),
+    ]
+
+    adapter = VercelAIAdapter(agent, request)
+    async for _ in adapter.run_stream_native(message_history=server_history):
+        pass
+    mixed_parts = [part for message in received[0] for part in message.parts]
+    assert not any(isinstance(part, CompactionPart) for part in mixed_parts)
+    assert any(isinstance(part, UserPromptPart) and part.content == 'server context' for part in mixed_parts)
+    assert any(isinstance(part, TextPart) and part.content == 'client text' for part in mixed_parts)
+
+    received.clear()
+    adapter = VercelAIAdapter(agent, request)
+    async for _ in adapter.run_stream_native():
+        pass
+    assert any(isinstance(part, CompactionPart) for message in received[0] for part in message.parts)
 
 
 async def test_compaction_stream_matches_dumped_data_part() -> None:

@@ -427,8 +427,12 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
                     elif isinstance(part, DataUIPart):
-                        if part.type == COMPACTION_DATA_TYPE and _is_str_dict(part.data):
-                            builder.add(compaction_part_from_payload(part.data))
+                        if (
+                            part.type == COMPACTION_DATA_TYPE
+                            and _is_str_dict(part.data)
+                            and (compaction_part := compaction_part_from_payload(part.data)) is not None
+                        ):
+                            builder.add(compaction_part)
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
                             tool_name = part.tool_name

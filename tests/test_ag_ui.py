@@ -7668,6 +7668,23 @@ def test_compaction_ui_round_trip_and_sanitization():
     )
 
 
+def test_compaction_malformed_payload_is_skipped():
+    """Malformed compaction activity content is skipped entirely rather than failing the request.
+
+    Skipping — not degrading to an empty part — matters because even an empty `CompactionPart`
+    acts as a `post_compaction_window` visibility boundary, resetting derived state like tool
+    discovery.
+    """
+    activity = ActivityMessage(
+        id='malformed',
+        activity_type='pydantic_ai_compaction',
+        content={'content': 42},
+    )
+
+    loaded = AGUIAdapter.load_messages([activity])
+    assert not any(isinstance(part, CompactionPart) for message in loaded for part in message.parts)
+
+
 async def test_compaction_event_skipped_for_legacy_ag_ui() -> None:
     """Compaction activity events are omitted when the negotiated AG-UI version predates them."""
     event_stream = AGUIEventStream(

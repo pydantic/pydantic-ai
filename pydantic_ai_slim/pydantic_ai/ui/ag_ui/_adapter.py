@@ -575,7 +575,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     if activity_msg.activity_type == TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE:
                         builder.add(tool_availability_delta_from_payload(activity_msg.content))
                     elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
-                        builder.add(compaction_part_from_payload(activity_msg.content))
+                        if (compaction_part := compaction_part_from_payload(activity_msg.content)) is not None:
+                            builder.add(compaction_part)
                     elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')

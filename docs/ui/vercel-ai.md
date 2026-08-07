@@ -160,7 +160,7 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 
 ## Compaction
 
-[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations remain usable when a frontend such as `useChat` owns the message history. Client-supplied compaction items are honored — the conversation stays compacted — but never trusted to have retained the server's standing system prompt, which is re-inserted on ingest. See [History custody](../capabilities/compaction.md#history-custody) for the trade-offs of client-side custody and the recommended server-side pattern.
+[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations remain usable when a frontend such as `useChat` owns the message history. Client-supplied compaction items are honored when the client owns the conversation — the conversation stays compacted — but they are never trusted to have retained the server's standing system prompt (re-inserted on ingest), and they are dropped entirely when the run also has server-side `message_history`, since the server then owns the history's boundaries. See [History custody](../capabilities/compaction.md#history-custody) for the trade-offs of client-side custody and the recommended server-side pattern.
 
 ## Tool Approval
 

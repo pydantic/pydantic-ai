@@ -4,7 +4,7 @@ import re
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import KW_ONLY, Field, dataclass
+from dataclasses import KW_ONLY, Field, dataclass, replace
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
@@ -30,6 +30,7 @@ from pydantic_ai.messages import (
     CompactionPart,
     ForceDownloadMode,
     ModelMessage,
+    ModelResponse,
     ToolAvailabilityDeltaPart,
     sanitize_messages,
 )
@@ -125,19 +126,46 @@ def compaction_payload(part: CompactionPart) -> dict[str, Any]:
     }
 
 
-def compaction_part_from_payload(payload: Mapping[str, Any]) -> CompactionPart:
+def compaction_part_from_payload(payload: Mapping[str, Any]) -> CompactionPart | None:
     """Build a [`CompactionPart`][pydantic_ai.messages.CompactionPart] from a UI payload.
 
     Like `tool_availability_delta_from_payload`, validation here is shape hygiene at the UI
-    boundary, not a security gate: malformed data
-    renders an inert empty part — no provider adapter honors a compaction part without a
-    `provider_name` matching its own — rather than raising out of `load_messages` and taking the
-    whole request with it.
+    boundary, not a security gate: malformed data returns `None` and the part is skipped, rather
+    than raising out of `load_messages` and taking the whole request with it. Skipping — instead of
+    degrading to an empty part — is deliberate: even an empty `CompactionPart` acts as a visibility
+    boundary for [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] (which
+    ignores `provider_name`), resetting derived state like tool discovery, so it would not be
+    inert. The cost is that a corrupted-in-transit valid boundary un-compacts the conversation —
+    acceptable, since the protocol history still holds the plaintext messages and the window merely
+    re-inflates until the next compaction.
     """
     try:
         return _COMPACTION_PART_ADAPTER.validate_python(payload)
     except ValidationError:
-        return CompactionPart()
+        return None
+
+
+def _drop_compaction_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """Drop client-supplied compaction parts from a mixed-custody run's frontend messages.
+
+    A compaction part is the latest history boundary: provider adapters trim everything before it
+    from the request, and [`post_compaction_window`][pydantic_ai.messages.post_compaction_window]
+    derives model-visible state from it. When the caller passed server-side `message_history`,
+    honoring a client-supplied boundary would let the client hide that trusted prefix from the
+    model, replacing it with the client's own summary or blob — so mixed-custody runs keep only the
+    server's boundaries. With no server-side history, the client owns the conversation, boundaries
+    included, and its compaction parts are honored. A response left with no parts is dropped
+    entirely.
+    """
+    result: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse) and any(isinstance(part, CompactionPart) for part in message.parts):
+            parts = [part for part in message.parts if not isinstance(part, CompactionPart)]
+            if parts:
+                result.append(replace(message, parts=parts))
+        else:
+            result.append(message)
+    return result
 
 
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
@@ -512,6 +540,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             conversation_id = self.conversation_id
 
         frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
+        if message_history:
+            # Mixed custody: the server owns the history's compaction boundaries; a client-supplied
+            # one would trim the trusted server prefix off the wire. See `_drop_compaction_parts`.
+            frontend_messages = _drop_compaction_parts(frontend_messages)
         message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset
