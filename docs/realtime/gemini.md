@@ -80,17 +80,16 @@ interrupted turn in history. Other Live models ignore the setting.
 
 ### Native tools
 
-Gemini maps [`WebSearch`][pydantic_ai.capabilities.WebSearch] to Google Search grounding and
-[`WebFetch`][pydantic_ai.capabilities.WebFetch] to URL context, where the model supports them. Code
-execution is available through [`NativeTool`][pydantic_ai.capabilities.NativeTool] and
-[`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool]. Check
-`supported_native_tools` on the model profile.
+Gemini Live maps [`WebSearch`][pydantic_ai.capabilities.WebSearch] to Google Search grounding, the
+only native tool it supports — no Live model runs native code execution or URL context, so neither
+[`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] nor
+[`WebFetch`][pydantic_ai.capabilities.WebFetch] is advertised in `supported_native_tools`. Give
+those a `local=` fallback and the session runs the local tool instead: `CodeExecutionTool(local=...)`,
+or `WebFetch(native=False, local=True)`, which requires the `web-fetch` optional group
+(`pip install "pydantic-ai-slim[realtime,google,web-fetch]"`).
 
-Native-audio models do not support native URL context. Use `WebFetch(native=False, local=True)`
-instead, which requires the `web-fetch` optional group
-(`pip install "pydantic-ai-slim[realtime,google,web-fetch]"`). Gemini 2.5 also cannot combine native Google Search grounding with function tools; choose
-native grounding or local function-tool fallbacks unless using a model that supports the
-combination.
+Gemini 2.5 also cannot combine native Google Search grounding with function tools; choose native
+grounding or local function-tool fallbacks unless using a model that supports the combination.
 
 ## Feature support and limitations
 
