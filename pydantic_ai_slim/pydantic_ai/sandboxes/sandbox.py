@@ -35,6 +35,7 @@ from .references import SandboxConnector, SandboxRef, connect_sandbox_ref
 
 __all__ = ('FileWindow', 'Sandbox')
 
+
 @dataclass(frozen=True, kw_only=True)
 class FileWindow:
     """A line window of a sandbox file, as returned by [`Sandbox.read_file`][pydantic_ai.sandboxes.Sandbox.read_file]."""
