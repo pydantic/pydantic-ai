@@ -121,6 +121,15 @@ class WrapperModel(Model):
         return self.wrapped.system
 
     @property
+    def model_id(self) -> str:
+        # `Model.model_id` derives from `system` and `model_name`, which are forwarded above, so for
+        # most models this override is redundant. It matters for a wrapped model that computes its own
+        # ID: `FallbackModel` joins its sub-models' `model_id`s, which recombining the two joined
+        # strings can't reproduce. The ID names a Temporal activity and keys a Prefect cache, so a
+        # mangled one isn't only a telemetry concern.
+        return self.wrapped.model_id
+
+    @property
     def profile(self) -> ModelProfile:  # type: ignore[override]
         return self.wrapped.profile
 
@@ -128,6 +137,15 @@ class WrapperModel(Model):
     def settings(self) -> ModelSettings | None:
         """Get the settings from the wrapped model."""
         return self.wrapped.settings
+
+    @property
+    def base_url(self) -> str | None:
+        # `Model.base_url` defaults to `None`, so without this override normal attribute lookup
+        # succeeds and `__getattr__` never forwards. Two consumers read it: the `server.*` span
+        # attributes, and `best_effort_price(provider_api_url=...)` under
+        # `UsageLimits.count_tokens_before_request` — which prefers the URL over the provider name,
+        # so a wrapped model prices the same as an unwrapped one only once this forwards.
+        return self.wrapped.base_url
 
     def __getattr__(self, item: str):
         return getattr(self.wrapped, item)

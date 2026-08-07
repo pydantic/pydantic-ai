@@ -9,7 +9,7 @@ from pydantic_ai._deferred_capabilities import LoadCapabilityArgs, LoadCapabilit
 from pydantic_ai._instructions import normalize_toolset_instructions, resolve_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import InstructionPart
+from pydantic_ai.messages import InstructionPart, ToolReturn
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
@@ -68,7 +68,9 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             return await self._load_capability(tool_args, ctx)
         return await self.wrapped.call_tool(name, tool_args, ctx, tool)
 
-    async def _load_capability(self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> LoadCapabilityReturn:
+    async def _load_capability(
+        self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]
+    ) -> ToolReturn[LoadCapabilityReturn]:
         capability_id = tool_args['id']
         capability = ctx.capabilities.get(capability_id)
         if capability is None:
@@ -86,7 +88,9 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         instructions_text = InstructionPart.join(parts)
 
         ctx.loaded_capability_ids.add(capability_id)
-        return {'instructions': instructions_text} if instructions_text is not None else {}
+        result: LoadCapabilityReturn = {'instructions': instructions_text} if instructions_text is not None else {}
+        tools = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
+        return ToolReturn(return_value=result, tools=tools or None)
 
     async def _collect_owned_toolset_instructions(
         self, capability_id: str, ctx: RunContext[AgentDepsT]

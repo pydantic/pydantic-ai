@@ -208,13 +208,15 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
     if base_url := model.base_url:
         try:
             parsed = urlparse(base_url)
-        except Exception:  # pragma: no cover
+            # `urlparse` defers port validation to `.port`, so a malformed port raises on the read, not the parse.
+            hostname, port = parsed.hostname, parsed.port
+        except ValueError:
             pass
         else:
-            if parsed.hostname:  # pragma: no branch
-                attributes['server.address'] = parsed.hostname
-            if parsed.port:  # pragma: no branch
-                attributes['server.port'] = parsed.port
+            if hostname:  # pragma: no branch
+                attributes['server.address'] = hostname
+            if port:  # pragma: no branch
+                attributes['server.port'] = port
 
     return attributes
 
@@ -272,6 +274,12 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
 
     tool_definitions: list[dict[str, Any]] = []
     for tool in all_tools:
+        if model_request_parameters.visibility_of(tool.name) == 'withheld':
+            # Withheld tools are not represented anywhere in the request — recording their
+            # schema and description would put a tool the model cannot see (and whose hidden
+            # description may be sensitive) into telemetry. `via_history` and `deferred` tools
+            # do reach the model, so they stay.
+            continue
         tool_def: dict[str, Any] = {'type': 'function', 'name': tool.name}
         if tool.description:
             tool_def['description'] = tool.description

@@ -292,7 +292,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     if supports_advisor:
         supported_native_tools = supported_native_tools | {AdvisorTool}
 
-    return AnthropicModelProfile(
+    profile = AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
         supports_json_schema_output=supports_json_schema_output,
         anthropic_supports_fast_speed=anthropic_supports_fast_speed,
@@ -310,6 +310,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_forced_tool_choice=supports_forced_tool_choice,
         supported_native_tools=supported_native_tools,
     )
+    if supports_tool_search:
+        profile['tool_deferral_mode'] = 'standalone'
+    return profile
 
 
 def _code_execution_tool_versions(

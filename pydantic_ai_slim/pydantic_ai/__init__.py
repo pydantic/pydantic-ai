@@ -1,5 +1,6 @@
 from importlib.metadata import version as _metadata_version
 
+from ._cancel import CancellationToken
 from .agent import (
     Agent,
     AgentModelSettings,
@@ -39,6 +40,7 @@ from .exceptions import (
     ModelHTTPError,
     ModelRetry,
     PydanticAIDeprecationWarning,
+    RunCancelled,
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
@@ -102,6 +104,7 @@ from .messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
     ToolCallEvent,
     ToolCallPart,
@@ -175,6 +178,7 @@ __all__ = (
     '__version__',
     # agent
     'Agent',
+    'CancellationToken',
     'AgentModelSettings',
     'AgentRetries',
     'AgentSpec',
@@ -209,6 +213,7 @@ __all__ = (
     'ModelHTTPError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
+    'RunCancelled',
     'MessageHistoryMutatedWarning',
     'PydanticAIDeprecationWarning',
     'SkipModelRequest',
@@ -270,6 +275,7 @@ __all__ = (
     'TextPart',
     'TextPartDelta',
     'ThinkingPart',
+    'ToolAvailabilityDeltaEvent',
     'ToolAvailabilityDeltaPart',
     'ThinkingPartDelta',
     'ToolCallEvent',
