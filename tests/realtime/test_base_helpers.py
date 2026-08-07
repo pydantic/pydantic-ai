@@ -35,7 +35,9 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
+    RealtimeModelProfileSpec,
     RealtimeModelSettings,
+    RealtimeResponseInterruptedEvent,
     ReconnectPolicy,
 )
 from pydantic_ai.realtime._base import (
@@ -47,8 +49,11 @@ from pydantic_ai.realtime._base import (
 from pydantic_ai.realtime.codec import (
     DEFAULT_REALTIME_PROFILE,
     RealtimeConnection,
+    ResponseDone,
     merge_realtime_profile,
 )
+
+from .test_session import FakeRealtimeConnection, RealtimeSession, collect_events
 
 pytestmark = pytest.mark.anyio
 
@@ -77,8 +82,9 @@ class _BareModel(RealtimeModel):
 class _SearchOnlyModel(_BareModel):
     """A model whose implementation covers only part of what its provider advertises."""
 
-    def __init__(self, provider: Provider[Any]) -> None:
+    def __init__(self, provider: Provider[Any], *, profile: RealtimeModelProfileSpec | None = None) -> None:
         self._provider = provider
+        self._profile = profile
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -112,6 +118,17 @@ class _VoiceProvider(Provider[None]):
         }
 
 
+async def test_provider_reported_interruption_passes_straight_through() -> None:
+    """Only Gemini Live reports this, so no in-slice provider exercises the session's passthrough."""
+    conn = FakeRealtimeConnection([RealtimeResponseInterruptedEvent(), ResponseDone()])
+
+    events = await collect_events(RealtimeSession(conn))
+
+    assert [e for e in events if isinstance(e, RealtimeResponseInterruptedEvent)] == [
+        RealtimeResponseInterruptedEvent()
+    ]
+
+
 def test_merge_realtime_profile_layers_later_overrides_last() -> None:
     assert merge_realtime_profile(None) == {}
     assert merge_realtime_profile(
@@ -140,6 +157,33 @@ def test_model_profile_intersects_provider_tools_with_the_implementation() -> No
     assert provider.name == 'voice'
     assert model.base_url == 'https://voice.example.com'
     assert model.profile.get('supports_interruption') is True
+    assert model.profile.get('supported_native_tools') == frozenset({WebSearchTool})
+
+
+def test_user_profile_dict_merges_on_top_of_the_provider_defaults() -> None:
+    """The `profile=` dict form adds to (and overrides) what the provider advertised."""
+    model = _SearchOnlyModel(
+        _VoiceProvider(), profile={'supports_text_output': False, 'audio_output_sample_rate': 8000}
+    )
+
+    assert model.profile.get('supports_interruption') is True  # still the provider's claim
+    assert model.profile.get('supports_text_output') is False
+    assert model.profile.get('audio_output_sample_rate') == 8000
+
+
+def test_user_profile_callable_replaces_the_resolved_profile_wholesale() -> None:
+    """The callable form can drop a claim the provider made, which merging a dict cannot."""
+
+    def drop_interruption(resolved: RealtimeModelProfile) -> RealtimeModelProfile:
+        assert resolved.get('supports_interruption') is True
+        return {'supports_text_output': True, 'supported_native_tools': frozenset({WebSearchTool, WebFetchTool})}
+
+    model = _SearchOnlyModel(_VoiceProvider(), profile=drop_interruption)
+
+    assert 'supports_interruption' not in model.profile
+    assert model.profile.get('supports_text_output') is True
+    # The native-tool intersection still runs after the user layer, so a claim the model class does
+    # not implement is dropped even when the user asserted it.
     assert model.profile.get('supported_native_tools') == frozenset({WebSearchTool})
 
 

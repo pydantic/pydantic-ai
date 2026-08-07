@@ -384,6 +384,8 @@ The `message_history` parameter is trusted server-side state. If you load histor
 
 [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, and removes unresolved tool calls at the end of the history.
 
+Client-supplied compaction items remain compacted, but their provenance stamp is stripped so the server's standing system prompt is always re-inserted. The fast path that skips re-insertion is reserved for histories kept in server-side custody.
+
 ```python {title="sanitize untrusted message history" test="skip" lint="skip"}
 from pydantic_ai import Agent, ModelMessagesTypeAdapter
 from pydantic_ai.messages import sanitize_messages
