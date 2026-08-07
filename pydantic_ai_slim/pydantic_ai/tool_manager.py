@@ -88,6 +88,14 @@ class ValidatedToolCall(Generic[AgentDepsT]):
     """
 
 
+class _ToolUnavailable(ModelRetry):
+    """A `ModelRetry` refusing a call because the tool is not available yet.
+
+    A distinct type only so `_make_validation_failure` can widen the retry budget for it. It
+    reaches the model as an ordinary retry prompt, exactly like the `ModelRetry` it replaced.
+    """
+
+
 class _ValidationDeferral(Exception):
     """Internal signal that validation requested approval for or deferred the tool call.
 
@@ -222,12 +230,17 @@ class ToolManager(Generic[AgentDepsT]):
         tool = self.tools.get(name)
         return tool.tool_def if tool is not None else None
 
-    def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> None:
-        """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
+    def _check_max_retries(self, name: str, max_retries: int, error: Exception, *, extra: int = 0) -> None:
+        """Raise UnexpectedModelBehavior if the tool has exceeded its max retries.
+
+        `extra` widens the budget for this failure only, without touching the stored count — the
+        offset belongs here rather than in `retries`, which is user-visible through `ctx.retry`
+        and `ctx.last_attempt` and would carry a sentinel into every tool and hook.
+        """
         assert self.ctx is not None
         # `>=` rather than `==` so a negative budget raises immediately instead of looping forever
         # (the count starts at 0 and only ever grows, so it would never equal a negative target).
-        if self.ctx.retries.get(name, 0) >= max_retries:
+        if self.ctx.retries.get(name, 0) >= max_retries + extra:
             raise UnexpectedModelBehavior(
                 f'Tool {name!r} exceeded max retries count of {max_retries}. Consider raising the retry '
                 'limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'
@@ -481,7 +494,7 @@ class ToolManager(Generic[AgentDepsT]):
                 msg = 'No tools available.'
             raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
         if (unavailable := self._unavailable_reason(tool.tool_def)) is not None:
-            raise ModelRetry(unavailable)
+            raise _ToolUnavailable(unavailable)
         return name, tool
 
     def _unavailable_reason(self, tool_def: ToolDefinition) -> str | None:
@@ -552,7 +565,12 @@ class ToolManager(Generic[AgentDepsT]):
         cause = (
             error.__cause__ if isinstance(error, ToolRetryError) and isinstance(error.__cause__, Exception) else error
         )
-        self._check_max_retries(name, max_retries, cause)
+        # An availability refusal is not a mistake about *this* tool's arguments — it says the run
+        # is not in a state where the tool can be called, and names the step that fixes it. Charging
+        # it like a validation error makes a single act of model disobedience fatal on the default
+        # budget of 1, which defeats a message written to be acted on. One extra attempt is enough
+        # for the model to search or load and come back, and keeps the ceiling finite.
+        self._check_max_retries(name, max_retries, cause, extra=1 if isinstance(error, _ToolUnavailable) else 0)
         self.failed_tools.add(name)
         validation_error = error if isinstance(error, ToolRetryError) else self._wrap_error_as_retry(name, call, error)
         return ValidatedToolCall(

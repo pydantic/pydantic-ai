@@ -7331,6 +7331,33 @@ class TestUnavailableCapabilityToolsAreNotCallable:
             'the search result has shown you its schema.'
         )
 
+    async def test_an_availability_refusal_leaves_room_to_act_on_it(self):
+        """The refusal grants one attempt beyond the tool's budget, and no more.
+
+        It is not a mistake about the call's arguments — it says the run isn't in a state where the
+        tool can be called, and names the step that fixes it. On the default budget of 1, charging
+        it like a validation error would make a single act of disobedience fatal, so a message
+        written to be acted on would never get the chance. The ceiling stays finite: a model that
+        never takes the correction still ends the run.
+        """
+
+        def call_twice_then_report(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            refusals = list(iter_message_parts(messages, ModelRequest, RetryPromptPart))
+            if len(refusals) >= 2:
+                return make_text_response(f'refused {len(refusals)}x, still running')
+            return ModelResponse(parts=[ToolCallPart(tool_name='secret_op', args={}, tool_call_id=f's{len(refusals)}')])
+
+        agent = Agent(FunctionModel(call_twice_then_report), capabilities=[self._guarded_capability()])
+        assert (await agent.run('hello')).output == snapshot('refused 2x, still running')
+
+        def keep_calling(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            refusals = list(iter_message_parts(messages, ModelRequest, RetryPromptPart))
+            return ModelResponse(parts=[ToolCallPart(tool_name='secret_op', args={}, tool_call_id=f's{len(refusals)}')])
+
+        stubborn = Agent(FunctionModel(keep_calling), capabilities=[self._guarded_capability()])
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'secret_op' exceeded max retries"):
+            await stubborn.run('hello')
+
     async def test_unavailable_capability_tool_is_not_advertised(self):
         """The tool is withheld as well as uncallable — never visible-but-unusable."""
         advertised: list[list[str]] = []
