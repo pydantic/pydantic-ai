@@ -311,7 +311,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         for the reveal state sent through the model-request pipeline.
         """
         if isinstance(tool, str):
-            if self.tool_manager is None:
+            if self.tool_manager is None or self.tool_manager.tools is None:
+                # Same live-state condition as `available_tool_names`: mid-`get_tools` the
+                # manager exists but its tool set isn't resolved yet, so fall back to history.
                 return tool in self.available_tool_names
             tool_def = self.tools.get(tool)
             if tool_def is None:

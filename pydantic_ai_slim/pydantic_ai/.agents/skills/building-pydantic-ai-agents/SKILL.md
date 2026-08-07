@@ -235,7 +235,7 @@ agent = Agent(instructions='You are a helpful voice assistant.')
 
 async def main(microphone_chunk: bytes):
     settings = OpenAIRealtimeModelSettings(
-        voice='alloy', turn_detection=TurnDetection(sensitivity='high')
+        openai_voice='alloy', turn_detection=TurnDetection(sensitivity='high')
     )
     async with agent.realtime(
         'openai:gpt-realtime', model_settings=settings
