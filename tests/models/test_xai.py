@@ -119,6 +119,26 @@ pytestmark = [
     pytest.mark.vcr,
 ]
 
+
+def test_xai_hidden_tools_stay_off_the_wire():
+    """Guard xAI's single-line switch from `tool_defs` to `declared_tool_defs`."""
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(api_key='foobar'))
+    hidden = ToolDefinition(
+        name='process_refund',
+        description='Process a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    visible = ToolDefinition(name='visible')
+
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+    assert prepared.tool_visibility == {'process_refund': 'withheld', 'visible': 'visible'}
+
+    tool_defs, _ = model._get_tool_choice({}, prepared)  # pyright: ignore[reportPrivateUsage]
+    assert list(tool_defs) == ['visible']
+
+
 # Test model constants
 XAI_NON_REASONING_MODEL = 'grok-4-fast-non-reasoning'
 XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
@@ -3543,6 +3563,37 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
             }
         ]
     )
+
+
+@pytest.mark.parametrize('agent_count', [4, 16])
+async def test_xai_agent_count_forwarded(allow_model_requests: None, agent_count: int):
+    """xai_agent_count is forwarded to the SDK as agent_count when set."""
+    response = create_response(content='response with agent count')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        model_settings=XaiModelSettings(xai_agent_count=agent_count),
+    )
+
+    result = await agent.run('hello')
+    assert result.output == 'response with agent count'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    assert kwargs['agent_count'] == agent_count
+
+
+async def test_xai_agent_count_unset(allow_model_requests: None):
+    """agent_count is not sent when xai_agent_count is unset (server default applies)."""
+    response = create_response(content='response without agent count')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    assert 'agent_count' not in kwargs
 
 
 async def test_xai_model_properties():

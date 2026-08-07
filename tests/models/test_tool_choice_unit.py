@@ -266,7 +266,105 @@ RAISES_CASES = [
         },
         match=r'Invalid tool names in `tool_choice`:.*Available function tools:',
     ),
+    dict(
+        id='single_withheld',
+        tool_choice=['hidden'],
+        params_kwargs={
+            'function_tools': [make_tool('hidden')],
+            'tool_visibility': {'hidden': 'withheld'},
+            'allow_text_output': True,
+        },
+        match=r"No tool in `tool_choice` is currently available: \['hidden'\]",
+    ),
+    dict(
+        # `required` with every function tool withheld would put `required` next to an empty
+        # `tools` list on the wire — fail loudly instead of letting the provider reject or
+        # silently degrade.
+        id='required_all_withheld',
+        tool_choice='required',
+        params_kwargs={
+            'function_tools': [
+                make_tool('hidden_a'),
+                make_tool('hidden_b'),
+            ],
+            'tool_visibility': {'hidden_a': 'withheld', 'hidden_b': 'withheld'},
+            'allow_text_output': True,
+        },
+        match=r'"required", but every function tool is hidden until revealed',
+    ),
 ]
+
+
+def test_resolve_tool_choice_allows_deferred_declaration() -> None:
+    params = ModelRequestParameters(
+        function_tools=[make_tool('corpus_tool')],
+        tool_visibility={'corpus_tool': 'deferred'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ['corpus_tool']}, params) == 'required'
+
+
+def test_resolve_tool_choice_filters_hidden_names_when_one_is_available() -> None:
+    params = ModelRequestParameters(
+        function_tools=[make_tool('visible'), make_tool('hidden')],
+        tool_visibility={'visible': 'visible', 'hidden': 'withheld'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ['visible', 'hidden']}, params) == ('required', {'visible'})
+
+
+def test_resolve_tool_choice_keeps_via_history_names() -> None:
+    """A `'via_history'` definition travels on the tool-addition channel and stays forcible
+    (live-verified against OpenAI Responses), so it must survive the hidden-name filter."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('visible'), make_tool('revealed')],
+        tool_visibility={'visible': 'visible', 'revealed': 'via_history'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ['revealed']}, params) == ('required', {'revealed'})
+
+
+def test_resolve_tool_choice_required_with_only_via_history_tools() -> None:
+    """`required` stays valid when every function tool travels via the tool-addition channel:
+    the definitions are on the wire in history items, and OpenAI accepts `required` with an
+    empty `tools` array in that shape (live-verified)."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('revealed_a'), make_tool('revealed_b')],
+        tool_visibility={'revealed_a': 'via_history', 'revealed_b': 'via_history'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': 'required'}, params) == 'required'
+
+
+def test_resolve_tool_choice_tool_or_output_degrades_to_output_tools_when_all_hidden() -> None:
+    """`ToolOrOutput` naming only hidden function tools keeps the run alive: with output tools
+    still usable, the choice degrades to those instead of raising."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('hidden')],
+        output_tools=[make_tool('final_result')],
+        tool_visibility={'hidden': 'withheld'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['hidden'])}, params) == (
+        'auto',
+        {'final_result'},
+    )
+
+
+def test_resolve_tool_choice_rejects_choice_reduced_to_unknown_names() -> None:
+    """`['hidden', 'typo']` must not reach the wire as `required` targeting only the typo:
+    the hidden name is filtered, the unknown one passes through by the dynamic-availability
+    rule, and a choice left with no available name fails loudly instead."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('hidden')],
+        tool_visibility={'hidden': 'withheld'},
+        allow_text_output=True,
+    )
+    with (
+        pytest.warns(UserWarning, match=r'not currently available and will be ignored'),
+        pytest.raises(UserError, match=r"No tool in `tool_choice` is currently available: \['hidden', 'typo'\]"),
+    ):
+        resolve_tool_choice({'tool_choice': ['hidden', 'typo']}, params)
 
 
 @pytest.mark.parametrize('case', RAISES_CASES, ids=lambda c: c['id'])

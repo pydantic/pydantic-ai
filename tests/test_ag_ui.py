@@ -22,6 +22,7 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -45,6 +46,7 @@ from pydantic_ai import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
@@ -278,6 +280,7 @@ def test_emitted_event_surface_is_pinned() -> None:
     """
     assert _constructed_ag_ui_event_names() == snapshot(
         {
+            'ActivitySnapshotEvent',
             'ReasoningEncryptedValueEvent',
             'ReasoningEndEvent',
             'ReasoningMessageContentEvent',
@@ -7139,6 +7142,35 @@ async def test_run_finished_no_outcome_when_sdk_lacks_interrupts(monkeypatch: py
     assert 'outcome' not in run_finished
 
 
+@requires_ag_ui('0.1.13')
+async def test_run_cancelled_finishes_without_error_or_outcome() -> None:
+    agent = Agent(model=TestModel())
+
+    @agent.tool
+    async def tool(ctx: RunContext, query: str) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='hi')))
+    event_types = [event['type'] for event in events]
+
+    assert event_types == snapshot(
+        [
+            'RUN_STARTED',
+            'TOOL_CALL_START',
+            'TOOL_CALL_ARGS',
+            'TOOL_CALL_END',
+            'TOOL_CALL_RESULT',
+            'REASONING_ENCRYPTED_VALUE',
+            'RUN_FINISHED',
+        ]
+    )
+    assert 'outcome' not in events[-1]
+    assert 'RUN_ERROR' not in event_types
+
+
 @pytestmark_interrupts
 async def test_run_finished_interrupt_outcome_for_pending_approval() -> None:
     """When the run ends with `DeferredToolRequests.approvals`, the adapter emits an
@@ -7583,6 +7615,163 @@ async def test_interrupt_resume_roundtrip_executes_approved_tool() -> None:
 # endregion
 def test_tool_availability_delta_ui_round_trip():
     """The reserved activity discriminator preserves control history through AG-UI."""
-    messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])]
+    messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='load-1')])]
 
     assert AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages)) == messages
+
+
+def test_compaction_ui_round_trip_and_sanitization():
+    """Compaction data stays faithful on the wire while client provenance is sanitized on ingest."""
+    compaction = CompactionPart(
+        content='Summary of the conversation.',
+        id='cmp-1',
+        provider_name='openai',
+        provider_details={
+            'encrypted_content': 'blob',
+            'pydantic_ai_standing_prompt_planted': True,
+        },
+    )
+    messages = [ModelResponse(parts=[compaction])]
+
+    ag_ui_messages = AGUIAdapter.dump_messages(messages)
+    assert [message.model_dump(exclude_none=True) for message in ag_ui_messages] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'activity',
+                'activity_type': 'pydantic_ai_compaction',
+                'content': {
+                    'content': 'Summary of the conversation.',
+                    'id': 'cmp-1',
+                    'provider_name': 'openai',
+                    'provider_details': {
+                        'encrypted_content': 'blob',
+                        'pydantic_ai_standing_prompt_planted': True,
+                    },
+                },
+            }
+        ]
+    )
+    loaded = AGUIAdapter.load_messages(ag_ui_messages)
+    assert message_part(loaded, CompactionPart) == compaction
+
+    adapter = AGUIAdapter(
+        Agent(TestModel()),
+        create_input(*ag_ui_messages),
+    )
+    sanitized = adapter.sanitize_messages(adapter.messages)
+    assert message_part(sanitized, CompactionPart) == CompactionPart(
+        content='Summary of the conversation.',
+        id='cmp-1',
+        provider_name='openai',
+        provider_details={'encrypted_content': 'blob'},
+    )
+
+
+def test_compaction_malformed_payload_is_skipped():
+    """Malformed compaction activity content is skipped entirely rather than failing the request.
+
+    Skipping — not degrading to an empty part — matters because even an empty `CompactionPart`
+    acts as a `post_compaction_window` visibility boundary, resetting derived state like tool
+    discovery.
+    """
+    activity = ActivityMessage(
+        id='malformed',
+        activity_type='pydantic_ai_compaction',
+        content={'content': 42},
+    )
+
+    loaded = AGUIAdapter.load_messages([activity])
+    assert not any(isinstance(part, CompactionPart) for message in loaded for part in message.parts)
+
+
+async def test_compaction_event_skipped_for_legacy_ag_ui() -> None:
+    """Compaction activity events are omitted when the negotiated AG-UI version predates them."""
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Continue')),
+        ag_ui_version='0.1.10',
+    )
+    events = [
+        event
+        async for event in event_stream.handle_compaction(CompactionPart(content='Summary.', provider_name='anthropic'))
+    ]
+    assert events == []
+
+
+@requires_ag_ui('0.1.19')
+async def test_compaction_stream_matches_dumped_activity_message() -> None:
+    """A streamed compaction uses the same activity type and faithful content as dumped history."""
+    compaction = CompactionPart(
+        content='Summary of the conversation.',
+        id='cmp-1',
+        provider_name='openai',
+        provider_details={'encrypted_content': 'blob'},
+    )
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Continue')),
+        ag_ui_version='0.1.19',
+    )
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=compaction)
+        yield PartEndEvent(index=0, part=compaction)
+
+    events = [
+        json.loads(event_stream.encode_event(event).removeprefix('data: '))
+        async for event in event_stream.transform_stream(event_generator())
+    ]
+    snapshot_event = next(event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT')
+
+    [activity] = AGUIAdapter.dump_messages([ModelResponse(parts=[compaction])])
+    assert isinstance(activity, ActivityMessage)
+    assert snapshot_event['activityType'] == activity.activity_type
+    assert snapshot_event['content'] == activity.content
+
+
+async def test_tool_availability_delta_event_skipped_for_legacy_ag_ui() -> None:
+    """Activity events are omitted when the negotiated AG-UI version predates them."""
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Reveal the tool')),
+        ag_ui_version='0.1.10',
+    )
+    events = [
+        event
+        async for event in event_stream.handle_tool_availability_delta(
+            ToolAvailabilityDeltaEvent(
+                part=ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')
+            )
+        )
+    ]
+    assert events == []
+
+
+@requires_ag_ui('0.1.19')
+async def test_tool_availability_delta_stream_matches_dumped_activity_message() -> None:
+    """A live reveal persists with the same activity type and content as dumped history."""
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='reveal', json_args='{}', tool_call_id='reveal-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def reveal() -> ToolReturn[str]:
+        return ToolReturn(return_value='ready', tools=['new_tool'])
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='user-1', content='Reveal the tool')))
+    snapshot_event = next(event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT')
+
+    dumped = AGUIAdapter.dump_messages(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')])]
+    )
+    activity = next(message for message in dumped if isinstance(message, ActivityMessage))
+    assert snapshot_event['activityType'] == activity.activity_type
+    assert snapshot_event['content'] == activity.content
+    # The literal is a frontend-facing wire contract: deriving both sides from the shared constant
+    # would let a rename drift silently.
+    assert activity.activity_type == 'pydantic_ai_tool_availability_delta'

@@ -7,7 +7,7 @@ from typing import Any, Literal, cast
 from pydantic.errors import PydanticUserError
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool
-from pydantic_ai.durable_exec._toolset import guard_run_context_enqueue
+from pydantic_ai.durable_exec._toolset import guard_run_context
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -17,7 +17,7 @@ from ._types import TaskConfig
 
 def guard_task_enqueue(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
     """Make `ctx.enqueue()` raise inside a Prefect task-wrapped tool call."""
-    return guard_run_context_enqueue(ctx, unit_noun='task', container_noun='flow')
+    return guard_run_context(ctx, unit_noun='task', container_noun='flow')
 
 
 def with_non_retryable_errors(config: TaskConfig) -> TaskConfig:

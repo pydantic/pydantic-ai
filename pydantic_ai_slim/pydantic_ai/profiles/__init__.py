@@ -1,18 +1,22 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Callable
 from textwrap import dedent
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, cast
 
 from typing_extensions import TypedDict
 
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from ..exceptions import PydanticAIDeprecationWarning
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
 
 __all__ = [
     'ModelProfile',
     'ModelProfileSpec',
+    'ToolAdditionMode',
+    'ToolDeferralMode',
     'DEFAULT_PROFILE',
     'DEFAULT_PROMPTED_OUTPUT_TEMPLATE',
     'DEFAULT_THINKING_TAGS',
@@ -20,6 +24,9 @@ __all__ = [
     'JsonSchemaTransformer',
     'merge_profile',
 ]
+
+ToolDeferralMode: TypeAlias = Literal['standalone', 'with_tool_search']
+ToolAdditionMode: TypeAlias = Literal['by_reference', 'with_definitions']
 
 
 DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
@@ -135,23 +142,15 @@ class ModelProfile(TypedDict, total=False):
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The set of native tool types that this model/profile supports. Default: `SUPPORTED_NATIVE_TOOLS` (all)."""
 
-    deferred_tools_require_tool_search: bool
-    """Whether the API rejects a deferred function tool unless the same request also sends a tool-search tool. Default: `False`.
+    tool_deferral_mode: ToolDeferralMode | None
+    """When the provider permits a `tools` entry whose schema is withheld. Default: `None`.
 
-    A model that supports [`ToolSearchTool`][pydantic_ai.native_tools.ToolSearchTool] can declare a function
-    tool while withholding its schema, so a tool stays hidden until something reveals it without ever
-    changing the `tools` block. Providers differ on whether that's usable on its own: Anthropic accepts a
-    deferred tool with no search tool in sight, while the OpenAI Responses API answers
-    `Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.` (verified live on
-    `gpt-5.6`).
-
-    When this is `True` and no tool-search tool survives into the request — which is what a run whose
-    deferred tools are all gated by on-demand capabilities looks like, since none of them are searchable —
-    hidden tools are kept off the wire instead, and reach the model through the provider's
-    mid-conversation reveal if it has one.
+    `'standalone'` permits the deferral flag on its own. `'with_tool_search'` permits it only when a
+    tool-search tool is present in the same request. `None` means hidden tools can only be withheld
+    from the wire. Unsupported deferral is handled on a best-effort basis by withholding the tool.
     """
 
-    tool_additions: Literal['by_reference', 'with_definitions'] | None
+    tool_addition_mode: ToolAdditionMode | None
     """How the model natively expresses tools added mid-conversation. Default: `None`.
 
     `'by_reference'` reveals a tool already declared in the request's tool definitions (Anthropic
@@ -160,6 +159,47 @@ class ModelProfile(TypedDict, total=False):
     no native channel: `Model.prepare_messages` projects the change into messages. Additions only —
     tool removal (#6985) is not modeled yet and will get its own field.
     """
+
+    tool_additions: ToolAdditionMode | None
+    """Deprecated: use `tool_addition_mode` instead.
+
+    Translated (with a deprecation warning) whenever profiles are merged; an explicit
+    `tool_addition_mode` in the same profile wins.
+    """
+
+    deferred_tools_require_tool_search: bool
+    """Deprecated: use `tool_deferral_mode` instead.
+
+    `True` translates to `tool_deferral_mode='with_tool_search'` (with a deprecation warning)
+    whenever profiles are merged. `False` carried no signal on its own — deferral capability came
+    from native tool-search support — so it is dropped; an explicit `tool_deferral_mode` in the
+    same profile wins.
+    """
+
+
+def _translate_legacy_profile_keys(profile: ModelProfile) -> ModelProfile:
+    """Translate keys renamed after their v2.23 release into their current spellings, warning."""
+    if 'tool_additions' not in profile and 'deferred_tools_require_tool_search' not in profile:
+        return profile
+    translated = dict(profile)
+    if 'tool_additions' in translated:
+        warnings.warn(
+            '`ModelProfile` key `tool_additions` is deprecated, use `tool_addition_mode` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=3,
+        )
+        value = translated.pop('tool_additions')
+        translated.setdefault('tool_addition_mode', value)
+    if 'deferred_tools_require_tool_search' in translated:
+        warnings.warn(
+            '`ModelProfile` key `deferred_tools_require_tool_search` is deprecated, use '
+            "`tool_deferral_mode='with_tool_search'` instead.",
+            PydanticAIDeprecationWarning,
+            stacklevel=3,
+        )
+        if translated.pop('deferred_tools_require_tool_search'):
+            translated.setdefault('tool_deferral_mode', 'with_tool_search')
+    return cast('ModelProfile', translated)
 
 
 DEFAULT_PROFILE: ModelProfile = {
@@ -177,8 +217,8 @@ DEFAULT_PROFILE: ModelProfile = {
     'thinking_tags': DEFAULT_THINKING_TAGS,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
-    'deferred_tools_require_tool_search': False,
-    'tool_additions': None,
+    'tool_deferral_mode': None,
+    'tool_addition_mode': None,
 }
 """Fully populated default `ModelProfile`. Used as the base layer when resolving a model's effective profile."""
 
@@ -197,11 +237,13 @@ def merge_profile(base: ModelProfile | None, *overrides: ModelProfile | None) ->
     """Merge profiles via dict-spread. Later arguments override earlier ones; `None` is treated as empty.
 
     This is the canonical way to layer profiles in providers and tests; replaces the old `ModelProfile.update()` method.
+    Deprecated key spellings are translated per input before spreading, so a legacy key in an
+    override still overrides the base.
     """
     result: ModelProfile = {}
     if base:
-        result = {**result, **base}
+        result = {**result, **_translate_legacy_profile_keys(base)}
     for override in overrides:
         if override:
-            result = {**result, **override}
+            result = {**result, **_translate_legacy_profile_keys(override)}
     return result
