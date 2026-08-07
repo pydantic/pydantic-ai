@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import io
 from typing import Any
 
 import pytest
@@ -9,7 +10,10 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from rich.console import Console
+
     from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext
+    from pydantic_evals.evaluators.evaluator import EvaluatorFailure
     from pydantic_evals.reporting import (
         EvaluationReport,
         EvaluationReportAdapter,
@@ -267,3 +271,127 @@ async def test_render_config():
     assert 'diff_checker' in value_config
     assert 'diff_formatter' in value_config
     assert 'diff_style' in value_config
+
+
+def _print_with_encoding(report: EvaluationReport, encoding: str, **kwargs: Any) -> str:
+    """Render `report` through a `Console` whose stream can't encode non-ASCII characters.
+
+    Simulates e.g. a Windows console with output redirected to a non-UTF-8 stream.
+    """
+    buffer = io.BytesIO()
+    stream = io.TextIOWrapper(buffer, encoding=encoding)
+    console = Console(width=200, file=stream)
+    report.print(console=console, **kwargs)
+    stream.flush()
+    return buffer.getvalue().decode(encoding)
+
+
+async def test_print_ascii_fallback_for_non_utf8_console(
+    mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata],
+):
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/7281.
+
+    `print()` used to raise `UnicodeEncodeError` whenever the target console's stream couldn't
+    encode the `✔`/`✗` assertion glyphs (e.g. Windows with stdout redirected to a non-UTF-8
+    stream). It should fall back to ASCII markers instead.
+    """
+    case = ReportCase(
+        name='case1',
+        inputs={'query': 'What is 2+2?'},
+        output={'answer': '4'},
+        expected_output={'answer': '4'},
+        metadata={'difficulty': 'easy'},
+        metrics={},
+        attributes={},
+        scores={},
+        labels={},
+        assertions={
+            'pass': EvaluationResult(name='pass', value=True, reason=None, source=mock_evaluator.as_spec()),
+            'fail': EvaluationResult(name='fail', value=False, reason=None, source=mock_evaluator.as_spec()),
+        },
+        task_duration=0.1,
+        total_duration=0.2,
+        trace_id='test-trace-id',
+        span_id='test-span-id',
+    )
+    report = EvaluationReport(cases=[case], name='report')
+
+    output = _print_with_encoding(report, 'cp1252')
+
+    assert '✔' not in output
+    assert '✗' not in output
+    assert 'v' in output
+    assert 'x' in output
+
+
+async def test_print_diff_ascii_fallback_for_non_utf8_console(
+    mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata],
+):
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/7281, for diff reports.
+
+    Every `→` used to join before/after values in a diff report (assertions, evaluator failures,
+    scores/metrics/durations, and experiment metadata) is subject to the same `UnicodeEncodeError`
+    as the assertion glyphs, so this exercises them together via `print(baseline=...)`.
+    """
+    baseline_case = ReportCase(
+        name='case1',
+        inputs={'query': 'old input'},
+        output={'answer': 'old'},
+        expected_output={'answer': 'old'},
+        metadata={'difficulty': 'easy'},
+        metrics={'accuracy': 0.5},
+        attributes={},
+        scores={},
+        labels={},
+        assertions={'a': EvaluationResult(name='a', value=False, reason=None, source=mock_evaluator.as_spec())},
+        task_duration=0.2,
+        total_duration=0.3,
+        trace_id='baseline-trace-id',
+        span_id='baseline-span-id',
+        evaluator_failures=[
+            EvaluatorFailure(
+                name='OldEvaluator',
+                error_message='old failure',
+                error_stacktrace='old stacktrace',
+                source=mock_evaluator.as_spec(),
+            )
+        ],
+    )
+    new_case = ReportCase(
+        name='case1',
+        inputs={'query': 'new input'},
+        output={'answer': 'new'},
+        expected_output={'answer': 'new'},
+        metadata={'difficulty': 'hard'},
+        metrics={'accuracy': 0.9},
+        attributes={},
+        scores={},
+        labels={},
+        assertions={
+            'a': EvaluationResult(name='a', value=True, reason=None, source=mock_evaluator.as_spec()),
+            'b': EvaluationResult(name='b', value=False, reason=None, source=mock_evaluator.as_spec()),
+        },
+        task_duration=0.1,
+        total_duration=0.15,
+        trace_id='new-trace-id',
+        span_id='new-span-id',
+        evaluator_failures=[
+            EvaluatorFailure(
+                name='NewEvaluator',
+                error_message='new failure',
+                error_stacktrace='new stacktrace',
+                source=mock_evaluator.as_spec(),
+            )
+        ],
+    )
+    baseline_report = EvaluationReport(
+        cases=[baseline_case], name='baseline_report', experiment_metadata={'run': 'a', 'stable': 'x'}
+    )
+    new_report = EvaluationReport(cases=[new_case], name='new_report', experiment_metadata={'run': 'b', 'stable': 'x'})
+
+    output = _print_with_encoding(new_report, 'cp1252', baseline=baseline_report)
+
+    assert '✔' not in output
+    assert '✗' not in output
+    assert '→' not in output
+    assert '->' in output

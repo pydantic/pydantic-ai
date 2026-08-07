@@ -62,6 +62,19 @@ MISSING_VALUE_STR = '[i]<missing>[/i]'
 EMPTY_CELL_STR = '-'
 EMPTY_AGGREGATE_CELL_STR = ''
 
+
+def _check_mark(ascii_only: bool) -> str:
+    return 'v' if ascii_only else '✔'
+
+
+def _cross_mark(ascii_only: bool) -> str:
+    return 'x' if ascii_only else '✗'
+
+
+def _arrow(ascii_only: bool) -> str:
+    return '->' if ascii_only else '→'
+
+
 InputsT = TypeVar('InputsT', default=Any)
 OutputT = TypeVar('OutputT', default=Any)
 MetadataT = TypeVar('MetadataT', default=Any)
@@ -467,8 +480,9 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         """
         if console is None:  # pragma: no branch
             console = Console(width=width)
+        ascii_only = console.options.ascii_only
 
-        metadata_panel = self._metadata_panel(baseline=baseline)
+        metadata_panel = self._metadata_panel(baseline=baseline, ascii_only=ascii_only)
         renderable: RenderableType = self.console_table(
             baseline=baseline,
             include_input=include_input,
@@ -489,6 +503,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             duration_config=duration_config,
             include_reasons=include_reasons,
             with_title=not metadata_panel,
+            ascii_only=ascii_only,
         )
         # Wrap table with experiment metadata panel if present
         if metadata_panel:
@@ -538,11 +553,15 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         duration_config: RenderNumberConfig | None = None,
         include_reasons: bool = False,
         with_title: bool = True,
+        ascii_only: bool = False,
     ) -> RenderableType:
         """Return a table containing the data from this report.
 
         If a baseline is provided, returns a diff between this report and the baseline report.
         Optionally include input and output details.
+
+        `ascii_only` selects ASCII fallbacks (e.g. `v`/`x` instead of `✔`/`✗`) for glyphs that a
+        non-UTF-8 console (as `print()` uses when writing to a non-UTF-8 stream) can't encode.
         """
         renderer = EvaluationRenderer(
             include_input=include_input,
@@ -564,6 +583,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             metric_configs=metric_configs or {},
             duration_config=duration_config or _DEFAULT_DURATION_CONFIG,
             include_reasons=include_reasons,
+            ascii_only=ascii_only,
         )
         if baseline is None:
             return renderer.build_table(self, with_title=with_title)
@@ -571,12 +591,13 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             return renderer.build_diff_table(self, baseline, with_title=with_title)
 
     def _metadata_panel(
-        self, baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None
+        self, baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None, *, ascii_only: bool = False
     ) -> RenderableType | None:
         """Build an experiment metadata panel if metadata exists.
 
         Args:
             baseline: Optional baseline report for diff metadata.
+            ascii_only: Whether to use ASCII fallbacks for glyphs a non-UTF-8 console can't encode.
 
         Returns:
             A `Panel` with the experiment (or diff) metadata, or `None` if there is no metadata to show.
@@ -601,7 +622,9 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         else:
             # Diff report - show metadata diff if either has metadata
             if self.experiment_metadata or baseline.experiment_metadata:
-                diff_name = baseline.name if baseline.name == self.name else f'{baseline.name} → {self.name}'
+                diff_name = (
+                    baseline.name if baseline.name == self.name else f'{baseline.name} {_arrow(ascii_only)} {self.name}'
+                )
                 metadata_text = Text()
                 lines_styles: list[tuple[str, str]] = []
                 if baseline.experiment_metadata and self.experiment_metadata:
@@ -617,7 +640,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
                         elif report_val is None:
                             lines_styles.append((f'- {key}: {baseline_val}', 'red'))
                         else:
-                            lines_styles.append((f'{key}: {baseline_val} → {report_val}', 'yellow'))
+                            lines_styles.append((f'{key}: {baseline_val} {_arrow(ascii_only)} {report_val}', 'yellow'))
                 elif self.experiment_metadata:
                     lines_styles = [(f'+ {k}: {v}', 'green') for k, v in self.experiment_metadata.items()]
                 else:  # baseline.experiment_metadata only
@@ -698,14 +721,16 @@ class _ValueRenderer:
     diff_checker: Callable[[Any, Any], bool] | None = lambda x, y: x != y
     diff_formatter: Callable[[Any, Any], str | None] | None = None
     diff_style: str = 'magenta'
+    ascii_only: bool = False
 
     @staticmethod
-    def from_config(config: RenderValueConfig) -> _ValueRenderer:
+    def from_config(config: RenderValueConfig, *, ascii_only: bool = False) -> _ValueRenderer:
         return _ValueRenderer(
             value_formatter=config.get('value_formatter', '{}'),
             diff_checker=config.get('diff_checker', lambda x, y: x != y),
             diff_formatter=config.get('diff_formatter'),
             diff_style=config.get('diff_style', 'magenta'),
+            ascii_only=ascii_only,
         )
 
     def render_value(self, name: str | None, v: Any) -> str:
@@ -720,7 +745,7 @@ class _ValueRenderer:
         if old_str == new_str:
             result = old_str
         else:
-            result = f'{old_str} → {new_str}'
+            result = f'{old_str} {_arrow(self.ascii_only)} {new_str}'
 
             has_diff = self.diff_checker and self.diff_checker(old, new)
             if has_diff:  # pragma: no branch
@@ -817,6 +842,7 @@ class _NumberRenderer:
     diff_rtol: float
     diff_increase_style: str
     diff_decrease_style: str
+    ascii_only: bool = False
 
     def render_value(self, name: str | None, v: float | int) -> str:
         result = self._get_value_str(v)
@@ -830,7 +856,7 @@ class _NumberRenderer:
         if old_str == new_str:
             result = old_str
         else:
-            result = f'{old_str} → {new_str}'
+            result = f'{old_str} {_arrow(self.ascii_only)} {new_str}'
 
             diff_style = self._get_diff_style(old, new)
             if diff_style:
@@ -849,7 +875,11 @@ class _NumberRenderer:
 
     @staticmethod
     def infer_from_config(
-        config: RenderNumberConfig, kind: Literal['score', 'metric', 'duration'], values: list[float | int]
+        config: RenderNumberConfig,
+        kind: Literal['score', 'metric', 'duration'],
+        values: list[float | int],
+        *,
+        ascii_only: bool = False,
     ) -> _NumberRenderer:
         value_formatter = config.get('value_formatter', UNSET)
         if isinstance(value_formatter, Unset):
@@ -883,6 +913,7 @@ class _NumberRenderer:
             diff_atol=diff_atol,
             diff_increase_style=diff_increase_style,
             diff_decrease_style=diff_decrease_style,
+            ascii_only=ascii_only,
         )
 
     def _get_value_str(self, value: float | int | None) -> str:
@@ -955,6 +986,7 @@ class ReportCaseRenderer:
     include_error_message: bool
     include_error_stacktrace: bool
     include_evaluator_failures: bool
+    ascii_only: bool = False
 
     input_renderer: _ValueRenderer
     metadata_renderer: _ValueRenderer
@@ -1296,46 +1328,54 @@ class ReportCaseRenderer:
             return EMPTY_CELL_STR
         lines: list[str] = []
         for a in assertions:
-            line = '[green]✔[/]' if a.value else '[red]✗[/]'
+            line = f'[green]{_check_mark(self.ascii_only)}[/]' if a.value else f'[red]{_cross_mark(self.ascii_only)}[/]'
             if self.include_reasons:
                 line = f'{a.name}: {line}\n'
                 line = f'{line}  Reason: {a.reason}\n\n' if a.reason else line
             lines.append(line)
         return ''.join(lines)
 
-    @staticmethod
     def _render_aggregate_assertions(
+        self,
         assertions: float | None,
     ) -> str:
         return (
-            default_render_percentage(assertions) + ' [green]✔[/]'
+            default_render_percentage(assertions) + f' [green]{_check_mark(self.ascii_only)}[/]'
             if assertions is not None
             else EMPTY_AGGREGATE_CELL_STR
         )
 
-    @staticmethod
     def _render_assertions_diff(
-        assertions: list[EvaluationResult[bool]], new_assertions: list[EvaluationResult[bool]]
+        self, assertions: list[EvaluationResult[bool]], new_assertions: list[EvaluationResult[bool]]
     ) -> str:
         if not assertions and not new_assertions:  # pragma: no cover
             return EMPTY_CELL_STR
 
-        old = ''.join(['[green]✔[/]' if a.value else '[red]✗[/]' for a in assertions])
-        new = ''.join(['[green]✔[/]' if a.value else '[red]✗[/]' for a in new_assertions])
-        return old if old == new else f'{old} → {new}'
+        check_mark = _check_mark(self.ascii_only)
+        cross_mark = _cross_mark(self.ascii_only)
+        old = ''.join([f'[green]{check_mark}[/]' if a.value else f'[red]{cross_mark}[/]' for a in assertions])
+        new = ''.join([f'[green]{check_mark}[/]' if a.value else f'[red]{cross_mark}[/]' for a in new_assertions])
+        return old if old == new else f'{old} {_arrow(self.ascii_only)} {new}'
 
-    @staticmethod
     def _render_aggregate_assertions_diff(
+        self,
         baseline: float | None,
         new: float | None,
     ) -> str:
         if baseline is None and new is None:  # pragma: no cover
             return EMPTY_AGGREGATE_CELL_STR
+        check_mark = _check_mark(self.ascii_only)
         rendered_baseline = (
-            default_render_percentage(baseline) + ' [green]✔[/]' if baseline is not None else EMPTY_CELL_STR
+            default_render_percentage(baseline) + f' [green]{check_mark}[/]' if baseline is not None else EMPTY_CELL_STR
         )
-        rendered_new = default_render_percentage(new) + ' [green]✔[/]' if new is not None else EMPTY_CELL_STR
-        return rendered_new if rendered_baseline == rendered_new else f'{rendered_baseline} → {rendered_new}'
+        rendered_new = (
+            default_render_percentage(new) + f' [green]{check_mark}[/]' if new is not None else EMPTY_CELL_STR
+        )
+        return (
+            rendered_new
+            if rendered_baseline == rendered_new
+            else f'{rendered_baseline} {_arrow(self.ascii_only)} {rendered_new}'
+        )
 
     def _render_evaluator_failures(
         self,
@@ -1360,7 +1400,7 @@ class ReportCaseRenderer:
         new_str = self._render_evaluator_failures(new_failures)
         if baseline_str == new_str:
             return baseline_str  # pragma: no cover
-        return f'{baseline_str}\n→\n{new_str}'
+        return f'{baseline_str}\n{_arrow(self.ascii_only)}\n{new_str}'
 
 
 @dataclass(kw_only=True)
@@ -1394,6 +1434,8 @@ class EvaluationRenderer:
     include_error_stacktrace: bool
     include_evaluator_failures: bool
 
+    ascii_only: bool = False
+
     def include_scores(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
         return any(case.scores for case in self._all_cases(report, baseline))
 
@@ -1426,14 +1468,17 @@ class EvaluationRenderer:
     def _get_case_renderer(
         self, report: EvaluationReport, baseline: EvaluationReport | None = None
     ) -> ReportCaseRenderer:
-        input_renderer = _ValueRenderer.from_config(self.input_config)
-        metadata_renderer = _ValueRenderer.from_config(self.metadata_config)
-        output_renderer = _ValueRenderer.from_config(self.output_config)
+        input_renderer = _ValueRenderer.from_config(self.input_config, ascii_only=self.ascii_only)
+        metadata_renderer = _ValueRenderer.from_config(self.metadata_config, ascii_only=self.ascii_only)
+        output_renderer = _ValueRenderer.from_config(self.output_config, ascii_only=self.ascii_only)
         score_renderers = self._infer_score_renderers(report, baseline)
         label_renderers = self._infer_label_renderers(report, baseline)
         metric_renderers = self._infer_metric_renderers(report, baseline)
         duration_renderer = _NumberRenderer.infer_from_config(
-            self.duration_config, 'duration', [x.task_duration for x in self._all_cases(report, baseline)]
+            self.duration_config,
+            'duration',
+            [x.task_duration for x in self._all_cases(report, baseline)],
+            ascii_only=self.ascii_only,
         )
 
         return ReportCaseRenderer(
@@ -1451,6 +1496,7 @@ class EvaluationRenderer:
             include_error_message=self.include_error_message,
             include_error_stacktrace=self.include_error_stacktrace,
             include_evaluator_failures=self.include_evaluator_failures_column(report, baseline),
+            ascii_only=self.ascii_only,
             input_renderer=input_renderer,
             metadata_renderer=metadata_renderer,
             output_renderer=output_renderer,
@@ -1521,7 +1567,11 @@ class EvaluationRenderer:
                 assert False, 'This should be unreachable'
 
         case_renderer = self._get_case_renderer(report, baseline)
-        diff_name = baseline.name if baseline.name == report.name else f'{baseline.name} → {report.name}'
+        diff_name = (
+            baseline.name
+            if baseline.name == report.name
+            else f'{baseline.name} {_arrow(self.ascii_only)} {report.name}'
+        )
 
         title = f'Evaluation Diff: {diff_name}' if with_title else ''
         table = case_renderer.build_base_table(title)
@@ -1573,7 +1623,9 @@ class EvaluationRenderer:
         for name, values in values_by_name.items():
             merged_config = _DEFAULT_NUMBER_CONFIG.copy()
             merged_config.update(self.score_configs.get(name, {}))
-            all_renderers[name] = _NumberRenderer.infer_from_config(merged_config, 'score', values)
+            all_renderers[name] = _NumberRenderer.infer_from_config(
+                merged_config, 'score', values, ascii_only=self.ascii_only
+            )
         return all_renderers
 
     def _infer_label_renderers(
@@ -1589,7 +1641,7 @@ class EvaluationRenderer:
         for name in all_names:
             merged_config = _DEFAULT_VALUE_CONFIG.copy()
             merged_config.update(self.label_configs.get(name, {}))
-            all_renderers[name] = _ValueRenderer.from_config(merged_config)
+            all_renderers[name] = _ValueRenderer.from_config(merged_config, ascii_only=self.ascii_only)
         return all_renderers
 
     def _infer_metric_renderers(
@@ -1606,7 +1658,9 @@ class EvaluationRenderer:
         for name, values in values_by_name.items():
             merged_config = _DEFAULT_NUMBER_CONFIG.copy()
             merged_config.update(self.metric_configs.get(name, {}))
-            all_renderers[name] = _NumberRenderer.infer_from_config(merged_config, 'metric', values)
+            all_renderers[name] = _NumberRenderer.infer_from_config(
+                merged_config, 'metric', values, ascii_only=self.ascii_only
+            )
         return all_renderers
 
     def _infer_duration_renderer(
