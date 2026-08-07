@@ -98,6 +98,9 @@ class XaiProvider(Provider[AsyncClient]):
         return {
             'supports_manual_turn_control': True,
             'supports_interruption': True,
+            # Grok Voice always speaks: the API has no response-modality control, so an
+            # `output_modality='text'` session would silently come back as audio.
+            'supports_text_output': False,
             'supports_session_seeding': True,
             'supports_seeding_images': False,
             'supports_seeding_audio': False,

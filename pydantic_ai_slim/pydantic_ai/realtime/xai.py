@@ -14,7 +14,10 @@ conversion, server-VAD config, and the WebSocket connection itself — and diver
   `conversation.id` is reused and its replay burst is suppressed from local history;
 - no output truncation (`conversation.item.truncate` is unsupported), so
   [`RealtimeModelProfile.supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation]
-  is `False` while cancellation-based interruption still works.
+  is `False` while cancellation-based interruption still works;
+- no text output — the API has no response-modality control and always speaks — so
+  [`RealtimeModelProfile.supports_text_output`][pydantic_ai.realtime.RealtimeModelProfile.supports_text_output]
+  is `False` and `output_modality='text'` raises rather than silently coming back as audio.
 
 Requires the `websockets` package (the `realtime` optional group), `xai-sdk` (the `xai` group, for
 [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider]), and `openai` (the `openai` group, whose SDK
@@ -28,7 +31,7 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import KW_ONLY, InitVar, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
@@ -62,6 +65,7 @@ from ._base import (
     InputTranscript,
     RealtimeCodecEvent,
     RealtimeModel,
+    RealtimeModelProfileSpec,
     RealtimeModelSettings,
     RealtimeSessionReconnectEvent,
     ReconnectPolicy,
@@ -104,7 +108,9 @@ __all__ = (
 class XaiRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings specific to xAI realtime models.
 
-    xAI ignores the inherited `output_modality` setting and always produces audio output.
+    Grok Voice always produces audio, so its profile reports
+    [`supports_text_output=False`][pydantic_ai.realtime.RealtimeModelProfile.supports_text_output] and
+    the inherited `output_modality='text'` is rejected up front rather than quietly ignored.
     """
 
     xai_voice: str
@@ -236,7 +242,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
                     yield replayed_item
 
 
-@dataclass
+@dataclass(init=False)
 class XaiRealtimeModel(RealtimeModel):
     """xAI Grok Voice realtime API model.
 
@@ -251,6 +257,11 @@ class XaiRealtimeModel(RealtimeModel):
             pinned version like `grok-voice-think-fast-1.0`. The `model` query parameter is required by
             the server, which otherwise falls back to a default silently.
         provider: The provider to use for authentication and the base URL. Defaults to `'xai'`.
+        profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
+            merged over the provider's — a partial dict, or a callable taking the resolved profile and
+            returning the one to use. Mirrors `profile=` on a standard
+            [`Model`][pydantic_ai.models.Model], and is the escape hatch when a model name doesn't
+            identify the model (e.g. an Azure deployment named something other than its model).
         reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
             recover from a dropped connection. Setting a policy enables xAI's native session resumption;
             prior turns are restored when reconnecting within xAI's resumption window (reportedly ~30
@@ -261,13 +272,27 @@ class XaiRealtimeModel(RealtimeModel):
 
     model: str = 'grok-voice-latest'
     _: KW_ONLY
-    provider: InitVar[XaiProvider | str] = 'xai'
     settings: RealtimeModelSettings | None = None
     reconnect: ReconnectPolicy | None = None
     _provider: XaiProvider = field(init=False, repr=False)
     _api_key: str = field(init=False, repr=False)
 
-    def __post_init__(self, provider: XaiProvider | str) -> None:
+    # Written out rather than generated because `profile` has to be an init argument while
+    # `RealtimeModel.profile` stays the *resolved* profile, exactly as on a standard `Model` — a
+    # dataclass field of that name would shadow the property.
+    def __init__(
+        self,
+        model: str = 'grok-voice-latest',
+        *,
+        provider: XaiProvider | str = 'xai',
+        settings: RealtimeModelSettings | None = None,
+        profile: RealtimeModelProfileSpec | None = None,
+        reconnect: ReconnectPolicy | None = None,
+    ) -> None:
+        self.model = model
+        self.settings = settings
+        self.reconnect = reconnect
+        self._profile = profile
         if isinstance(provider, str):
             provider = cast('XaiProvider', infer_provider(provider))
         if provider.name != 'xai':
