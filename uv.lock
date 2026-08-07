@@ -5381,6 +5381,9 @@ openrouter = [
 prefect = [
     { name = "pydantic-ai-slim", extra = ["prefect"] },
 ]
+realtime = [
+    { name = "pydantic-ai-slim", extra = ["realtime"] },
+]
 sentence-transformers = [
     { name = "pydantic-ai-slim", extra = ["sentence-transformers"] },
 ]
@@ -5470,6 +5473,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["mistral"], marker = "extra == 'mistral'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["openrouter"], marker = "extra == 'openrouter'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["prefect"], marker = "extra == 'prefect'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["realtime"], marker = "extra == 'realtime'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["sentence-transformers"], marker = "extra == 'sentence-transformers'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["spec"], marker = "extra == 'spec'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["tavily"], marker = "extra == 'tavily'", editable = "pydantic_ai_slim" },
@@ -5479,7 +5483,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["web-fetch"], marker = "extra == 'web-fetch'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "exa", "examples", "groq", "huggingface", "mistral", "openrouter", "prefect", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web-fetch", "xai"]
+provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "exa", "examples", "groq", "huggingface", "mistral", "openrouter", "prefect", "realtime", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web-fetch", "xai"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -5656,6 +5660,9 @@ openrouter = [
 prefect = [
     { name = "prefect" },
 ]
+realtime = [
+    { name = "websockets" },
+]
 retries = [
     { name = "tenacity" },
 ]
@@ -5744,9 +5751,10 @@ requires-dist = [
     { name = "typing-inspection", specifier = ">=0.4.0" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
+    { name = "websockets", marker = "extra == 'realtime'", specifier = ">=14.0" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.14.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "zai"]
 
 [[package]]
 name = "pydantic-core"
