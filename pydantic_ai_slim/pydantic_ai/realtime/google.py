@@ -25,6 +25,7 @@ from typing import Any, Literal, cast
 from urllib.parse import quote
 
 from anyio import Lock
+from anyio.lowlevel import current_token
 from typing_extensions import assert_never
 
 try:
@@ -285,7 +286,7 @@ _TURN_COVERAGE = {
     'all_video': genai_types.TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO,
 }
 
-_WS_CONNECT_LOCK = Lock()
+_WS_CONNECT_LOCKS: dict[object, Lock] = {}
 
 
 def _ws_connect_lock() -> Lock:
@@ -296,8 +297,14 @@ def _ws_connect_lock() -> Lock:
     take their own lock, and whichever restored second would put the other's replacement back as the
     "original", leaving every later Vertex session pointed at the gateway path. A handshake is short,
     so serializing them costs little next to that.
+
+    One lock per running event loop rather than a single module-level one: an `anyio.Lock` binds to
+    the loop (and async backend) it is first used on, so a shared instance breaks an app that opens
+    sessions from more than one runtime — the same hazard `Provider._enter_lock` defers construction
+    to avoid. Sessions racing this rewrite from different loops is the far-fetched case; sessions
+    racing it from one is the case that has to hold.
     """
-    return _WS_CONNECT_LOCK
+    return _WS_CONNECT_LOCKS.setdefault(current_token(), Lock())
 
 
 def _thinking_to_config(thinking: ThinkingLevel) -> genai_types.ThinkingConfig:
@@ -508,9 +515,13 @@ def _drop_unsupported_keywords(json_schema: dict[str, Any]) -> dict[str, Any]:
         if key not in _SCHEMA_KEYWORDS:
             continue
         if key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
+            # A property's schema can be a boolean too: `True` accepts anything, so it becomes the
+            # unconstrained schema, and `False` accepts nothing, so the property is dropped rather
+            # than declared as something no value could satisfy.
             kept[key] = {
-                name: _drop_unsupported_keywords(schema)
-                for name, schema in cast('dict[str, dict[str, Any]]', value).items()
+                name: {} if schema is True else _drop_unsupported_keywords(schema)
+                for name, schema in cast('dict[str, dict[str, Any] | bool]', value).items()
+                if schema is not False
             }
         elif key in _SCHEMA_LIST_KEYWORDS and isinstance(value, list):
             # A member can be a boolean schema, which `Schema` has no way to express: `True` accepts
@@ -680,7 +691,11 @@ def _ws_trace_context(client: Client) -> Generator[None]:
     headers = cast('dict[str, str]', raw_headers)
     carrier: dict[str, str] = {}
     inject_trace_context(carrier)
-    added = {key: value for key, value in carrier.items() if key not in headers}
+    # Compared case-insensitively: header names are, and `websockets` stores them that way, so adding a
+    # lowercase `traceparent` next to a `Traceparent` the client already carries is a duplicate header
+    # the handshake can be rejected for (the same hazard `_single_ws_user_agent` above reconciles).
+    existing = {key.lower() for key in headers}
+    added = {key: value for key, value in carrier.items() if key.lower() not in existing}
     headers.update(added)
     try:
         yield
@@ -694,7 +709,7 @@ _VERTEX_BIDI_PATH_RE = re.compile(r'/ws/google\.cloud\.aiplatform\.v1(?:beta1)?\
 
 
 @contextmanager
-def _ws_gateway_url_rewrite(model: str) -> Generator[None]:
+def _ws_gateway_url_rewrite(model: str, base_url: str) -> Generator[None]:
     """TEMPORARY: rewrite the Gemini Live handshake URL to the gateway's unified realtime path.
 
     The `google-genai` SDK dials Vertex's native Bidi path
@@ -708,9 +723,14 @@ def _ws_gateway_url_rewrite(model: str) -> Generator[None]:
     from google.genai import live
 
     real_ws_connect = live.ws_connect  # pyright: ignore[reportPrivateImportUsage]
+    # `live.ws_connect` is a module global, so unrelated `google-genai` Live connections opened
+    # elsewhere in the process during this handshake also enter the wrapper below. Rewrite only URIs
+    # under *this* session's gateway route, so a concurrent connection dialing Vertex directly (or a
+    # different gateway route) passes through to its own endpoint untouched.
+    gateway_prefix = re.sub(r'^http', 'ws', base_url.rstrip('/'))
 
     def rewritten(uri: str, *args: Any, **kwargs: Any) -> Any:
-        if _VERTEX_BIDI_PATH_RE.search(uri):
+        if uri.startswith(gateway_prefix) and _VERTEX_BIDI_PATH_RE.search(uri):
             base = _VERTEX_BIDI_PATH_RE.sub('/v1/realtime', uri.partition('?')[0], count=1)
             uri = f'{base}?model={quote(model)}'
         return real_ws_connect(uri, *args, **kwargs)
@@ -1019,7 +1039,7 @@ class GoogleRealtimeModel(RealtimeModel):
                         # The gateway bearer auth reaches the handshake via a static header set on the
                         # client at build time (see `_set_google_ws_gateway_auth`), so no per-connect
                         # header injection is needed here.
-                        stack.enter_context(_ws_gateway_url_rewrite(self.model))
+                        stack.enter_context(_ws_gateway_url_rewrite(self.model, self._provider.base_url))
                     session = await opening.__aenter__()
             cm = opening
             return session
@@ -1216,6 +1236,14 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     return
                 state_restored = self._resumption_handle is not None
                 if await self._try_reconnect():
+                    if not state_restored and self._tool_calls:
+                        # Without a resumption handle the re-dialed session is a fresh one that never
+                        # issued these calls, so a tool task still running for the lost session would
+                        # send its result back against an id Gemini doesn't know. Abandon them the way
+                        # Gemini's own `tool_call_cancellation` does: the tasks are cancelled and each
+                        # call still gets a matching return in history.
+                        yield ToolCallCancelled(tool_call_ids=list(self._tool_calls))
+                        self._tool_calls.clear()
                     if self._turn_open:
                         # The dropped connection was mid-turn. Gemini never continues an in-flight
                         # generation on the re-dialed connection (resumption restores conversation

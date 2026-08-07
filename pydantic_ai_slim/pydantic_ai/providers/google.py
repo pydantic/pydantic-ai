@@ -8,7 +8,7 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, create_async_http_client, get_user_agent
-from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
@@ -59,9 +59,19 @@ class BaseGoogleProvider(Provider[Client], ABC):
             'supports_seeding_audio': False,
             'audio_input_sample_rate': 16000,
             'audio_output_sample_rate': 24000,
-            'supported_native_tools': frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
-            # Native-audio Gemini Live models support a thinking config (verified live).
-            'supports_thinking': 'native-audio' in model_name,
+            # Search grounding only. Google's Live tool matrix lists code execution and URL context as
+            # unsupported for every Live model, and that matches the live behavior:
+            # `gemini-2.5-flash-native-audio-latest` closes the session with `1007 Code Execution tool
+            # is not supported for this model`, and its URL-context grounding answers "I was unable to
+            # access the page"; `gemini-3.1-flash-live-preview` accepts both declarations and then
+            # produces neither a code-execution part nor URL-context metadata. Advertising them makes
+            # a `WebFetch()` or `CodeExecutionTool()` a silent no-op; leaving them out means a `local=`
+            # fallback is used instead, or the shared `UserError` points at one.
+            'supported_native_tools': frozenset({WebSearchTool}),
+            # Every current Gemini Live model takes a thinking config (verified live for both
+            # `gemini-2.5-flash-native-audio-latest` and `gemini-3.1-flash-live-preview`), which Google
+            # documents as `thinkingBudget` on the 2.5 family and `thinkingLevel` on 3.x.
+            'supports_thinking': True,
             # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with
             # a slow tool, where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and
             # `gemini-3.1-flash-live-preview` accepts the flag but still goes silent until the result
