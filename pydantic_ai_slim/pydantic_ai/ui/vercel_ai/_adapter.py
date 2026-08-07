@@ -52,6 +52,7 @@ from .. import MessagesBuilder, UIAdapter
 from .._adapter import resolve_allow_uploaded_files, tool_availability_delta_from_payload
 from ._event_stream import VercelAIEventStream
 from ._utils import (
+    TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     apply_message_metadata,
     dump_message_metadata,
     dump_provider_metadata,
@@ -102,7 +103,7 @@ if TYPE_CHECKING:
     from ...usage import RunUsage, UsageLimits
     from .. import UIEventStream
     from .._adapter import DispatchDepsT, DispatchOutputDataT
-    from .._event_stream import OnCompleteFunc
+    from .._event_stream import OnCancelFunc, OnCompleteFunc
 
 __all__ = ['VercelAIAdapter']
 
@@ -113,7 +114,6 @@ _MEDIA_PREFIX_TO_URL_TYPE: dict[str, type[ImageUrl | AudioUrl | VideoUrl]] = {
     'video': VideoUrl,
     'audio': AudioUrl,
 }
-_TOOL_AVAILABILITY_DELTA_DATA_TYPE = 'data-tool-availability-delta'
 
 
 def _generate_message_id(
@@ -221,6 +221,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
+        on_cancel: OnCancelFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
@@ -254,6 +255,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             toolsets=toolsets,
             capabilities=capabilities,
             on_complete=on_complete,
+            on_cancel=on_cancel,
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
@@ -362,7 +364,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 )
                         user_prompt_content.append(file)
                     elif isinstance(part, DataUIPart):
-                        if part.type == _TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
+                        if part.type == TOOL_AVAILABILITY_DELTA_DATA_TYPE and _is_str_dict(part.data):
                             builder.add(tool_availability_delta_from_payload(part.data))
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported user message part type: {type(part)}')
@@ -640,9 +642,9 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             elif isinstance(part, ToolAvailabilityDeltaPart):
                 user_ui_parts.append(
                     DataUIPart(
-                        type=_TOOL_AVAILABILITY_DELTA_DATA_TYPE,
+                        type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
                         data={
-                            'added': part.added,
+                            'added': part.tools_added,
                             'tool_call_id': part.tool_call_id,
                         },
                     )
@@ -950,6 +952,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         is therefore presented to the model as a definitive failure rather than a request to correct
         and retry; keep the conversation in-process rather than persisting through the Vercel AI wire
         format if you need retry semantics to survive a round-trip.
+
+        Tool calls lose one thing too: `ToolCallPart.args` that don't parse as a JSON object are
+        rewritten to `{'INVALID_JSON': '<raw args>'}` (see
+        [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict]), so the raw string is
+        no longer recoverable as args on reload.
 
         When `sdk_version=6`, tool calls that have no corresponding result in the message history
         are automatically detected as deferred and emitted with `state='approval-requested'`, so the

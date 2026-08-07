@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
@@ -44,6 +45,9 @@ class SpanQuery(TypedDict, total=False):
 
     ## Attribute conditions
     has_attributes: dict[str, Any]
+    """Attribute values are compared with equality; a dict or list value also matches an attribute stored as its
+    JSON serialization, since OTel attributes cannot hold nested objects and instrumentation libraries like Logfire
+    store them as JSON strings. A list value also matches an attribute stored as a tuple."""
     has_attribute_keys: list[str]
 
     ## Status conditions
@@ -252,6 +256,23 @@ class SpanNode:
 
         return self._matches_query(query)
 
+    def _attribute_matches(self, key: str, expected: Any) -> bool:
+        """Check if a span attribute matches an expected value, handling JSON-serialized dicts and lists."""
+        stored = self.attributes.get(key)
+        if stored == expected:
+            return True
+        # OTel attribute values can only be primitives or sequences thereof, so instrumentation
+        # libraries like Logfire store dict and list values as JSON strings.
+        if isinstance(expected, dict | list) and isinstance(stored, str):
+            try:
+                return json.loads(stored) == expected
+            except (json.JSONDecodeError, RecursionError):
+                return False
+        # The OTel SDK stores sequence attribute values as tuples
+        if isinstance(expected, list) and isinstance(stored, tuple):
+            return list(stored) == expected
+        return False
+
     def _matches_query(self, query: SpanQuery) -> bool:  # noqa: C901
         """Check if the span matches the query conditions."""
         # Logical combinations
@@ -278,7 +299,7 @@ class SpanNode:
 
         # Attribute conditions
         if (has_attributes := query.get('has_attributes')) and not all(
-            self.attributes.get(key) == value for key, value in has_attributes.items()
+            self._attribute_matches(key, value) for key, value in has_attributes.items()
         ):
             return False
         if (has_attributes_keys := query.get('has_attribute_keys')) and not all(

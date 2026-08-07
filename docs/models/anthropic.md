@@ -559,6 +559,8 @@ Because [Tool Output](../output.md#tool-output) resolves to a forced tool choice
 
 Anthropic supports [automatic context compaction](https://docs.anthropic.com/en/docs/build-with-claude/compaction) to manage long conversations. When input tokens exceed a configured threshold, the API automatically generates a summary that replaces older messages while preserving context.
 
+After compaction, subsequent requests send only the compacted window, from the latest compaction block onward, which reduces request size — the API ignores earlier content either way. The standing system prompt is unaffected: it's sent as the separate `system` parameter, which compaction doesn't replace.
+
 The easiest way to enable compaction is with the [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] capability:
 
 ```python {title="anthropic_compaction.py"}

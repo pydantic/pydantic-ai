@@ -34,6 +34,9 @@ constructing the event raises — see `REASONING_MESSAGE_ROLE`.
 MULTIMODAL_VERSION = (0, 1, 15)
 """AG-UI version that introduced typed multimodal input content (Image/Audio/Video/Document)."""
 
+ACTIVITY_EVENTS_VERSION = (0, 1, 19)
+"""AG-UI version that introduced activity snapshot and delta events."""
+
 INTERRUPTS_VERSION = (0, 1, 19)
 """AG-UI version that introduced the interrupt-aware run lifecycle.
 
