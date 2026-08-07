@@ -7600,8 +7600,8 @@ class _HookObservingCapability(Capability[None]):
     async def before_tool_execute(
         self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
     ) -> dict[str, Any]:
-        self.hook_log.append(f'before:{call.tool_name}:loaded={ctx.capability_loaded}')
-        return args
+        self.hook_log.append(f'before:{call.tool_name}:loaded={ctx.capability_loaded}')  # pragma: no cover
+        return args  # pragma: no cover
 
     async def wrap_tool_execute(
         self,
@@ -7612,8 +7612,8 @@ class _HookObservingCapability(Capability[None]):
         args: dict[str, Any],
         handler: Callable[[dict[str, Any]], Awaitable[Any]],
     ) -> Any:
-        self.hook_log.append(f'wrap:{call.tool_name}')
-        return await handler(args)
+        self.hook_log.append(f'wrap:{call.tool_name}')  # pragma: no cover
+        return await handler(args)  # pragma: no cover
 
 
 async def _call_capability_tool_directly(
@@ -7732,8 +7732,8 @@ async def test_pre_compaction_tool_is_refused_until_rediscovered() -> None:
 
     @toolset.tool_plain(defer_loading=True)
     def issue_refund() -> str:
-        executed.append('issue_refund')
-        return 'refunded'
+        executed.append('issue_refund')  # pragma: no cover
+        return 'refunded'  # pragma: no cover
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='discover tools')]),
