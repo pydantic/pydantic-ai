@@ -9,10 +9,44 @@ to accept and therefore no `UIAdapter` counterpart.
 """
 
 from ._event_stream import NDJSON_CONTENT_TYPE, ClaudeCodeEventStream
-from ._types import ClaudeCodeEvent
+from ._types import (
+    AssistantMessage,
+    AssistantRecord,
+    ClaudeCodeEvent,
+    CompactBoundaryRecord,
+    CompactMetadata,
+    ContentBlock,
+    InitRecord,
+    JSONValue,
+    ResultRecord,
+    StreamEventRecord,
+    TextBlock,
+    ThinkingBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    Usage,
+    UserMessage,
+    UserRecord,
+)
 
 __all__ = [
     'ClaudeCodeEventStream',
     'ClaudeCodeEvent',
     'NDJSON_CONTENT_TYPE',
+    'InitRecord',
+    'AssistantRecord',
+    'UserRecord',
+    'CompactBoundaryRecord',
+    'StreamEventRecord',
+    'ResultRecord',
+    'AssistantMessage',
+    'UserMessage',
+    'CompactMetadata',
+    'ContentBlock',
+    'TextBlock',
+    'ThinkingBlock',
+    'ToolUseBlock',
+    'ToolResultBlock',
+    'Usage',
+    'JSONValue',
 ]

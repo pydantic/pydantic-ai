@@ -2,8 +2,8 @@
 
 [GitHub Agentic Workflows](https://github.com/github/gh-aw) (gh-aw) renders the step summary of a
 `engine: claude` run by parsing the Claude Code CLI's `stream-json` output. Running that parser over
-a stream produced by [`ClaudeCodeEventStream`][pydantic_ai.ui.claude_code.ClaudeCodeEventStream] is
-what proves compatibility rather than claiming it, so `test_claude_code_ui.py` uses it as an oracle.
+a stream produced by `ClaudeCodeEventStream` is what proves compatibility rather than claiming it,
+so `tests/test_claude_code.py` uses it as an oracle.
 
 | | |
 |---|---|

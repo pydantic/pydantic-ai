@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import json
-import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from dataclasses import KW_ONLY, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Literal
 from uuid import uuid4
 
-from ...exceptions import UsageLimitExceeded
+from ..._utils import now_utc
+from ...exceptions import RunCancelled, UsageLimitExceeded
 from ...messages import (
     CompactionPart,
+    FilePart,
     FinishReason,
     FunctionToolResultEvent,
     NativeToolCallPart,
@@ -69,10 +70,6 @@ def _uuid_str() -> str:
     return str(uuid4())
 
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 @dataclass
 class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, OutputDataT]):
     """UI event stream transformer for the Claude Code CLI's `stream-json` output format.
@@ -103,29 +100,37 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
 
     Not knowable from the event stream, which is why it's a parameter: a run's model is only
     reported once the run has finished, by which time the `init` record has long been written.
+
+    Free-form: the CLI reports vendor model ids like `claude-haiku-4-5-20251001`, but nothing
+    consuming the stream parses the value, so a Pydantic AI model name is equally valid.
     """
-    cwd: str = field(default_factory=os.getcwd)
-    """Working directory reported by the `init` record."""
+    cwd: str = ''
+    """Working directory reported by the `init` record, disclosed only if you opt in by setting it.
+
+    An absolute server-side path says more about the machine than a consumer needs, so it's empty
+    by default: consumers treat an empty `cwd` as absent and simply don't report one.
+    """
     include_partial_messages: bool = False
     """Whether to additionally emit `stream_event` records carrying Anthropic-shaped streaming deltas.
 
     Mirrors the CLI's `--include-partial-messages` flag, which is a superset: the whole-block
     `assistant` records are emitted either way.
     """
-    id_factory: Callable[[], str] = _uuid_str
-    """Factory for per-line `uuid`s and message ids. Injectable so tests can pin them."""
-    now: Callable[[], datetime] = _utc_now
-    """Clock for line timestamps and the run duration. Injectable so tests can pin them; must return UTC."""
 
-    _started_at: datetime = field(default_factory=_utc_now)
+    _started_at: datetime = field(default_factory=now_utc)
     _response_count: int = 0
     _block_index: int = 0
     _response_message_id: str = ''
+    _text_buffer: str = ''
+    _thinking_buffer: str = ''
+    _thinking_signature: str = ''
+    _args_fragment_emitted: bool = False
     _final_text: str = ''
     _usage: Usage | None = None
     _cost: float | None = None
     _stop_reason: str | None = None
     _error: Exception | None = None
+    _cancellation: RunCancelled | None = None
 
     @property
     def content_type(self) -> str:
@@ -135,7 +140,22 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
         return json.dumps(event, separators=(',', ':')) + '\n'
 
     async def before_stream(self) -> AsyncIterator[ClaudeCodeEvent]:
-        self._started_at = self.now()
+        # Every field the stream accumulates is reset here rather than only initialized, so that
+        # streaming a second run through the same instance reports that run and not the first one's.
+        self._started_at = now_utc()
+        self._response_count = 0
+        self._block_index = 0
+        self._response_message_id = ''
+        self._text_buffer = ''
+        self._thinking_buffer = ''
+        self._thinking_signature = ''
+        self._args_fragment_emitted = False
+        self._final_text = ''
+        self._usage = None
+        self._cost = None
+        self._stop_reason = None
+        self._error = None
+        self._cancellation = None
         record: InitRecord = {
             'type': 'system',
             'subtype': 'init',
@@ -146,7 +166,7 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
             'permissionMode': 'default',
             'slash_commands': [],
             'output_style': 'default',
-            'uuid': self.id_factory(),
+            'uuid': _uuid_str(),
         }
         if self.model is not None:
             record['model'] = self.model
@@ -164,9 +184,17 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
         return
         yield  # Make this an async generator
 
+    async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[ClaudeCodeEvent]:
+        # Recorded apart from `on_error`, which the base implementation would otherwise delegate to:
+        # a cancellation is a pause the caller asked for, not a failure, so the `result` record names
+        # it with its own `terminal_reason` and reports no `errors`.
+        self._cancellation = cancelled
+        return
+        yield  # Make this an async generator
+
     async def before_response(self) -> AsyncIterator[ClaudeCodeEvent]:
         self._response_count += 1
-        self._response_message_id = f'msg_{self.id_factory()}'
+        self._response_message_id = f'msg_{_uuid_str()}'
         self._block_index = -1
         if self.include_partial_messages:
             message: dict[str, JSONValue] = {
@@ -187,8 +215,13 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
             yield self._stream_event({'type': 'message_stop'})
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[ClaudeCodeEvent]:
-        for event in self._open_block({'type': 'text', 'text': ''}):
-            yield event
+        # A model can split one logical answer across adjacent text parts (interleaved citations do
+        # this), which `stream-json` has no way to express: a content block is whole or it isn't. So
+        # a run of adjacent parts stays inside one block, buffered until the last of them ends.
+        if not follows_text:
+            self._text_buffer = ''
+            for event in self._open_block({'type': 'text', 'text': ''}):
+                yield event
         if self.include_partial_messages and part.content:
             yield self._content_block_delta({'type': 'text_delta', 'text': part.content})
 
@@ -197,17 +230,23 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
             yield self._content_block_delta({'type': 'text_delta', 'text': delta.content_delta})
 
     async def handle_text_end(self, part: TextPart, followed_by_text: bool = False) -> AsyncIterator[ClaudeCodeEvent]:
-        # `result.result` reports the run's final answer, which is the last text the model produced.
-        self._final_text = part.content
-        block: TextBlock = {'type': 'text', 'text': part.content}
+        self._text_buffer += part.content
+        if followed_by_text:
+            return
+        # `result.result` reports the run's final answer, which is the last text block it produced.
+        self._final_text = self._text_buffer
+        block: TextBlock = {'type': 'text', 'text': self._text_buffer}
         for event in self._close_block(block):
             yield event
 
     async def handle_thinking_start(
         self, part: ThinkingPart, follows_thinking: bool = False
     ) -> AsyncIterator[ClaudeCodeEvent]:
-        for event in self._open_block({'type': 'thinking', 'thinking': '', 'signature': ''}):
-            yield event
+        if not follows_thinking:
+            self._thinking_buffer = ''
+            self._thinking_signature = ''
+            for event in self._open_block({'type': 'thinking', 'thinking': '', 'signature': ''}):
+                yield event
         if self.include_partial_messages and part.content:
             yield self._content_block_delta({'type': 'thinking_delta', 'thinking': part.content})
 
@@ -222,13 +261,26 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
     async def handle_thinking_end(
         self, part: ThinkingPart, followed_by_thinking: bool = False
     ) -> AsyncIterator[ClaudeCodeEvent]:
-        block: ThinkingBlock = {'type': 'thinking', 'thinking': part.content}
+        self._thinking_buffer += part.content
         if part.signature:
+            # A run of adjacent thinking parts is signed by whichever of them carried a signature
+            # last: one block can only claim one.
+            self._thinking_signature = part.signature
+        if followed_by_thinking:
+            return
+        block: ThinkingBlock = {'type': 'thinking', 'thinking': self._thinking_buffer}
+        if self._thinking_signature:
             # Omitted rather than emitted empty for models that don't sign their thinking: an empty
             # signature is a value Anthropic rejects, whereas an absent one is simply unsigned.
-            block['signature'] = part.signature
+            block['signature'] = self._thinking_signature
         for event in self._close_block(block):
             yield event
+
+    async def handle_file(self, part: FilePart) -> AsyncIterator[ClaudeCodeEvent]:
+        # Dropped deliberately: a model-generated file has no `stream-json` counterpart, whose
+        # assistant content blocks are only ever text, thinking or tool_use.
+        return
+        yield  # Make this an async generator
 
     def handle_tool_call_start(self, part: ToolCallPart) -> AsyncIterator[ClaudeCodeEvent]:
         return self._handle_tool_call_start(part)
@@ -237,18 +289,22 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
         return self._handle_tool_call_start(part)
 
     async def _handle_tool_call_start(self, part: ToolCallPart | NativeToolCallPart) -> AsyncIterator[ClaudeCodeEvent]:
+        self._args_fragment_emitted = False
         for event in self._open_block(
             {'type': 'tool_use', 'id': part.tool_call_id, 'name': part.tool_name, 'input': {}}
         ):
             yield event
-        if self.include_partial_messages and part.args:
-            # The args a start event carries are the head of the JSON the deltas continue, so a
-            # client reassembling `partial_json` needs them announced as the first delta.
+        # A `str` is the head of the JSON the deltas continue, so a client reassembling `partial_json`
+        # needs it announced as the first fragment, raw: re-encoding would corrupt what it rebuilds.
+        # `dict` args aren't a fragment of anything and are emitted whole once the call ends instead.
+        if self.include_partial_messages and isinstance(part.args, str) and part.args:
             yield self._input_json_delta(part.args)
+            self._args_fragment_emitted = True
 
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[ClaudeCodeEvent]:
-        if self.include_partial_messages:
+        if self.include_partial_messages and isinstance(delta.args_delta, str) and delta.args_delta:
             yield self._input_json_delta(delta.args_delta)
+            self._args_fragment_emitted = True
 
     def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[ClaudeCodeEvent]:
         return self._handle_tool_call_end(part)
@@ -257,11 +313,21 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
         return self._handle_tool_call_end(part)
 
     async def _handle_tool_call_end(self, part: ToolCallPart | NativeToolCallPart) -> AsyncIterator[ClaudeCodeEvent]:
+        # `args_as_json_str` rather than `args_as_dict` because a `dict` arg value is only guaranteed
+        # to be JSON-encodable once Pydantic AI has encoded it: a `datetime` reaches `json.dumps` as
+        # a `TypeError` that would break the line rather than the value it stands for.
+        args_json = part.args_as_json_str()
+        # Concatenating a call's `input_json_delta` fragments has to yield exactly its `input`, so a
+        # call whose args never arrived as JSON text emits them here as one complete fragment. That
+        # covers `dict` args, which Pydantic AI merges by key rather than by concatenation. A call
+        # can't mix the two: applying a delta of the other kind is rejected upstream.
+        if self.include_partial_messages and not self._args_fragment_emitted and part.args:
+            yield self._input_json_delta(args_json)
         block: ToolUseBlock = {
             'type': 'tool_use',
             'id': part.tool_call_id,
             'name': part.tool_name,
-            'input': part.args_as_dict(),
+            'input': json.loads(args_json),
         }
         for event in self._close_block(block):
             yield event
@@ -300,7 +366,7 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
             'message': {'role': 'user', 'content': [block]},
             'parent_tool_use_id': None,
             'session_id': self.session_id,
-            'uuid': self.id_factory(),
+            'uuid': _uuid_str(),
             'timestamp': self._timestamp(),
         }
         yield record
@@ -313,7 +379,7 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
             # always `'auto'`. The CLI also reports `pre_tokens`, which the seam doesn't expose.
             'compact_metadata': {'trigger': 'auto'},
             'session_id': self.session_id,
-            'uuid': self.id_factory(),
+            'uuid': _uuid_str(),
             'timestamp': self._timestamp(),
         }
         yield record
@@ -330,12 +396,12 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
         if usage.cost:
             self._cost = float(usage.cost)
         if finish_reason := event.result.response.finish_reason:
-            self._stop_reason = _STOP_REASON_MAP[finish_reason]
+            self._stop_reason = _STOP_REASON_MAP.get(finish_reason)
         return
         yield  # Make this an async generator
 
     def _timestamp(self) -> str:
-        return self.now().isoformat(timespec='milliseconds').removesuffix('+00:00') + 'Z'
+        return now_utc().isoformat(timespec='milliseconds').removesuffix('+00:00') + 'Z'
 
     def _stream_event(self, event: dict[str, JSONValue]) -> StreamEventRecord:
         return {
@@ -343,17 +409,13 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
             'event': event,
             'parent_tool_use_id': None,
             'session_id': self.session_id,
-            'uuid': self.id_factory(),
+            'uuid': _uuid_str(),
         }
 
     def _content_block_delta(self, delta: dict[str, JSONValue]) -> StreamEventRecord:
         return self._stream_event({'type': 'content_block_delta', 'index': self._block_index, 'delta': delta})
 
-    def _input_json_delta(self, args: object) -> StreamEventRecord:
-        # A `str` is passed through raw: mid-stream it's a JSON fragment that only becomes valid once
-        # the following deltas are concatenated, so re-encoding it would corrupt what the client
-        # reassembles. `dict` args always arrive whole.
-        partial_json = args if isinstance(args, str) else json.dumps(args)
+    def _input_json_delta(self, partial_json: str) -> StreamEventRecord:
         return self._content_block_delta({'type': 'input_json_delta', 'partial_json': partial_json})
 
     def _open_block(self, content_block: dict[str, JSONValue]) -> list[ClaudeCodeEvent]:
@@ -392,7 +454,7 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
             'message': message,
             'parent_tool_use_id': None,
             'session_id': self.session_id,
-            'uuid': self.id_factory(),
+            'uuid': _uuid_str(),
             'timestamp': self._timestamp(),
         }
         events: list[ClaudeCodeEvent] = [record]
@@ -401,9 +463,14 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
         return events
 
     def _result_record(self) -> ResultRecord:
-        error = self._error
+        error = self._cancellation if self._cancellation is not None else self._error
         subtype: Literal['success', 'error_max_turns'] = 'success'
-        if error is None:
+        if self._cancellation is not None:
+            # The CLI has no cancellation record, so this is our own vocabulary: a cancelled run is
+            # reported as an error so nothing reads a stopped run as a finished one, under a
+            # `terminal_reason` that says it was stopped rather than that it broke.
+            terminal_reason = 'cancelled'
+        elif error is None:
             terminal_reason = 'completed'
         elif isinstance(error, UsageLimitExceeded):
             subtype = 'error_max_turns'
@@ -421,10 +488,10 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
             # One turn per model response, which is what the CLI counts and what gh-aw compares
             # against its max-turns budget, so it must never be inflated.
             'num_turns': self._response_count,
-            'duration_ms': int((self.now() - self._started_at).total_seconds() * 1000),
+            'duration_ms': int((now_utc() - self._started_at).total_seconds() * 1000),
             'result': str(error) if error is not None else self._final_text,
             'session_id': self.session_id,
-            'uuid': self.id_factory(),
+            'uuid': _uuid_str(),
         }
         if self._stop_reason is not None:
             record['stop_reason'] = self._stop_reason
@@ -434,6 +501,9 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
             # A `0` cost is indistinguishable from an absent one downstream, so only a real cost is
             # ever reported.
             record['total_cost_usd'] = self._cost
-        if error is not None:
-            record['errors'] = [str(error)]
+        if self._error is not None:
+            # The CLI's own `success`-subtype failures carry no `errors`, but gh-aw's parser reads
+            # `lastEntry.errors` to render its Errors block (`log_parser_shared.cjs:336`), so a real
+            # failure reports one. A cancellation doesn't: nothing went wrong.
+            record['errors'] = [str(self._error)]
         return record

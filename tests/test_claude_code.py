@@ -13,9 +13,8 @@ import json
 import shutil
 import subprocess
 from collections.abc import AsyncIterator
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
-from itertools import count
 from pathlib import Path
 from typing import Any
 
@@ -25,17 +24,25 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, RunCancelled
 from pydantic_ai.messages import (
     BinaryImage,
     CompactionPart,
+    FilePart,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
     ModelMessage,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    ToolCallPartDelta,
+    ToolReturnPart,
 )
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -50,22 +57,29 @@ from pydantic_ai.ui import NativeEvent
 from pydantic_ai.ui.claude_code import NDJSON_CONTENT_TYPE, ClaudeCodeEventStream
 from pydantic_ai.usage import RunUsage, UsageLimits
 
+from .conftest import IsInt, IsSameStr, IsStr
+
 pytestmark = pytest.mark.anyio
 
 StreamedChunks = AsyncIterator[DeltaThinkingCalls | DeltaToolCalls | str]
 
 
+def _timestamp() -> str:
+    """Matcher for the UTC millisecond timestamps the CLI stamps on its non-`stream_event` lines."""
+    return IsStr(regex=r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z')
+
+
 def _event_stream(*, include_partial_messages: bool = False) -> ClaudeCodeEventStream[Any, Any]:
-    """An event stream with every nondeterministic input pinned, so its lines can be snapshotted."""
-    ids = count(1)
-    ticks = count(0)
+    """An event stream with the caller-supplied fields pinned, so its lines can be snapshotted.
+
+    The ids and timestamps it generates stay nondeterministic — they're `uuid4`s and the wall
+    clock — and are asserted with matchers.
+    """
     return ClaudeCodeEventStream(
         session_id='session-1',
         model='function:stream',
         cwd='/workspace',
         include_partial_messages=include_partial_messages,
-        id_factory=lambda: f'id-{next(ids)}',
-        now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(milliseconds=100 * next(ticks)),
     )
 
 
@@ -108,13 +122,13 @@ async def test_plain_text_run():
                 'permissionMode': 'default',
                 'slash_commands': [],
                 'output_style': 'default',
-                'uuid': 'id-1',
+                'uuid': IsStr(),
                 'model': 'function:stream',
             },
             {
                 'type': 'assistant',
                 'message': {
-                    'id': 'msg_id-2',
+                    'id': IsStr(regex=r'msg_.+'),
                     'type': 'message',
                     'role': 'assistant',
                     'content': [{'type': 'text', 'text': 'hello world'}],
@@ -124,8 +138,8 @@ async def test_plain_text_run():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-3',
-                'timestamp': '2026-01-01T00:00:00.100Z',
+                'uuid': IsStr(),
+                'timestamp': _timestamp(),
             },
             {
                 'type': 'result',
@@ -133,10 +147,10 @@ async def test_plain_text_run():
                 'is_error': False,
                 'terminal_reason': 'completed',
                 'num_turns': 1,
-                'duration_ms': 200,
+                'duration_ms': IsInt(),
                 'result': 'hello world',
                 'session_id': 'session-1',
-                'uuid': 'id-4',
+                'uuid': IsStr(),
                 'usage': {
                     'input_tokens': 50,
                     'output_tokens': 2,
@@ -153,29 +167,75 @@ def test_content_type_is_ndjson():
     assert _event_stream().content_type == NDJSON_CONTENT_TYPE == 'application/x-ndjson'
 
 
-async def test_default_ids_and_clock():
-    """Left to its defaults, the stream generates its own session id, uuids and UTC timestamps."""
+async def test_defaults_generate_ids_and_disclose_no_working_directory():
+    """Left to its defaults, the stream generates its own session id, uuids and UTC timestamps.
+
+    `cwd` is the one field it will not fill in: an absolute server-side path says more about the
+    machine than a consumer needs, so disclosing one is opt-in.
+    """
 
     async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> StreamedChunks:
         yield 'hello'
 
-    stream = ClaudeCodeEventStream(cwd='/workspace')
+    stream = ClaudeCodeEventStream()
     lines = await _lines(stream, _native_events(Agent(FunctionModel(stream_function=stream_function)), 'hi'))
 
     init, assistant, result = lines
     assert init['session_id'] == stream.session_id == result['session_id']
     assert len({init['uuid'], assistant['uuid'], result['uuid']}) == 3
-    assert assistant['timestamp'].endswith('Z')
+    assert assistant['timestamp'] == _timestamp()
     assert result['duration_ms'] >= 0
-    # No model was configured, so none is claimed on the init record or on the message.
+    # No working directory was configured, so none is claimed; consumers read empty as absent.
+    assert init['cwd'] == ''
+    # Nor is a model, on the init record or on the message.
     assert 'model' not in init
     assert 'model' not in assistant['message']
 
     # Nor on the message the partial-messages mode announces up front.
-    partial = ClaudeCodeEventStream(cwd='/workspace', include_partial_messages=True)
+    partial = ClaudeCodeEventStream(include_partial_messages=True)
     partial_lines = await _lines(partial, _native_events(Agent(FunctionModel(stream_function=stream_function)), 'hi'))
     message_start = next(line for line in partial_lines if line['type'] == 'stream_event')
     assert 'model' not in message_start['event']['message']
+
+
+async def test_adjacent_text_parts_become_one_content_block():
+    """A single answer split across adjacent text parts is emitted as one block, not one per part.
+
+    Models that interleave citations end a text part and start another mid-answer. `stream-json`
+    has no way to say "this block continues", so the run of parts is buffered into one block —
+    otherwise the answer arrives as fragments and `result.result` reports only the last of them.
+
+    Fed through `transform_stream` because a `FunctionModel` cannot express adjacent text parts:
+    consecutive text deltas are merged into a single part.
+    """
+    first = TextPart('The answer is ')
+    second = TextPart('42.')
+
+    async def events() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=first)
+        yield PartEndEvent(index=0, part=first, next_part_kind='text')
+        yield PartStartEvent(index=1, part=second, previous_part_kind='text')
+        yield PartEndEvent(index=1, part=second)
+
+    lines = await _lines(_event_stream(include_partial_messages=True), events())
+
+    assert [line['message']['content'] for line in lines if line['type'] == 'assistant'] == snapshot(
+        [[{'type': 'text', 'text': 'The answer is 42.'}]]
+    )
+    assert lines[-1]['result'] == snapshot('The answer is 42.')
+    # One block, so one `content_block_start`/`content_block_stop` pair, both at index 0.
+    assert [
+        (line['event']['type'], line['event'].get('index'))
+        for line in lines
+        if line['type'] == 'stream_event' and line['event']['type'].startswith('content_block')
+    ] == snapshot(
+        [
+            ('content_block_start', 0),
+            ('content_block_delta', 0),
+            ('content_block_delta', 0),
+            ('content_block_stop', 0),
+        ]
+    )
 
 
 async def test_tool_call_and_result():
@@ -212,13 +272,13 @@ async def test_tool_call_and_result():
                 'permissionMode': 'default',
                 'slash_commands': [],
                 'output_style': 'default',
-                'uuid': 'id-1',
+                'uuid': IsStr(),
                 'model': 'function:stream',
             },
             {
                 'type': 'assistant',
                 'message': {
-                    'id': 'msg_id-2',
+                    'id': IsStr(regex=r'msg_.+'),
                     'type': 'message',
                     'role': 'assistant',
                     'content': [
@@ -230,8 +290,8 @@ async def test_tool_call_and_result():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-3',
-                'timestamp': '2026-01-01T00:00:00.100Z',
+                'uuid': IsStr(),
+                'timestamp': _timestamp(),
             },
             {
                 'type': 'user',
@@ -241,13 +301,13 @@ async def test_tool_call_and_result():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-4',
-                'timestamp': '2026-01-01T00:00:00.200Z',
+                'uuid': IsStr(),
+                'timestamp': _timestamp(),
             },
             {
                 'type': 'assistant',
                 'message': {
-                    'id': 'msg_id-5',
+                    'id': IsStr(regex=r'msg_.+'),
                     'type': 'message',
                     'role': 'assistant',
                     'content': [{'type': 'text', 'text': 'It is sunny in Utrecht.'}],
@@ -257,8 +317,8 @@ async def test_tool_call_and_result():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-6',
-                'timestamp': '2026-01-01T00:00:00.300Z',
+                'uuid': IsStr(),
+                'timestamp': _timestamp(),
             },
             {
                 'type': 'result',
@@ -266,10 +326,10 @@ async def test_tool_call_and_result():
                 'is_error': False,
                 'terminal_reason': 'completed',
                 'num_turns': 2,
-                'duration_ms': 400,
+                'duration_ms': IsInt(),
                 'result': 'It is sunny in Utrecht.',
                 'session_id': 'session-1',
-                'uuid': 'id-7',
+                'uuid': IsStr(),
                 'usage': {
                     'input_tokens': 100,
                     'output_tokens': 12,
@@ -298,93 +358,117 @@ async def test_failed_tool_is_marked_as_an_error():
 
     lines = await _run_lines(agent, 'go')
 
-    assert lines == snapshot(
+    assert [line['message']['content'] for line in lines if line['type'] == 'user'] == snapshot(
         [
-            {
-                'type': 'system',
-                'subtype': 'init',
-                'cwd': '/workspace',
-                'session_id': 'session-1',
-                'tools': [],
-                'mcp_servers': [],
-                'permissionMode': 'default',
-                'slash_commands': [],
-                'output_style': 'default',
-                'uuid': 'id-1',
-                'model': 'function:stream',
-            },
-            {
-                'type': 'assistant',
-                'message': {
-                    'id': 'msg_id-2',
-                    'type': 'message',
-                    'role': 'assistant',
-                    'content': [{'type': 'tool_use', 'id': 'call-1', 'name': 'flaky', 'input': {}}],
-                    'stop_reason': None,
-                    'stop_sequence': None,
-                    'model': 'function:stream',
-                },
-                'parent_tool_use_id': None,
-                'session_id': 'session-1',
-                'uuid': 'id-3',
-                'timestamp': '2026-01-01T00:00:00.100Z',
-            },
-            {
-                'type': 'user',
-                'message': {
-                    'role': 'user',
-                    'content': [
-                        {
-                            'type': 'tool_result',
-                            'tool_use_id': 'call-1',
-                            'content': """\
+            [
+                {
+                    'type': 'tool_result',
+                    'tool_use_id': 'call-1',
+                    'content': """\
 try something else
 
 Fix the errors and try again.\
 """,
-                            'is_error': True,
-                        }
-                    ],
-                },
-                'parent_tool_use_id': None,
-                'session_id': 'session-1',
-                'uuid': 'id-4',
-                'timestamp': '2026-01-01T00:00:00.200Z',
-            },
-            {
-                'type': 'assistant',
-                'message': {
-                    'id': 'msg_id-5',
-                    'type': 'message',
-                    'role': 'assistant',
-                    'content': [{'type': 'text', 'text': 'Gave up.'}],
-                    'stop_reason': None,
-                    'stop_sequence': None,
-                    'model': 'function:stream',
-                },
-                'parent_tool_use_id': None,
-                'session_id': 'session-1',
-                'uuid': 'id-6',
-                'timestamp': '2026-01-01T00:00:00.300Z',
-            },
-            {
-                'type': 'result',
-                'subtype': 'success',
-                'is_error': False,
-                'terminal_reason': 'completed',
-                'num_turns': 2,
-                'duration_ms': 400,
-                'result': 'Gave up.',
-                'session_id': 'session-1',
-                'uuid': 'id-7',
-                'usage': {
-                    'input_tokens': 100,
-                    'output_tokens': 4,
-                    'cache_creation_input_tokens': 0,
-                    'cache_read_input_tokens': 0,
-                },
-            },
+                    'is_error': True,
+                }
+            ]
         ]
+    )
+    assert lines[-1]['result'] == snapshot('Gave up.')
+
+
+def _tool_result_blocks(lines: list[Any]) -> list[Any]:
+    return [line['message']['content'][0] for line in lines if line['type'] == 'user']
+
+
+async def test_a_tool_call_left_pending_by_an_error_is_reported_as_failed():
+    """A call cut off by a failing run is closed out as a `tool_result` marked `is_error`.
+
+    gh-aw renders a `tool_result` without `is_error` as a success, so a call the run never
+    completed has to say so — otherwise a broken run reports a green tool list.
+    """
+    part = ToolCallPart('run_job', '{}', tool_call_id='call-1')
+
+    async def events() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part=part)
+        raise RuntimeError('kaboom')
+
+    lines = await _lines(_event_stream(), events())
+
+    assert _tool_result_blocks(lines) == snapshot(
+        [
+            {
+                'type': 'tool_result',
+                'tool_use_id': 'call-1',
+                'content': 'Tool execution was interrupted by an error.',
+                'is_error': True,
+            }
+        ]
+    )
+
+
+async def test_a_tool_call_left_pending_by_a_cancellation_is_not_an_error():
+    """Cancelling a run interrupts its pending calls; an interrupted call is not a failed one.
+
+    The distinction is the whole point of the `outcome` discriminator: marking these `is_error`
+    would render a run the caller stopped on purpose as a run that broke.
+    """
+    part = ToolCallPart('run_job', '{}', tool_call_id='call-1')
+
+    async def events() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=part)
+        yield FunctionToolCallEvent(part=part)
+        raise RunCancelled('user stopped the run', messages=[])
+
+    lines = await _lines(_event_stream(), events())
+
+    assert _tool_result_blocks(lines) == snapshot(
+        [
+            {
+                'type': 'tool_result',
+                'tool_use_id': 'call-1',
+                'content': 'The tool call was interrupted before a result was produced.',
+            }
+        ]
+    )
+    assert lines[-1] == snapshot(
+        {
+            'type': 'result',
+            'subtype': 'success',
+            'is_error': True,
+            'terminal_reason': 'cancelled',
+            'num_turns': 1,
+            'duration_ms': IsInt(),
+            'result': 'user stopped the run',
+            'session_id': 'session-1',
+            'uuid': IsStr(),
+        }
+    )
+    # No `errors`: the run was stopped, not broken, and gh-aw renders `errors` as a failure report.
+    assert 'errors' not in lines[-1]
+
+
+async def test_a_denied_tool_call_is_not_an_error():
+    """A call refused by an approval mechanism produced no result, but nothing about it failed."""
+    part = ToolCallPart('delete_everything', '{}', tool_call_id='call-1')
+
+    async def events() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(
+                tool_name='delete_everything',
+                content='The tool call was denied.',
+                tool_call_id='call-1',
+                outcome='denied',
+            )
+        )
+
+    lines = await _lines(_event_stream(), events())
+
+    assert _tool_result_blocks(lines) == snapshot(
+        [{'type': 'tool_result', 'tool_use_id': 'call-1', 'content': 'The tool call was denied.'}]
     )
 
 
@@ -394,92 +478,41 @@ async def test_thinking_run():
     async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> StreamedChunks:
         yield {0: DeltaThinkingPart(content='Signed thought')}
         yield {0: DeltaThinkingPart(signature='sig-1')}
-        yield {1: DeltaThinkingPart(content='Unsigned thought')}
         yield 'Done thinking.'
 
     lines = await _run_lines(Agent(FunctionModel(stream_function=stream_function)), 'think')
 
-    assert lines == snapshot(
+    assert [line['message']['content'] for line in lines if line['type'] == 'assistant'] == snapshot(
         [
-            {
-                'type': 'system',
-                'subtype': 'init',
-                'cwd': '/workspace',
-                'session_id': 'session-1',
-                'tools': [],
-                'mcp_servers': [],
-                'permissionMode': 'default',
-                'slash_commands': [],
-                'output_style': 'default',
-                'uuid': 'id-1',
-                'model': 'function:stream',
-            },
-            {
-                'type': 'assistant',
-                'message': {
-                    'id': 'msg_id-2',
-                    'type': 'message',
-                    'role': 'assistant',
-                    'content': [{'type': 'thinking', 'thinking': 'Signed thought', 'signature': 'sig-1'}],
-                    'stop_reason': None,
-                    'stop_sequence': None,
-                    'model': 'function:stream',
-                },
-                'parent_tool_use_id': None,
-                'session_id': 'session-1',
-                'uuid': 'id-3',
-                'timestamp': '2026-01-01T00:00:00.100Z',
-            },
-            {
-                'type': 'assistant',
-                'message': {
-                    'id': 'msg_id-2',
-                    'type': 'message',
-                    'role': 'assistant',
-                    'content': [{'type': 'thinking', 'thinking': 'Unsigned thought'}],
-                    'stop_reason': None,
-                    'stop_sequence': None,
-                    'model': 'function:stream',
-                },
-                'parent_tool_use_id': None,
-                'session_id': 'session-1',
-                'uuid': 'id-4',
-                'timestamp': '2026-01-01T00:00:00.200Z',
-            },
-            {
-                'type': 'assistant',
-                'message': {
-                    'id': 'msg_id-2',
-                    'type': 'message',
-                    'role': 'assistant',
-                    'content': [{'type': 'text', 'text': 'Done thinking.'}],
-                    'stop_reason': None,
-                    'stop_sequence': None,
-                    'model': 'function:stream',
-                },
-                'parent_tool_use_id': None,
-                'session_id': 'session-1',
-                'uuid': 'id-5',
-                'timestamp': '2026-01-01T00:00:00.300Z',
-            },
-            {
-                'type': 'result',
-                'subtype': 'success',
-                'is_error': False,
-                'terminal_reason': 'completed',
-                'num_turns': 1,
-                'duration_ms': 400,
-                'result': 'Done thinking.',
-                'session_id': 'session-1',
-                'uuid': 'id-6',
-                'usage': {
-                    'input_tokens': 50,
-                    'output_tokens': 7,
-                    'cache_creation_input_tokens': 0,
-                    'cache_read_input_tokens': 0,
-                },
-            },
+            [{'type': 'thinking', 'thinking': 'Signed thought', 'signature': 'sig-1'}],
+            [{'type': 'text', 'text': 'Done thinking.'}],
         ]
+    )
+    # Both blocks belong to the one model response, so both lines carry the same message id.
+    assert len({line['message']['id'] for line in lines if line['type'] == 'assistant'}) == 1
+
+
+async def test_adjacent_thinking_parts_become_one_unsigned_block():
+    """Adjacent thinking parts merge like adjacent text parts, and an unsigned block omits `signature`.
+
+    An empty signature is a value Anthropic rejects, whereas an absent one is simply unsigned.
+
+    Fed through `transform_stream` because a `FunctionModel` merges consecutive thinking deltas into
+    one part, so adjacent thinking parts can't be expressed as a stream function.
+    """
+    first = ThinkingPart('I should ')
+    second = ThinkingPart('look it up')
+
+    async def events() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=first)
+        yield PartEndEvent(index=0, part=first, next_part_kind='thinking')
+        yield PartStartEvent(index=1, part=second, previous_part_kind='thinking')
+        yield PartEndEvent(index=1, part=second)
+
+    lines = await _lines(_event_stream(), events())
+
+    assert [line['message']['content'] for line in lines if line['type'] == 'assistant'] == snapshot(
+        [[{'type': 'thinking', 'thinking': 'I should look it up'}]]
     )
 
 
@@ -500,16 +533,45 @@ async def test_multimodal_tool_result_uses_the_content_array_form():
 
     lines = await _run_lines(agent, 'capture')
 
-    assert [line['message']['content'] for line in lines if line['type'] == 'user'] == snapshot(
+    assert _tool_result_blocks(lines) == snapshot(
         [
-            [
-                {
-                    'type': 'tool_result',
-                    'tool_use_id': 'call-1',
-                    'content': [{'type': 'text', 'text': '["here is the screen","See file shot."]'}],
-                }
-            ]
+            {
+                'type': 'tool_result',
+                'tool_use_id': 'call-1',
+                'content': [{'type': 'text', 'text': '["here is the screen","See file shot."]'}],
+            }
         ]
+    )
+
+
+async def test_file_part_produces_no_record():
+    """A model-generated `FilePart` reaches the consumer as nothing at all.
+
+    `stream-json`'s assistant content blocks are only ever `text`, `thinking` or `tool_use`, so a
+    generated file has no counterpart to map onto. Inventing a private block type would only be
+    understood by a consumer we also wrote, which is the opposite of speaking the format, so the
+    part is dropped and this test says so out loud.
+
+    Fed through `transform_stream` because a model that emits a `FilePart` mid-response cannot be
+    expressed as a `FunctionModel` stream function. `FilePart` gets no `PartEndEvent` — only parts
+    that have deltas are ended — so the stream below is what a real response would produce.
+    """
+    text = TextPart('Here is the chart')
+
+    async def events() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=text)
+        yield PartEndEvent(index=0, part=text, next_part_kind='file')
+        yield PartStartEvent(
+            index=1,
+            part=FilePart(content=BinaryImage(data=b'fake-png', media_type='image/png')),
+            previous_part_kind='text',
+        )
+
+    lines = await _lines(_event_stream(), events())
+
+    assert [line['type'] for line in lines] == snapshot(['system', 'assistant', 'result'])
+    assert [line['message']['content'] for line in lines if line['type'] == 'assistant'] == snapshot(
+        [[{'type': 'text', 'text': 'Here is the chart'}]]
     )
 
 
@@ -548,6 +610,9 @@ async def test_output_tool_result():
             ('result', None),
         ]
     )
+    # `result.result` reports the final *text*, and a structured output produced none: the answer is
+    # the tool call above. gh-aw never reads the field, rendering the assistant lines instead.
+    assert lines[-1]['result'] == snapshot('')
 
 
 async def test_result_record_reports_stop_reason_and_cost():
@@ -575,10 +640,10 @@ async def test_result_record_reports_stop_reason_and_cost():
             'is_error': False,
             'terminal_reason': 'completed',
             'num_turns': 1,
-            'duration_ms': 200,
+            'duration_ms': IsInt(),
             'result': 'Done.',
             'session_id': 'session-1',
-            'uuid': 'id-4',
+            'uuid': IsStr(),
             'stop_reason': 'end_turn',
             'usage': {
                 'input_tokens': 10,
@@ -589,6 +654,28 @@ async def test_result_record_reports_stop_reason_and_cost():
             'total_cost_usd': 0.0042,
         }
     )
+
+
+def _reassembled_tool_inputs(lines: list[Any]) -> list[tuple[Any, Any]]:
+    """Pair each `tool_use` block's `input` with the JSON its `input_json_delta` fragments spell out.
+
+    A client rebuilding a call's arguments from partial-messages mode only ever sees the fragments,
+    so their concatenation has to parse back to exactly the whole-block `input`. A call with no
+    arguments emits no fragments at all, which is how the CLI's own streams read.
+    """
+    pairs: list[tuple[Any, Any]] = []
+    fragments: list[str] = []
+    for line in lines:
+        if line['type'] == 'stream_event':
+            delta = line['event'].get('delta')
+            if is_str_dict(delta) and delta.get('type') == 'input_json_delta':
+                fragments.append(delta['partial_json'])
+        elif line['type'] == 'assistant':
+            block = line['message']['content'][0]
+            if block['type'] == 'tool_use':
+                pairs.append((block['input'], json.loads(''.join(fragments)) if fragments else {}))
+            fragments = []
+    return pairs
 
 
 async def test_partial_messages_mode():
@@ -618,6 +705,8 @@ async def test_partial_messages_mode():
     lines = await _run_lines(agent, 'weather?', include_partial_messages=True)
 
     assert lines[-1]['type'] == 'result'
+    # The fragments a client concatenates rebuild exactly the arguments the whole block reports.
+    assert _reassembled_tool_inputs(lines) == snapshot([({'city': 'Utrecht'}, {'city': 'Utrecht'})])
     assert lines == snapshot(
         [
             {
@@ -630,7 +719,7 @@ async def test_partial_messages_mode():
                 'permissionMode': 'default',
                 'slash_commands': [],
                 'output_style': 'default',
-                'uuid': 'id-1',
+                'uuid': IsStr(),
                 'model': 'function:stream',
             },
             {
@@ -638,7 +727,7 @@ async def test_partial_messages_mode():
                 'event': {
                     'type': 'message_start',
                     'message': {
-                        'id': 'msg_id-2',
+                        'id': (first_message_id := IsSameStr()),
                         'type': 'message',
                         'role': 'assistant',
                         'content': [],
@@ -649,7 +738,7 @@ async def test_partial_messages_mode():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-3',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
@@ -660,7 +749,7 @@ async def test_partial_messages_mode():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-4',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
@@ -671,7 +760,7 @@ async def test_partial_messages_mode():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-5',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
@@ -682,7 +771,7 @@ async def test_partial_messages_mode():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-6',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
@@ -693,12 +782,12 @@ async def test_partial_messages_mode():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-7',
+                'uuid': IsStr(),
             },
             {
                 'type': 'assistant',
                 'message': {
-                    'id': 'msg_id-2',
+                    'id': first_message_id,
                     'type': 'message',
                     'role': 'assistant',
                     'content': [{'type': 'thinking', 'thinking': 'I should look it up', 'signature': 'sig-1'}],
@@ -708,15 +797,15 @@ async def test_partial_messages_mode():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-8',
-                'timestamp': '2026-01-01T00:00:00.100Z',
+                'uuid': IsStr(),
+                'timestamp': _timestamp(),
             },
             {
                 'type': 'stream_event',
                 'event': {'type': 'content_block_stop', 'index': 0},
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-9',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
@@ -727,7 +816,7 @@ async def test_partial_messages_mode():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-10',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
@@ -738,7 +827,7 @@ async def test_partial_messages_mode():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-11',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
@@ -749,12 +838,12 @@ async def test_partial_messages_mode():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-12',
+                'uuid': IsStr(),
             },
             {
                 'type': 'assistant',
                 'message': {
-                    'id': 'msg_id-2',
+                    'id': first_message_id,
                     'type': 'message',
                     'role': 'assistant',
                     'content': [
@@ -766,29 +855,29 @@ async def test_partial_messages_mode():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-13',
-                'timestamp': '2026-01-01T00:00:00.200Z',
+                'uuid': IsStr(),
+                'timestamp': _timestamp(),
             },
             {
                 'type': 'stream_event',
                 'event': {'type': 'content_block_stop', 'index': 1},
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-14',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
                 'event': {'type': 'message_delta', 'delta': {'stop_reason': None, 'stop_sequence': None}},
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-15',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
                 'event': {'type': 'message_stop'},
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-16',
+                'uuid': IsStr(),
             },
             {
                 'type': 'user',
@@ -798,15 +887,15 @@ async def test_partial_messages_mode():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-17',
-                'timestamp': '2026-01-01T00:00:00.300Z',
+                'uuid': IsStr(),
+                'timestamp': _timestamp(),
             },
             {
                 'type': 'stream_event',
                 'event': {
                     'type': 'message_start',
                     'message': {
-                        'id': 'msg_id-18',
+                        'id': (second_message_id := IsSameStr()),
                         'type': 'message',
                         'role': 'assistant',
                         'content': [],
@@ -817,33 +906,33 @@ async def test_partial_messages_mode():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-19',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
                 'event': {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-20',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
                 'event': {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'It is '}},
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-21',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
                 'event': {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'sunny.'}},
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-22',
+                'uuid': IsStr(),
             },
             {
                 'type': 'assistant',
                 'message': {
-                    'id': 'msg_id-18',
+                    'id': second_message_id,
                     'type': 'message',
                     'role': 'assistant',
                     'content': [{'type': 'text', 'text': 'It is sunny.'}],
@@ -853,29 +942,29 @@ async def test_partial_messages_mode():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-23',
-                'timestamp': '2026-01-01T00:00:00.400Z',
+                'uuid': IsStr(),
+                'timestamp': _timestamp(),
             },
             {
                 'type': 'stream_event',
                 'event': {'type': 'content_block_stop', 'index': 0},
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-24',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
                 'event': {'type': 'message_delta', 'delta': {'stop_reason': None, 'stop_sequence': None}},
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-25',
+                'uuid': IsStr(),
             },
             {
                 'type': 'stream_event',
                 'event': {'type': 'message_stop'},
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-26',
+                'uuid': IsStr(),
             },
             {
                 'type': 'result',
@@ -883,10 +972,10 @@ async def test_partial_messages_mode():
                 'is_error': False,
                 'terminal_reason': 'completed',
                 'num_turns': 2,
-                'duration_ms': 500,
+                'duration_ms': IsInt(),
                 'result': 'It is sunny.',
                 'session_id': 'session-1',
-                'uuid': 'id-27',
+                'uuid': IsStr(),
                 'usage': {
                     'input_tokens': 100,
                     'output_tokens': 15,
@@ -896,6 +985,70 @@ async def test_partial_messages_mode():
             },
         ]
     )
+
+
+async def test_dict_tool_args_are_emitted_as_one_complete_fragment():
+    """`dict` args reach the client as a single fragment carrying the whole encoded object.
+
+    Unlike streamed `str` args, a `dict` delta is a merge rather than a continuation, so emitting
+    one fragment per delta would concatenate into invalid JSON. The value is encoded the way
+    Pydantic AI encodes tool arguments, which `json.dumps` alone cannot do — a `datetime` argument
+    would raise instead of reaching the consumer.
+    """
+    args = {'when': datetime(2026, 8, 6, 12, tzinfo=timezone.utc)}
+    start = NativeToolCallPart('log_at', args, tool_call_id='call-1')
+    end = NativeToolCallPart('log_at', {**args, 'level': 'info'}, tool_call_id='call-1')
+
+    async def events() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=start)
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'level': 'info'}, tool_call_id='call-1'))
+        yield PartEndEvent(index=0, part=end)
+
+    lines = await _lines(_event_stream(include_partial_messages=True), events())
+
+    assert [
+        line['event']['delta']['partial_json']
+        for line in lines
+        if line['type'] == 'stream_event' and line['event'].get('delta', {}).get('type') == 'input_json_delta'
+    ] == snapshot(['{"when":"2026-08-06T12:00:00Z","level":"info"}'])
+    assert _reassembled_tool_inputs(lines) == snapshot(
+        [
+            (
+                {'when': '2026-08-06T12:00:00Z', 'level': 'info'},
+                {'when': '2026-08-06T12:00:00Z', 'level': 'info'},
+            )
+        ]
+    )
+
+
+async def test_a_delta_carrying_no_arguments_emits_no_fragment():
+    """A chunk that carries no arguments contributes nothing to the JSON a client reassembles.
+
+    Providers that stream a tool call across chunks routinely send one with no arguments at all;
+    emitting a fragment for it would inject a literal `null` into the middle of the JSON.
+    """
+
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> StreamedChunks:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='noop', json_args='{}', tool_call_id='call-1')}
+            yield {0: DeltaToolCall(tool_call_id='call-1')}
+        else:
+            yield 'Done.'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def noop() -> str:
+        return 'ok'
+
+    lines = await _run_lines(agent, 'go', include_partial_messages=True)
+
+    assert [
+        line['event']['delta']['partial_json']
+        for line in lines
+        if line['type'] == 'stream_event' and line['event'].get('delta', {}).get('type') == 'input_json_delta'
+    ] == snapshot(['{}'])
+    assert _reassembled_tool_inputs(lines) == snapshot([({}, {})])
 
 
 async def test_error_run_still_closes_with_a_result():
@@ -919,7 +1072,7 @@ async def test_error_run_still_closes_with_a_result():
                 'permissionMode': 'default',
                 'slash_commands': [],
                 'output_style': 'default',
-                'uuid': 'id-1',
+                'uuid': IsStr(),
                 'model': 'function:stream',
             },
             {
@@ -928,13 +1081,53 @@ async def test_error_run_still_closes_with_a_result():
                 'is_error': True,
                 'terminal_reason': 'error',
                 'num_turns': 0,
-                'duration_ms': 100,
+                'duration_ms': IsInt(),
                 'result': 'the model exploded',
                 'session_id': 'session-1',
-                'uuid': 'id-2',
+                'uuid': IsStr(),
                 'errors': ['the model exploded'],
             },
         ]
+    )
+
+
+async def test_reusing_an_instance_reports_each_run_on_its_own_terms():
+    """A second run through the same stream reports that run, not a residue of the first.
+
+    Everything the stream accumulates — the failure, the turn count, the answer — is per-run state,
+    and `num_turns` is what gh-aw compares against its max-turns budget.
+    """
+
+    async def failing(messages: list[ModelMessage], agent_info: AgentInfo) -> StreamedChunks:
+        raise RuntimeError('the model exploded')
+        yield  # Make this an async generator
+
+    async def succeeding(messages: list[ModelMessage], agent_info: AgentInfo) -> StreamedChunks:
+        yield 'all good'
+
+    stream = _event_stream()
+    first = await _lines(stream, _native_events(Agent(FunctionModel(stream_function=failing)), 'go'))
+    second = await _lines(stream, _native_events(Agent(FunctionModel(stream_function=succeeding)), 'go'))
+
+    assert (first[-1]['is_error'], first[-1]['num_turns']) == snapshot((True, 0))
+    assert second[-1] == snapshot(
+        {
+            'type': 'result',
+            'subtype': 'success',
+            'is_error': False,
+            'terminal_reason': 'completed',
+            'num_turns': 1,
+            'duration_ms': IsInt(),
+            'result': 'all good',
+            'session_id': 'session-1',
+            'uuid': IsStr(),
+            'usage': {
+                'input_tokens': 50,
+                'output_tokens': 2,
+                'cache_creation_input_tokens': 0,
+                'cache_read_input_tokens': 0,
+            },
+        }
     )
 
 
@@ -988,7 +1181,7 @@ async def test_synthetic_parts_without_a_run_result():
                 'permissionMode': 'default',
                 'slash_commands': [],
                 'output_style': 'default',
-                'uuid': 'id-1',
+                'uuid': IsStr(),
                 'model': 'function:stream',
             },
             {
@@ -996,13 +1189,13 @@ async def test_synthetic_parts_without_a_run_result():
                 'subtype': 'compact_boundary',
                 'compact_metadata': {'trigger': 'auto'},
                 'session_id': 'session-1',
-                'uuid': 'id-3',
-                'timestamp': '2026-01-01T00:00:00.100Z',
+                'uuid': IsStr(),
+                'timestamp': _timestamp(),
             },
             {
                 'type': 'assistant',
                 'message': {
-                    'id': 'msg_id-2',
+                    'id': IsStr(regex=r'msg_.+'),
                     'type': 'message',
                     'role': 'assistant',
                     'content': [
@@ -1014,8 +1207,8 @@ async def test_synthetic_parts_without_a_run_result():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-4',
-                'timestamp': '2026-01-01T00:00:00.200Z',
+                'uuid': IsStr(),
+                'timestamp': _timestamp(),
             },
             {
                 'type': 'user',
@@ -1025,8 +1218,8 @@ async def test_synthetic_parts_without_a_run_result():
                 },
                 'parent_tool_use_id': None,
                 'session_id': 'session-1',
-                'uuid': 'id-5',
-                'timestamp': '2026-01-01T00:00:00.300Z',
+                'uuid': IsStr(),
+                'timestamp': _timestamp(),
             },
             {
                 'type': 'result',
@@ -1034,28 +1227,27 @@ async def test_synthetic_parts_without_a_run_result():
                 'is_error': False,
                 'terminal_reason': 'completed',
                 'num_turns': 1,
-                'duration_ms': 400,
+                'duration_ms': IsInt(),
                 'result': '',
                 'session_id': 'session-1',
-                'uuid': 'id-6',
+                'uuid': IsStr(),
             },
         ]
     )
 
 
-def _shape(value: Any, label: str, shapes: dict[str, set[str]]) -> None:
+def _shape(value: dict[str, Any], label: str, shapes: dict[str, set[str]]) -> None:
     """Record the key set of every record, message, block, event and delta object in `value`."""
-    if not is_str_dict(value):
-        return
     shapes.setdefault(label, set()).update(value)
     for key, child in value.items():
         if key in ('message', 'event', 'delta', 'content_block'):
-            child_type = child.get('type') if is_str_dict(child) else None
+            assert is_str_dict(child)
+            child_type = child.get('type')
             _shape(child, f'{key}:{child_type}' if child_type else key, shapes)
         elif key == 'content' and not isinstance(child, str):
             for block in child:
-                block_type = block.get('type') if is_str_dict(block) else None
-                _shape(block, f'block:{block_type}', shapes)
+                assert is_str_dict(block)
+                _shape(block, f'block:{block.get("type")}', shapes)
 
 
 def _stream_shapes(lines: list[Any]) -> dict[str, set[str]]:
@@ -1071,9 +1263,12 @@ def _stream_shapes(lines: list[Any]) -> dict[str, set[str]]:
 # The captured fixtures contain no failing tool call and no compaction, so these two have no CLI
 # precedent to check against. `tool_result.is_error` is read by gh-aw's parser, which renders a
 # failure as a success without it; `compact_boundary` is documented by the Claude Agent SDK's
-# message types. Everything else we emit has to have been seen in a real stream.
+# message types. `result.errors` is the same kind of divergence: the CLI's own `success`-subtype
+# failures carry no such key, but gh-aw's parser reads `lastEntry.errors` (in
+# `log_parser_shared.cjs`) to render its Errors block, so a failed run reports one.
+# Everything else we emit has to have been seen in a real stream.
 UNOBSERVED_SHAPES = {'record:system:compact_boundary'}
-UNOBSERVED_KEYS = {('block:tool_result', 'is_error')}
+UNOBSERVED_KEYS = {('block:tool_result', 'is_error'), ('record:result:success', 'errors')}
 
 
 async def test_emitted_shapes_were_observed_in_real_cli_output(assets_path: Path):
@@ -1092,6 +1287,10 @@ async def test_emitted_shapes_were_observed_in_real_cli_output(assets_path: Path
     def flaky() -> str:
         raise ModelRetry('nope')
 
+    async def failing(messages: list[ModelMessage], agent_info: AgentInfo) -> StreamedChunks:
+        raise RuntimeError('the model exploded')
+        yield  # Make this an async generator
+
     fixture_shapes: dict[str, set[str]] = {}
     fixtures = sorted((assets_path / 'claude_code_stream_json').glob('*.jsonl'))
     assert len(fixtures) == 8
@@ -1103,6 +1302,7 @@ async def test_emitted_shapes_were_observed_in_real_cli_output(assets_path: Path
     emitted = await _run_lines(agent, 'go')
     emitted += await _run_lines(agent, 'go', include_partial_messages=True)
     emitted += await _lines(_event_stream(), _synthetic_events())
+    emitted += await _run_lines(Agent(FunctionModel(stream_function=failing)), 'go')
     emitted_shapes = _stream_shapes(emitted)
 
     unexpected = {

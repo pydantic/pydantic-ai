@@ -1,8 +1,8 @@
 # TDD spec: Claude Code stream-json event stream for `pydantic_ai.ui`
 
-Originally written 2026-08-07 in the harness `github-aw-pyai-engine` session as a handoff doc;
-moved into this worktree (branch `claude-code-event-stream`) and committed for version control on
-2026-08-06, with the review addendum at the bottom. Questions about intent go to David.
+Originally written 2026-08-06 in the harness `github-aw-pyai-engine` session as a handoff doc;
+moved into this worktree (branch `claude-code-event-stream`) and committed for version control the
+same day, with the review addendum at the bottom. Questions about intent go to David.
 
 ## Goal
 
@@ -20,11 +20,10 @@ conversation with Douwe (he proposed this seam; he has not yet blessed the exact
   overridden gives us gh-aw's Claude log parser, step-summary rendering, and token metrics for free
   -- third-party engines get none of that. Proven end-to-end by Bill's shim:
   https://github.com/strawgate/gh-aw/pull/4
-- Douwe's design direction (Slack 2026-08-07 + huddle notes
-  `~/pydantic/ai/notes/meetings/2026-05-21 douwe, bill.md`): implement "as a uiadapter, partially" --
-  the event mapping belongs in `pydantic_ai.ui` beside the AG-UI and Vercel AI adapters; the
-  HTTP-shaped input half does not apply to a CLI. His May framing: "take any agent and with a couple
-  lines of code make it look like Claude code."
+- Douwe's design direction: implement "as a uiadapter, partially" -- the event mapping belongs in
+  `pydantic_ai.ui` beside the AG-UI and Vercel AI adapters; the HTTP-shaped input half does not apply
+  to a CLI. His earlier framing: "take any agent and with a couple lines of code make it look like
+  Claude code."
 
 ## Read before designing
 
@@ -157,14 +156,14 @@ reading item 0, and the compaction example removed from Constraints (corrected h
   `is_error: true`); `stop_reason` reconstruction from `finish_reason`; multimodal tool returns ->
   `tool_result` content arrays; `parent_tool_use_id: null` (no subagent counterpart in the seam).
 
-### #5223 lessons — API-shape constraints (resolved 2026-08-06 — full report in `local-notes/pr5223-stall-report.md`, uncommitted)
+### #5223 lessons — API-shape constraints (resolved 2026-08-06)
 
 #5223 is still open/draft; it stalled because its load-bearing API question was never adjudicated
 (the substantive review lived off-GitHub) and the diff grew to 40 files. Binding lessons here:
 
-1. **No `Agent.to_claude_code()`, no `deps_factory`.** `Agent.to_ag_ui()` is a stated maintainer
-   regret; the blessed shape is "construct the adapter/event-stream, call it in a couple of
-   lines". We ship `ClaudeCodeEventStream` (+ docs showing the couple-of-lines usage); any
+1. **No `Agent.to_claude_code()`, no `deps_factory`.** Maintainer review of #5223 preferred the
+   construct-the-adapter shape over `Agent.to_*()` methods (`to_ag_ui()` predates that preference);
+   the blessed shape is "construct the adapter/event-stream, call it in a couple of lines". We ship `ClaudeCodeEventStream` (+ docs showing the couple-of-lines usage); any
    one-liner convenience belongs harness-side, and would be a factory function, never an `Agent`
    method.
 2. **The diff stays inside `pydantic_ai/ui/claude_code/` + its tests + docs.** Zero changes to
@@ -177,7 +176,7 @@ reading item 0, and the compaction example removed from Constraints (corrected h
    explicitly routed this CLI-output seam through `pydantic_ai.ui`. Naming that distinction
    preempts the "why is this a UI adapter?" round.
 
-### gh-aw parser requirements (resolved 2026-08-06 — full report in `local-notes/ghaw-parser-requirements.md`, uncommitted)
+### gh-aw parser requirements (resolved 2026-08-06)
 
 Pinned oracle: `github/gh-aw` @ `fafef5837db7134eb1931954423f5c9d6e0bec3a`, entry point
 `actions/setup/js/parse_claude_log.cjs`. **Vendoring needs the whole family** (that file is a
