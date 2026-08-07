@@ -450,7 +450,7 @@ def _insert_cache_point_before_trailing_documents(
                 'due to Bedrock API restrictions. '
                 'Add text content before or after your document or video to enable caching.'
             )
-        return False  # pragma: no cover
+        return False
 
 
 class BedrockModelSettings(ModelSettings, total=False):
