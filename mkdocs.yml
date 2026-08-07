@@ -141,6 +141,7 @@ nav:
           - Overview: ui/overview.md
           - AG-UI: ui/ag-ui.md
           - Vercel AI: ui/vercel-ai.md
+          - Claude Code: ui/claude-code.md
 
   - Related Packages:
       - clai: cli.md
@@ -218,6 +219,7 @@ nav:
           - api/toolsets.md
           - api/ui/ag_ui.md
           - api/ui/base.md
+          - api/ui/claude_code.md
           - api/ui/vercel_ai.md
           - api/usage.md
       - pydantic_evals:
