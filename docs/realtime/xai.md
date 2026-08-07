@@ -1,7 +1,7 @@
 # xAI Grok Voice
 
 [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] brings Grok Voice into the typed,
-server-side realtime agent loop. Start with the [realtime quickstart](index.md#quickstart) or the
+server-side realtime agent loop. Start with the [realtime quickstart](overview.md#quickstart) or the
 [text-to-audio example](../examples/realtime-text-to-audio.md).
 
 ## Setup
@@ -27,7 +27,7 @@ model list.
 ## Settings
 
 [`XaiRealtimeModelSettings`][pydantic_ai.realtime.xai.XaiRealtimeModelSettings] extends the
-[shared settings](index.md#shared-settings):
+[shared settings](overview.md#shared-settings):
 
 ```python
 from pydantic_ai.realtime import TurnDetection
@@ -41,14 +41,17 @@ settings = XaiRealtimeModelSettings(
 model = XaiRealtimeModel('grok-voice-latest', settings=settings)
 ```
 
-`xai_voice` selects the provider voice; `eve` is the default. For exact server-VAD threshold or
+`xai_voice` selects the provider voice; when unset, xAI picks its own server-side default
+(currently `eve`). For exact server-VAD threshold or
 automatic-response behavior, set `xai_turn_detection=` with
 [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]; it fully overrides shared `turn_detection`.
 Set `turn_detection=False` for push-to-talk.
 
-Input transcription defaults to `'auto'`. The provider sends cumulative transcript snapshots that
-can revise earlier words, so caption UIs should render the full
-[`TranscriptUpdate.transcript`][pydantic_ai.realtime.TranscriptUpdate.transcript].
+Input transcription defaults to `'auto'`. Unlike the incremental deltas described in
+[live captions](audio.md#consuming-audio-and-transcripts), xAI sends cumulative transcript
+snapshots that can revise earlier words, so caption UIs should render the full
+[`TranscriptUpdate.transcript`][pydantic_ai.realtime.TranscriptUpdate.transcript] rather than
+append deltas.
 
 ### Reasoning
 

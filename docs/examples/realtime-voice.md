@@ -1,11 +1,11 @@
-Example of a voice assistant built on a [realtime](../realtime/index.md) speech-to-speech model: it
+Example of a voice assistant built on a [realtime](../realtime/overview.md) speech-to-speech model: it
 streams your microphone to OpenAI's `gpt-realtime` model and plays the model's spoken replies back
 through your speakers. Talk to it — and try interrupting while it's speaking: the model stops and
 listens (barge-in).
 
 Demonstrates:
 
-- [realtime sessions](../realtime/index.md)
+- [realtime sessions](../realtime/overview.md)
 - [tools](../tools.md)
 - [barge-in](../realtime/turns.md#barge-in) (interrupting the model mid-sentence)
 

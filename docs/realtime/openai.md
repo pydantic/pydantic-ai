@@ -1,7 +1,7 @@
 # OpenAI Realtime
 
 [`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel] connects an agent to
-OpenAI's native speech-to-speech models. Start with the [realtime quickstart](index.md#quickstart) or
+OpenAI's native speech-to-speech models. Start with the [realtime quickstart](overview.md#quickstart) or
 the [text-to-audio example](../examples/realtime-text-to-audio.md).
 
 ## Setup
@@ -27,7 +27,7 @@ canonical model list.
 ## Settings
 
 [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] extends the
-[shared settings](index.md#shared-settings) with voice, noise reduction, output speed, exact turn
+[shared settings](overview.md#shared-settings) with voice, noise reduction, output speed, exact turn
 detection, and truncation:
 
 ```python
@@ -104,7 +104,3 @@ that expose the realtime protocol can also be supplied through an `OpenAIProvide
 
 - The provider connection has no resumable server handle. Automatic reconnect restores completed
   history by replaying local messages into a new session.
-- The provider can speak while local function tools run, so a single user exchange may contain
-  multiple model responses. Wait for `RealtimeTurnCompleteEvent`.
-- Changing `openai_voice` or other provider settings should be done before opening the session; the
-  shared agent configuration is resolved once at connect.

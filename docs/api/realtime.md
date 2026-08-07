@@ -9,7 +9,7 @@ long-lived connection: you stream audio (or text/images) in, and consume audio, 
 tool calls as they arrive. The high-level entry point is
 [`Agent.realtime()`][pydantic_ai.agent.Agent.realtime], followed by
 [`AgentRealtime.session()`][pydantic_ai.agent.AgentRealtime.session], which wires the agent's tools and
-instructions into a session and runs the tool loop for you. See the [Realtime guide](../realtime/index.md)
+instructions into a session and runs the tool loop for you. See the [Realtime guide](../realtime/overview.md)
 for a walkthrough.
 
 The flow of a session:
@@ -109,75 +109,9 @@ control-plane events above (`RealtimeInputSpeechStartEvent`, `RealtimeInputSpeec
 [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent], which the
 session synthesizes rather than reading off the wire. Usage updates are accumulated on the session and are not yielded.
 
+The lower-level codec vocabulary is documented in
+[`pydantic_ai.realtime.codec`](realtime/codec.md), and each provider in its own module:
+[`pydantic_ai.realtime.openai`](realtime/openai.md), [`pydantic_ai.realtime.google`](realtime/google.md),
+[`pydantic_ai.realtime.xai`](realtime/xai.md), and [`pydantic_ai.realtime.azure`](realtime/azure.md).
+
 ::: pydantic_ai.realtime
-
-## Codec
-
-The lower-level *codec* vocabulary, for implementing a realtime provider or consuming a
-[`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection] directly: the raw events a
-connection yields, the turn-control verbs and inputs it accepts, and the model-profile merge helpers.
-Most users only need the session-level API above.
-
-::: pydantic_ai.realtime.codec
-
-## OpenAI provider
-
-The OpenAI Realtime API provider. Requires the `realtime` and `openai` optional groups
-(`pip install "pydantic-ai-slim[realtime,openai]"`).
-
-[`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] configures
-the session, including shared turn-taking via [`TurnDetection`][pydantic_ai.realtime.TurnDetection]
-(or `False` for push-to-talk). For finer control, `openai_turn_detection` accepts
-[`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] or
-[`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] and fully overrides the shared setting.
-Resilience comes from [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] on
-[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel].
-
-::: pydantic_ai.realtime.openai
-
-## Gemini provider
-
-The Gemini Live API provider. Requires the `google` optional group
-(`pip install "pydantic-ai-slim[google]"`).
-
-[`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel] runs over the `google-genai`
-SDK (which manages the WebSocket transport). Gemini expects **16 kHz** PCM input (output is 24 kHz),
-produces one response modality per session, and natively accepts live video frames sent as
-[`ImageInput`][pydantic_ai.realtime.ImageInput]. It exposes Gemini Live's session and generation
-configuration through [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings] —
-shared turn-taking via [`TurnDetection`][pydantic_ai.realtime.TurnDetection], with finer Gemini-specific
-control via [`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD] in `google_vad` plus
-`google_activity_handling`/`google_turn_coverage`, voice via `google_voice` or a
-[`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker] in `google_multi_speaker`,
-and long-session [`ContextCompression`][pydantic_ai.realtime.google.ContextCompression] — with
-resilience via session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] on the model.
-
-::: pydantic_ai.realtime.google
-
-## xAI Grok Voice provider
-
-The xAI Grok Voice realtime API provider. Requires the `realtime`, `xai`, and `openai` optional
-groups (`pip install "pydantic-ai-slim[realtime,xai,openai]"`) — `openai` because the model reuses
-the OpenAI Realtime codec, whose event types come from the OpenAI SDK.
-
-xAI's realtime API is a clone of the OpenAI Realtime protocol, so
-[`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] reuses the OpenAI codec (event
-mapping, seeding, the WebSocket connection). Turn-taking uses the shared
-[`TurnDetection`][pydantic_ai.realtime.TurnDetection] (or `False` for push-to-talk); for exact
-server-VAD control, `xai_turn_detection` accepts
-[`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] and fully overrides the shared setting. It
-diverges only where xAI does: it supports
-cancellation-based interruption but not output truncation, has no image input, and streams input
-transcription as cumulative snapshots that may revise earlier text, rather than as incremental deltas.
-Authentication comes from an
-[`XaiProvider`][pydantic_ai.providers.xai.XaiProvider], mirroring [`XaiModel`][pydantic_ai.models.xai.XaiModel].
-
-::: pydantic_ai.realtime.xai
-
-## Azure OpenAI provider
-
-The Azure OpenAI realtime model reuses the OpenAI Realtime codec and connection, authenticates with
-[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider], and so needs the `realtime` and
-`openai` optional groups (`pip install "pydantic-ai-slim[realtime,openai]"`).
-
-::: pydantic_ai.realtime.azure

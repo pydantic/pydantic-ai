@@ -39,15 +39,22 @@ interrupts model output instead. These are the signals to flush playback.
 
 [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] handles the server-side half of the
 problem. When supported, pass how many milliseconds actually played so the provider does not record
-unheard words as part of the conversation:
+unheard words as part of the conversation. `Speaker` here stands in for your playback layer —
+anything that can report and flush buffered audio:
 
-```python {test="skip"}
-from typing import Any
+```python
+from typing import Protocol
 
-from pydantic_ai.realtime import RealtimeInputSpeechStartEvent
+from pydantic_ai.realtime import RealtimeInputSpeechStartEvent, RealtimeSession
 
 
-async def handle_events(session: Any, speaker: Any):
+class Speaker(Protocol):
+    def has_unplayed_audio(self) -> bool: ...
+    def flush(self) -> None: ...
+    def played_ms(self) -> int: ...
+
+
+async def handle_events(session: RealtimeSession, speaker: Speaker):
     async for event in session:
         if isinstance(event, RealtimeInputSpeechStartEvent) and speaker.has_unplayed_audio():
             speaker.flush()
@@ -93,10 +100,11 @@ async def main():
 Gemini does not expose manual turn verbs through Pydantic AI; `turn_detection=False` raises
 [`UserError`][pydantic_ai.exceptions.UserError] before connecting.
 
-## Capability checks
+## Checking what the model supports
 
-Branch on [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] rather than provider
-names:
+These are *model profile* flags describing what a provider connection can do — not to be confused
+with [capabilities](../capabilities/overview.md), which add behavior to an agent. Branch on
+[`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] rather than provider names:
 
 | Profile flag | Gates |
 | --- | --- |
@@ -112,8 +120,3 @@ control message is sent. Current provider support is summarized on each provider
 - Push-to-talk silence usually means `commit_audio()` or `create_response()` was omitted.
 - If playback triggers speech detection, add echo cancellation in the device or WebRTC layer and
   flush playback promptly on real barge-in.
-- A model may speak, call a tool, and speak again. Treat
-  [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent], not the end of one speech part, as
-  the exchange boundary.
-- xAI can cancel output but cannot report how much audio played, so call `interrupt()` without
-  `played_ms`. Gemini handles interruption server-side and exposes no explicit `interrupt()`.

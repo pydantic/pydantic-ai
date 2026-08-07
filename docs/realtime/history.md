@@ -111,6 +111,24 @@ utterance.
 
 ## Retaining images
 
+Pass `retain_images_every_n=` and `retain_images_max=` to
+[`session()`][pydantic_ai.agent.AgentRealtime.session] to bound how many images stay in local
+history:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+
+agent = Agent()
+
+
+async def main():
+    async with agent.realtime(OpenAIRealtimeModel('gpt-realtime')).session(
+        retain_images_every_n=10, retain_images_max=25
+    ):
+        ...
+```
+
 Images sent through [`send()`][pydantic_ai.realtime.RealtimeSession.send] are recorded by default.
 `retain_images_every_n=N` keeps the first image and then one of every `N`; the provider still receives
 every frame. `retain_images_max` defaults to `100` and evicts the oldest retained image when the cap

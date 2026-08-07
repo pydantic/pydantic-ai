@@ -1,10 +1,10 @@
 This camera agent streams microphone audio and one camera frame per second into a
-[realtime session](../realtime/index.md), then plays and captions the spoken response. Point it at
+[realtime session](../realtime/overview.md), then plays and captions the spoken response. Point it at
 objects to ask about them, enable *Watch* for proactive narration, or show it a sketch to redraw.
 
 The example demonstrates:
 
-- provider-agnostic [realtime sessions](../realtime/index.md) with profile-derived PCM sample rates
+- provider-agnostic [realtime sessions](../realtime/overview.md) with profile-derived PCM sample rates
 - [image input](../realtime/audio.md#images) using
   [`BinaryContent`][pydantic_ai.messages.BinaryContent]
 - live vision with `turn_coverage='all_input'` and a *Watch* toggle

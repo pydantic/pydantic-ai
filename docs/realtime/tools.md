@@ -65,16 +65,59 @@ restrictions—are canonical on the [Gemini provider page](gemini.md#native-tool
 
 ## Deferred and approval-required tools
 
-**An approval-gated tool is not executable in a realtime session unless you install a
-[`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler.** A standard
-run can end with a `DeferredToolRequests` output and resume once a human answers; a live conversation
-has nowhere to pause, so with no handler the call is refused *every time* — the model receives an
-explanation that the tool cannot complete during a realtime session, and the tool never runs.
-Installing a handler is the expected setup for approval-gated tools in a realtime session, not an
-optional extra.
+**Approval-gated tools need a
+[`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler; without one
+the call is refused every time.** A standard run can end with a
+[`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output and resume once a human
+answers, but a live conversation has nowhere to pause: with no handler, the model is told the tool
+cannot complete during a realtime session, and the tool never runs.
 
 The handler resolves each call inline: approve it (the tool then runs and returns normally), deny it
-(recorded with `outcome='denied'`), substitute a result, or request a retry.
+(recorded with `outcome='denied'`), substitute a result, or request a retry. This handler approves
+small refunds from policy and denies the rest:
+
+```python
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, ToolDenied
+from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+from pydantic_ai.tools import RunContext
+
+agent = Agent(instructions='You are a customer support voice assistant.')
+
+
+@agent.tool_plain(requires_approval=True)
+def issue_refund(order_id: str, amount: float) -> str:
+    return f'Refunded ${amount:.2f} for order {order_id}.'
+
+
+async def refund_policy(
+    ctx: RunContext[None], requests: DeferredToolRequests
+) -> DeferredToolResults:
+    results = DeferredToolResults()
+    for call in requests.approvals:
+        if call.args_as_dict().get('amount', 0) <= 100:
+            results.approvals[call.tool_call_id] = True
+        else:
+            results.approvals[call.tool_call_id] = ToolDenied(
+                'Refunds over $100 need a human; offer to connect one.'
+            )
+    return results
+
+
+async def main():
+    async with agent.realtime(
+        OpenAIRealtimeModel('gpt-realtime'),
+        capabilities=[HandleDeferredToolCalls(handler=refund_policy)],
+    ).session():
+        ...
+```
+
+This applies to both ways a call is deferred — raising
+[`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+[`CallDeferred`][pydantic_ai.exceptions.CallDeferred] from the tool, and declaring it up front with
+`requires_approval=True` or an [external toolset](../toolsets.md#external-toolset). An approval-gated
+tool is still advertised to the model, exactly as in a standard run; calling it opens the approval
+flow rather than running the tool.
 
 !!! warning "The handler answers from policy, not from a person"
     The handler must return a decision promptly — it is a programmatic policy resolver, not an approval
@@ -85,32 +128,18 @@ The handler resolves each call inline: approve it (the tool then runs and return
     assistant silence, and if the user speaks into that gap the provider cancels the pending call
     outright (recorded as [a synthetic cancellation](#function-tools)).
 
-    Asking a human mid-call and resuming on their answer is not supported yet; a standard run, which
-    can end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output and resume
-    later, is the place for that today.
+Asking a human mid-call and resuming on their answer is not supported yet: a realtime session cannot
+pause and return a `DeferredToolRequests` output for an out-of-band result. Resolve the request
+during the call, or move that workflow to a standard agent run.
 
-    [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] on a session is
-    informational for the same reason: it is emitted when the handler *has* resolved the calls, so a
-    consumer can observe what was asked and decided. It is not a hook to respond to — unlike the same
-    event in a standard run, nothing waits for the consumer, and no event is emitted when no handler is
-    installed and the call is refused.
+[`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] on a session is
+informational for the same reason: it is emitted when the handler *has* resolved the calls, so a
+consumer can observe what was asked and decided. It is not a hook to respond to — unlike the same
+event in a standard run, nothing waits for the consumer, and no event is emitted when no handler is
+installed and the call is refused.
 
-This applies to both ways a call is deferred — raising
-[`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
-[`CallDeferred`][pydantic_ai.exceptions.CallDeferred] from the tool, and declaring it up front with
-`requires_approval=True` or an [external toolset](../toolsets.md#external-toolset). An approval-gated
-tool is still advertised to the model, exactly as in a standard run; calling it opens the approval
-flow rather than running the tool.
-
-A realtime session cannot pause and return a `DeferredToolRequests` output for an out-of-band
-result. Resolve the request during the call or move that workflow to a standard agent run.
-
-A session's tools are fixed when the connection opens, so nothing can reveal a tool mid-call. Tools
-registered with `defer_loading=True` for [tool search](../tools-advanced.md#tool-search), and
-[capabilities](../capabilities/overview.md) with `defer_loading=True` that contribute tools or native
-tools, are therefore rejected with [`UserError`][pydantic_ai.exceptions.UserError] when the session
-opens — rather than advertising a search that could find the tool but never deliver it. Register
-those tools normally for a realtime session, or keep that workflow in a standard agent run.
+Tools registered with `defer_loading=True` are rejected in a realtime session for a related reason;
+see [Capabilities and hooks](#capabilities-and-hooks).
 
 ## Enqueuing prompts from tools
 
@@ -131,23 +160,36 @@ A [capability][pydantic_ai.capabilities.AbstractCapability] attached to the agen
 | --- | --- |
 | `for_agent`, `for_run`, `get_instructions` | Runs during setup; dynamic instructions are evaluated once at connect. |
 | `get_toolset`, `get_wrapper_toolset`, `prepare_tools` | Contributes, wraps, and prepares local tools before connecting. |
-| `get_native_tools` | Contributes concrete native tools before connecting; dynamic selectors do not apply. |
+| `get_native_tools` | Contributes native tools before connecting; a dynamic native-tool function is resolved once against the connect-time context, like dynamic instructions. |
 | Tool validation/execution hooks | Runs around each local function-tool call. |
 | `handle_deferred_tool_calls` | Resolves deferred requests inline. |
 | Graph node, model-request, and output-processing hooks | Do not run; no agent graph or output-processing stage exists. |
-| `before_run`, `after_run`, `wrap_run`, `on_run_error` | Run once around the session, with the same close-boundary recovery and result-transformation semantics as `iter()`; a realtime session is a run. |
-| `wrap_run_event_stream` | Wraps the consumer-facing session iterator. It can observe or transform shared [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members and realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members without changing history or tool execution. `event_stream_handler` works through the same stream. |
+
+`before_run`, `after_run`, `wrap_run`, and `on_run_error` run once around the session — a realtime
+session is a run — with the same close-boundary recovery and result-transformation semantics as
+[`iter()`][pydantic_ai.agent.AbstractAgent.iter].
+
+`wrap_run_event_stream` wraps the consumer-facing session iterator. It can observe or transform
+shared [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent] members and realtime-only
+[`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members without changing history or tool
+execution. There is no `event_stream_handler` parameter on `realtime()`; a handler-style consumer
+is attached with the [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream]
+capability, which works through this same stream.
 
 `get_model_settings()` may run during capability setup, but regular model settings do not configure
 a realtime model. Pass [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] through
-`realtime(model_settings=...)` instead. Inside session hooks and tools,
-[`ctx.model_settings`][pydantic_ai.tools.RunContext.model_settings] holds the merged
-[`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was connected with,
-[`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] is `True` from `before_run` onward, and
-[`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] exposes the live
-[`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] once it is connected (it is still `None` in
-`before_run`, in instruction functions, and in the pre-handler part of `wrap_run`, which all run
-before the connection is established).
+`realtime(model_settings=...)` instead. Inside session hooks and tools, the
+[`RunContext`][pydantic_ai.tools.RunContext] reflects the session:
+
+| `RunContext` field | Value in a realtime session |
+| --- | --- |
+| [`ctx.model_settings`][pydantic_ai.tools.RunContext.model_settings] | The merged [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was connected with. |
+| [`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] | `True` from `before_run` onward. |
+| [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] | The live [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] once it is connected. |
+
+!!! note
+    `ctx.realtime_session` is still `None` in `before_run`, in instruction functions, and in the
+    pre-handler part of `wrap_run`, which all run before the connection is established.
 
 Deferred capabilities load in a session the same way they do in a regular run: the capability
 catalog is part of the session's instructions, and calling the `load_capability` tool returns the
@@ -171,6 +213,7 @@ frontier text model. Expose a tool that delegates the hard work to a standard
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 
@@ -191,7 +234,12 @@ async def consult(question: str) -> str:
 
 async def main():
     async with voice.realtime(OpenAIRealtimeModel('gpt-realtime')).session() as session:
-        await session.send('What is the answer?')
+        await session.send(
+            'Which of our three shipping options is cheapest for a 4 kg parcel to Berlin?'
+        )
+        async for event in session:
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
 ```
 
 The delegated run executes concurrently, so providers with asynchronous tool calls can keep talking
@@ -200,8 +248,8 @@ while analysis runs. To continue the entire conversation after the voice session
 
 ## Edge cases
 
-- A tool finishing does not necessarily finish the turn. Wait for
-  [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent].
+- A tool finishing does not necessarily finish the turn; see the
+  [exchange boundary](audio.md#event-reference).
 - Short tools can make asynchronous Gemini tool calling counterproductive: the result may interrupt
   a reply that barely started. Enable it for tools whose latency would otherwise create dead air.
 - Native-tool behavior is model-specific. Check the profile and provider page rather than assuming

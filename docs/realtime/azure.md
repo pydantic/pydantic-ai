@@ -2,7 +2,7 @@
 
 [`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] connects to Azure OpenAI's GA
 realtime protocol with the server-side Pydantic AI agent loop. Start with the
-[realtime quickstart](index.md#quickstart) or [text-to-audio example](../examples/realtime-text-to-audio.md).
+[realtime quickstart](overview.md#quickstart) or [text-to-audio example](../examples/realtime-text-to-audio.md).
 
 ## Setup
 
@@ -82,8 +82,6 @@ prefix or an explicitly configured `AzureProvider`.
 
 ## Provider-specific quirks
 
-- Azure uses the OpenAI event and settings protocol but deployment names and resource-scoped
-  transcription models make setup different.
 - A failed input transcription leaves the user turn represented as retained audio when available,
   or as a content-less `SpeechPart` otherwise.
 - Azure AI Voice Live is not supported; this page covers Azure OpenAI Realtime only.

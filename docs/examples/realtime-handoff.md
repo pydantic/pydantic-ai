@@ -3,14 +3,14 @@ output. This example shows the robust pattern: let the realtime model run the li
 then hand its [message history](../message-history.md) to a normal
 [`Agent.run()`][pydantic_ai.agent.AbstractAgent.run] with `output_type` to extract a typed result.
 
-Because a [realtime session](../realtime/index.md) records the *same*
+Because a [realtime session](../realtime/overview.md) records the *same*
 [`ModelMessage`][pydantic_ai.messages.ModelMessage] history a text agent produces, the handoff is
 just passing [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] along —
 realtime and non-realtime runs are peers that interoperate through message history.
 
 Demonstrates:
 
-- [realtime sessions](../realtime/index.md)
+- [realtime sessions](../realtime/overview.md)
 - [structured output](../output.md) via a text-agent handoff
 - [message history](../message-history.md) shared across realtime and non-realtime runs
 

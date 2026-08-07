@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import json
 import os
 import re
@@ -44,18 +45,21 @@ from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
 from pydantic_ai.embeddings.test import TestEmbeddingModel
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.realtime import RealtimeModel
 from pydantic_ai.realtime.codec import (
     AudioDelta,
+    InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
     ResponseDone,
+    ToolCall,
+    ToolResult,
 )
 
 from .conftest import TestEnv, try_import
@@ -142,23 +146,48 @@ def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
 
 
 class MockRealtimeConnection(RealtimeConnection):
-    """A minimal scripted realtime connection for executable documentation examples."""
+    """A scripted realtime connection for executable documentation examples.
+
+    The default script speaks one assistant turn. When the example's agent defines a
+    `check_availability` tool, the script plays a full spoken exchange instead — user turn, tool
+    round, assistant answer — so the quickstart's printed conversation is produced by the real
+    session/tool loop rather than pasted into the docs.
+    """
+
+    def __init__(self, function_tool_names: Sequence[str] = ()) -> None:
+        self._function_tool_names = function_tool_names
+        self._tool_result_received = asyncio.Event()
 
     async def send(self, content: RealtimeInput) -> None:
-        pass
+        if isinstance(content, ToolResult):
+            self._tool_result_received.set()
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-        yield AudioDelta(data=b'\x00\x00')
-        yield OutputTranscript(text='Hello from the realtime assistant.', is_final=True)
-        yield ResponseDone()
+        if 'check_availability' in self._function_tool_names:
+            yield InputTranscript(text='Hi! Do you have a table for two tomorrow night?', is_final=True)
+            yield ToolCall(
+                tool_call_id='call_1', tool_name='check_availability', args='{"day": "tomorrow", "party_size": 2}'
+            )
+            yield ResponseDone()
+            # A real provider only answers once the tool's result has been sent back.
+            await self._tool_result_received.wait()
+            yield AudioDelta(data=b'\x00\x00')
+            yield OutputTranscript(text='We do: 7 pm, table for two. Want me to book it?', is_final=True)
+            yield ResponseDone()
+        else:
+            yield AudioDelta(data=b'\x00\x00')
+            yield OutputTranscript(text='Hello from the realtime assistant.', is_final=True)
+            yield ResponseDone()
 
 
 @asynccontextmanager
 async def _mock_realtime_connect(
     self: RealtimeModel,
+    *,
+    model_request_parameters: ModelRequestParameters,
     **kwargs: Any,
 ) -> AsyncGenerator[RealtimeConnection]:
-    yield MockRealtimeConnection()
+    yield MockRealtimeConnection([tool.name for tool in model_request_parameters.function_tools])
 
 
 def _patch_realtime_models(mocker: MockerFixture) -> None:

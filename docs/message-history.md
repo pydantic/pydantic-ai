@@ -536,7 +536,7 @@ print(science_result.output)
 _(This example is complete, it can be run "as is")_
 
 !!! tip "Handing off from a realtime session"
-    A [realtime speech-to-speech session](realtime/index.md) accumulates the same message history, so you
+    A [realtime speech-to-speech session](realtime/overview.md) accumulates the same message history, so you
     can pass [`session.all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] straight
     into `agent.run(message_history=...)` to summarize or extract structured data from a voice
     conversation. See [Realtime history and handoff](realtime/history.md).

@@ -1699,9 +1699,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         """Bind this agent's configuration to a realtime `model`, returning an accessor for realtime operations.
 
         The returned [`AgentRealtime`][pydantic_ai.agent.AgentRealtime] carries the agent's realtime
-        configuration so that opening a session with [`session()`][pydantic_ai.agent.AgentRealtime.session] —
-        and, where the model supports it, browser WebRTC signaling — reuses the same instructions, tools,
-        capabilities, and run context without re-passing them.
+        configuration so that opening a session with [`session()`][pydantic_ai.agent.AgentRealtime.session]
+        reuses the same instructions, tools, capabilities, and run context without re-passing them.
 
         These parameters mirror [`iter`][pydantic_ai.agent.AbstractAgent.iter]. Parameters specific to the
         request-response graph — `output_type`, `retries`, `event_stream_handler`, `deferred_tool_results` —
@@ -2031,9 +2030,9 @@ class AgentRealtime(Generic[AgentDepsT]):
     """An agent bound to a realtime model, returned by [`AbstractAgent.realtime`][pydantic_ai.agent.AbstractAgent.realtime].
 
     Carries the agent's realtime configuration (mirroring the parameters of
-    [`iter`][pydantic_ai.agent.AbstractAgent.iter]) so that opening a session — and, where the model
-    supports it, browser WebRTC signaling — reuses the same instructions, tools, capabilities, and run
-    context without re-passing them. Construct it via [`agent.realtime(model, ...)`][pydantic_ai.agent.AbstractAgent.realtime],
+    [`iter`][pydantic_ai.agent.AbstractAgent.iter]) so that opening a session reuses the same
+    instructions, tools, capabilities, and run context without re-passing them. Construct it via
+    [`agent.realtime(model, ...)`][pydantic_ai.agent.AbstractAgent.realtime],
     then open a session with [`session()`][pydantic_ai.agent.AgentRealtime.session].
     """
 

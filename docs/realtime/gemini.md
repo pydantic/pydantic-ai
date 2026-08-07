@@ -2,12 +2,12 @@
 
 [`GoogleRealtimeModel`][pydantic_ai.realtime.google.GoogleRealtimeModel] connects an agent to Gemini
 Live, including native audio, live images, and provider-native tools. Start with the
-[realtime quickstart](index.md#quickstart) or [camera example](../examples/realtime-camera.md).
+[realtime quickstart](overview.md#quickstart) or [camera example](../examples/realtime-camera.md).
 
 ## Setup
 
 ```bash
-pip install "pydantic-ai-slim[realtime,google]"
+pip install "pydantic-ai-slim[google]"
 ```
 
 Authentication comes from `provider`, mirroring
@@ -25,16 +25,10 @@ asynchronous tools, and output behavior. Use the
 [official Gemini Live documentation](https://ai.google.dev/gemini-api/docs/live) as the canonical
 model and availability source.
 
-The profile describes the speech-to-speech Live models. Gemini also serves specialist streaming
-models on the same endpoint that behave differently — `gemini-robotics-er-2-streaming-preview`, for
-instance, is text-only and rejects audio output. Point a session at one of those and correct the
-facts with [`profile=`](index.md#provider-support), e.g.
-`GoogleRealtimeModel('gemini-robotics-er-2-streaming-preview', profile={'supports_text_output': True})`.
-
 ## Settings
 
 [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings] extends the
-[shared settings](index.md#shared-settings) with Google generation and Live controls:
+[shared settings](overview.md#shared-settings) with Google generation and Live controls:
 
 ```python
 from pydantic_ai.realtime.google import (
@@ -92,10 +86,18 @@ only native tool it supports — no Live model runs native code execution or URL
 [`WebFetch`][pydantic_ai.capabilities.WebFetch] is advertised in `supported_native_tools`. Give
 those a `local=` fallback and the session runs the local tool instead: `CodeExecutionTool(local=...)`,
 or `WebFetch(native=False, local=True)`, which requires the `web-fetch` optional group
-(`pip install "pydantic-ai-slim[realtime,google,web-fetch]"`).
+(`pip install "pydantic-ai-slim[google,web-fetch]"`).
 
 Gemini 2.5 also cannot combine native Google Search grounding with function tools; choose native
 grounding or local function-tool fallbacks unless using a model that supports the combination.
+
+### Specialist streaming models
+
+The built-in profile describes the speech-to-speech Live models. Gemini also serves specialist
+streaming models on the same endpoint that behave differently — `gemini-robotics-er-2-streaming-preview`,
+for instance, is text-only and rejects audio output. Point a session at one of those and correct the
+facts with [`profile=`](overview.md#provider-support), e.g.
+`GoogleRealtimeModel('gemini-robotics-er-2-streaming-preview', profile={'supports_text_output': True})`.
 
 ## Feature support and limitations
 

@@ -6,20 +6,52 @@ limits without changing the application event loop.
 
 ## Connecting a frontend
 
-Keep provider keys, tools, and business logic on the server. Common transport shapes are:
+Keep provider keys, tools, and business logic on the server; connect user devices to your backend,
+not to the provider.
 
-- **Browser → backend → provider:** relay audio over your own WebSocket. The
-  [realtime camera example](../examples/realtime-camera.md) demonstrates this shape.
-- **WebRTC media room:** let a platform such as LiveKit handle echo cancellation, jitter, devices,
-  and telephony while a server-side participant runs the realtime session.
-- **SIP/telephony bridge:** terminate the call with a telephony provider and bridge its audio to the
-  backend session.
+**Browser → backend → provider.** Build a WebSocket endpoint on your backend that accepts the
+browser's microphone audio and pumps it into
+[`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio], while relaying
+[`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] output back for playback. The
+[realtime camera example](../examples/realtime-camera.md) demonstrates this shape end to end.
 
-```text
-device ↔ media bridge ↔ RealtimeSession ↔ provider
-                         ├── typed tools
-                         └── message history
-                         (your backend)
+**WebRTC media room.** Let a platform such as LiveKit handle echo cancellation, jitter, device
+handling, and telephony; you build an agent worker that joins the room as a server-side participant
+and bridges the room's audio track to the realtime session.
+
+**SIP/telephony bridge.** Terminate the phone call with a telephony provider such as Twilio, then
+build the service that connects its media stream (e.g. Twilio Media Streams over WebSocket) to the
+backend session, transcoding between the line's codec and PCM16.
+
+A minimal FastAPI relay for the first shape — the browser sends raw PCM16 binary frames and plays
+the frames it receives:
+
+```python
+import asyncio
+
+from fastapi import FastAPI, WebSocket
+
+from pydantic_ai import Agent
+
+agent = Agent(instructions='You are a helpful voice assistant.')
+app = FastAPI()
+
+
+@app.websocket('/voice')
+async def voice_socket(websocket: WebSocket):
+    await websocket.accept()
+    async with agent.realtime('openai:gpt-realtime').session() as session:
+
+        async def pump_input():
+            while True:
+                await session.send_audio(await websocket.receive_bytes())
+
+        input_task = asyncio.create_task(pump_input())
+        try:
+            async for chunk in session.stream_audio():
+                await websocket.send_bytes(chunk)
+        finally:
+            input_task.cancel()
 ```
 
 Browser-direct provider sessions move the agent loop into the client and give up Pydantic AI's
@@ -49,8 +81,7 @@ Without a policy, an unexpected provider close raises
 ### State restoration
 
 OpenAI and Azure OpenAI have no cross-connection server state, so Pydantic AI replays local message
-history into the new session. Prior transcript turns survive; in-flight audio does not. A reconnect
-therefore always begins a fresh turn.
+history into the new session. Prior transcript turns survive; in-flight audio does not.
 
 Gemini and xAI use native in-process session resumption. xAI enables it automatically when a policy
 is present. Gemini additionally requires `google_enable_session_resumption=True`; see the
@@ -58,13 +89,17 @@ is present. Gemini additionally requires `google_enable_session_resumption=True`
 cannot be persisted for another process.
 
 [`RealtimeSessionReconnectEvent.state_restored`][pydantic_ai.realtime.RealtimeSessionReconnectEvent.state_restored]
-reports whether conversation state was recovered. Treat `False` as a fresh context.
+reports whether conversation state was recovered, by either mechanism.
 
-Resumption restores the conversation, not a generation in flight: a reply the drop cut off is never
-continued on the new connection. The session closes it as an interrupted response — keeping any
-partial transcript in history — and ends its turn before the
-[`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent], so queued messages waiting for
-the turn boundary still flush; the model then stays quiet until the next input.
+A reply the drop cut off follows the same flag. With state restored, the recorded response simply
+stays open: output on the new connection continues it, and the turn completes with the response
+terminal as usual — except on Gemini, which closes the cut reply as an interrupted response (keeping
+any partial transcript in history) before the
+[`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and stays
+quiet until the next input. With state lost, treat the session as a fresh context: before emitting
+the event, the session settles everything the provider lost — the partial reply is recorded as an
+interrupted response, running tool calls get cancelled returns, and the turn ends so queued messages
+waiting for the boundary still flush.
 
 ## Provider session limits
 
@@ -104,14 +139,16 @@ Receive-loop and tool failures propagate from session iteration.
 
 ## Troubleshooting
 
-### No audio
+### No audio, or no useful speech
 
 Send mono PCM16 at `session.profile['audio_input_sample_rate']` and play it at
-`session.profile['audio_output_sample_rate']`. Do not assume the rates match.
+`session.profile['audio_output_sample_rate']`. Do not assume the rates match. See the
+[audio wire contract](audio.md#audio-wire-contract).
 
 ### The model never responds
 
-In push-to-talk mode, call `commit_audio()` and then `create_response()` after sending audio.
+In push-to-talk mode, call `commit_audio()` and then `create_response()` after sending audio. See
+[push-to-talk](turns.md#push-to-talk).
 
 ### The model interrupts itself
 
@@ -127,9 +164,10 @@ tool lifecycle events and review [concurrent tool execution](tools.md#concurrent
 
 Inspect `RealtimeSessionReconnectEvent.state_restored`. If false, begin a fresh conversation; if true but a
 current utterance vanished, that in-flight media was outside the restored completed-turn history.
+See [state restoration](#state-restoration).
 
 ### Gemini reaches its session limit
 
 Combine [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] with
 `google_enable_session_resumption=True`. Recovery uses the latest in-memory server handle after the
-drop.
+drop. See [Gemini session resumption](gemini.md#session-resumption).

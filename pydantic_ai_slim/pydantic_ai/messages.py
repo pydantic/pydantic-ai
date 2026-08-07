@@ -4035,19 +4035,19 @@ class RealtimeInputTranscriptionErrorEvent:
 class RealtimeSessionReconnectEvent:
     """The connection dropped and was automatically re-established; inspect `state_restored` for continuity.
 
-    Session configuration (instructions, tools, voice, ...) is restored on every reconnect. OpenAI
-    starts with fresh server-side conversation state; Gemini and xAI restore conversation state when
-    their session-resumption support is enabled (xAI enables it automatically when `reconnect` is set).
+    Session configuration (instructions, tools, voice, ...) is restored on every reconnect.
+    Conversation state is restored either by the provider's native session resumption (Gemini Live
+    when enabled, xAI Grok Voice) or by the session replaying its local history into the fresh
+    server-side conversation (OpenAI/Azure OpenAI).
     """
 
     _: KW_ONLY
 
     state_restored: bool = False
-    """Whether the provider restored prior conversation state on reconnect.
+    """Whether prior conversation state is available again after the reconnect, regardless of
+    mechanism — native provider resumption or a local-history replay.
 
-    `False` (OpenAI/Azure OpenAI — the server starts a fresh conversation) means the consumer should
-    treat the session as having lost prior turns; `True` (xAI Grok Voice and Gemini Live, when their native
-    session resumption is active) means prior turns were restored.
+    `False` means prior turns were lost: treat the session as a fresh context.
     """
 
     event_kind: Literal['realtime_session_reconnect'] = 'realtime_session_reconnect'

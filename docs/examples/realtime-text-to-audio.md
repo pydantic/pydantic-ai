@@ -1,11 +1,11 @@
-The smallest possible [realtime session](../realtime/index.md): send plain text from Python and hear
+The smallest possible [realtime session](../realtime/overview.md): send plain text from Python and hear
 the model speak the reply. Sending text into an OpenAI realtime session asks the model to respond
 right away, so there's no microphone, voice-activity detection, or manual turn-taking to manage —
 just [`send()`][pydantic_ai.realtime.RealtimeSession.send] and iterate the session's events.
 
 Demonstrates:
 
-- [realtime sessions](../realtime/index.md)
+- [realtime sessions](../realtime/overview.md)
 - the text-in / audio-out path (no audio hardware required)
 - streaming [`SpeechPartDelta`][pydantic_ai.messages.SpeechPartDelta] audio and transcript deltas
 
