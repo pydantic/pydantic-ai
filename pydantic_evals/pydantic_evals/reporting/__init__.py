@@ -481,14 +481,13 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
 
         On a console `rich` reports as ASCII-only — a non-UTF-8 stream, as Windows produces when stdout is
         redirected to a file or a pipe — `v`, `x` and `->` stand in for the `✔`, `✗` and `→` glyphs. The `µs`
-        unit sub-millisecond durations render with is not covered yet, so a code page that can't encode `µ`
-        (`cp932`, `cp936`, `cp949`, `cp950`) can still raise: see
-        [#7291](https://github.com/pydantic/pydantic-ai/issues/7291).
+        unit sub-millisecond durations render with is not covered yet, so a stream that can't encode `µ` can
+        still raise: see [#7291](https://github.com/pydantic/pydantic-ai/issues/7291).
 
         If you want more control over the output, use `console_table` instead and pass it to `rich.Console.print`,
-        passing `ascii_only=True` when your own console needs the fallback.
+        forwarding `ascii_only=console.options.ascii_only` from the console you print to.
         """
-        if console is None:  # pragma: no branch
+        if console is None:
             console = Console(width=width)
         ascii_only = console.options.ascii_only
 
@@ -570,9 +569,9 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         If a baseline is provided, returns a diff between this report and the baseline report.
         Optionally include input and output details.
 
-        Pass `ascii_only=True` to render `v`, `x` and `->` in place of the `✔`, `✗` and `→` glyphs, for a
-        console whose stream can't encode them. Only the caller holding that console can answer this, so
-        it defaults to `False`; `print` reads it off the console it was given.
+        `ascii_only` renders `v`, `x` and `->` in place of the `✔`, `✗` and `→` glyphs, for a console whose
+        stream can't encode them. Only the caller holding that console can answer this, so it defaults to
+        `False`; pass `ascii_only=console.options.ascii_only` from the console you print the table to.
         """
         renderer = EvaluationRenderer(
             include_input=include_input,
@@ -1677,17 +1676,6 @@ class EvaluationRenderer:
                 merged_config, 'metric', values, ascii_only=self.ascii_only
             )
         return all_renderers
-
-    def _infer_duration_renderer(
-        self, report: EvaluationReport, baseline: EvaluationReport | None
-    ) -> _NumberRenderer:  # pragma: no cover
-        all_cases = self._all_cases(report, baseline)
-        all_durations = [x.task_duration for x in all_cases]
-        if self.include_total_duration:
-            all_durations += [x.total_duration for x in all_cases]
-        return _NumberRenderer.infer_from_config(
-            self.duration_config, 'duration', all_durations, ascii_only=self.ascii_only
-        )
 
 
 def _render_analysis(
