@@ -15,7 +15,7 @@ If you're using a web framework not based on Starlette (e.g. Django or Flask) or
 
 ### Usage with Starlette/FastAPI
 
-Besides the request, [`VercelAIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] takes the agent, the same optional arguments as [`Agent.run_stream_events()`](../agent.md#running-agents), and an optional `on_complete` callback function that receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional Vercel AI events.
+Besides the request, [`VercelAIAdapter.dispatch_request()`][pydantic_ai.ui.UIAdapter.dispatch_request] takes the agent, the same optional arguments as [`Agent.run_stream_events()`](../agent.md#running-agents), an optional `on_complete` callback for successful runs, and an optional `on_cancel` callback for cancelled runs. Both callbacks can optionally yield additional Vercel AI events.
 
 ```py {title="dispatch_request.py"}
 from fastapi import FastAPI
@@ -40,13 +40,20 @@ If you're using a web framework not based on Starlette (e.g. Django or Flask) or
 
 1. The [`VercelAIAdapter.build_run_input()`][pydantic_ai.ui.vercel_ai.VercelAIAdapter.build_run_input] class method takes the request body as bytes and returns a Vercel AI [`RequestData`][pydantic_ai.ui.vercel_ai.request_types.RequestData] run input object, which you can then pass to the [`VercelAIAdapter()`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] constructor along with the agent.
     - You can also use the [`VercelAIAdapter.from_request()`][pydantic_ai.ui.UIAdapter.from_request] class method to build an adapter directly from a Starlette/FastAPI request.
-2. The [`VercelAIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream] method runs the agent and returns a stream of Vercel AI events. It supports the same optional arguments as [`Agent.run_stream_events()`](../agent.md#running-agents) and an optional `on_complete` callback function that receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional Vercel AI events.
+2. The [`VercelAIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream] method runs the agent and returns a stream of Vercel AI events. It supports the same optional arguments as [`Agent.run_stream_events()`](../agent.md#running-agents), including the `on_complete` and `on_cancel` callbacks.
     - You can also use [`VercelAIAdapter.run_stream_native()`][pydantic_ai.ui.UIAdapter.run_stream_native] to run the agent and return a stream of Pydantic AI events instead, which can then be transformed into Vercel AI events using [`VercelAIAdapter.transform_stream()`][pydantic_ai.ui.UIAdapter.transform_stream].
 3. The [`VercelAIAdapter.encode_stream()`][pydantic_ai.ui.UIAdapter.encode_stream] method encodes the stream of Vercel AI events as SSE (HTTP Server-Sent Events) strings, which you can then return as a streaming response.
     - You can also use [`VercelAIAdapter.streaming_response()`][pydantic_ai.ui.UIAdapter.streaming_response] to generate a Starlette/FastAPI streaming response directly from the Vercel AI event stream returned by `run_stream()`.
 
 !!! note
     This example uses FastAPI, but can be modified to work with any web framework.
+
+### Cancellation
+
+When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()` from a tool, `AgentRun.cancel()`, or a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint — the adapter emits a Vercel `abort` chunk. [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) keeps the partial message and reports `isAbort` to `onFinish` instead of entering an error state. Pass an `on_cancel` callback to persist the resumable message history, as shown in the example below.
+
+!!! note "Client disconnects are external cancellation"
+    Calling `stop()` on the client aborts the browser's request, which the server sees as a *disconnect*, not a first-party cancellation. That tears the run down as an external `asyncio.CancelledError` (see [why cancellation arrives in two shapes](../agent.md#cancelling-a-run)), so no `abort` chunk is emitted and `on_cancel` does not fire — and the client has disconnected anyway. To get the `abort` chunk and run `on_cancel` on a stop gesture, keep the stream connected and cancel the run *first-party*: give the run a [`CancellationToken`][pydantic_ai.CancellationToken] and expose a separate endpoint (e.g. `POST /chat/{id}/cancel`) that calls `token.cancel()`.
 
 ```py {title="run_stream.py"}
 import json
@@ -57,13 +64,18 @@ from fastapi.requests import Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunCancelled
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 agent = Agent('openai:gpt-5.2')
 
 app = FastAPI()
+
+
+async def on_cancel(cancelled: RunCancelled) -> None:
+    messages = cancelled.all_messages()  # (1)!
+    print(f'cancelled after {len(messages)} messages')
 
 
 @app.post('/chat')
@@ -79,11 +91,13 @@ async def chat(request: Request) -> Response:
         )
 
     adapter = VercelAIAdapter(agent=agent, run_input=run_input, accept=accept)
-    event_stream = adapter.run_stream()
+    event_stream = adapter.run_stream(on_cancel=on_cancel)
 
     sse_event_stream = adapter.encode_stream(event_stream)
     return StreamingResponse(sse_event_stream, media_type=accept)
 ```
+
+1. The resumable history to persist -- pass it as `message_history` to a later run to resume the conversation.
 
 ### Data Chunks
 
@@ -167,7 +181,7 @@ When `sdk_version=6`, the adapter will:
 
 On the frontend, AI SDK UI's [`useChat`](https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat) hook handles the approval flow. You can use the [`Confirmation`](https://ai-sdk.dev/elements/components/confirmation) component from AI Elements for a pre-built approval UI, or build your own using the hook's `addToolApprovalResponse` function.
 
-Tool approval responses are trusted from the request by design, matching the protocol's round-trip through `useChat`'s `addToolApprovalResponse` and the reference Next.js backend. If your application needs the approval decision tied to server-side state rather than the request, intercept [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests], persist the approval IDs server-side, and pass explicit `deferred_tool_results` when resuming.
+Tool approval responses are trusted from the request by design, matching the protocol's round-trip through `useChat`'s `addToolApprovalResponse` and the reference Next.js backend. The decision itself must be an actual JSON boolean: `approved` is strictly typed, so any stand-in — `1` or `"true"` as much as `0` or `"false"` — fails request validation rather than being coerced into a decision. If your application needs the approval decision tied to server-side state rather than the request, intercept [`DeferredToolRequests`][pydantic_ai.DeferredToolRequests], persist the approval IDs server-side, and pass explicit `deferred_tool_results` when resuming.
 
 ## Tool input validation
 

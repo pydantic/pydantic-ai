@@ -2536,6 +2536,20 @@ async def test_google_timeout(allow_model_requests: None, google_provider: Googl
         await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
 
 
+async def test_google_timeout_zero_in_config():
+    """An explicit `timeout=0` is forwarded to the SDK config, which VCR does not expose."""
+    m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=GoogleModelSettings(timeout=0),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['http_options']['timeout'] == 0
+
+
 async def test_google_extra_headers(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-1.5-flash', provider=google_provider)
     agent = Agent(m, model_settings=GoogleModelSettings(extra_headers={'Extra-Header-Key': 'Extra-Header-Value'}))

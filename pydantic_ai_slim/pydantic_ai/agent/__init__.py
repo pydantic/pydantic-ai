@@ -45,6 +45,7 @@ from .._agent_graph import (
     build_run_context,
     capture_run_messages,
 )
+from .._cancel import CancellationToken, RunCancellation, take_run_binding
 from .._deferred_capabilities import parse_loaded_capabilities
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
@@ -108,6 +109,7 @@ from .abstract import (
     AgentMetadata,
     AgentModelSettings,
     AgentRetries,
+    AgentRunEvents,
     EventStreamHandler,
     EventStreamProcessor,
     RunOutputDataT,
@@ -128,6 +130,7 @@ __all__ = (
     'AgentModelSettings',
     'AgentRetries',
     'AgentRun',
+    'AgentRunEvents',
     'AgentRunResult',
     'NativeToolFunc',
     'CallToolsNode',
@@ -953,6 +956,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -978,6 +982,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1003,6 +1008,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1092,6 +1098,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 that receives [`RunContext`][pydantic_ai.tools.RunContext] and returns settings.
                 Callables are called before each model request, allowing dynamic per-step settings.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Token used to cancel this run from another task or thread. Single-use:
+                mint a fresh token per run, as a reused (already-cancelled) token prevents the run from starting.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1110,6 +1118,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
+
+        # Consume the pending `AgentRunEvents` binding before ANY user-supplied code (capability /
+        # toolset `for_run()` hooks below) runs in this context: a hook that starts a nested agent
+        # run would otherwise consume it and attach the outer handle to the wrong run.
+        binding = take_run_binding()
 
         # A bare `int` overrides both budgets; a partial `retries={'tools': ...}` / `{'output': ...}`
         # dict overrides only the named budget for this run (riding `ToolManager.default_max_retries`).
@@ -1268,6 +1281,55 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_id=state.conversation_id,
             _run_state_key=run_state_key,
         )
+        run_cancellation = binding.cancellation if binding is not None else RunCancellation()
+        # Equals the `new_message_index` later frozen into `GraphAgentDeps`; computed here so the
+        # cancellation edge below can snapshot run state even when cancellation fires during
+        # preparation, before `graph_deps` exists.
+        new_message_index = len(message_history) if message_history else 0
+
+        @asynccontextmanager
+        async def _translate_cancellation() -> AsyncGenerator[None]:
+            def _run_cancelled(message: str) -> exceptions.RunCancelled:
+                return exceptions.RunCancelled(
+                    message,
+                    messages=state.message_history,
+                    new_message_index=new_message_index,
+                    usage=state.usage,
+                    metadata=state.metadata,
+                    run_id=state.run_id,
+                    conversation_id=state.conversation_id,
+                )
+
+            try:
+                yield
+            except exceptions.RunCancelled as exc:
+                # A `RunCancelled` reaching this run's outer edge from below — e.g. a delegate tool
+                # awaited a sub-agent run that cancelled itself via `cancel()` — carries the
+                # *nested* run's history, not this run's. Presenting it to this run's caller
+                # unchanged would make `RunCancelled.all_messages()` (and a resume from it) silently
+                # use the wrong conversation. Re-stamp it with this run's state, keeping the nested
+                # cancellation as the cause. Whether a nested cancellation should terminate this run
+                # at all, or be isolated as a tool failure, is a separate semantics question tracked
+                # in https://github.com/pydantic/pydantic-ai/issues/7199.
+                raise _run_cancelled('The agent run was cancelled by a nested run.') from exc
+            except asyncio.CancelledError as exc:
+                first_party = run_cancellation.resolve()
+                if first_party:
+                    raise _run_cancelled('The agent run was cancelled.') from exc
+                # An external cancellation must keep propagating as `CancelledError`, but the run
+                # state rides along on the exception instance for `RunCancelled.from_cancellation()`.
+                # Nested runs attach to the same propagating exception; the outermost run attaches
+                # last and wins, giving its awaiter the outer run's history.
+                _run_cancelled('The agent run was cancelled by an external asyncio cancellation.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
+                raise
+            finally:
+                # On every exit path — translation above, a clean exit after user code swallowed a
+                # requested cancellation, a superseded driving task, or a non-cancellation error
+                # overtaking a requested cancel — an issued-but-unresolved cancellation must not
+                # leak an elevated `Task.cancelling()` count past the run: it would spuriously
+                # cancel unrelated later work on the task that drove the run.
+                run_cancellation.release_issued()
+
         async with AsyncExitStack() as stack:
             try:
                 # Entered first so this brackets the whole run lifecycle and exits last:
@@ -1287,6 +1349,22 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     return False
 
                 stack.push(_record_unwind_error)
+
+                # Entered inside `wrap_entire_run` (so the run span records the translated
+                # `RunCancelled`) but before every other context, so cancellation is classified
+                # only after all inner contexts have torn down.
+                await stack.enter_async_context(_translate_cancellation())
+
+                # Bind the run's cancellation controller to this task and register the token BEFORE any
+                # potentially-blocking setup (the concurrency limiter, model entry): a run queued behind
+                # the concurrency limiter must still be cancellable via its token or `cancel()`, and a
+                # pre-cancelled token must prevent it from starting. `finish` neutralizes `cancel()` once
+                # the run is over so it can never cancel unrelated later work on this task.
+                run_cancellation.bind()
+                stack.callback(run_cancellation.finish)
+                if cancellation_token is not None:
+                    run_cancellation.attach_token(cancellation_token)
+
                 await stack.enter_async_context(
                     _concurrency.get_concurrency_context(self._concurrency_limiter, f'agent:{agent_name}')
                 )
@@ -1728,6 +1806,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     tracer=tracer,
                     get_instructions=get_instructions,
                     instrumentation_settings=instrumentation_settings,
+                    cancellation=run_cancellation,
                 )
 
                 user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -1753,6 +1832,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     )
                 )
                 agent_run = AgentRun(graph_run)
+                if binding is not None:
+                    # Hand the live `AgentRun` to the `AgentRunEvents` handle that started this run, so
+                    # its `cancel()`/run-state accessors reach the run. The controller was already bound
+                    # to this task above, before `wrap_run`/`before_run`.
+                    binding.agent_run = agent_run
                 self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
                 # Build RunContext for run lifecycle hooks
@@ -1841,8 +1925,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     # Every completion path funnels through here — including `wrap_run`/`on_run_error`
                     # recovering from the very `CancelledError` an external cancel delivered. If that
                     # cancellation is still pending on this task, re-assert it rather than let the run
-                    # finalize as a success.
+                    # finalize as a success. A first-party request remains terminal even if a hook
+                    # consumed the task's cancellation counter.
                     _utils.raise_if_cancelling()
+                    if run_cancellation.cancel_requested:
+                        raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
                     agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
                     _run_error = None
 

@@ -110,7 +110,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
             ),
-            AnthropicModelProfile(tool_additions='by_reference')
+            AnthropicModelProfile(tool_addition_mode='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
             else AnthropicModelProfile(),
         )

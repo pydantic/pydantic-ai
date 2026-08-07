@@ -353,7 +353,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         Returns a tuple of (tools, tool_choice).
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         tool_choice: Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None
         if resolved_tool_choice in ('auto', 'required'):

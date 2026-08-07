@@ -56,6 +56,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    ToolAvailabilityDeltaPart,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -3319,6 +3320,100 @@ async def test_bedrock_no_tool_choice(bedrock_provider: BedrockProvider):
     )
 
 
+async def test_bedrock_capability_tools_stay_off_the_wire(bedrock_provider: BedrockProvider):
+    """Anthropic-on-Bedrock inherits `tool_deferral_mode` from the shared vendor profile, but the Converse
+    API has no wire representation for deferred schemas — an inherited claim would render hidden
+    capability-owned tools as ordinary callable `toolSpec`s before their capability loads.
+    """
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+
+    provider_profile = bedrock_provider.model_profile(model.model_name)
+    assert provider_profile is not None and provider_profile.get('tool_deferral_mode') == 'standalone'
+    assert model.profile.get('tool_deferral_mode') == 'standalone'
+    assert model.tool_deferral_mode is None
+    assert model.tool_addition_mode is None
+
+    hidden = ToolDefinition(
+        name='process_refund',
+        description='Process a refund for an order.',
+        parameters_json_schema={'type': 'object', 'properties': {'order_id': {'type': 'string'}}},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    visible = ToolDefinition(
+        name='get_weather',
+        description='Get the weather.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+
+    tool_config = model._map_tool_config(prepared, BedrockModelSettings())  # type: ignore[reportPrivateUsage]
+    assert tool_config == snapshot(
+        {
+            'tools': [
+                {
+                    'toolSpec': {
+                        'name': 'get_weather',
+                        'inputSchema': {'json': {'type': 'object', 'properties': {}}},
+                        'description': 'Get the weather.',
+                    }
+                }
+            ],
+            'toolChoice': {'auto': {}},
+        }
+    )
+
+
+async def test_bedrock_delta_renders_announcement_and_plain_tool_spec(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    """Converse receives the fallback announcement and a callable schema without reveal metadata."""
+    model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=bedrock_provider)
+    tool = ToolDefinition(
+        name='revealed_tool',
+        description='A newly available tool.',
+        parameters_json_schema={'type': 'object', 'properties': {'value': {'type': 'string'}}},
+        defer_loading=True,
+    )
+    parameters = ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
+    settings, parameters = model.prepare_request(None, parameters)
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='start')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
+    ]
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'ok'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await model.request(model.prepare_messages(history, parameters), settings, parameters)
+
+    request = mock_converse.call_args.kwargs
+    announcement = 'The following tool(s) are now available: `revealed_tool`'
+    assert json.dumps(request['messages'], sort_keys=True).count(announcement) == 1
+    assert request['toolConfig'] == {
+        'tools': [
+            {
+                'toolSpec': {
+                    'name': 'revealed_tool',
+                    'description': 'A newly available tool.',
+                    'inputSchema': {
+                        'json': {
+                            'type': 'object',
+                            'properties': {'value': {'type': 'string'}},
+                        }
+                    },
+                }
+            }
+        ],
+        'toolChoice': {'auto': {}},
+    }
+    assert 'defer_loading' not in json.dumps(request['toolConfig'])
+
+
 async def test_bedrock_sanitize_tool_name_in_history(bedrock_provider: BedrockProvider):
     """Hallucinated tool names with invalid chars (e.g. dots) are sanitized when replayed to Bedrock."""
     model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
@@ -3619,6 +3714,26 @@ async def test_bedrock_top_k_unsupported_family_dropped(
     assert 'additionalModelRequestFields' not in kwargs
 
 
+async def test_bedrock_top_p_zero_reaches_inference_config(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(top_p=0.0))
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    await agent.run('What is the capital of France?')
+
+    _, kwargs = mock_converse.call_args
+    assert kwargs['inferenceConfig']['topP'] == 0.0
+
+
 async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None, bedrock_provider: BedrockProvider):
     model = BedrockConverseModel(model_name='openai.gpt-oss-120b-1:0', provider=bedrock_provider)
     agent = Agent(model)
@@ -3656,6 +3771,40 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
             PartEndEvent(index=1, part=TextPart(content='Hello! How can I help you today?')),
         ]
     )
+
+
+@pytest.mark.parametrize(
+    ('model_id', 'expected_output'),
+    [
+        ('qwen.qwen3-coder-next', 'Paris'),
+        ('moonshot.kimi-k2-thinking', 'Paris'),
+        ('us.amazon.nova-micro-v1:0', '\n\nParis'),
+    ],
+)
+async def test_bedrock_stream_whitespace_only_leading_delta(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    mocker: MockerFixture,
+    model_id: str,
+    expected_output: str,
+):
+    model = BedrockConverseModel(model_id, provider=bedrock_provider)
+    agent = Agent(model=model)
+
+    def _stream() -> Iterator[dict[str, Any]]:
+        yield {'messageStart': {'role': 'assistant'}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': '\n\n'}}}
+        yield {'contentBlockDelta': {'contentBlockIndex': 0, 'delta': {'text': 'Paris'}}}
+        yield {'contentBlockStop': {'contentBlockIndex': 0}}
+        yield {'messageStop': {'stopReason': 'end_turn'}}
+
+    mock_converse_stream = mocker.patch.object(model.client, 'converse_stream')
+    mock_converse_stream.return_value = {'stream': _stream(), 'ResponseMetadata': {'RequestId': 'stub'}}
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        output = await result.get_output()
+
+    assert output == expected_output
 
 
 @pytest.mark.vcr()

@@ -228,7 +228,7 @@ class CohereModel(Model[AsyncClientV2]):
         via `tool_choice`, mirroring `MistralModel`.
         """
         resolved = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         if isinstance(resolved, tuple):
             # Cohere can't target a tool by name, so restrict the tools to the chosen subset
