@@ -12,7 +12,12 @@ from pydantic_ai.realtime import codec as realtime_codec, infer_realtime_model
 from pydantic_ai.realtime.azure import AzureRealtimeModel
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
-from ..conftest import TestEnv
+from ..conftest import TestEnv, try_import
+
+with try_import() as imports_successful:
+    # Inferring the Google realtime model eagerly constructs its provider, which imports the
+    # `google-genai` SDK, so that dispatch case only runs when it's installed.
+    import google.genai  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 
 def test_star_import_does_not_load_optional_providers() -> None:
@@ -38,8 +43,10 @@ def test_realtime_event_exports_match_public_layers() -> None:
     assert 'SessionUsageEvent' in realtime_codec.__all__
 
 
+@pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
 def test_infer_realtime_models(env: TestEnv) -> None:
     env.set('OPENAI_API_KEY', 'test')
+    env.set('GOOGLE_API_KEY', 'test')
     env.set('AZURE_OPENAI_ENDPOINT', 'https://resource.openai.azure.com/openai/v1')
     env.set('AZURE_OPENAI_API_KEY', 'test')
 
@@ -48,6 +55,10 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     openai_model = infer_realtime_model('openai:gpt-realtime')
     assert type(openai_model).__name__ == 'OpenAIRealtimeModel'
     assert openai_model.model_name == 'gpt-realtime'
+
+    google_model = infer_realtime_model('google:gemini-2.5-flash-native-audio-latest')
+    assert type(google_model).__name__ == 'GoogleRealtimeModel'
+    assert google_model.model_name == 'gemini-2.5-flash-native-audio-latest'
 
     azure_model = infer_realtime_model('azure:gpt-realtime')
     assert type(azure_model).__name__ == 'AzureRealtimeModel'
@@ -75,6 +86,26 @@ def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
     assert direct_model._realtime_url().split('?', 1)[0] == 'wss://api.openai.com/v1/realtime'  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
+def test_infer_realtime_model_gateway_google(env: TestEnv) -> None:
+    # `gateway/google:...` (and its `gateway/google-cloud` alias) route Gemini Live through the gateway's
+    # Vertex upstream: a `GoogleRealtimeModel` whose provider derives its base URL and key from
+    # `gateway_provider`, with the gateway's bearer auth added to the WebSocket handshake.
+    env.set('PYDANTIC_AI_GATEWAY_API_KEY', 'test')
+    env.set('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.dev/proxy')
+
+    for route in ('gateway/google', 'gateway/google-cloud'):
+        model = infer_realtime_model(f'{route}:gemini-live-2.5-flash')
+        # Name-check the class (rather than importing it) to keep this dispatch test light.
+        assert type(model).__name__ == 'GoogleRealtimeModel'
+        assert model.model_name == 'gemini-live-2.5-flash'
+        # Both shorthands collapse onto the gateway's Google Cloud (Vertex) route, so the handshake
+        # connects through the gateway rather than directly to Vertex.
+        assert getattr(model, '_provider').base_url == 'https://gateway.pydantic.dev/proxy/google-vertex'
+        # `_gateway` gates the handshake bearer-auth injection in `connect`.
+        assert getattr(model, '_gateway') is True
+
+
 def test_azure_rejects_non_azure_provider(env: TestEnv) -> None:
     env.set('OPENAI_API_KEY', 'test')
 
@@ -83,7 +114,7 @@ def test_azure_rejects_non_azure_provider(env: TestEnv) -> None:
 
 
 def test_infer_realtime_model_unknown_provider() -> None:
-    with pytest.raises(UserError, match='Supported providers are `openai` and `azure`'):
+    with pytest.raises(UserError, match='Supported providers are `openai`, `azure`, and `google`'):
         infer_realtime_model('anthropic:voice')
 
     with pytest.raises(UserError, match=r'use the `provider:model` format .*; got \'openai\''):

@@ -2,14 +2,18 @@ from __future__ import annotations as _annotations
 
 import os
 from abc import ABC, abstractmethod
-from typing import Literal, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, create_async_http_client, get_user_agent
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
+
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
     from google.genai.client import Client
@@ -45,6 +49,55 @@ class BaseGoogleProvider(Provider[Client], ABC):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         return google_model_profile(model_name)
+
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+        return {
+            'supports_image_input': True,
+            # Every general-purpose Live model is audio-only: a session asking for `TEXT` is closed with
+            # `1007 The requested combination of response modalities (TEXT) is not supported by the
+            # model`. Verified live against all four the Developer API serves — the three
+            # `gemini-2.5-flash-native-audio-*` variants *and* `gemini-3.1-flash-live-preview` — bare
+            # (no transcription or speech config, which make no difference to the error), with the dict
+            # and typed config forms, and on both `v1alpha` and `v1beta`. Google's docs describe the
+            # half-cascade 3.1 model as supporting `TEXT`; the API disagrees, so this follows the API.
+            # Output transcription, on by default, is how a Live session gets text.
+            #
+            # The one Live model that *is* text-only is `gemini-robotics-er-2-streaming-preview`, which
+            # conversely rejects `AUDIO`. It isn't a speech-to-speech model and isn't advertised in
+            # `KnownRealtimeModelName`; pointing a session at it wants
+            # `profile={'supports_text_output': True}`, which is what that override is for. Reporting
+            # `False` by default keeps the common case failing closed with a clear error rather than an
+            # opaque handshake rejection.
+            'supports_text_output': False,
+            'supports_session_seeding': True,
+            'supports_seeding_images': True,
+            'supports_seeding_audio': False,
+            'audio_input_sample_rate': 16000,
+            'audio_output_sample_rate': 24000,
+            # Search grounding only. Google's Live tool matrix lists code execution and URL context as
+            # unsupported for every Live model, and that matches the live behavior:
+            # `gemini-2.5-flash-native-audio-latest` closes the session with `1007 Code Execution tool
+            # is not supported for this model`, and its URL-context grounding answers "I was unable to
+            # access the page"; `gemini-3.1-flash-live-preview` accepts both declarations and then
+            # produces neither a code-execution part nor URL-context metadata. Advertising them makes
+            # a `WebFetch()` or `CodeExecutionTool()` a silent no-op; leaving them out means a `local=`
+            # fallback is used instead, or the shared `UserError` points at one.
+            'supported_native_tools': frozenset({WebSearchTool}),
+            # Every current Gemini Live model takes a thinking config (verified live for both
+            # `gemini-2.5-flash-native-audio-latest` and `gemini-3.1-flash-live-preview`), which Google
+            # documents as `thinkingBudget` on the 2.5 family and `thinkingLevel` on 3.x.
+            'supports_thinking': True,
+            # Only the native-audio models actually honor `Behavior.NON_BLOCKING`; verified live with
+            # a slow tool, where `gemini-2.5-flash-native-audio-latest` keeps speaking throughout and
+            # `gemini-3.1-flash-live-preview` accepts the flag but still goes silent until the result
+            # lands. This gates the opt-in `google_async_tool_calls` setting; it is not enabled by
+            # merely being supported.
+            'supports_async_tool_calls': 'native-audio' in model_name,
+            # Gemini Live takes a tool's return schema natively, as the function declaration's
+            # `response` schema (matching the classic `GoogleModel`'s `response_json_schema`).
+            'supports_tool_return_schema': True,
+        }
 
     def _build_http_options(
         self,
