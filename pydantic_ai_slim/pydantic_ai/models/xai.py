@@ -242,6 +242,14 @@ class XaiModelSettings(ModelSettings, total=False):
     `xai_max_turns` does not necessarily equal the total number of tool calls made.
     """
 
+    xai_agent_count: int
+    """Number of agents for xAI multi-agent models (e.g. `grok-4.20-multi-agent`).
+
+    Forwarded to `chat.create(agent_count=...)`. Documented values are `4` and `16`; more
+    agents increase token usage and latency. Only affects multi-agent models; other models
+    ignore it. The multi-agent API is in beta, so the accepted values may change.
+    """
+
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.
 # Most keys are the same, but some differ (e.g., 'stop_sequences' -> 'stop').
@@ -261,6 +269,7 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'xai_previous_response_id': 'previous_response_id',
     'xai_reasoning_effort': 'reasoning_effort',
     'xai_max_turns': 'max_turns',
+    'xai_agent_count': 'agent_count',
 }
 
 
