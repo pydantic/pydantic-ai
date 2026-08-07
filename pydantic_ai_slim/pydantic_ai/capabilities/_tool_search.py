@@ -187,9 +187,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             named: ToolSearchNativeStrategy = self.strategy
             return [ToolSearchTool(strategy=named, optional=False)]
 
-    def get_wrapper_toolset(
-        self, toolset: AbstractToolset[AgentDepsT]
-    ) -> AbstractToolset[AgentDepsT] | None:
+    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         # If the user already supplied a `ToolSearchToolset` themselves (e.g.
         # `Agent(..., toolsets=[ToolSearchToolset(wrapped=inner)])`), their explicit
         # configuration wins — skip the auto-wrap entirely. Wrapping again would stack
