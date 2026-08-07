@@ -1025,7 +1025,7 @@ async def test_stripped_reveal_exchange_heals_via_re_search() -> None:
         return [
             replace(
                 message,
-                parts=[  # pyright: ignore[reportArgumentType]
+                parts=[
                     part
                     for part in message.parts
                     if not (
