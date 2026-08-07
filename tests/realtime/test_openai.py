@@ -58,9 +58,17 @@ from pydantic_ai.realtime import (
     RealtimeSessionReconnectEvent,
     TurnDetection,
 )
-from pydantic_ai.realtime._base import ImageInput, RealtimeSessionErrorEvent, TextInput, merge_realtime_profile
+from pydantic_ai.realtime._base import (
+    ConversationCreated,
+    ConversationItemCreated,
+    ImageInput,
+    RealtimeSessionErrorEvent,
+    TextInput,
+    merge_realtime_profile,
+)
 from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
+    expect_event,
     map_conversation_event,
     realtime_websocket_url,
     replay_items,
@@ -438,6 +446,39 @@ def test_map_conversation_event_rejects_malformed_nested_object(frame: dict[str,
     assert map_conversation_event({'type': 'conversation.created'}) is None
 
 
+# The conversation mapper is shared OpenAI-protocol surface, but only xAI opts into it (OpenAI itself
+# doesn't support resumption, so its mapper deliberately leaves these frames unmapped). The next three
+# tests therefore drive it directly rather than through a cassette: the frames appear only in xAI
+# recordings, and behaviour this mapper defines deserves provider-neutral coverage that survives
+# whichever providers happen to consume it.
+def test_map_conversation_created_returns_the_conversation_id() -> None:
+    assert map_conversation_event({'type': 'conversation.created', 'conversation': {'id': 'conv-1'}}) == (
+        ConversationCreated('conv-1')
+    )
+    # A handshake that names no conversation carries nothing to resume against, so it maps to nothing.
+    assert map_conversation_event({'type': 'conversation.created', 'conversation': {}}) is None
+
+
+@pytest.mark.parametrize('event_type', ['conversation.item.added', 'conversation.item.created'])
+def test_map_conversation_item_lifecycle_events_carry_identifiers(event_type: str) -> None:
+    """Both item lifecycle spellings map alike, and a function call also surfaces its `call_id`."""
+    assert map_conversation_event({'type': event_type, 'item': {'id': 'item-1'}}) == ConversationItemCreated(
+        item_id='item-1', tool_call_id=None, replayed=False
+    )
+    assert map_conversation_event(
+        {'type': event_type, 'item': {'id': 'item-2', 'type': 'function_call', 'call_id': 'call-1'}}
+    ) == ConversationItemCreated(item_id='item-2', tool_call_id='call-1', replayed=False)
+    # `replayed=True` is set only by the reconnect handshake's burst capture, and marks the item as
+    # already-seen history rather than a live event.
+    assert map_conversation_event({'type': event_type, 'item': {'id': 'item-3'}}, replayed=True) == (
+        ConversationItemCreated(item_id='item-3', tool_call_id=None, replayed=True)
+    )
+
+
+def test_map_conversation_event_ignores_unrelated_event_types() -> None:
+    assert map_conversation_event({'type': 'response.done'}) is None
+
+
 def test_map_error_event_with_message() -> None:
     assert map_event({'type': 'error', 'error': {'message': 'bad'}}) == RealtimeSessionErrorEvent(message='bad')
 
@@ -705,6 +746,28 @@ def _created() -> str:
 
 def _updated() -> str:
     return json.dumps({'type': 'session.updated'})
+
+
+@pytest.mark.anyio
+async def test_expect_event_hands_skipped_frames_to_the_callback() -> None:
+    """Frames arriving before the awaited one are skipped, and offered to `on_unexpected` when given.
+
+    Driven directly rather than through a cassette: no OpenAI handshake passes a callback (only xAI's
+    resumption burst capture does), so this shared handshake reader's hand-off is otherwise unpinned.
+    """
+    ws = FakeWebSocket(
+        [
+            json.dumps({'type': 'rate_limits.updated'}),
+            json.dumps({'type': 'conversation.item.created', 'item': {'id': 'item-1'}}),
+            _updated(),
+        ]
+    )
+    skipped: list[dict[str, Any]] = []
+
+    awaited = await expect_event(ws, 'session.updated', timeout=5, on_unexpected=skipped.append)  # type: ignore[arg-type]
+
+    assert awaited == {'type': 'session.updated'}
+    assert [frame['type'] for frame in skipped] == ['rate_limits.updated', 'conversation.item.created']
 
 
 @pytest.mark.anyio
@@ -2190,6 +2253,28 @@ async def test_transcription_completed_token_usage_emits_run_level_usage() -> No
             response_scoped=False,
         ),
     ]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('usage', [None, {}], ids=['absent', 'empty'])
+async def test_transcription_completed_without_usage_emits_only_the_transcript(usage: dict[str, Any] | None) -> None:
+    """A final transcript with nothing to report costs no usage event — the counterpart of the case above.
+
+    OpenAI only reports transcription usage when the session asks for it, so a well-formed frame can
+    legitimately carry no `usage` at all, or an empty one. Driven directly rather than through a
+    cassette because our OpenAI recordings all enable transcription usage; the frames that omit it
+    reach us only from protocol clones.
+    """
+    frame: dict[str, Any] = {
+        'type': 'conversation.item.input_audio_transcription.completed',
+        'item_id': 'u1',
+        'transcript': 'hi',
+    }
+    if usage is not None:
+        frame['usage'] = usage
+    conn = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(frame)]))  # type: ignore[arg-type]
+
+    assert await collect_codec_events(conn) == [InputTranscript(text='hi', is_final=True, item_id='u1')]
 
 
 @pytest.mark.anyio
