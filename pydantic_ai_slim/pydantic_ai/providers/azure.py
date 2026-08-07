@@ -304,7 +304,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     # a real Azure OpenAI resource: the two version schemes are unrelated, so the data
                     # plane would be called with a version it doesn't recognize.
                     api_version = os.getenv('AZURE_VOICELIVE_API_VERSION')
-                if not api_version:  # pragma: no cover
+                if not api_version:
                     raise UserError(
                         'Must provide the `api_version` argument or set the `OPENAI_API_VERSION` '
                         'environment variable (`AZURE_VOICELIVE_API_VERSION` stands in only when the '
