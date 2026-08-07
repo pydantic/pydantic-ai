@@ -68,6 +68,25 @@ async def test_connection_names_azure_not_openai() -> None:
     assert AzureRealtimeModel._connection_type is AzureRealtimeConnection  # pyright: ignore[reportPrivateUsage]
 
 
+def test_profile_override_corrects_a_deployment_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Azure's `model` is the *deployment* name, a user-chosen string that need not name the model, and
+    # the profile is inferred from it (reasoning effort is only accepted by `gpt-realtime-2*`). A
+    # deployment named anything else therefore loses `thinking` — `profile=` is the way to correct it,
+    # mirroring `profile=` on a standard `Model`.
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://resource.openai.azure.com/openai/v1')
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'azure-key')
+
+    inferred = AzureRealtimeModel('voice-prod', settings={'thinking': 'low'})
+    assert inferred.profile.get('supports_thinking') is False
+    assert 'reasoning' not in inferred._session_config('', None, None)  # pyright: ignore[reportPrivateUsage]
+
+    corrected = AzureRealtimeModel('voice-prod', settings={'thinking': 'low'}, profile={'supports_thinking': True})
+    assert corrected.profile.get('supports_thinking') is True
+    assert corrected._session_config('', None, None)['reasoning'] == {'effort': 'low'}  # pyright: ignore[reportPrivateUsage]
+    # Everything the provider said is still there — `profile=` is a layer, not a replacement.
+    assert corrected.profile.get('supports_image_input') is True
+
+
 def test_infer_provider_from_bare_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     # The realtime model speaks only the GA `/openai/v1` protocol and never uses the provider's SDK
     # client, so inferring the provider from a bare resource endpoint must not demand the unrelated

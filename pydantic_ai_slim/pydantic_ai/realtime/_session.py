@@ -127,6 +127,7 @@ _CANCELLED_TOOL_RESULT = 'Tool call cancelled before it completed.'
 # validated up front by `Agent.realtime`, not the session, so this field is inert here.
 _FULL_PROFILE = RealtimeModelProfile(
     supports_image_input=True,
+    supports_text_output=True,
     supports_manual_turn_control=True,
     supports_interruption=True,
     supports_output_truncation=True,
