@@ -14121,3 +14121,93 @@ async def test_agent_graph_sleep_streaming_with_delay() -> None:
 def test_agent_rejects_non_positive_tool_timeout(tool_timeout: float):
     with pytest.raises(UserError, match='tool_timeout must be > 0'):
         Agent('test', tool_timeout=tool_timeout)
+
+
+def test_system_prompt_sync_function_returning_coroutine():
+    """A plain `def` system prompt that returns a coroutine has its awaited string used as content.
+
+    On the old dispatch (`is_async_callable` was False for a plain `def`), the coroutine object was
+    embedded as the `SystemPromptPart` content instead of the string it resolves to.
+    """
+
+    async def _async_prompt() -> str:
+        return 'Async system prompt'
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(return_model))
+
+    @agent.system_prompt
+    def system_prompt() -> Any:
+        return _async_prompt()
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='Async system prompt', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
+def test_output_validator_sync_function_returning_coroutine():
+    """A plain `def` output validator that returns a coroutine has the coroutine awaited.
+
+    On the old dispatch the coroutine object was returned as the validated output (and a `ModelRetry`
+    raised from within the awaited coroutine was never seen); here the awaited value and retry are honored.
+    """
+
+    async def _validate(o: Foo) -> Foo:
+        if o.a == 42:
+            return o
+        raise ModelRetry('"a" should be 42')
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            args_json = '{"a": 41, "b": "foo"}'
+        else:
+            args_json = '{"a": 42, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_model), output_type=Foo)
+
+    @agent.output_validator
+    def validate_output(o: Foo) -> Any:
+        return _validate(o)
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+    assert result.output == snapshot(Foo(a=42, b='foo'))
+
+
+def test_tool_sync_function_returning_coroutine():
+    """A plain `def` tool that returns a coroutine has the coroutine awaited before returning.
+
+    On the old dispatch the coroutine object itself was returned as the tool result instead of the
+    string it resolves to, so the model never saw the real value.
+    """
+
+    async def _compute() -> str:
+        return 'tool result value'
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {})])
+        tool_return = next(p for m in messages for p in m.parts if isinstance(p, ToolReturnPart))
+        return ModelResponse(parts=[TextPart(tool_return.content)])
+
+    agent = Agent(FunctionModel(call_tool))
+
+    @agent.tool_plain
+    def my_tool() -> Any:
+        return _compute()
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('tool result value')

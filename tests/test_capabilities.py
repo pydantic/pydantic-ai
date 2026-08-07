@@ -16542,6 +16542,25 @@ async def test_resolve_model_id_capability_async_resolver() -> None:
     assert result.output == 'ok'
 
 
+async def test_resolve_model_id_capability_sync_resolver_returning_coroutine() -> None:
+    """A plain-`def` resolver returning a coroutine is awaited, not mistaken for the resolved model.
+
+    `ModelIdResolver` permits a sync function whose return value is an `Awaitable[Model | None]`;
+    the hook must await that coroutine to obtain the model rather than returning the coroutine itself.
+    """
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='coroutine-resolved')
+
+    async def _resolve(model_id: str) -> FunctionModel | None:
+        return target if model_id == 'alias' else None
+
+    def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> Awaitable[FunctionModel | None]:
+        return _resolve(model_id)
+
+    agent = Agent(name='resolve_cap_sync_coroutine', capabilities=[ResolveModelId(resolver)])
+    result = await agent.run('hi', model='alias')
+    assert result.output == 'ok'
+
+
 async def test_resolve_model_id_capability_defers_to_infer_model() -> None:
     """A `ResolveModelId` resolver returning None falls back to the default `infer_model` flow."""
 
