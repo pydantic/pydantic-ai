@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from ..._utils import now_utc
-from ...exceptions import RunCancelled, UserError
+from ...exceptions import RunCancelled
 from ...messages import (
     FunctionToolResultEvent,
     NativeToolCallPart,
@@ -161,8 +161,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             # AG-UI has no cancelled outcome; revisit when the protocol fills this spec gap:
             # https://github.com/ag-ui-protocol/ag-ui/issues/880
             yield RunFinishedEvent(
-                thread_id=self.run_input.thread_id,
-                run_id=self.run_input.run_id,
+                thread_id=self.thread_id,
+                run_id=self.run_id,
                 timestamp=self._get_timestamp(),
             )
             return
