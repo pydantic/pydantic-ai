@@ -156,3 +156,23 @@ reading item 0, and the compaction example removed from Constraints (corrected h
   (`UsageLimitExceeded` -> `error_max_turns`?, generic error path -> `error_during_execution` with
   `is_error: true`); `stop_reason` reconstruction from `finish_reason`; multimodal tool returns ->
   `tool_result` content arrays; `parent_tool_use_id: null` (no subagent counterpart in the seam).
+
+### Fixture findings (captured 2026-08-06, CLI 2.1.222 — see `tests/assets/claude_code_stream_json/`)
+
+- **One `assistant` line per content block**, sharing one `message.id`; `message.usage` repeated
+  on each line. This settles the default-mode emission model: one line per part at part-end,
+  one message id per model response.
+- **Partial mode is a superset, not an alternative**: `--include-partial-messages` interleaves
+  `stream_event` lines (raw Anthropic SSE shapes) while keeping the whole-block `assistant`
+  lines and the terminal `result`. So "both modes" = one emission pipeline + an opt-in flag that
+  additionally emits `stream_event` records.
+- **Error semantics are two-axis**: API failures keep `result.subtype = 'success'` with
+  `is_error: true` + `terminal_reason`, and the synthetic `assistant` line carries
+  `model: '<synthetic>'` + an `error` field; only turn-limit exhaustion changes the subtype
+  (`error_max_turns`). Don't assume `subtype` is the error channel.
+- The live CLI emits record types beyond the classic four — `rate_limit_event`,
+  `system`/`status`, `system`/`thinking_tokens`, hook records — which consumers evidently
+  tolerate; our adapter emits none of them (documented drop).
+- The `init` record is far richer than assumed (`agents`, `skills`, `capabilities`,
+  `memory_paths`, `fast_mode_state`, ...); constructor params should cover only the load-bearing
+  subset (per the gh-aw parser requirements), with the rest fabricated as static defaults.
