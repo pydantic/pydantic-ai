@@ -290,7 +290,7 @@ def test_logfire(
                             ],
                         },
                         {
-                            'role': 'user',
+                            'role': 'tool',
                             'parts': [
                                 {
                                     'type': 'tool_call_response',
@@ -648,7 +648,7 @@ def test_instructions_with_structured_output(
                             ],
                         },
                         {
-                            'role': 'user',
+                            'role': 'tool',
                             'parts': [
                                 {
                                     'type': 'tool_call_response',
@@ -742,7 +742,7 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
                             ],
                         },
                         {
-                            'role': 'user',
+                            'role': 'tool',
                             'parts': [
                                 {
                                     'type': 'tool_call_response',
@@ -969,7 +969,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                             ],
                         },
                         {
-                            'role': 'user',
+                            'role': 'tool',
                             'parts': [
                                 {
                                     'type': 'tool_call_response',
@@ -1226,7 +1226,7 @@ async def test_in_place_history_mutation_warns_and_leaves_stale_request_spans(ca
                     'parts': [{'type': 'tool_call', 'id': 'call_1', 'name': 'corrupt_history', 'arguments': {}}],
                 },
                 {
-                    'role': 'user',
+                    'role': 'tool',
                     'parts': [
                         {'type': 'tool_call_response', 'id': 'call_1', 'name': 'corrupt_history', 'result': 'ok'}
                     ],
@@ -1243,7 +1243,7 @@ async def test_in_place_history_mutation_warns_and_leaves_stale_request_spans(ca
                 'parts': [{'type': 'tool_call', 'id': 'call_1', 'name': 'corrupt_history', 'arguments': {}}],
             },
             {
-                'role': 'user',
+                'role': 'tool',
                 'parts': [{'type': 'tool_call_response', 'id': 'call_1', 'name': 'corrupt_history', 'result': 'ok'}],
             },
             {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'done'}]},
@@ -2655,7 +2655,7 @@ def test_static_function_instructions_in_agent_run_span(
                             ],
                         },
                         {
-                            'role': 'user',
+                            'role': 'tool',
                             'parts': [
                                 {
                                     'type': 'tool_call_response',
@@ -2825,7 +2825,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
                             ],
                         },
                         {
-                            'role': 'user',
+                            'role': 'tool',
                             'parts': [
                                 {
                                     'type': 'tool_call_response',
@@ -2847,7 +2847,7 @@ def test_dynamic_function_instructions_in_agent_run_span(
                             ],
                         },
                         {
-                            'role': 'user',
+                            'role': 'tool',
                             'parts': [
                                 {
                                     'type': 'tool_call_response',
@@ -2988,7 +2988,7 @@ def test_function_instructions_with_history_in_agent_run_span(
                             ],
                         },
                         {
-                            'role': 'user',
+                            'role': 'tool',
                             'parts': [
                                 {
                                     'type': 'tool_call_response',

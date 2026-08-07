@@ -232,10 +232,10 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'logfire.msg': 'chat gpt-4o',
                     'gen_ai.input.messages': [
                         {'role': 'system', 'parts': [{'type': 'text', 'content': 'system_prompt'}]},
+                        {'role': 'user', 'parts': [{'type': 'text', 'content': 'user_prompt'}]},
                         {
-                            'role': 'user',
+                            'role': 'tool',
                             'parts': [
-                                {'type': 'text', 'content': 'user_prompt'},
                                 {
                                     'type': 'tool_call_response',
                                     'id': 'tool_call_3',
@@ -252,6 +252,11 @@ retry_prompt1
 Fix the errors and try again.\
 """,
                                 },
+                            ],
+                        },
+                        {
+                            'role': 'user',
+                            'parts': [
                                 {
                                     'type': 'text',
                                     'content': """\
@@ -760,10 +765,10 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                                 {'type': 'text', 'content': 'system_prompt'},
                             ],
                         },
+                        {'role': 'user', 'parts': [{'type': 'text', 'content': 'user_prompt'}]},
                         {
-                            'role': 'user',
+                            'role': 'tool',
                             'parts': [
-                                {'type': 'text', 'content': 'user_prompt'},
                                 {
                                     'type': 'tool_call_response',
                                     'id': 'tool_call_3',
@@ -780,6 +785,11 @@ retry_prompt1
 Fix the errors and try again.\
 """,
                                 },
+                            ],
+                        },
+                        {
+                            'role': 'user',
+                            'parts': [
                                 {
                                     'type': 'text',
                                     'content': """\
@@ -1381,8 +1391,8 @@ def test_messages_without_content(document_content: BinaryContent):
                     {'type': 'tool_call', 'id': IsStr(), 'name': 'my_tool'},
                 ],
             },
-            {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_1', 'name': 'tool'}]},
-            {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
+            {'role': 'tool', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_1', 'name': 'tool'}]},
+            {'role': 'tool', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
             {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'blob', 'mime_type': 'application/pdf'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'assistant', 'parts': [{'type': 'blob', 'mime_type': 'application/pdf'}]},
@@ -2194,7 +2204,7 @@ def test_messages_to_otel_messages_serialization_errors():
                 'parts': [{'type': 'tool_call', 'id': 'tool_call_id', 'name': 'tool', 'arguments': {'arg': 'Foo()'}}],
             },
             {
-                'role': 'user',
+                'role': 'tool',
                 'parts': [
                     {
                         'type': 'tool_call_response',
@@ -2246,7 +2256,7 @@ def test_messages_to_otel_messages_serializes_bytes():
                 ],
             },
             {
-                'role': 'user',
+                'role': 'tool',
                 'parts': [
                     {
                         'type': 'tool_call_response',
