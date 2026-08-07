@@ -366,7 +366,8 @@ class Instrumentation(AbstractCapability[Any]):
             else:
                 # Validation errors may contain rejected arguments, so omit their message and
                 # stack trace when content capture is disabled. Execution spans keep their
-                # existing exception recording behavior.
+                # existing exception recording behavior. The type formatting must match what
+                # the OTel SDK's `Span.record_exception` would have produced for this error.
                 error_type = type(error)
                 type_name = (
                     f'{error_type.__module__}.{error_type.__qualname__}'
