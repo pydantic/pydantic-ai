@@ -2278,7 +2278,7 @@ class StatefulToolset(AbstractToolset):
 
     @property
     def id(self) -> str | None:
-        return self._id  # pragma: no cover
+        return self._id
 
     async def for_run(self, ctx: RunContext) -> AbstractToolset:
         return StatefulToolset(call_count=0, id=self._id)
