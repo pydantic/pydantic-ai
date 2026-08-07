@@ -132,7 +132,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     """Settings to configure a realtime model session.
 
     Defines the common settings vocabulary used across realtime model providers. Unsupported settings
-    are silently ignored. Providers with additional generation parameters extend it.
+    are silently ignored. Providers with additional generation parameters extend it, e.g.
+    [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings].
     """
 
     max_tokens: int
