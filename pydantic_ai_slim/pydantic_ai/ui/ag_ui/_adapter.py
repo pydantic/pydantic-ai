@@ -922,6 +922,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           via `ToolMessage.error`, `'denied'` reloads as `'failed'`, and `'interrupted'` reloads as
           `'success'`.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
+        - A `NativeToolReturnPart` is always emitted directly after its `NativeToolCallPart`, so any
+          part that originally sat between them — e.g. a `CompactionPart` — reloads after the pair
+          instead. Provider adapters emit compaction parts outside call/return pairs, so this only
+          affects hand-constructed histories.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `FileUrl.force_download` is dropped when `ag_ui_version < '0.1.15'` (before typed
           multimodal content gained a metadata carrier).
