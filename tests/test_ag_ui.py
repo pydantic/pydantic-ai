@@ -4227,6 +4227,84 @@ async def test_event_stream_back_to_back_text():
     )
 
 
+async def test_event_stream_without_run_input_generates_identity():
+    """Built without a run input, the stream generates its own `thread_id`/`run_id` pair."""
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+
+    event_stream = AGUIEventStream()
+    assert event_stream.run_input is None
+
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {'type': 'TEXT_MESSAGE_CONTENT', 'timestamp': IsInt(), 'messageId': message_id, 'delta': 'Hello'},
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
+    assert (event_stream.thread_id, event_stream.run_id) == (thread_id, run_id)
+
+
+async def test_event_stream_without_run_input_uses_explicit_identity():
+    """A transport that already owns the run's identity passes it to the stream directly."""
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+
+    event_stream = AGUIEventStream(thread_id='thread-1', run_id='run-1')
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert [event for event in events if event['type'] in ('RUN_STARTED', 'RUN_FINISHED')] == snapshot(
+        [
+            {'type': 'RUN_STARTED', 'timestamp': IsInt(), 'threadId': 'thread-1', 'runId': 'run-1'},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': 'thread-1',
+                'runId': 'run-1',
+                **run_finished_outcome(),
+            },
+        ]
+    )
+
+
+def test_event_stream_identity_comes_from_run_input():
+    """The run input the frontend sent stays authoritative for the identity echoed back to it."""
+    run_input = create_input(UserMessage(id='msg_1', content='Hello'))
+    event_stream = AGUIEventStream(run_input=run_input, thread_id='ignored', run_id='ignored')
+
+    assert (event_stream.thread_id, event_stream.run_id) == (run_input.thread_id, run_input.run_id)
+
+
 async def test_file_part_emits_no_ag_ui_event():
     """A model-generated `FilePart` reaches the client as nothing at all.
 

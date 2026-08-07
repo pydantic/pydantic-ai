@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Iterable
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from uuid import uuid4
 
 from ..._utils import now_utc
@@ -89,6 +89,24 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     ag_ui_version: str = DEFAULT_AG_UI_VERSION
 
+    _: KW_ONLY
+
+    thread_id: str = field(default_factory=lambda: str(uuid4()))
+    """The thread ID to report on `RUN_STARTED` and `RUN_FINISHED`.
+
+    Taken from [`run_input`][pydantic_ai.ui.UIEventStream.run_input] when one is given. Without a
+    run input, set it to the ID the conversation already has in your own transport, or leave it to
+    default to a new UUID.
+    """
+
+    run_id: str = field(default_factory=lambda: str(uuid4()))
+    """The run ID to report on `RUN_STARTED` and `RUN_FINISHED`.
+
+    Taken from [`run_input`][pydantic_ai.ui.UIEventStream.run_input] when one is given. Without a
+    run input, set it to the ID the run already has in your own transport, or leave it to default to
+    a new UUID.
+    """
+
     _use_reasoning: bool = field(default=False, init=False)
     _reasoning_message_id: str | None = None
     _reasoning_started: bool = False
@@ -99,6 +117,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     def __post_init__(self) -> None:
         self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
+        if (run_input := self.run_input) is not None:
+            # A request's own identity wins: the frontend picked these and correlates the run by them,
+            # so they're not something the server gets to substitute.
+            self.thread_id = run_input.thread_id
+            self.run_id = run_input.run_id
 
     @property
     def _event_encoder(self) -> EventEncoder:
@@ -124,8 +147,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
 
     async def before_stream(self) -> AsyncIterator[BaseEvent]:
         yield RunStartedEvent(
-            thread_id=self.run_input.thread_id,
-            run_id=self.run_input.run_id,
+            thread_id=self.thread_id,
+            run_id=self.run_id,
             timestamp=self._get_timestamp(),
         )
 
@@ -144,8 +167,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             # AG-UI has no cancelled outcome; revisit when the protocol fills this spec gap:
             # https://github.com/ag-ui-protocol/ag-ui/issues/880
             yield RunFinishedEvent(
-                thread_id=self.run_input.thread_id,
-                run_id=self.run_input.run_id,
+                thread_id=self.thread_id,
+                run_id=self.run_id,
                 timestamp=self._get_timestamp(),
             )
             return
@@ -156,15 +179,15 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # to omit it entirely.
         if HAS_INTERRUPTS:
             yield RunFinishedEvent(
-                thread_id=self.run_input.thread_id,
-                run_id=self.run_input.run_id,
+                thread_id=self.thread_id,
+                run_id=self.run_id,
                 outcome=self._build_outcome(),
                 timestamp=self._get_timestamp(),
             )
         else:
             yield RunFinishedEvent(
-                thread_id=self.run_input.thread_id,
-                run_id=self.run_input.run_id,
+                thread_id=self.thread_id,
+                run_id=self.run_id,
                 timestamp=self._get_timestamp(),
             )
 

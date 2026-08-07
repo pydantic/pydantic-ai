@@ -94,6 +94,33 @@ async def chat(request: Request) -> Response:
     return StreamingResponse(sse_event_stream, media_type=accept)
 ```
 
+### Encoding events without a request
+
+If the agent doesn't run inside the request that serves the frontend — its events reach your API edge over a transport of their own, like a [durable execution](../durable-execution/overview.md) workflow, a queue, or a websocket fan-out — there's no request body to build a run input from, and no `UIAdapter` to run the agent. Use the protocol-specific [`UIEventStream`][pydantic_ai.ui.UIEventStream] subclass on its own instead: it transforms and encodes [the agent's events](../agent.md#streaming-all-events) and takes no run input.
+
+```py {title="encode_events.py"}
+from collections.abc import AsyncIterator
+
+from pydantic_ai.ui import NativeEvent
+from pydantic_ai.ui.vercel_ai import VercelAIEventStream
+
+
+async def encode_events(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str]:
+    event_stream = VercelAIEventStream()
+    async for sse_event in event_stream.encode_stream(event_stream.transform_stream(events)):
+        yield sse_event
+```
+
+An event stream instance carries the state of one run as it goes (the current message ID, the part it's streaming, the tool calls it's waiting on), so build a new one per run rather than reusing it.
+
+The AG-UI protocol identifies every run to the frontend: its `RUN_STARTED` and `RUN_FINISHED` events carry a thread ID and a run ID, which [`AGUIEventStream`][pydantic_ai.ui.ag_ui.AGUIEventStream] reads off the run input when it has one. Without a run input, pass the IDs your own transport already assigns to the conversation and the run, or leave them to default to new UUIDs:
+
+```py {title="encode_ag_ui_events.py"}
+from pydantic_ai.ui.ag_ui import AGUIEventStream
+
+event_stream = AGUIEventStream(thread_id='conversation-123', run_id='workflow-456')
+```
+
 ## Trust model for client-submitted messages
 
 UI adapter endpoints aren't authentication boundaries. Both the AG-UI and Vercel AI protocols are designed around the client transmitting the full conversation history on each request, so anything in `message_history` from the protocol — assistant messages, tool calls, file URLs, tool results — is under the caller's control. Treat the adapter endpoint as an internal backend service, running it inside your own authenticated route handler. See the [AG-UI security considerations](https://learn.microsoft.com/en-us/agent-framework/integrations/ag-ui/security-considerations) page for more on the deployment model both protocols assume.
