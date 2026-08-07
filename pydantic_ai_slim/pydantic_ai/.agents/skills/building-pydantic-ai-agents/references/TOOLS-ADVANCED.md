@@ -151,6 +151,8 @@ def click_and_capture(x: int, y: int) -> ToolReturn:
 
 Set `tools=['tool_name']` when the call makes a tool declared with `defer_loading=True` available. The executor deduplicates names in first-occurrence order, omits names already revealed, and stores a `ToolAvailabilityDeltaPart` immediately after that call's `ToolReturnPart`. The recorded name remains revealed when history is resumed; an unknown or already-visible name is a no-op when rendered.
 
+Every searchable deferred tool stays in the search corpus after discovery. A `CompactionPart` resets discovery at its exact position, so pre-boundary tools become hidden and can be searched for again; they remain callable if the model emits a valid call.
+
 ## Control Tool Execution When an Output Tool Is Called
 
 When a model calls an output tool (structured output) in the *same* response as other tools, the agent's `end_strategy` controls how those calls run and which one becomes the final result. Most agents never need to touch this, since most responses don't mix an output tool with other tools.
