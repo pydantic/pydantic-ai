@@ -1571,10 +1571,10 @@ class BedrockConverseModel(Model[BaseClient]):
                         continue
                     if not content:
                         # A leading CachePoint marks a cache boundary right before this part, i.e. at
-                        # the end of the preceding user content, so attach it there. This lets
-                        # capabilities that inject `[CachePoint, ...]` reminder parts (e.g. Planning
-                        # from pydantic-ai-harness) run on Bedrock, where each part maps to its own
-                        # message. See https://github.com/pydantic/pydantic-ai/issues/7004.
+                        # the end of the preceding user content, so attach it there. Each part maps to
+                        # its own message on Bedrock, so parts injected behind a cache boundary would
+                        # otherwise present the marker as the first block and fail.
+                        # See https://github.com/pydantic/pydantic-ai/issues/7004.
                         self._attach_cache_point_to_last_user_message(prior_messages, self._get_cache_point(item.ttl))
                         continue
                     if 'cachePoint' in content[-1]:

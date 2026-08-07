@@ -4108,7 +4108,7 @@ async def test_bedrock_cache_messages_with_video_as_last_content(
     assert usage.cache_read_tokens == 0
 
 
-async def test_bedrock_cache_point_as_first_content_raises_error(
+async def test_bedrock_cache_point_with_no_prior_user_content_raises_error(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
     """A CachePoint with no prior user content anywhere in the conversation raises a UserError."""
@@ -4238,6 +4238,75 @@ async def test_bedrock_leading_cache_point_lands_before_trailing_documents(
                     {'text': 'A reminder'},
                 ],
             }
+        ]
+    )
+
+
+async def test_bedrock_leading_cache_point_with_video_only_preceding_content_is_skipped(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """When the preceding user content is only a video, the cache point is skipped (AWS rejects a cache point directly after a video)."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=[BinaryContent(data=b'video data', media_type='video/mp4')]),
+                UserPromptPart(content=[CachePoint(), 'A reminder']),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [{'video': {'format': 'mp4', 'source': {'bytes': b'video data'}}}, {'text': 'A reminder'}],
+            }
+        ]
+    )
+
+
+async def test_bedrock_leading_cache_point_stays_with_tool_result_when_the_turn_splits(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Content that cannot share a tool result's turn still splits; the attached cache point stays with the tool result."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Summarize the doc')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_doc', args={}, tool_call_id='tc1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_doc', content='Fetched', tool_call_id='tc1'),
+                UserPromptPart(
+                    content=[CachePoint(), BinaryContent(data=b'Document content', media_type='text/plain')]
+                ),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Summarize the doc'}]},
+            {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 'tc1', 'name': 'get_doc', 'input': {}}}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'tc1', 'content': [{'text': 'Fetched'}], 'status': 'success'}},
+                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                ],
+            },
+            {'role': 'assistant', 'content': [{'text': '.'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'See attached document(s).'},
+                    {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Document content'}}},
+                ],
+            },
         ]
     )
 
