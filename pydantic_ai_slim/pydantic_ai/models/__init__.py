@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import cache, cached_property, wraps
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
@@ -97,6 +97,7 @@ See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.p
 
 _MAX_FILE_URL_DOWNLOAD_BYTES = 50 * 1024 * 1024
 """Default maximum response body size when downloading a [`FileUrl`][pydantic_ai.messages.FileUrl]."""
+
 
 ModelContextDepsT = TypeVar('ModelContextDepsT')
 
@@ -442,6 +443,27 @@ class Model(ABC, Generic[InterfaceClient]):
     def settings(self) -> ModelSettings | None:
         """Get the model settings."""
         return self._settings
+
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Resolve prompt cache retention requested by provider-specific model settings.
+
+        The model's default settings are merged with the per-request `model_settings`. Only provider-specific settings
+        are currently considered; a future unified cache setting is not yet an input. If multiple active settings
+        request different retention periods, the longest period wins because any longer-lived cache breakpoint can
+        keep the corresponding prompt prefix available. Models without a provider-specific retention setting return
+        `None`.
+        """
+        return None
+
+    @staticmethod
+    def _max_prompt_cache_retention(
+        *cache_settings: bool | Literal['5m', '1h'] | None,
+    ) -> timedelta | None:
+        if '1h' in cache_settings:
+            return timedelta(hours=1)
+        if any(cache_settings):
+            return timedelta(minutes=5)
+        return None
 
     @property
     def tool_deferral_mode(self) -> ToolDeferralMode | None:

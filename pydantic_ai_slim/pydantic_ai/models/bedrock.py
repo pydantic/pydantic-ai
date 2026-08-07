@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, 
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import count
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, overload
@@ -629,6 +629,21 @@ class BedrockConverseModel(Model[BaseClient]):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Resolve the longest retention requested by supported Bedrock cache settings."""
+        settings = merge_model_settings(self.settings, model_settings) or {}
+        return self._max_prompt_cache_retention(
+            settings.get('bedrock_cache_instructions')
+            if self.profile.get('bedrock_supports_prompt_caching', False)
+            else None,
+            settings.get('bedrock_cache_messages')
+            if self.profile.get('bedrock_supports_prompt_caching', False)
+            else None,
+            settings.get('bedrock_cache_tool_definitions')
+            if self.profile.get('bedrock_supports_tool_caching', False)
+            else None,
+        )
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
