@@ -24,7 +24,7 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     time_to_first_chunk_ctx,
 )
-from pydantic_ai._tool_retry import build_tool_retry_prompt
+from pydantic_ai._retry_prompt import retry_prompt_from_error
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -360,7 +360,7 @@ class Instrumentation(AbstractCapability[Any]):
             set_status_on_exception=False,
         ) as span:
             if self.settings.include_content and span.is_recording():
-                retry = build_tool_retry_prompt(call.tool_name, call.tool_call_id, error)
+                retry = retry_prompt_from_error(error, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
                 span.set_attribute(names.tool_result_attr, retry.model_response())
                 span.record_exception(error, escaped=True)
             else:
