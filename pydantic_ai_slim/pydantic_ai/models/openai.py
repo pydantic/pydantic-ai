@@ -104,6 +104,7 @@ from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
+    STANDING_PROMPT_PLANTED_KEY,
     Model,
     ModelRequestContext,
     ModelRequestParameters,
@@ -2045,7 +2046,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not isinstance(compaction, ResponseCompactionItem):  # pragma: no cover
             raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {compaction.type}')
 
-        part = _map_compaction_item(compaction, self.system)
+        # This compact call's input window explicitly planted the standing prompt (see
+        # `_responses_compact`), so the minted part carries the provenance stamp that lets the
+        # trim rely on the item's retention instead of re-sending the standing prompt.
+        part = _map_compaction_item(compaction, self.system, standing_prompt_planted=True)
         return ModelResponse(
             parts=[part],
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
@@ -4901,13 +4905,26 @@ def _support_tool_forcing(
         return True
 
 
-def _map_compaction_item(item: ResponseCompactionItem, system: str) -> CompactionPart:
-    """Convert an OpenAI `ResponseCompactionItem` to a `CompactionPart`."""
+def _map_compaction_item(
+    item: ResponseCompactionItem, system: str, *, standing_prompt_planted: bool = False
+) -> CompactionPart:
+    """Convert an OpenAI `ResponseCompactionItem` to a `CompactionPart`.
+
+    `standing_prompt_planted` stamps the part as minted by our own `responses.compact` call,
+    whose input window explicitly plants the standing prompt — the provenance that lets the trim
+    rely on the compaction item's retention instead of re-sending the standing prompt (see
+    `_trim_messages_before_compaction`). Compaction items arriving in ordinary responses are left
+    unstamped: their window may itself have relied on an earlier item's retention, and retention
+    is only reliable for a single hop.
+    """
+    provider_details = item.model_dump()
+    if standing_prompt_planted:
+        provider_details[STANDING_PROMPT_PLANTED_KEY] = True
     return CompactionPart(
         content=None,
         id=item.id,
         provider_name=system,
-        provider_details=item.model_dump(),
+        provider_details=provider_details,
     )
 
 

@@ -1945,6 +1945,15 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
     return count
 
 
+STANDING_PROMPT_PLANTED_KEY = 'pydantic_ai_standing_prompt_planted'
+"""`CompactionPart.provider_details` key stamped on compaction items minted by our own compact
+call, whose input window explicitly planted the standing prompt. Provenance for
+`_trim_messages_before_compaction`'s `standing_prompt_retained` fast path: only a stamped item is
+trusted to retain the standing prompt; anything else — an externally supplied or spliced history,
+or an item produced by a provider-initiated compaction of an ordinary request window — gets the
+standing prompt re-inserted."""
+
+
 def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
     messages: list[ModelMessage],
     system: str,
@@ -1970,11 +1979,15 @@ def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
     `system` input items *inside* the compacted window, and the compaction item demonstrably
     retains them — a latent directive that never fired before the boundary still governs
     post-compaction replies without the item being re-sent (live-verified) — so ordinary requests
-    pass `True` and skip re-sending what the model would receive twice. Retention is only reliable
-    for a single hop, though: a directive carried solely by a previous compaction item decayed when
-    compacted again (live-verified), so the re-compaction call itself passes `False` to plant the
-    standing prompt explicitly in every freshly built window. Recovered instructions are re-sent
-    either way — they travel as a per-request parameter, never inside the window.
+    pass `True` and skip re-sending what the model would receive twice. `True` is honored only for
+    a boundary part stamped with `STANDING_PROMPT_PLANTED_KEY`: retention presumes the compacted
+    window contained the standing prompt, which only our own compact call guarantees — an
+    externally produced or spliced-in item gets the standing prompt re-inserted as before.
+    Retention is also only reliable for a single hop: a directive carried solely by a previous
+    compaction item decayed when compacted again (live-verified), so the re-compaction call itself
+    passes `False` to plant the standing prompt explicitly in every freshly built window (and
+    stamps the result). Recovered instructions are re-sent either way — they travel as a
+    per-request parameter, never inside the window.
     The Messages API accepts a request whose messages start with the assistant compaction block
     (live-verified), and keeping e.g. the original first user message can 400 when it carries a
     `tool_result` whose `tool_use` was trimmed away — validation runs even on ignored content.
@@ -1993,8 +2006,11 @@ def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
             ):
                 continue
             tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
+            retained = standing_prompt_retained and bool(
+                part.provider_details and part.provider_details.get(STANDING_PROMPT_PLANTED_KEY)
+            )
             return [
-                *_standing_prompt_request(messages[:message_index], include_system_parts=not standing_prompt_retained),
+                *_standing_prompt_request(messages[:message_index], include_system_parts=not retained),
                 *tail,
             ]
     return messages
