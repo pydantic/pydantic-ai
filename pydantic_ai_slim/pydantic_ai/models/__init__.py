@@ -32,6 +32,7 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
+    STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
     BaseToolReturnPart,
     BinaryImage,
@@ -1943,15 +1944,6 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
             break
         count += 1
     return count
-
-
-STANDING_PROMPT_PLANTED_KEY = 'pydantic_ai_standing_prompt_planted'
-"""`CompactionPart.provider_details` key stamped on compaction items minted by our own compact
-call, whose input window explicitly planted the standing prompt. Provenance for
-`_trim_messages_before_compaction`'s `standing_prompt_retained` fast path: only a stamped item is
-trusted to retain the standing prompt; anything else — an externally supplied or spliced history,
-or an item produced by a provider-initiated compaction of an ordinary request window — gets the
-standing prompt re-inserted."""
 
 
 def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
