@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, InitVar, dataclass, field
 from typing import Any, Protocol
-from urllib.parse import urlencode, urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse
 
 from anyio.to_thread import run_sync
 from openai import AsyncOpenAI
@@ -15,6 +15,7 @@ from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
 from ..tools import ToolDefinition
 from ._base import RealtimeModelSettings, WebRTCAnswer
+from ._openai_protocol import with_realtime_query
 from ._openai_webrtc import relay_sdp_offer as _relay_sdp_offer
 from .openai import OpenAIRealtimeModel
 
@@ -77,7 +78,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         return urlunparse(parsed._replace(scheme='wss', path='/openai/v1/realtime', query=''))
 
     def _realtime_url(self) -> str:
-        return f'{self._realtime_ws_base()}?{urlencode({"model": self.model})}'
+        return with_realtime_query(self._realtime_ws_base(), model=self.model)
 
     def _webrtc_http_base(self) -> str:
         # Azure exposes the WebRTC signaling endpoints under the GA `/openai/v1/` path, regardless of the

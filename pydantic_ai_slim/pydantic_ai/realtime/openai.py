@@ -114,6 +114,7 @@ from ._openai_protocol import (
     turn_detection_config,
     user_message_item,
     validate_response_data,
+    with_realtime_query,
 )
 from ._openai_webrtc import answer_webrtc_offer as _answer_webrtc_offer, mint_client_secret as _mint_client_secret
 
@@ -938,12 +939,20 @@ class OpenAIRealtimeModel(RealtimeModel):
                     config['reasoning'] = {'effort': effort}
         return config
 
+    def _realtime_ws_base(self) -> str:
+        """The realtime WebSocket URL before the session query is added.
+
+        The seam Azure OpenAI overrides: its realtime path follows from the resource endpoint rather
+        than from the provider's `base_url`, and both URLs below have to honor that.
+        """
+        return realtime_websocket_url(self._provider.base_url)
+
     def _realtime_url(self) -> str:
-        return realtime_websocket_url(self._provider.base_url, model=self.model)
+        return with_realtime_query(self._realtime_ws_base(), model=self.model)
 
     def _sideband_url(self, call_id: str) -> str:
         """The control-plane WebSocket URL that attaches to an existing WebRTC call by `call_id`."""
-        return realtime_websocket_url(self._provider.base_url, call_id=call_id)
+        return with_realtime_query(self._realtime_ws_base(), call_id=call_id)
 
     def _webrtc_http_base(self) -> str:
         """The HTTP base URL for realtime signaling, always ending in `/` (e.g. `https://api.openai.com/v1/`)."""

@@ -109,11 +109,8 @@ def realtime_websocket_url(base_url: str, *, model: str | None = None, call_id: 
 
     Swaps the HTTP scheme for the WebSocket one and appends the `realtime` path, so the default
     OpenAI base URL `https://api.openai.com/v1/` yields `wss://api.openai.com/v1/realtime`. The
-    path lands *before* any query string the base URL carries — which is preserved, with `model`
-    or `call_id` merged into it — rather than being appended after it into the wrong endpoint.
-
-    `model` opens a new session; `call_id` attaches a control-plane (sideband) connection to a WebRTC
-    call that already exists, which carries its own model.
+    path lands *before* any query string the base URL carries, rather than being appended after it
+    into the wrong endpoint; `model`/`call_id` are then merged in by `with_realtime_query`.
     """
     url, _, query = base_url.partition('?')
     url = url.rstrip('/')
@@ -122,6 +119,19 @@ def realtime_websocket_url(base_url: str, *, model: str | None = None, call_id: 
     elif url.startswith('http://'):
         url = 'ws://' + url[len('http://') :]
     url = f'{url}/realtime'
+    return with_realtime_query(f'{url}?{query}' if query else url, model=model, call_id=call_id)
+
+
+def with_realtime_query(websocket_url: str, *, model: str | None = None, call_id: str | None = None) -> str:
+    """Merge the session-addressing query parameters into a realtime WebSocket URL.
+
+    Takes the URL as already derived — a provider whose realtime path doesn't follow from its HTTP
+    base URL (Azure OpenAI derives it from the resource endpoint) builds that part itself — and
+    preserves any query the URL already carries. `model` opens a new session; `call_id` attaches a
+    control-plane (sideband) connection to a WebRTC call that already exists, which carries its own
+    model.
+    """
+    url, _, query = websocket_url.partition('?')
     for name, value in (('model', model), ('call_id', call_id)):
         if value is not None:
             param = f'{name}={quote(value, safe="")}'
