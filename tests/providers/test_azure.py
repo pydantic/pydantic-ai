@@ -303,6 +303,32 @@ def test_azure_provider_reads_voice_live_env_prefix(monkeypatch: pytest.MonkeyPa
     assert provider.voice_live_api_version == '2026-04-10'
 
 
+def test_azure_provider_voice_live_api_version_is_not_borrowed_by_the_data_plane(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`AZURE_VOICELIVE_API_VERSION` must not version the Azure OpenAI chat client.
+
+    Regression: with an Azure OpenAI resource configured but `OPENAI_API_VERSION` unset, the Voice Live
+    api-version was handed to `AsyncAzureOpenAI`. The two are unrelated version schemes, so every chat
+    request went out with a version the data plane doesn't recognize.
+    """
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://ga.openai.azure.com')
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'ga-key')
+    monkeypatch.delenv('OPENAI_API_VERSION', raising=False)
+    monkeypatch.setenv('AZURE_VOICELIVE_API_VERSION', '2026-04-10')
+
+    with pytest.raises(UserError, match='OPENAI_API_VERSION'):
+        AzureProvider()
+
+    # It still stands in when the whole resource is the Voice Live one, so a Voice-Live-only
+    # configuration keeps constructing (the chat client it builds is a formality there).
+    monkeypatch.delenv('AZURE_OPENAI_ENDPOINT')
+    monkeypatch.delenv('AZURE_OPENAI_API_KEY')
+    monkeypatch.setenv('AZURE_VOICELIVE_ENDPOINT', 'https://vl.services.ai.azure.com')
+    monkeypatch.setenv('AZURE_VOICELIVE_API_KEY', 'vl-key')
+    assert AzureProvider().voice_live_api_version == '2026-04-10'
+
+
 def test_azure_provider_voice_live_credentials_are_coherent(monkeypatch: pytest.MonkeyPatch):
     # With both resource sets configured, the Azure OpenAI (GA) credentials and the Voice Live credentials
     # are each drawn as one coherent set — never mixed (e.g. GA endpoint with the Voice Live key).
