@@ -673,7 +673,7 @@ async def _signal_cancellation_stream_model(messages: list[ModelMessage], info: 
     _signal_cancellation_activity_started.set()
     yield 'thinking'
     # Block until the model activity is cancelled by the run's first-party cancellation.
-    while True:  # pragma: no cover
+    while True:
         activity.heartbeat()
         await asyncio.sleep(0.01)
 
