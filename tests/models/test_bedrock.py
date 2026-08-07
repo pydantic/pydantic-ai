@@ -3946,7 +3946,9 @@ async def test_bedrock_cache_point_as_first_content_is_skipped(
 ):
     """A leading CachePoint is silently skipped: it has no preceding content in the message to cache."""
     model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'This should not fail'])])]
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'This should not fail'])])
+    ]
     _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         messages, ModelRequestParameters(), BedrockModelSettings()
     )
