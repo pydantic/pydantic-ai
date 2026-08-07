@@ -24,6 +24,8 @@ from pydantic_ai.tools import ToolDefinition
 from ..conftest import try_import
 
 with try_import() as anthropic_available:
+    from anthropic.types.beta import BetaToolChoiceParam
+
     from pydantic_ai.models.anthropic import (
         AnthropicModel,
         AnthropicModelSettings,
@@ -901,25 +903,40 @@ async def test_anthropic_fallback_single_tool_with_thinking_filters_tool_defs(al
 
 
 @skip_if_no_anthropic
-async def test_anthropic_single_tool_stays_forced_under_unified_thinking_on_adaptive_model(
+@pytest.mark.parametrize(
+    'model_name,expected_tool_choice,expected_tool_names',
+    [
+        pytest.param(
+            'claude-opus-4-6',
+            {'type': 'tool', 'name': 'tool_a'},
+            {'tool_a', 'tool_b'},
+            id='adaptive_profile_keeps_forcing',
+        ),
+        pytest.param('claude-sonnet-4-5', {'type': 'auto'}, {'tool_a'}, id='non_adaptive_profile_falls_back'),
+    ],
+)
+async def test_anthropic_single_tool_forcing_under_unified_thinking(
     allow_model_requests: None,
+    model_name: str,
+    expected_tool_choice: BetaToolChoiceParam,
+    expected_tool_names: set[str],
 ):
-    """The single-tool branch keeps forcing under unified thinking on an adaptive-capable model.
+    """Unified thinking decides the single-tool branch through the profile's adaptive flag.
 
-    `Model.prepare_request` strips a unified `thinking` into `params.thinking` (simulated here), and
-    the profile's adaptive flag decides that it maps to adaptive thinking, which accepts forcing. On a
-    non-adaptive profile the same setting maps to extended thinking and falls back to auto, as above.
+    `Model.prepare_request` strips a unified `thinking` into `params.thinking` (simulated here). It
+    maps to adaptive thinking — which accepts forcing — on an adaptive-capable profile, and to
+    extended thinking on the rest, where the resolved choice softens to `auto` with filtered tools.
     """
-    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key='test-key'))
+    m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test-key'))
     settings: AnthropicModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
     params = ModelRequestParameters(
         function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=False, thinking='high'
     )
 
     tools, tool_choice = m._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
-    assert tool_choice == {'type': 'tool', 'name': 'tool_a'}
+    assert tool_choice == expected_tool_choice
     tool_names = {t['name'] for t in tools if isinstance(t, dict) and 'name' in t}
-    assert tool_names == {'tool_a', 'tool_b'}
+    assert tool_names == expected_tool_names
 
 
 # Models that reject a forced `tool_choice` outright, even without thinking (unlike other Anthropic models).
