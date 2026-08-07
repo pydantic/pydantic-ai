@@ -63,7 +63,10 @@ dependencies = [
     "duckdb>=1.4.2",
     "datasets>=4.0.0",
     "pandas>=2.3.3",
-    "prompt-toolkit>=3",
+    # Needed by the interactive cancel_and_resume example. Declaring it here also pulls prompt_toolkit
+    # into the lowest-versions test env, which un-skips the CLI tests; 3.0.29 is the first release whose
+    # `create_pipe_input()` is a context manager (as those tests use it), so pin the floor there.
+    "prompt-toolkit>=3.0.29",
     "twelvelabs>=1.2.8",
     # On Python 3.14, the locked numpy 2.2.6 has no cp314 wheel and would be
     # source-built in CI. numpy 2.3.2+ ships cp314 wheels, so require it there.
