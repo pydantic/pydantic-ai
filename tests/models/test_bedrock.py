@@ -4181,16 +4181,16 @@ async def test_bedrock_leading_cache_point_after_tool_return_shares_the_turn(
     )
 
 
-async def test_bedrock_leading_cache_point_deduplicates_existing_boundary(
+async def test_bedrock_leading_cache_point_replaces_existing_boundary_marker(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """A leading CachePoint meeting an already-marked boundary does not double the cache point."""
+    """A leading CachePoint meeting an already-marked boundary replaces the marker: the latest one wins."""
     model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(
             parts=[
                 UserPromptPart(content=['Some context', CachePoint()]),
-                UserPromptPart(content=[CachePoint(), 'A reminder']),
+                UserPromptPart(content=[CachePoint(ttl='1h'), 'A reminder']),
             ]
         ),
     ]
@@ -4203,7 +4203,38 @@ async def test_bedrock_leading_cache_point_deduplicates_existing_boundary(
                 'role': 'user',
                 'content': [
                     {'text': 'Some context'},
+                    {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+                    {'text': 'A reminder'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_leading_cache_point_lands_before_trailing_documents(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """When the preceding user content ends with documents, the boundary lands before them (AWS rejects a cache point directly after a document)."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Read this', BinaryContent(data=b'Document content', media_type='text/plain')]),
+                UserPromptPart(content=[CachePoint(), 'A reminder']),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Read this'},
                     {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                    {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Document content'}}},
                     {'text': 'A reminder'},
                 ],
             }

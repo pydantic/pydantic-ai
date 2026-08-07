@@ -1462,20 +1462,30 @@ class BedrockConverseModel(Model[BaseClient]):
         """Attach a cache point to the end of the last user message in `messages`.
 
         A `CachePoint` leading a user prompt part marks a cache boundary right before that
-        part, i.e. at the end of the preceding user content. If the last user message
-        already ends with a cache point, the boundary is already marked and this is a no-op.
+        part, i.e. at the end of the preceding user content. If that content already ends
+        with a cache point, the latest marker wins, matching the Anthropic mapper.
 
         Raises:
             UserError: If the conversation contains no prior user message.
         """
-        content = BedrockConverseModel._get_last_user_message_content(messages)
-        if content is not None:
-            _insert_cache_point_before_trailing_documents(content, cache_point)
-        elif not any(message['role'] == 'user' for message in messages):
+        content: list[Any] | None = next(
+            (
+                message['content']
+                for message in reversed(messages)
+                if message['role'] == 'user' and isinstance(message['content'], list) and message['content']
+            ),
+            None,
+        )
+        if content is None:
             raise UserError(
                 'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
                 'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
             )
+        last_block = content[-1]
+        if isinstance(last_block, dict) and 'cachePoint' in last_block:
+            content[-1] = cache_point
+        else:
+            _insert_cache_point_before_trailing_documents(content, cache_point)
 
     @staticmethod
     async def _map_file_to_content_block(
