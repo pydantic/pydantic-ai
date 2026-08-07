@@ -110,7 +110,7 @@ class _ContextInMemorySpanExporter(SpanExporter):
             if context_id is None:
                 all_finished_spans: list[ReadableSpan] = []
                 for finished_spans in self._finished_spans.values():
-                    all_finished_spans.extend(finished_spans)
+                    all_finished_spans.extend(finished_spans)  # pragma: no cover
                 return tuple(all_finished_spans)
             else:
                 return tuple(self._finished_spans.get(context_id, []))
