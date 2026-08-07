@@ -164,6 +164,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
         azure_endpoint: str | None = None,
         api_version: str | None = None,
         api_key: str | None = None,
+        entra_authenticated: bool = False,
         http_client: httpx.AsyncClient | None = None,
     ) -> Self:
         """Create an Azure provider for the GA realtime API.
@@ -179,8 +180,18 @@ class AzureProvider(Provider[AsyncOpenAI]):
             api_version: The API version for endpoints that require one. Falls back to
                 `OPENAI_API_VERSION`.
             api_key: The Azure resource key. Falls back to `AZURE_OPENAI_API_KEY`.
+            entra_authenticated: Set when every request is authenticated with a Microsoft Entra ID
+                credential instead of the resource key (see
+                [`AzureRealtimeModel(credential=...)`][pydantic_ai.realtime.azure.AzureRealtimeModel]).
+                The key is then neither required nor sent, and `api_key` raises its usual explanatory
+                error if anything asks — the same state a provider built from an Entra-authenticated
+                `openai_client` lands in.
             http_client: An existing `httpx.AsyncClient` used to construct the provider client.
         """
+        if entra_authenticated and not api_key and 'AZURE_OPENAI_API_KEY' not in os.environ:
+            # The SDK's own placeholder for "Entra-authenticated, no key", which `__init__` normalizes
+            # back to `None` below. Satisfies the key requirement without inventing a credential.
+            api_key = _api_key_sentinel
         endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT')
         resolved_api_version = api_version or os.getenv('OPENAI_API_VERSION')
         if endpoint and not resolved_api_version and _openai_compatible_v1_base_url(endpoint) is None:
@@ -294,7 +305,10 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 )
 
             self._azure_endpoint = azure_endpoint.rstrip('/')
-            self._api_key = api_key
+            # The SDK's Entra placeholder means "no key" here too, exactly as on the `openai_client`
+            # branch above, so `api_key` reports its absence rather than handing the placeholder out.
+            # Normalized before the Voice Live set resolves, since that falls back to this value.
+            self._api_key = None if api_key == _api_key_sentinel else api_key
             self._resolve_voice_live_credentials(voice_live_endpoint, voice_live_api_key, voice_live_api_version)
 
             if http_client is None:

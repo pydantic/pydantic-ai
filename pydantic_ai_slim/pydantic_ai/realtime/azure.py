@@ -200,6 +200,11 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
                 When set, the realtime WebSocket session *and* the browser WebRTC signaling calls
                 authenticate with a bearer token instead of the resource `api-key`.
         """
+        if credential is not None and provider == 'azure':
+            # An Entra credential authenticates every request, so the resource key is never read — and a
+            # resource locked to managed identity has none to give. Build the default provider knowing
+            # that, rather than demanding `AZURE_OPENAI_API_KEY` for a value this model won't use.
+            provider = AzureProvider.for_realtime(entra_authenticated=True)
         super().__init__(model, provider=provider, settings=settings, profile=profile, reconnect=reconnect)
         self.credential = credential
 
