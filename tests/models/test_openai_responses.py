@@ -13559,7 +13559,10 @@ async def test_openai_responses_compaction_without_encrypted_content_does_not_tr
     messages: list[ModelMessage] = [
         ModelRequest.user_text_prompt('keep before unrenderable boundary'),
         ModelResponse(
-            parts=[CompactionPart(content='summary without payload', provider_name='openai'), TextPart(content='keep text')],
+            parts=[
+                CompactionPart(content='summary without payload', provider_name='openai'),
+                TextPart(content='keep text'),
+            ],
             provider_name='openai',
         ),
         ModelRequest.user_text_prompt('keep tail'),
