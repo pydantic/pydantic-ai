@@ -312,7 +312,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     # version schemes are unrelated, so the data plane would be called with a version it
                     # doesn't recognize.
                     api_version = self._voice_live_api_version
-                if not api_version:  # pragma: no cover
+                if not api_version:
                     raise UserError(
                         'Must provide the `api_version` argument or set the `OPENAI_API_VERSION` '
                         'environment variable (`AZURE_VOICELIVE_API_VERSION` stands in only when the '
