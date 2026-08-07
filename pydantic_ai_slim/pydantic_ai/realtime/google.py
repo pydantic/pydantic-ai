@@ -20,7 +20,7 @@ import json
 import re
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
-from dataclasses import KW_ONLY, InitVar, dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, Literal, cast
 from urllib.parse import quote
 
@@ -105,6 +105,7 @@ from ._base import (
     RealtimeInput,
     RealtimeModel,
     RealtimeModelProfile,
+    RealtimeModelProfileSpec,
     RealtimeModelSettings,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
@@ -748,7 +749,7 @@ def _ws_gateway_url_rewrite(model: str, base_url: str) -> Generator[None]:
         live.ws_connect = real_ws_connect  # pyright: ignore[reportPrivateImportUsage]
 
 
-@dataclass
+@dataclass(init=False)
 class GoogleRealtimeModel(RealtimeModel):
     """Gemini Live API model.
 
@@ -770,6 +771,11 @@ class GoogleRealtimeModel(RealtimeModel):
         provider: The provider to use for authentication and API access — `'google'` (Gemini Developer
             API, the default) or `'google-cloud'` (Vertex AI), or a `Provider` instance.
         settings: Model-level defaults for session and generation configuration.
+        profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
+            merged over the provider's — a partial dict, or a callable taking the resolved profile and
+            returning the one to use. Mirrors `profile=` on a standard
+            [`Model`][pydantic_ai.models.Model], and is the escape hatch when a model name doesn't
+            identify the model (e.g. an Azure deployment named something other than its model).
         reconnect: Backoff policy for transparently re-dialing a dropped session; requires
             `google_enable_session_resumption=True`. With no policy, the low-level connection reports
             a non-recoverable session error; `RealtimeSession` raises
@@ -778,13 +784,27 @@ class GoogleRealtimeModel(RealtimeModel):
 
     model: str = 'gemini-2.5-flash-native-audio-latest'
     _: KW_ONLY
-    provider: InitVar[Provider[Client] | str] = 'google'
     settings: RealtimeModelSettings | None = None
     reconnect: ReconnectPolicy | None = None
     _provider: Provider[Client] = field(init=False, repr=False)
     _gateway: bool = field(init=False, default=False, repr=False)
 
-    def __post_init__(self, provider: Provider[Client] | str) -> None:
+    # Written out rather than generated because `profile` has to be an init argument while
+    # `RealtimeModel.profile` stays the *resolved* profile, exactly as on a standard `Model` — a
+    # dataclass field of that name would shadow the property.
+    def __init__(
+        self,
+        model: str = 'gemini-2.5-flash-native-audio-latest',
+        *,
+        provider: Provider[Client] | str = 'google',
+        settings: RealtimeModelSettings | None = None,
+        profile: RealtimeModelProfileSpec | None = None,
+        reconnect: ReconnectPolicy | None = None,
+    ) -> None:
+        self.model = model
+        self.settings = settings
+        self.reconnect = reconnect
+        self._profile = profile
         if isinstance(provider, str):
             provider = cast('Provider[Client]', infer_provider(provider))
         self._provider = provider
