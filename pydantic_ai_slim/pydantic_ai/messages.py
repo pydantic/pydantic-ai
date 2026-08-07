@@ -2666,10 +2666,36 @@ _FileUrlT = TypeVar('_FileUrlT', bound=FileUrl)
 subclass (`ImageUrl`, `DocumentUrl`, etc.) when sanitizing a file URL."""
 
 
+def _drop_compaction_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """Drop client-supplied compaction parts from untrusted messages that follow trusted history.
+
+    A compaction part is the latest history boundary: provider adapters trim everything before it
+    from the request, and [`post_compaction_window`][pydantic_ai.messages.post_compaction_window]
+    derives model-visible state from it. When trusted server-side history precedes the untrusted
+    messages, honoring a client-supplied boundary would let the client hide that trusted prefix
+    from the model, replacing it with the client's own summary or blob — so only the server's own
+    boundaries are kept. With no server-side history, the client-transmitted messages are the
+    entire conversation, boundaries included, and its compaction parts should be honored. A
+    response left with no parts is dropped entirely. Shared by
+    `sanitize_messages(strip_compaction_parts=True)` and the UI adapters' handling of runs that
+    combine server-side `message_history` with client-submitted messages.
+    """
+    result: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse) and any(isinstance(part, CompactionPart) for part in message.parts):
+            parts = [part for part in message.parts if not isinstance(part, CompactionPart)]
+            if parts:
+                result.append(replace(message, parts=parts))
+        else:
+            result.append(message)
+    return result
+
+
 def sanitize_messages(
     messages: Sequence[ModelMessage],
     *,
     strip_system_prompts: bool = True,
+    strip_compaction_parts: bool = False,
     allowed_file_url_schemes: Collection[str] = ('http', 'https'),
     allowed_file_url_force_download: Collection[ForceDownloadMode] = (),
     allow_uploaded_files: bool = False,
@@ -2708,13 +2734,25 @@ def sanitize_messages(
       agent loop never dispatches them, so they aren't a client-injection risk. If stripping leaves the
       final response with no parts, the response is dropped from history entirely.
     - The compaction provenance stamp from [`CompactionPart.provider_details`][pydantic_ai.messages.CompactionPart.provider_details].
-      This ensures client-supplied OpenAI Responses compaction items never suppress re-insertion of
-      the server's standing system prompt.
+      This ensures a client-supplied OpenAI Responses compaction item is never trusted to already
+      carry the leading [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s: they are
+      re-sent to the model even where the provider's own compaction state would normally let them
+      be skipped.
+    - [`CompactionPart`][pydantic_ai.messages.CompactionPart]s, when `strip_compaction_parts=True`
+      (off by default). Everything before a compaction part is hidden from the model, so pass
+      `True` whenever you combine the sanitized history with trusted server-side
+      `message_history` — a client-supplied compaction part would hide that server-side history.
+      The [UI adapters](../ui/overview.md) apply this rule automatically when a run combines
+      server-side `message_history` with client-submitted messages.
 
     Args:
         messages: Messages to sanitize.
         strip_system_prompts: Whether to strip
             [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s.
+        strip_compaction_parts: Whether to drop
+            [`CompactionPart`][pydantic_ai.messages.CompactionPart]s entirely. Off by default, for
+            when the untrusted input is the entire conversation; pass `True` when the sanitized
+            history is combined with trusted server-side history.
         allowed_file_url_schemes: URL schemes allowed for [`FileUrl`][pydantic_ai.messages.FileUrl]
             parts. Defaults to `http` and `https`.
         allowed_file_url_force_download: Additional
@@ -2727,6 +2765,9 @@ def sanitize_messages(
             Use this for human-in-the-loop resumption when matching tool results are being submitted
             with the same request.
     """
+    if strip_compaction_parts:
+        messages = _drop_compaction_parts(messages)
+
     allowed_schemes = {scheme.lower() for scheme in allowed_file_url_schemes}
     allowed_force_download = set(allowed_file_url_force_download)
     resolved_ids = set(resolved_tool_call_ids)

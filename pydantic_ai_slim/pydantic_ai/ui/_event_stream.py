@@ -465,7 +465,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case FilePart():
                 async for e in self.handle_file(part):
                     yield e
-            case CompactionPart():  # pragma: no cover
+            case CompactionPart():  # pragma: no branch
                 async for e in self.handle_compaction(part):
                     yield e
 
@@ -527,7 +527,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case NativeToolCallPart():
                 async for e in self.handle_builtin_tool_call_end(part):
                     yield e
-            case NativeToolReturnPart() | FilePart() | CompactionPart():  # pragma: no cover
+            case NativeToolReturnPart() | FilePart() | CompactionPart():
                 # These don't have deltas, so they don't need to be ended.
                 pass
 
