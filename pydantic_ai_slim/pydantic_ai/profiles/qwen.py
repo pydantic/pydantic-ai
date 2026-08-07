@@ -6,11 +6,14 @@ from ..profiles.openai import OpenAIModelProfile
 from . import InlineDefsJsonSchemaTransformer, ModelProfile
 
 _QWEN_3_5_RE = re.compile(r'qwen-?3[\.\-]5')
+# Cerebras serves `qwen-3-coder-*` (hyphenated), while Bedrock, Heroku and OpenRouter serve
+# `qwen3-coder-*` (un-hyphenated); accept both spellings, like `_QWEN_3_5_RE` does for Qwen3.5.
+_QWEN_3_CODER_RE = re.compile(r'^qwen-?3-coder')
 
 
 def qwen_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Qwen model."""
-    if model_name.startswith('qwen-3-coder'):
+    if _QWEN_3_CODER_RE.match(model_name):
         return OpenAIModelProfile(
             json_schema_transformer=InlineDefsJsonSchemaTransformer,
             openai_supports_tool_choice_required=False,
