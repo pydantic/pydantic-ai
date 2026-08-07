@@ -134,6 +134,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'sambanova',
         'together',
         'vercel',
+        'vllm',
         'zai',
     ],
 )
