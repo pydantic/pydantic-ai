@@ -122,6 +122,8 @@ with try_import() as imports_successful:
         BetaAdvisorToolResultError,
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
+        BetaCompactionBlock,
+        BetaCompactionContentBlockDelta,
         BetaCompactionIterationUsage,
         BetaContentBlock,
         BetaDirectCaller,
@@ -12977,8 +12979,6 @@ async def test_anthropic_compaction_capability_preserves_existing_edits(
 
 async def test_anthropic_compaction_round_trip(allow_model_requests: None, anthropic_api_key: str):
     """Test that CompactionPart is correctly round-tripped in Anthropic message mapping."""
-    from pydantic_ai.messages import CompactionPart
-
     model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     messages: list[ModelMessage] = [
@@ -12997,6 +12997,36 @@ async def test_anthropic_compaction_round_trip(allow_model_requests: None, anthr
     result = await agent.run('What did I say earlier?', message_history=messages)
 
     assert result.output
+
+
+@pytest.mark.parametrize(
+    ('provider_details', 'expected_encrypted_content'),
+    [({'encrypted_content': 'opaque-blob'}, 'opaque-blob'), (None, None)],
+)
+async def test_anthropic_compaction_maps_encrypted_content(
+    allow_model_requests: None,
+    provider_details: dict[str, Any] | None,
+    expected_encrypted_content: str | None,
+):
+    """The API does not emit encrypted compaction content yet, so pin the rendered SDK parameter."""
+    response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[CompactionPart(content='Summary.', provider_name='anthropic', provider_details=provider_details)],
+            provider_name='anthropic',
+        ),
+        ModelRequest.user_text_prompt('Continue'),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    compaction_block = get_mock_chat_completion_kwargs(mock_client)[0]['messages'][0]['content'][0]
+    if expected_encrypted_content is None:
+        assert 'encrypted_content' not in compaction_block
+    else:
+        assert compaction_block['encrypted_content'] == expected_encrypted_content
 
 
 async def test_anthropic_trims_before_latest_compaction(allow_model_requests: None):
@@ -13163,15 +13193,14 @@ async def test_anthropic_compaction_beta_header(allow_model_requests: None):
     assert 'compact-2026-01-12' in kwargs['betas']
 
 
-async def test_anthropic_compaction_in_response(allow_model_requests: None):
+@pytest.mark.parametrize('encrypted_content', ['opaque-blob', None])
+async def test_anthropic_compaction_in_response(allow_model_requests: None, encrypted_content: str | None):
     """Test that BetaCompactionBlock in API response is mapped to CompactionPart."""
-    from anthropic.types.beta import BetaCompactionBlock
-
-    from pydantic_ai.messages import CompactionPart
-
     c = completion_message(
         [
-            BetaCompactionBlock(content='Summary of prior conversation.', type='compaction'),
+            BetaCompactionBlock(
+                content='Summary of prior conversation.', encrypted_content=encrypted_content, type='compaction'
+            ),
             BetaTextBlock(text='Based on our conversation, here is my response.', type='text'),
         ],
         BetaUsage(input_tokens=100, output_tokens=20),
@@ -13189,17 +13218,12 @@ async def test_anthropic_compaction_in_response(allow_model_requests: None):
     assert len(compaction_parts) == 1
     assert compaction_parts[0].content == 'Summary of prior conversation.'
     assert compaction_parts[0].provider_name == 'anthropic'
+    expected_provider_details = {'encrypted_content': encrypted_content} if encrypted_content is not None else None
+    assert compaction_parts[0].provider_details == expected_provider_details
 
 
 async def test_anthropic_compaction_streaming(allow_model_requests: None):
     """Test that BetaCompactionBlock in streaming response is handled correctly."""
-    from anthropic.types.beta import (
-        BetaCompactionBlock,
-        BetaCompactionContentBlockDelta,
-    )
-
-    from pydantic_ai.messages import CompactionPart
-
     stream: list[BetaRawMessageStreamEvent] = [
         BetaRawMessageStartEvent(
             type='message_start',
@@ -13216,25 +13240,39 @@ async def test_anthropic_compaction_streaming(allow_model_requests: None):
         BetaRawContentBlockStartEvent(
             type='content_block_start',
             index=0,
-            content_block=BetaCompactionBlock(content='Summary of conversation.', type='compaction'),
+            content_block=BetaCompactionBlock(
+                content='Summary of conversation.', encrypted_content='initial-opaque-blob', type='compaction'
+            ),
         ),
         BetaRawContentBlockDeltaEvent(
             type='content_block_delta',
             index=0,
-            delta=BetaCompactionContentBlockDelta(content='Updated summary of conversation.', type='compaction_delta'),
+            delta=BetaCompactionContentBlockDelta(
+                content='Updated summary of conversation.',
+                encrypted_content='opaque-blob',
+                type='compaction_delta',
+            ),
         ),
         BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
         BetaRawContentBlockStartEvent(
             type='content_block_start',
             index=1,
+            content_block=BetaCompactionBlock(
+                content='Second summary.', encrypted_content='start-only-opaque-blob', type='compaction'
+            ),
+        ),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=1),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start',
+            index=2,
             content_block=BetaTextBlock(text='', type='text'),
         ),
         BetaRawContentBlockDeltaEvent(
             type='content_block_delta',
-            index=1,
+            index=2,
             delta=BetaTextDelta(type='text_delta', text='Here is my response.'),
         ),
-        BetaRawContentBlockStopEvent(type='content_block_stop', index=1),
+        BetaRawContentBlockStopEvent(type='content_block_stop', index=2),
         BetaRawMessageDeltaEvent(
             type='message_delta',
             delta=Delta(stop_reason='end_turn'),
@@ -13254,17 +13292,24 @@ async def test_anthropic_compaction_streaming(allow_model_requests: None):
     response_msgs = [msg for msg in result.all_messages() if isinstance(msg, ModelResponse)]
     assert len(response_msgs) == 1
     compaction_parts = [p for p in response_msgs[0].parts if isinstance(p, CompactionPart)]
-    assert len(compaction_parts) == 1
-    assert compaction_parts[0].content == 'Updated summary of conversation.'
-    assert compaction_parts[0].provider_name == 'anthropic'
+    assert compaction_parts == snapshot(
+        [
+            CompactionPart(
+                content='Updated summary of conversation.',
+                provider_name='anthropic',
+                provider_details={'encrypted_content': 'opaque-blob'},
+            ),
+            CompactionPart(
+                content='Second summary.',
+                provider_name='anthropic',
+                provider_details={'encrypted_content': 'start-only-opaque-blob'},
+            ),
+        ]
+    )
 
 
 async def test_anthropic_compaction_only_response(allow_model_requests: None):
     """Test that a compaction-only response (pause_after_compaction=True) uses content as text output."""
-    from anthropic.types.beta import BetaCompactionBlock
-
-    from pydantic_ai.messages import CompactionPart
-
     mock_client = MockAnthropic.create_mock(
         completion_message(
             [BetaCompactionBlock(content='Summary of prior conversation.', type='compaction')],

@@ -186,3 +186,7 @@ output or deeper reasoning.
   before opening the session when filtering or redaction is required.
 - Realtime-specific exchange hooks are not yet available; use supported tool hooks and session
   events.
+- Interactive human-in-the-loop tool approval is not yet supported. A
+  [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves
+  approvals from policy, immediately; asking a person mid-call and resuming on their answer needs a
+  design of its own. See [approval-gated tools](tools.md#deferred-and-approval-required-tools).
