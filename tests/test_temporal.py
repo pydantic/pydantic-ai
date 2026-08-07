@@ -6915,6 +6915,33 @@ def test_durability_duplicate_toolset_id_rejected():
         )
 
 
+def _alpha_search(query: str) -> str:
+    """Alpha search."""
+    return 'alpha'  # pragma: no cover
+
+
+def _beta_search(topic: str) -> str:
+    """Beta search."""
+    return 'beta'  # pragma: no cover
+
+
+async def test_durability_run_level_capability_reusing_default_toolset_id_rejected():
+    """A run-level toolset carrying an already-registered `id` is rejected, not silently swapped.
+
+    The single-purpose capabilities name their contributed toolset after themselves, so a static
+    and a run-level `WebSearch` reach the registry under one `id` without the user setting one.
+    Returning the registered wrapper there would offer the static capability's tools twice and
+    drop the run-level one's entirely.
+    """
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_run_level_dup',
+        capabilities=[WebSearch(native=False, local=_alpha_search), TemporalDurability()],
+    )
+    with pytest.raises(UserError, match="Two toolsets have the same `id` 'web_search'"):
+        await agent.run('hi', capabilities=[WebSearch(native=False, local=_beta_search)])
+
+
 def test_durability_same_toolset_instance_reused():
     """The same toolset instance appearing twice maps to one wrapper, not an `id` conflict.
 

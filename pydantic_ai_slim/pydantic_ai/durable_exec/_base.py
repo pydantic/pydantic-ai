@@ -270,8 +270,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             ts_id = ts.id
-            if ts_id is not None and ts_id in self._toolsets_by_id:
-                return self._toolsets_by_id[ts_id]
+            if ts_id is not None and (existing := self._toolsets_by_id.get(ts_id)) is not None:
+                if existing.wrapped is not ts:
+                    # Returning the registered wrapper for a *different* toolset would route this
+                    # one's calls to the other's durable units and hide its tools behind them.
+                    raise UserError(
+                        f'Two toolsets have the same `id` {ts_id!r}. Toolset `id`s must be unique among all '
+                        f"toolsets registered with the same agent, as they identify the toolset's "
+                        f'{self._durable_unit_noun}s within the {self._durable_container_noun}. Pass a '
+                        f'distinct `id` to the toolset or capability supplied for this run.'
+                    )
+                return existing
             return ts
 
         return toolset.visit_and_replace(swap)
