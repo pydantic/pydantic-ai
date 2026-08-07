@@ -1172,6 +1172,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 part,
                                 document_count,
                                 supports_prompt_caching=profile.get('bedrock_supports_prompt_caching', False),
+                                prior_messages=bedrock_messages,
                             )
                         )
                     elif isinstance(part, ToolReturnPart):
@@ -1349,6 +1350,7 @@ class BedrockConverseModel(Model[BaseClient]):
         # Llama and Mistral reject anything sharing the turn (the `toolResult` must be alone). When the
         # combined content isn't co-locatable (per `colocatable_content`), split the turns instead of
         # merging. See https://github.com/pydantic/pydantic-ai/issues/6081 and `bedrock_tool_result_colocatable_content`.
+        # `cachePoint` blocks are cache markers, not content, so they never force a split.
         processed_messages: list[MessageUnionTypeDef] = []
         last_message: dict[str, Any] | None = None
         for current_message in bedrock_messages:
@@ -1360,7 +1362,9 @@ class BedrockConverseModel(Model[BaseClient]):
                 merged_content = [*last_message['content'], *current_message['content']]
                 has_tool_result = any('toolResult' in block for block in merged_content)
                 has_non_colocatable = any(
-                    'toolResult' not in block and next(iter(block)) not in colocatable_content
+                    'toolResult' not in block
+                    and 'cachePoint' not in block
+                    and next(iter(block)) not in colocatable_content
                     for block in merged_content
                 )
                 if has_tool_result and has_non_colocatable:
@@ -1452,6 +1456,28 @@ class BedrockConverseModel(Model[BaseClient]):
         return content
 
     @staticmethod
+    def _attach_cache_point_to_last_user_message(
+        messages: list[MessageUnionTypeDef], cache_point: ContentBlockUnionTypeDef
+    ) -> None:
+        """Attach a cache point to the end of the last user message in `messages`.
+
+        A `CachePoint` leading a user prompt part marks a cache boundary right before that
+        part, i.e. at the end of the preceding user content. If the last user message
+        already ends with a cache point, the boundary is already marked and this is a no-op.
+
+        Raises:
+            UserError: If the conversation contains no prior user message.
+        """
+        content = BedrockConverseModel._get_last_user_message_content(messages)
+        if content is not None:
+            _insert_cache_point_before_trailing_documents(content, cache_point)
+        elif not any(message['role'] == 'user' for message in messages):
+            raise UserError(
+                'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
+                'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
+            )
+
+    @staticmethod
     async def _map_file_to_content_block(
         file: ImageUrl | DocumentUrl | VideoUrl | BinaryContent,
         document_count: Iterator[int],
@@ -1494,6 +1520,7 @@ class BedrockConverseModel(Model[BaseClient]):
         document_count: Iterator[int],
         *,
         supports_prompt_caching: bool,
+        prior_messages: list[MessageUnionTypeDef],
     ) -> list[MessageUnionTypeDef]:
         content: list[ContentBlockUnionTypeDef] = []
         if isinstance(part.content, str):
@@ -1533,16 +1560,16 @@ class BedrockConverseModel(Model[BaseClient]):
                         # Silently skip CachePoint for models that don't support prompt caching
                         continue
                     if not content:
-                        # A CachePoint as the very first block of a user message has no preceding
-                        # content in this message to cache. Bedrock accepts such a checkpoint but
-                        # can't cache anything before it, so skip it instead of failing the request —
-                        # this lets capabilities that emit a leading CachePoint (e.g. the external
-                        # `Planning` capability) run on Bedrock.
+                        # A leading CachePoint marks a cache boundary right before this part, i.e. at
+                        # the end of the preceding user content, so attach it there. This lets
+                        # capabilities that inject `[CachePoint, ...]` reminder parts (e.g. Planning
+                        # from pydantic-ai-harness) run on Bedrock, where each part maps to its own
+                        # message. See https://github.com/pydantic/pydantic-ai/issues/7004.
+                        self._attach_cache_point_to_last_user_message(prior_messages, self._get_cache_point(item.ttl))
                         continue
                     if 'cachePoint' in content[-1]:
                         raise UserError(
-                            'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
-                            'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
+                            'CachePoint cannot be preceded by another CachePoint - there must be content between cache points when using Bedrock.'
                         )
                     _insert_cache_point_before_trailing_documents(
                         content,
@@ -1557,7 +1584,8 @@ class BedrockConverseModel(Model[BaseClient]):
         has_text = any('text' in block for block in content)
         if has_document and not has_text:
             content.insert(0, {'text': 'See attached document(s).'})
-        return [{'role': 'user', 'content': content}]
+        # A part holding only a leading CachePoint maps to no content of its own.
+        return [{'role': 'user', 'content': content}] if content else []
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:

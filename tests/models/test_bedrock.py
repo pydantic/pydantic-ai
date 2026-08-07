@@ -1643,6 +1643,7 @@ async def test_map_user_prompt_with_text_content_input(allow_model_requests: Non
         ),
         document_count=count(1),
         supports_prompt_caching=False,
+        prior_messages=[],
     )
     assert m == snapshot(
         [
@@ -4107,37 +4108,140 @@ async def test_bedrock_cache_messages_with_video_as_last_content(
     assert usage.cache_read_tokens == 0
 
 
-async def test_bedrock_cache_point_as_first_content_is_skipped(
+async def test_bedrock_cache_point_as_first_content_raises_error(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """A leading CachePoint is silently skipped: it has no preceding content in the message to cache."""
+    """A CachePoint with no prior user content anywhere in the conversation raises a UserError."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'This should fail'])])]
+    with pytest.raises(UserError, match='CachePoint cannot be the first content in a user message'):
+        await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_bedrock_leading_cache_point_attaches_to_previous_user_message(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """A CachePoint leading a user prompt part marks a boundary at the end of the preceding user content."""
     model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'This should not fail'])])
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(parts=[TextPart(content='First answer')]),
+        ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'Ephemeral reminder'])]),
     ]
     _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         messages, ModelRequestParameters(), BedrockModelSettings()
     )
-    assert bedrock_messages[0]['content'] == snapshot([{'text': 'This should not fail'}])
-
-
-async def test_bedrock_cache_point_followed_by_another_is_skipped(
-    allow_model_requests: None, bedrock_provider: BedrockProvider
-):
-    """Both a leading CachePoint and a trailing one still produce a valid message."""
-    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
-    messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content=[CachePoint(), 'some text', CachePoint()])])
-    ]
-    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, ModelRequestParameters(), BedrockModelSettings()
-    )
-    assert bedrock_messages[0]['content'] == snapshot(
+    assert bedrock_messages == snapshot(
         [
-            {'text': 'some text'},
-            {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+            {'role': 'user', 'content': [{'text': 'First question'}, {'cachePoint': {'type': 'default', 'ttl': '5m'}}]},
+            {'role': 'assistant', 'content': [{'text': 'First answer'}]},
+            {'role': 'user', 'content': [{'text': 'Ephemeral reminder'}]},
         ]
     )
+
+
+async def test_bedrock_leading_cache_point_after_tool_return_shares_the_turn(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """A tool return followed by a `[CachePoint, text]` part maps to one user message with the boundary between them.
+
+    This is the planning-reminder pattern from pydantic-ai-harness `Planning`:
+    https://github.com/pydantic/pydantic-ai/issues/7004
+    """
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Make a plan')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='write_plan', args={'plan': 'the plan'}, tool_call_id='tc1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='write_plan', content='Plan saved', tool_call_id='tc1'),
+                UserPromptPart(content=[CachePoint(), 'Current plan: the plan']),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'Make a plan'}]},
+            {
+                'role': 'assistant',
+                'content': [{'toolUse': {'toolUseId': 'tc1', 'name': 'write_plan', 'input': {'plan': 'the plan'}}}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {'toolResult': {'toolUseId': 'tc1', 'content': [{'text': 'Plan saved'}], 'status': 'success'}},
+                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                    {'text': 'Current plan: the plan'},
+                ],
+            },
+        ]
+    )
+
+
+async def test_bedrock_leading_cache_point_deduplicates_existing_boundary(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """A leading CachePoint meeting an already-marked boundary does not double the cache point."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content=['Some context', CachePoint()]),
+                UserPromptPart(content=[CachePoint(), 'A reminder']),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Some context'},
+                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
+                    {'text': 'A reminder'},
+                ],
+            }
+        ]
+    )
+
+
+async def test_bedrock_cache_point_only_part_attaches_and_emits_no_message(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """A part holding only a CachePoint attaches the boundary and produces no message of its own."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(content='Some context'),
+                UserPromptPart(content=[CachePoint()]),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [{'role': 'user', 'content': [{'text': 'Some context'}, {'cachePoint': {'type': 'default', 'ttl': '5m'}}]}]
+    )
+
+
+async def test_bedrock_consecutive_cache_points_raise_error(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """Two cache points with no content between them raise a UserError."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=['some text', CachePoint(), CachePoint()])])
+    ]
+    with pytest.raises(UserError, match='CachePoint cannot be preceded by another CachePoint'):
+        await model._map_messages(messages, ModelRequestParameters(), BedrockModelSettings())  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_bedrock_cache_point_with_only_document_raises_error(
