@@ -1,6 +1,6 @@
 """Portable, engine-agnostic seam for externally cancelling a durable agent run.
 
-First-party run cancellation (`AgentRun.cancel()`, `RunContext.cancel_run()`,
+First-party run cancellation (`AgentRun.cancel()`, `RunContext.cancel()`,
 [`CancellationToken`][pydantic_ai.CancellationToken]) has no story across a durable-execution
 boundary: a `CancellationToken` is a same-process, cross-thread handle that can't be serialized
 into a workflow/flow, and a durable run exposes no `AgentRun` for an external actor (a user hitting
