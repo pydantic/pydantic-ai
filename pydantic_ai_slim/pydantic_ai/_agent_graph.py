@@ -2392,10 +2392,12 @@ def _revealable_tool_names(
     hooks come as a bundle, and its tools should not reach the model ahead of the runbook for using
     them. A reveal says a schema *may* be shown; it cannot stand in for the load.
 
-    Not a trust boundary — whoever can author a `ToolAvailabilityDeltaPart` can author the
-    `load_capability` exchange too, and history integrity is the deployment's job. This is about the
-    model not being handed a tool it was never properly given, and about not advertising one
-    `ToolManager` would then refuse to run: visible and uncallable is the worst of both worlds.
+    Not a trust boundary, and not trying to be one. Any history the model could plausibly have
+    produced is honoured — fabricating a coherent `load_capability` exchange is equivalent to the
+    model having called it, and history integrity is the deployment's job. What is rejected is a
+    history no legitimate run could have produced: a capability tool revealed with no load behind it
+    describes a world that never existed, and honouring it would put the run in a state its own
+    rules forbid — including advertising a tool `ToolManager` will refuse to run.
 
     Only *deferred* capabilities gate their tools this way. An always-on capability's search-gated
     tool is revealed by discovery alone, which is why this needs `deferred_capability_ids` read from

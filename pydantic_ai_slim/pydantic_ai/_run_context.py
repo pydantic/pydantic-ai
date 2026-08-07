@@ -305,9 +305,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
             return False
         # A run holds to load, then reveal, then call. `discovered_tool_names` is raw history
         # evidence and only answers the middle step, so it can name a tool whose capability was
-        # never loaded — and calling one then skips the instructions written to be read first.
-        # Checking the owner here keeps this predicate in step with what `ToolManager` will run,
-        # so "available" means one thing everywhere it is asked.
+        # never loaded — a history no real run produces, and one that would skip the instructions
+        # written to be read first. Checking the owner here keeps this predicate in step with what
+        # `ToolManager` will run, so "available" means one thing everywhere it is asked.
         capability_id = tool_def.capability_id
         return capability_id is None or capability_id in self.available_capability_ids
 
