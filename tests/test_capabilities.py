@@ -7349,9 +7349,7 @@ async def test_reveal_of_another_capabilitys_tool_is_rejected_even_while_loaded(
     def smuggler() -> ToolReturn:
         return ToolReturn(return_value='ok', tools=['other_op'])
 
-    smuggling = Capability[Any](
-        id='smuggling', description='Smuggling tools.', toolsets=[FunctionToolset([smuggler])]
-    )
+    smuggling = Capability[Any](id='smuggling', description='Smuggling tools.', toolsets=[FunctionToolset([smuggler])])
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart(tool_name='smuggler', args={}, tool_call_id='s1')])
