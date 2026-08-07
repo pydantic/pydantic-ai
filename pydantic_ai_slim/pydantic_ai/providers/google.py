@@ -54,10 +54,21 @@ class BaseGoogleProvider(Provider[Client], ABC):
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         return {
             'supports_image_input': True,
-            # Verified live on both currently served Live models: a session asking for `TEXT` is closed
-            # with `1007 The requested combination of response modalities (TEXT) is not supported by the
-            # model`, matching Google's note that native-audio models only support the `AUDIO` modality.
-            # Output transcription (enabled by default) is how a Live session gets text.
+            # Every general-purpose Live model is audio-only: a session asking for `TEXT` is closed with
+            # `1007 The requested combination of response modalities (TEXT) is not supported by the
+            # model`. Verified live against all four the Developer API serves — the three
+            # `gemini-2.5-flash-native-audio-*` variants *and* `gemini-3.1-flash-live-preview` — bare
+            # (no transcription or speech config, which make no difference to the error), with the dict
+            # and typed config forms, and on both `v1alpha` and `v1beta`. Google's docs describe the
+            # half-cascade 3.1 model as supporting `TEXT`; the API disagrees, so this follows the API.
+            # Output transcription, on by default, is how a Live session gets text.
+            #
+            # The one Live model that *is* text-only is `gemini-robotics-er-2-streaming-preview`, which
+            # conversely rejects `AUDIO`. It isn't a speech-to-speech model and isn't advertised in
+            # `KnownRealtimeModelName`; pointing a session at it wants
+            # `profile={'supports_text_output': True}`, which is what that override is for. Reporting
+            # `False` by default keeps the common case failing closed with a clear error rather than an
+            # opaque handshake rejection.
             'supports_text_output': False,
             'supports_session_seeding': True,
             'supports_seeding_images': True,

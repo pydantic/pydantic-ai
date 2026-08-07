@@ -25,6 +25,12 @@ asynchronous tools, and output behavior. Use the
 [official Gemini Live documentation](https://ai.google.dev/gemini-api/docs/live) as the canonical
 model and availability source.
 
+The profile describes the speech-to-speech Live models. Gemini also serves specialist streaming
+models on the same endpoint that behave differently — `gemini-robotics-er-2-streaming-preview`, for
+instance, is text-only and rejects audio output. Point a session at one of those and correct the
+facts with [`profile=`](index.md#provider-support), e.g.
+`GoogleRealtimeModel('gemini-robotics-er-2-streaming-preview', profile={'supports_text_output': True})`.
+
 ## Settings
 
 [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings] extends the
@@ -96,12 +102,12 @@ grounding or local function-tool fallbacks unless using a model that supports th
 | Feature | Support | Notes |
 | --- | --- | --- |
 | Audio format | Full feature support | Mono PCM16, 16 kHz input and 24 kHz output |
-| Text output | Unsupported | Every Live model rejects a `TEXT` response modality; `output_modality='text'` raises. Read the answer from the transcript on the `SpeechPart` |
+| Text output | Unsupported | Every speech-to-speech Live model rejects a `TEXT` response modality, so `output_modality='text'` raises. Read the answer from the transcript on the `SpeechPart` |
 | Image/live video input | Full feature support | `google_turn_coverage='all_video'` keeps streamed frames in context |
 | Manual turns | Unsupported | Automatic VAD is required |
 | Explicit interruption/truncation | Unsupported | Gemini interrupts server-side and emits `RealtimeResponseInterruptedEvent` |
 | Input transcription | Full feature support | Native transcription, enabled by default; no separate model ID |
-| Native tools | Limited parameter support | Search, URL context, and code execution depend on the model and combinations above |
+| Native tools | Limited parameter support | Google Search grounding only; URL context and code execution fall back to a `local=` tool (see above) |
 | Usage | Full feature support | Token and modality breakdowns; function-call usage may arrive on a later turn |
 | State-restoring reconnect | Full feature support | Requires session resumption plus a reconnect policy |
 
