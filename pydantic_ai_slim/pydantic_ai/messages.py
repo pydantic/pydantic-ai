@@ -24,7 +24,7 @@ from typing_extensions import TypeAliasType, TypeVar, assert_never
 from pydantic_ai._cost import calculate_price_for_usage
 
 from . import _otel_messages, _utils
-from ._instrumentation import serialize_any
+from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
@@ -1518,7 +1518,7 @@ class BaseToolReturnPart:
         )
 
         if settings.include_content and self.content is not None:
-            part['result'] = serialize_any(self.content)
+            part['result'] = serialize_any(redact_binary_content(self.content, settings))
 
         return [part]
 
@@ -2546,7 +2546,7 @@ class ModelResponse:
                     builtin=True,
                 )
                 if settings.include_content and part.content is not None:  # pragma: no branch
-                    return_part['result'] = serialize_any(part.content)
+                    return_part['result'] = serialize_any(redact_binary_content(part.content, settings))
 
                 parts.append(return_part)
             elif isinstance(part, CompactionPart):
