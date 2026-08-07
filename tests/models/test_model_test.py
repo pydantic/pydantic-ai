@@ -32,6 +32,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ToolAvailabilityDeltaPart
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -140,6 +141,17 @@ def test_native_tool_addition_profile_runs_without_crashing() -> None:
         if isinstance(message, ModelRequest)
         for part in message.parts
     )
+
+
+async def test_delta_part_without_native_profile_still_raises() -> None:
+    """On the default profile (no native addition channel), a delta part in a direct
+    `Model.request()` history still means `prepare_messages` was skipped — keep teaching that."""
+    model = TestModel()
+    messages: list[Any] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden'])]),
+    ]
+    with pytest.raises(UserError, match=r'Call `model.prepare_messages\(messages\)` first'):
+        await model.request(messages, None, ModelRequestParameters())
 
 
 def test_revealed_via_history_tool_is_callable_in_named_mode() -> None:
