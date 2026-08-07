@@ -30,6 +30,7 @@ from pydantic_ai import (
     AgentStreamEvent,
     BinaryContent,
     BinaryImage,
+    CancellationToken,
     CodeExecutionTool,
     DocumentUrl,
     ExternalToolset,
@@ -56,6 +57,7 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     Tool,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
@@ -87,6 +89,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    RunCancelled,
     SkipModelRequest,
     ToolFailed,
     UnexpectedModelBehavior,
@@ -696,6 +699,15 @@ _capability_migration_agent = Agent(
         )
     ],
 )
+
+
+async def test_temporal_agent_rejects_cancellation_token() -> None:
+    """The wrapper agent rejects `cancellation_token` up front: a token is same-process state
+    that cannot cross the durable execution boundary."""
+    with pytest.raises(UserError, match='cannot cross the durable execution boundary'):
+        await _legacy_migration_agent.run('hello', cancellation_token=CancellationToken())
+
+
 _migration_agent: AbstractAgent[None, str] = _legacy_migration_agent
 
 
@@ -4261,6 +4273,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'model_settings',  # only set for model requests, which receive it as their own typed activity param
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
         '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
+        '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
@@ -4496,7 +4509,7 @@ async def test_run_context_fields_in_temporal_activity(client: Client):
             'prompt': "'prompt' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`.",
             'conversation_id': IsStr(),
             'discovered_tool_names_type': 'set',
-            'available_tool_names': [],
+            'available_tool_names': ['report_run_context'],
             'instrumentation_version': 5,
             'messages': "'messages' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`.",
         }
@@ -7630,6 +7643,10 @@ async def _durability_handler_tool() -> str:
     return 'handled'
 
 
+async def _durability_reveal_tool() -> ToolReturn[str]:
+    return ToolReturn(return_value='handled', tools=['hidden_tool'])
+
+
 _handler_durability = TemporalDurability(
     activity_config=BASE_ACTIVITY_CONFIG,
     event_stream_handler=_durability_handler,
@@ -7822,7 +7839,7 @@ async def test_durability_run_stream_in_workflow(client: Client) -> None:
 _run_stream_events_durable_agent = Agent(
     TestModel(custom_output_text='Streamed events output'),
     name='durability_run_stream_events_agent',
-    tools=[_durability_handler_tool],
+    tools=[_durability_reveal_tool],
     capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
 
@@ -7861,6 +7878,7 @@ async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
             'PartEndEvent',
             'FunctionToolCallEvent',
             'FunctionToolResultEvent',
+            'ToolAvailabilityDeltaEvent',
             'PartStartEvent',
             'FinalResultEvent',
             'PartDeltaEvent',
@@ -9524,6 +9542,234 @@ async def test_durability_tool_return_metadata_survives(allow_model_requests: No
     )
 
 
+# --- Deferred tool reveal round-trip ---
+
+
+def _durability_reveal_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    tool_names = {tool.name for tool in info.function_tools}
+    responses = sum(isinstance(message, ModelResponse) for message in messages)
+    if responses == 0:
+        assert 'durability_refund' not in tool_names
+        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'billing'}, tool_call_id='load')])
+    if responses == 1:
+        assert 'durability_refund' in tool_names
+        return ModelResponse(parts=[ToolCallPart('durability_refund', {}, tool_call_id='refund')])
+    if responses == 2:
+        assert 'durability_hidden' not in tool_names
+        return ModelResponse(parts=[ToolCallPart('durability_opener', {}, tool_call_id='open')])
+    if responses == 3:
+        assert 'durability_hidden' in tool_names
+        return ModelResponse(parts=[ToolCallPart('durability_hidden', {}, tool_call_id='hidden')])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+_durability_billing = Capability[None](id='billing', defer_loading=True)
+
+
+@_durability_billing.tool
+def durability_refund(ctx: RunContext[None]) -> str:
+    # The always-visible check exercises the availability snapshot carried across the activity
+    # boundary: `durability_opener` is never revealed, so the `discovered_tool_names` fallback
+    # alone would answer False for it inside the activity.
+    return (
+        f'refund available: {ctx.is_tool_available("durability_refund")}, '
+        f'opener available: {ctx.is_tool_available("durability_opener")}'
+    )
+
+
+_durability_reveal_agent = Agent(
+    FunctionModel(_durability_reveal_model),
+    name='durability_reveal_agent',
+    deps_type=type(None),
+    capabilities=[_durability_billing, TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@_durability_reveal_agent.tool
+def durability_opener(ctx: RunContext[None]) -> ToolReturn[str]:
+    return ToolReturn(
+        return_value='opened',
+        tools=['durability_hidden'],
+    )
+
+
+@_durability_reveal_agent.tool_plain(defer_loading=True)
+def durability_hidden() -> str:
+    return 'secret'
+
+
+@workflow.defn
+class DurabilityRevealWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[ModelMessage]:
+        result = await _durability_reveal_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_durability_tool_reveals_survive_workflow_and_activity(allow_model_requests: None, client: Client):
+    """Capability and activity-authored reveals both become durable history facts."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityRevealWorkflow],
+        plugins=[AgentPlugin(_durability_reveal_agent)],
+    ):
+        messages = await client.execute_workflow(
+            DurabilityRevealWorkflow.run,
+            args=['refund and open'],
+            id=DurabilityRevealWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    deltas = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+    ]
+    assert [(part.tools_added, part.tool_call_id) for part in deltas] == [
+        (['durability_refund'], 'load'),
+        (['durability_hidden'], 'open'),
+    ]
+    returns = {
+        part.tool_name: part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    }
+    assert returns['durability_refund'] == 'refund available: True, opener available: True'
+    assert returns['durability_opener'] == 'opened'
+
+
+# A fallback model cannot exercise Temporal's re-preparation seam: `FallbackModel.request()`
+# prepares the history separately for every inner model, so the required mutation would still pass.
+# Use raw model IDs across workflow executions instead, so only the worker-side concrete model can
+# project the serialized reveal history.
+def _cross_model_reveal_secondary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    parts = [part for message in messages for part in message.parts]
+    assert not any(isinstance(part, ToolAvailabilityDeltaPart) for part in parts)
+    assert any(
+        isinstance(part, UserPromptPart)
+        and part.content == '<system>The following tool(s) are now available: `cross_model_refund`</system>'
+        for part in parts
+    )
+    assert 'cross_model_refund' in {tool.name for tool in info.function_tools}
+    if not any(isinstance(part, ToolReturnPart) and part.tool_name == 'cross_model_refund' for part in parts):
+        return ModelResponse(parts=[ToolCallPart('cross_model_refund', {}, tool_call_id='refund')])
+    return ModelResponse(parts=[TextPart('refund complete')])
+
+
+def _cross_model_reveal_primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    deltas = [part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)]
+    if not deltas:
+        return ModelResponse(
+            parts=[ToolCallPart('load_capability', {'id': 'cross-model-billing'}, tool_call_id='load')]
+        )
+    assert [(part.tools_added, part.tool_call_id) for part in deltas] == [(['cross_model_refund'], 'load')]
+    return ModelResponse(parts=[TextPart('capability loaded')], usage=RequestUsage(input_tokens=1, output_tokens=1))
+
+
+def _infer_cross_model(model_id: Any, **kwargs: Any) -> Model:
+    if model := _cross_model_reveal_models.get(str(model_id)):
+        return model
+    return infer_model(model_id, **kwargs)
+
+
+_cross_model_reveal_models = {
+    'openai:cross-model-secondary': FunctionModel(
+        _cross_model_reveal_secondary,
+        model_name='cross-model-secondary',
+        profile=ModelProfile(),
+    ),
+    'anthropic:cross-model-primary': FunctionModel(
+        _cross_model_reveal_primary,
+        model_name='cross-model-primary',
+        profile=ModelProfile(tool_addition_mode='by_reference', tool_deferral_mode='standalone'),
+    ),
+}
+
+
+_cross_model_billing = Capability[None](id='cross-model-billing', defer_loading=True)
+
+
+@_cross_model_billing.tool
+def cross_model_refund(ctx: RunContext[None]) -> str:
+    return f'refund available in activity: {ctx.is_tool_available("cross_model_refund")}'
+
+
+_cross_model_reveal_base_agent = Agent(
+    _cross_model_reveal_models['openai:cross-model-secondary'],
+    name='cross_model_reveal_agent',
+    deps_type=type(None),
+    capabilities=[
+        _cross_model_billing,
+    ],
+)
+_cross_model_reveal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    _cross_model_reveal_base_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@dataclass
+class CrossModelRevealResult:
+    output: str
+    messages: list[ModelMessage]
+
+
+@workflow.defn
+class CrossModelRevealWorkflow:
+    @workflow.run
+    async def run(
+        self, prompt: str, model_id: str, message_history: list[ModelMessage] | None
+    ) -> CrossModelRevealResult:
+        result = await _cross_model_reveal_agent.run(prompt, model=model_id, message_history=message_history)
+        return CrossModelRevealResult(output=result.output, messages=result.all_messages())
+
+
+async def test_durability_reprepares_reveal_history_for_different_model(client: Client):
+    """A serialized reveal is projected onto a different model's channel in a later workflow.
+
+    Raw model IDs keep message preparation out of the workflow. The channel-bearing primary
+    authors the reveal; the channel-less secondary receives an announcement, then calls the
+    newly available tool inside an activity.
+    """
+    with patch(
+        'pydantic_ai.durable_exec.temporal._model.models.infer_model',
+        side_effect=_infer_cross_model,
+    ):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[CrossModelRevealWorkflow],
+            plugins=[AgentPlugin(_cross_model_reveal_agent)],
+        ):
+            first = await client.execute_workflow(
+                CrossModelRevealWorkflow.run,
+                args=['load refund capability', 'anthropic:cross-model-primary', None],
+                id=f'{CrossModelRevealWorkflow.__name__}-primary',
+                task_queue=TASK_QUEUE,
+            )
+            second = await client.execute_workflow(
+                CrossModelRevealWorkflow.run,
+                args=['issue refund', 'openai:cross-model-secondary', first.messages],
+                id=f'{CrossModelRevealWorkflow.__name__}-secondary',
+                task_queue=TASK_QUEUE,
+            )
+
+    assert first.output == 'capability loaded'
+    assert second.output == 'refund complete'
+    tool_return = next(
+        part.content
+        for message in second.messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'cross_model_refund'
+    )
+    assert tool_return == 'refund available in activity: True'
+
+
 # --- Passing image (BinaryImage) input through to a workflow ---
 
 _durability_multimodal_agent = Agent(
@@ -9910,6 +10156,97 @@ def _workflow_failure_cause(exc: WorkflowFailureError) -> ApplicationError:
 
 def _scheduled_activity_count(history: WorkflowHistory) -> int:
     return len([e for e in history.events if e.HasField('activity_task_scheduled_event_attributes')])
+
+
+_workflow_cancel_agent = Agent(
+    TestModel(custom_output_text='finished'),
+    name='workflow_cancel_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class WorkflowCancelAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        try:
+            async with _workflow_cancel_agent.iter(prompt) as agent_run:
+                async for node in agent_run:
+                    if Agent.is_call_tools_node(node):
+                        agent_run.cancel()
+        except RunCancelled as exc:
+            return f'cancelled:{bool(exc.all_messages())}'
+        return 'completed'  # pragma: no cover
+
+
+async def test_workflow_agent_run_cancel_is_application_outcome_and_replays(client: Client) -> None:
+    """Workflow-side first-party cancellation completes normally and remains replay-deterministic."""
+    workflow_id = f'{WorkflowCancelAgentWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowCancelAgentWorkflow],
+        plugins=[AgentPlugin(_workflow_cancel_agent)],
+    ):
+        output = await client.execute_workflow(
+            WorkflowCancelAgentWorkflow.run,
+            args=['cancel after the first model response'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        history = await client.get_workflow_handle(workflow_id).fetch_history()
+
+    assert output == 'cancelled:True'
+    await Replayer(
+        workflows=[WorkflowCancelAgentWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
+
+
+def _cancel_from_activity(ctx: RunContext[None]) -> str:
+    ctx.cancel()
+    return 'cancelled'  # pragma: no cover
+
+
+_activity_cancel_agent = Agent(
+    TestModel(call_tools=['_cancel_from_activity']),
+    name='activity_cancel_agent',
+    deps_type=type(None),
+    tools=[_cancel_from_activity],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class ActivityCancelAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _activity_cancel_agent.run(prompt)).output
+
+
+async def test_run_context_cancel_in_activity_surfaces_user_error(client: Client) -> None:
+    """An activity cannot cancel its workflow-side run and fails clearly instead of hanging."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ActivityCancelAgentWorkflow],
+        plugins=[AgentPlugin(_activity_cancel_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ActivityCancelAgentWorkflow.run,
+                args=['call the cancellation tool'],
+                id=f'{ActivityCancelAgentWorkflow.__name__}-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == UserError.__name__
+    assert cause.message == snapshot(
+        '`cancel` is only available during an agent run (from tools, event stream handlers, or capability hooks) '
+        'in the same process as the run itself. This `RunContext` has no run to cancel.'
+    )
 
 
 _continuation_model = ScriptedContinuationModel()

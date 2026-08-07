@@ -60,6 +60,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
+    ToolAvailabilityDeltaPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
     UploadedFile,
@@ -11139,6 +11140,17 @@ According to my memory, you live in **Mexico City**.\
 """)
 
 
+def test_hidden_memory_function_tool_is_not_restored_as_native() -> None:
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='memory', defer_loading=True)],
+        native_tools=[MemoryTool()],
+        tool_visibility={'memory': 'withheld'},
+    )
+    with pytest.raises(UserError, match="requires a 'memory' tool to be defined"):
+        model._add_native_tools([], params, AnthropicModelSettings())  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_anthropic_model_usage_limit_exceeded(
     allow_model_requests: None,
     anthropic_api_key: str,
@@ -11452,16 +11464,8 @@ async def test_anthropic_keyword_tool_search_is_stripped_for_capability_only_cor
     assert not any(tool.get('name') == 'search_tools' for tool in request['tools'])
 
 
-async def test_anthropic_named_native_tool_search_rejects_capability_only_corpus(allow_model_requests: None):
-    """A server-side strategy over a capability-owned corpus is refused, on Anthropic specifically.
-
-    Capability-owned tools reach the wire as `defer_loading` entries — that's how
-    `load_capability` reveals them by `tool_reference` without a search tool — and Anthropic's
-    `tool_search_tool_regex` indexes precisely those entries, so the model could uncover and call
-    `lookup_refund_policy` without ever loading `refunds` or seeing its instructions. The strategy
-    the user picked has no client-executed equivalent to fall back to, so this raises rather than
-    quietly substituting one.
-    """
+async def test_anthropic_named_native_tool_search_withholds_capability_tool(allow_model_requests: None):
+    """A named native strategy stays native while a hidden capability tool stays off the wire."""
     response = completion_message(
         [BetaTextBlock(text='Done.', type='text')],
         BetaUsage(input_tokens=5, output_tokens=10),
@@ -11474,13 +11478,21 @@ async def test_anthropic_named_native_tool_search_rejects_capability_only_corpus
     def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
         return f'{order_id}: refund allowed'
 
+    def searchable_tool(query: str) -> str:  # pragma: no cover
+        return query
+
     agent: Agent[None, str] = Agent(
         model,
         deps_type=type(None),
+        tools=[Tool(searchable_tool, defer_loading=True)],
         capabilities=[refunds, ToolSearch(strategy='regex')],
     )
-    with pytest.raises(UserError, match=r"strategy='regex'.*incompatible with deferred-loading"):
-        await agent.run('Hello')
+    await agent.run('Hello')
+
+    [request] = get_mock_chat_completion_kwargs(mock_client)
+    assert any(tool.get('type') == 'tool_search_tool_regex_20251119' for tool in request['tools'])
+    assert any(tool.get('name') == 'searchable_tool' for tool in request['tools'])
+    assert not any(tool.get('name') == 'lookup_refund_policy' for tool in request['tools'])
 
 
 async def test_anthropic_callable_tool_search_is_stripped_for_capability_only_corpus(
@@ -11541,6 +11553,330 @@ async def test_anthropic_callable_tool_search_is_stripped_for_capability_only_co
         for tool in request['tools']
         if tool.get('name') == 'lookup_refund_policy'
     )
+
+
+async def test_anthropic_lazy_advertisement_appends_with_tool_addition(allow_model_requests: None):
+    """A delta-tier mixed run appends the revealed deferred entry and references it in the same request."""
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='load-1', input={'id': 'refunds'}, name='load_capability', type='tool_use')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message(
+            [
+                BetaToolUseBlock(
+                    id='refund-1',
+                    input={'order_id': 'A-4417'},
+                    name='lookup_refund_policy',
+                    type='tool_use',
+                )
+            ],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=5, output_tokens=10)),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        return f'{order_id}: refund allowed'
+
+    def searchable_tool(query: str) -> str:  # pragma: no cover
+        return query
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        tools=[Tool(searchable_tool, defer_loading=True)],
+        capabilities=[refunds, ToolSearch()],
+    )
+    result = await agent.run('Load refunds and look up order A-4417.')
+
+    before, after, final = get_mock_chat_completion_kwargs(mock_client)
+    before_names = [tool.get('name') for tool in before['tools']]
+    after_names = [tool.get('name') for tool in after['tools']]
+    assert {key: value for key, value in before.items() if key not in ('tools', 'messages', 'betas')} == {
+        key: value for key, value in after.items() if key not in ('tools', 'messages', 'betas')
+    }
+    assert before['betas'] is OMIT
+    assert 'mid-conversation-tool-changes-2026-07-01' in after['betas']
+    assert 'lookup_refund_policy' not in before_names
+    assert after_names == [*before_names, 'lookup_refund_policy']
+    [revealed] = [tool for tool in after['tools'] if tool.get('name') == 'lookup_refund_policy']
+    assert revealed['defer_loading'] is True
+    addition_names = [
+        block['tool']['name']
+        for message in after['messages']
+        for block in message['content']
+        if block.get('type') == 'tool_addition'
+    ]
+    # List equality: a same-request duplicate `tool_addition` must fail here, not only in the
+    # dedupe unit test.
+    assert addition_names == ['lookup_refund_policy']
+    assert set(addition_names) <= set(after_names)
+    assert [tool.get('name') for tool in final['tools']] == after_names
+    assert any(
+        part.tool_name == 'lookup_refund_policy'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+    # Full-byte prefix property, not just names: every pre-existing declaration must serialize
+    # identically across the reveal, the reveal may only append, and the request after the reveal
+    # must repeat the grown list byte-for-byte. A mutated or reordered entry would pass the name
+    # checks above, and — sitting in the deferred tail — would also escape the cassette
+    # cache-prefix model, so the bytes are asserted here in full.
+    assert json.dumps(after['tools'][: len(before['tools'])]) == json.dumps(before['tools'])
+    assert json.dumps(final['tools']) == json.dumps(after['tools'])
+    assert json.dumps(after['system']) == json.dumps(before['system'])
+    assert json.dumps(after['messages'][: len(before['messages'])]) == json.dumps(before['messages'])
+    assert json.dumps(final['messages'][: len(after['messages'])]) == json.dumps(after['messages'])
+
+
+@pytest.mark.vcr()
+async def test_anthropic_lazy_advertisement_live(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+    """A real mixed run appends and calls a capability tool on the first reveal request.
+
+    The cassette serializer strips `anthropic-*` headers, so the request hook pins beta gating
+    against the actual generated wire while the recorded bodies pin tools and `tool_addition`.
+    """
+    beta_headers: list[str] = []
+
+    async def capture_request(request: httpx.Request) -> None:
+        beta_headers.append(request.headers.get('anthropic-beta', ''))
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    model = AnthropicModel(
+        'claude-opus-4-8',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client),
+    )
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools. Load this capability before looking up refund policy.',
+        defer_loading=True,
+    )
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        return f'{order_id}: refund allowed'
+
+    def searchable_tool(query: str) -> str:  # pragma: no cover
+        return query
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        tools=[Tool(searchable_tool, defer_loading=True)],
+        capabilities=[refunds, ToolSearch()],
+    )
+    try:
+        result = await agent.run(
+            'First load the refunds capability. Then call lookup_refund_policy for order A-4417. '
+            'Return only the tool result.'
+        )
+    finally:
+        await http_client.aclose()
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 3
+    before, reveal, *later = request_bodies
+    before_tools = before['tools']
+    reveal_tools = reveal['tools']
+    before_names = [tool.get('name') for tool in before_tools]
+    reveal_names = [tool.get('name') for tool in reveal_tools]
+    assert 'lookup_refund_policy' not in before_names
+    assert reveal_tools[:-1] == before_tools
+    assert reveal_names == [*before_names, 'lookup_refund_policy']
+    assert reveal_tools[-1]['defer_loading'] is True
+    addition_names = [
+        block['tool']['name']
+        for message in reveal['messages']
+        for block in message['content']
+        if block.get('type') == 'tool_addition'
+    ]
+    # List equality: a same-request duplicate `tool_addition` must fail here, not only in the
+    # dedupe unit test.
+    assert addition_names == ['lookup_refund_policy']
+    assert set(addition_names) <= set(reveal_names)
+    assert all(request_body['tools'] == reveal_tools for request_body in later)
+
+    beta = 'mid-conversation-tool-changes-2026-07-01'
+    assert beta not in beta_headers[0]
+    assert all(beta in header for header in beta_headers[1:])
+    assert any(
+        part.tool_name == 'lookup_refund_policy'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+
+
+@pytest.mark.vcr()
+async def test_anthropic_fable_5_lazy_advertisement_live(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+    """Fable 5 accepts a same-request deferred definition and `tool_addition` reveal."""
+    beta_headers: list[str] = []
+
+    async def capture_request(request: httpx.Request) -> None:
+        beta_headers.append(request.headers.get('anthropic-beta', ''))
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    model = AnthropicModel(
+        'claude-fable-5',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client),
+    )
+    refunds = Capability[None](
+        id='refunds',
+        description='Refund policy tools. Load this capability before looking up refund policy.',
+        defer_loading=True,
+    )
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        return f'{order_id}: refund allowed'
+
+    def searchable_tool(query: str) -> str:  # pragma: no cover
+        return query
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        tools=[Tool(searchable_tool, defer_loading=True)],
+        capabilities=[refunds, ToolSearch()],
+    )
+    try:
+        result = await agent.run(
+            'First load the refunds capability. Then call lookup_refund_policy for order A-4417. '
+            'Return only the tool result.'
+        )
+    finally:
+        await http_client.aclose()
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 3
+    before, reveal, *later = request_bodies
+    before_tools = before['tools']
+    reveal_tools = reveal['tools']
+    before_names = [tool.get('name') for tool in before_tools]
+    reveal_names = [tool.get('name') for tool in reveal_tools]
+    assert 'lookup_refund_policy' not in before_names
+    assert reveal_tools[:-1] == before_tools
+    assert reveal_names == [*before_names, 'lookup_refund_policy']
+    assert reveal_tools[-1]['defer_loading'] is True
+    addition_names = [
+        block['tool']['name']
+        for message in reveal['messages']
+        for block in message['content']
+        if block.get('type') == 'tool_addition'
+    ]
+    # List equality: a same-request duplicate `tool_addition` must fail here, not only in the
+    # dedupe unit test.
+    assert addition_names == ['lookup_refund_policy']
+    assert set(addition_names) <= set(reveal_names)
+    assert all(request_body['tools'] == reveal_tools for request_body in later)
+
+    beta = 'mid-conversation-tool-changes-2026-07-01'
+    assert beta not in beta_headers[0]
+    assert all(beta in header for header in beta_headers[1:])
+    assert any(
+        part.tool_name == 'lookup_refund_policy'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+
+
+async def test_anthropic_standalone_lazy_advertisement_synthesizes_reveal(allow_model_requests: None):
+    """A sub-delta Anthropic tier appends one deferred entry with the synthesized search exchange."""
+    responses = [
+        completion_message(
+            [BetaToolUseBlock(id='load-1', input={'id': 'refunds'}, name='load_capability', type='tool_use')],
+            BetaUsage(input_tokens=5, output_tokens=10),
+        ),
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=5, output_tokens=10)),
+    ]
+    mock_client = MockAnthropic.create_mock(responses)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
+
+    @refunds.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        return f'{order_id}: refund allowed'
+
+    def searchable_tool(query: str) -> str:  # pragma: no cover
+        return query
+
+    agent: Agent[None, str] = Agent(
+        model,
+        deps_type=type(None),
+        tools=[Tool(searchable_tool, defer_loading=True)],
+        capabilities=[refunds, ToolSearch()],
+    )
+    await agent.run('Load refunds.')
+
+    before, after = get_mock_chat_completion_kwargs(mock_client)
+    before_names = [tool.get('name') for tool in before['tools']]
+    after_names = [tool.get('name') for tool in after['tools']]
+    assert {key: value for key, value in before.items() if key not in ('tools', 'messages')} == {
+        key: value for key, value in after.items() if key not in ('tools', 'messages')
+    }
+    assert 'lookup_refund_policy' not in before_names
+    assert after_names == [*before_names, 'lookup_refund_policy']
+    [revealed] = [tool for tool in after['tools'] if tool.get('name') == 'lookup_refund_policy']
+    assert revealed['defer_loading'] is True
+    assert not any(
+        block.get('type') == 'tool_addition' for message in after['messages'] for block in message['content']
+    )
+    assert any(
+        block.get('type') == 'tool_result'
+        and any(item.get('type') == 'tool_reference' for item in block.get('content', []))
+        for message in after['messages']
+        for block in message['content']
+    )
+
+
+async def test_anthropic_rejects_all_deferred_tools_before_request(allow_model_requests: None):
+    """The adapter explains Anthropic's all-deferred `tools` constraint before making an API call."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='unused', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(
+                name='only_tool',
+                parameters_json_schema={'type': 'object'},
+                defer_loading=True,
+            )
+        ],
+        tool_visibility={'only_tool': 'deferred'},
+    )
+    with pytest.raises(UserError, match=r'Make at least one tool visible.*tool-search surface or capability catalog'):
+        await model.request([ModelRequest(parts=[UserPromptPart(content='Hi')])], None, params)
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+
+async def test_anthropic_lazy_advertisement_uses_reveal_order(allow_model_requests: None):
+    """Lazily appended definitions follow first-reveal order, not registration order."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=mock_client))
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='always_ready', parameters_json_schema={'type': 'object'}),
+            ToolDefinition(name='alpha', parameters_json_schema={'type': 'object'}, defer_loading=True),
+            ToolDefinition(name='beta', parameters_json_schema={'type': 'object'}, defer_loading=True),
+        ],
+        native_tools=[ToolSearchTool()],
+        revealed_tool_names={'alpha', 'beta'},
+    )
+    await model.request(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Hi')]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['beta', 'alpha'])]),
+        ],
+        None,
+        params,
+    )
+
+    [request] = get_mock_chat_completion_kwargs(mock_client)
+    assert [tool.get('name') for tool in request['tools']][-2:] == ['beta', 'alpha']
 
 
 @pytest.mark.parametrize(
@@ -12661,6 +12997,154 @@ async def test_anthropic_compaction_round_trip(allow_model_requests: None, anthr
     result = await agent.run('What did I say earlier?', message_history=messages)
 
     assert result.output
+
+
+async def test_anthropic_trims_before_latest_compaction(allow_model_requests: None):
+    response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='drop first request')]
+        ),
+        ModelResponse(
+            parts=[CompactionPart(content='old summary', provider_name='anthropic')], provider_name='anthropic'
+        ),
+        ModelRequest.user_text_prompt('drop between compactions'),
+        ModelResponse(
+            parts=[
+                TextPart(content='drop before boundary'),
+                CompactionPart(content='latest summary', provider_name='anthropic'),
+                TextPart(content='keep after boundary'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+    await model.count_tokens(messages, None, ModelRequestParameters())
+
+    create_kwargs, count_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    # The messages start with the assistant compaction block — the API accepts that shape
+    # (live-verified), and a kept user anchor could 400 on an orphaned `tool_result` — while the
+    # standing system prompt survives via the separate `system` parameter, which the compaction
+    # block does not replace.
+    assert (
+        create_kwargs['messages']
+        == count_kwargs['messages']
+        == snapshot(
+            [
+                {
+                    'role': 'assistant',
+                    'content': [
+                        {'content': 'latest summary', 'type': 'compaction'},
+                        {'text': 'keep after boundary', 'type': 'text'},
+                    ],
+                },
+                {'role': 'user', 'content': [{'text': 'keep tail', 'type': 'text'}]},
+            ]
+        )
+    )
+    assert create_kwargs['system'] == count_kwargs['system'] == snapshot('Standing system prompt.')
+    assert 'compact-2026-01-12' in create_kwargs['betas']
+    assert 'compact-2026-01-12' in count_kwargs['betas']
+
+
+async def test_anthropic_standing_prompt_survives_response_first_history(allow_model_requests: None):
+    """A history that opens with a `ModelResponse` still keeps the first request's standing prompt."""
+    response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart(content='resumed mid-conversation')], provider_name='anthropic'),
+        ModelRequest(parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='dropped')]),
+        ModelResponse(parts=[CompactionPart(content='Summary.', provider_name='anthropic')], provider_name='anthropic'),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['system'] == snapshot('Standing system prompt.')
+    assert kwargs['messages'] == snapshot(
+        [
+            {'role': 'assistant', 'content': [{'content': 'Summary.', 'type': 'compaction'}]},
+            {'role': 'user', 'content': [{'text': 'keep tail', 'type': 'text'}]},
+        ]
+    )
+
+
+async def test_anthropic_standing_instructions_survive_compaction(allow_model_requests: None):
+    """A direct `Model.request()` call whose only instructions live before the boundary keeps them:
+    the standing-prompt request carries the latest prefix instructions, so the last-two-requests
+    fallback still finds them when the trailing request is tool-return-only."""
+    response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='dropped')], instructions='Standing instructions.'),
+        ModelResponse(
+            parts=[
+                CompactionPart(content='Summary.', provider_name='anthropic'),
+                ToolCallPart(tool_name='do_thing', args={}, tool_call_id='call-1'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='do_thing', content='done', tool_call_id='call-1')]),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['system'] == snapshot([{'text': 'Standing instructions.', 'type': 'text'}])
+
+
+async def test_anthropic_foreign_compaction_does_not_trim(allow_model_requests: None):
+    response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('keep before foreign boundary'),
+        ModelResponse(
+            parts=[CompactionPart(content='foreign summary', provider_name='openai'), TextPart(content='keep text')],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'keep before foreign boundary', 'type': 'text'}]},
+            {'role': 'assistant', 'content': [{'text': 'keep text', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': 'keep tail', 'type': 'text'}]},
+        ]
+    )
+
+
+async def test_anthropic_without_compaction_maps_unchanged(allow_model_requests: None):
+    response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('first request'),
+        ModelResponse(parts=[TextPart(content='first response')], provider_name='anthropic'),
+        ModelRequest.user_text_prompt('second request'),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'first request', 'type': 'text'}]},
+            {'role': 'assistant', 'content': [{'text': 'first response', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': 'second request', 'type': 'text'}]},
+        ]
+    )
 
 
 async def test_anthropic_compaction_beta_header(allow_model_requests: None):

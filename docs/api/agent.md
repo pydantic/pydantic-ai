@@ -8,6 +8,7 @@
             - WrapperAgent
             - AgentRetries
             - AgentRun
+            - AgentRunEvents
             - AgentRunResult
             - EndStrategy
             - RunOutputDataT
@@ -21,3 +22,5 @@
             - ModelRequestNode
             - CallToolsNode
             - PydanticAIDeprecationWarning
+
+::: pydantic_ai.CancellationToken
