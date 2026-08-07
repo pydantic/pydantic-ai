@@ -397,6 +397,7 @@ def test_profile_allow_seeding() -> None:
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_output_truncation=False,
+        supports_text_output=False,  # every Live model rejects a TEXT response modality
         supports_session_seeding=True,
         supports_seeding_images=True,
         supports_seeding_audio=False,
