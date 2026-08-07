@@ -767,7 +767,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended
         # thinking. Adaptive thinking is accepted — but only on models that accept forcing at all;
         # on the rest, Tool Output could only degrade to a soft `tool_choice='auto'` the model may
-        # ignore, so they keep switching away from it while thinking.
+        # ignore, so they keep switching away from it whenever a thinking setting is configured.
         thinking_blocks_output_tools = thinking_type == 'enabled' or (
             thinking_type == 'adaptive' and not supports_forced_tool_choice
         )
@@ -785,8 +785,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 remedy = f'Use `output_type={suggested_output_type}(...)` instead.'
                 if thinking_type == 'adaptive':
                     raise UserError(
-                        f'{self.model_name!r} does not support output tools while thinking, '
-                        f'because it rejects a forced tool choice. {remedy}'
+                        f'{self.model_name!r} does not support output tools when a thinking setting is '
+                        f'configured, because it rejects the forced tool choice they require. {remedy}'
                     )
                 if supports_adaptive_thinking:
                     remedy += " Alternatively, `anthropic_thinking={'type': 'adaptive'}` supports output tools."

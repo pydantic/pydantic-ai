@@ -704,8 +704,9 @@ class TestAnthropicThinkingOutputToolsConflict:
             pytest.param(
                 'claude-fable-5',
                 ModelSettings(thinking='high'),
-                "'claude-fable-5' does not support output tools while thinking, because it rejects a "
-                'forced tool choice. Use `output_type=NativeOutput(...)` instead.',
+                "'claude-fable-5' does not support output tools when a thinking setting is configured, "
+                'because it rejects the forced tool choice they require. '
+                'Use `output_type=NativeOutput(...)` instead.',
                 id='adaptive_profile_that_cannot_force_names_the_model',
             ),
             pytest.param(

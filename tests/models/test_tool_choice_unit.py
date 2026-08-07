@@ -900,6 +900,28 @@ async def test_anthropic_fallback_single_tool_with_thinking_filters_tool_defs(al
     assert tool_names == {'tool_a'}
 
 
+@skip_if_no_anthropic
+async def test_anthropic_single_tool_stays_forced_under_unified_thinking_on_adaptive_model(
+    allow_model_requests: None,
+):
+    """The single-tool branch keeps forcing under unified thinking on an adaptive-capable model.
+
+    `Model.prepare_request` strips a unified `thinking` into `params.thinking` (simulated here), and
+    the profile's adaptive flag decides that it maps to adaptive thinking, which accepts forcing. On a
+    non-adaptive profile the same setting maps to extended thinking and falls back to auto, as above.
+    """
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key='test-key'))
+    settings: AnthropicModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
+    params = ModelRequestParameters(
+        function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=False, thinking='high'
+    )
+
+    tools, tool_choice = m._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+    assert tool_choice == {'type': 'tool', 'name': 'tool_a'}
+    tool_names = {t['name'] for t in tools if isinstance(t, dict) and 'name' in t}
+    assert tool_names == {'tool_a', 'tool_b'}
+
+
 # Models that reject a forced `tool_choice` outright, even without thinking (unlike other Anthropic models).
 NO_FORCING_ANTHROPIC_MODELS = ['claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview']
 
