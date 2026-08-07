@@ -230,6 +230,30 @@ async def test_empty_replay_closes_cleanly_and_disconnect_requires_binding() -> 
 
 
 @pytest.mark.anyio
+async def test_disconnect_delegates_to_the_bound_connection() -> None:
+    """Once bound, `disconnect()` drops the active transport so replay reaches the recorded close.
+
+    Only a resumption test drops its connection mid-cassette, and that lives with the one provider
+    whose recordings cover reconnect, so the delegation itself is pinned here instead.
+    """
+    cassette = RealtimeCassette(
+        interactions=[CassetteMessage(direction='received', data={'type': 'server.event'})],
+    )
+    dropped = False
+
+    async def drop() -> None:
+        nonlocal dropped
+        dropped = True
+
+    cassette.bind_disconnect(drop)
+    await cassette.disconnect()
+
+    assert dropped
+    # Binding only arms the drop; the recorded frames are untouched and still replay in order.
+    assert [message async for message in ReplayWebSocket(cassette)] == [json.dumps({'type': 'server.event'})]
+
+
+@pytest.mark.anyio
 async def test_recording_truncates_inbound_audio() -> None:
     """Unit test: inbound audio is truncated so cassettes stay small — both provider shapes."""
     long_audio = 'A' * 400  # far longer than the retained byte budget
