@@ -187,10 +187,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """IDs of the deferred capabilities the model has explicitly loaded via the `load_capability` tool.
 
     The capability-side mirror of `discovered_tool_names`: the runtime-revealed subset.
-    Seeded during run preparation from message history (`parse_loaded_capabilities`); the
-    `load_capability` tool body adds to it for in-step loads. Use `available_capability_ids`
-    for the full set of currently-active capabilities (auto/always-on plus these).
-    Managed by the framework: safe to read, but don't mutate it directly.
+    Derived from message history (`parse_loaded_capabilities`) before each request, so a capability
+    loaded during a step appears from the *next* one — the same step that first carries its
+    instructions to the model, and therefore the first on which its tools can be called. Use
+    `available_capability_ids` for the full set of currently-active capabilities (auto/always-on
+    plus these). Managed by the framework: safe to read, but don't mutate it directly.
     """
 
     capability_loaded: bool | None = None

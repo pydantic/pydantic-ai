@@ -88,18 +88,24 @@ _ToolCallPayload = (
 )
 
 
-def _reject_unloaded_capability_reveals(tools: Sequence[str], tool_manager: ToolManager[Any]) -> None:
+def _reject_unloaded_capability_reveals(
+    tools: Sequence[str], tool_manager: ToolManager[Any], *, tool_kind: str | None = None
+) -> None:
     """Reject `ToolReturn.tools` names owned by a capability that hasn't been loaded.
 
     A capability-owned tool must be revealed by loading its capability: `load_capability`
     activates the whole bundle — instructions, hooks, model settings — while a bare name
-    reveal would surface the tool with its capability's hooks skipped. (`load_capability`
-    itself passes: the loader marks the capability loaded before returning its names.)
+    reveal would surface the tool with its capability's hooks skipped. The framework's own loader
+    is exempt by tool kind: it reveals exactly the bundle it just activated, so it no longer has to
+    mark the capability loaded mid-step to get past a guard aimed at user tools.
 
     Gated on *availability*, not loadedness: an always-on capability is never
     `load_capability`-ed, so testing `loaded_capability_ids` rejected its own search-gated tool
     with an error naming a load the developer cannot perform.
     """
+    if tool_kind == 'capability-load':
+        # The framework's own loader: it reveals exactly the bundle it just activated.
+        return
     run_ctx = tool_manager.ctx
     for name in tools:
         toolset_tool = (tool_manager.tools or {}).get(name)
@@ -678,7 +684,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         parts: _FunctionCallParts = [return_part]
         if tools:
-            _reject_unloaded_capability_reveals(tools, self.tool_manager)
+            _reject_unloaded_capability_reveals(
+                tools, self.tool_manager, tool_kind=tool_def.tool_kind if tool_def else None
+            )
             # Only call-level dedupe here: cross-call dedupe and `discovered_tool_names`
             # bookkeeping happen at assembly time in emitted history order, via
             # `_prune_duplicate_tool_reveals` — parallel siblings complete in scheduler order,

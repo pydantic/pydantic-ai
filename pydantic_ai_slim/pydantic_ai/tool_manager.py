@@ -136,14 +136,6 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that succeeded in this run step."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
-    _available_capability_ids: frozenset[str] = frozenset()
-    """Capabilities available when this step's tools were assembled.
-
-    Snapshotted rather than read live: the `load_capability` tool body adds to
-    `ctx.loaded_capability_ids` as it runs, so a live read would let a capability loaded by one call
-    in a response make its own tools callable by a sibling call in that same response — before the
-    next request has carried the capability's instructions to the model.
-    """
 
     @classmethod
     @contextmanager
@@ -189,7 +181,6 @@ class ToolManager(Generic[AgentDepsT]):
             ctx=ctx,
             tools=await toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
-            _available_capability_ids=frozenset(ctx.available_capability_ids),
         )
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
@@ -505,7 +496,7 @@ class ToolManager(Generic[AgentDepsT]):
             return None
         assert self.ctx is not None
         if (capability_id := tool_def.capability_id) is not None:
-            if capability_id not in self._available_capability_ids:
+            if capability_id not in self.ctx.available_capability_ids:
                 return (
                     f'Tool {tool_def.name!r} is not available yet: it belongs to capability '
                     f'{capability_id!r}. Call `load_capability` for it first, then call the tool on a '
