@@ -37,4 +37,16 @@
 <!-- rule:9 -->
 - Place provider-specific code in `models/{provider}.py`, not shared modules — add functions consistently across all providers even if some are simple — Maintains clear architectural boundaries and prevents shared compatibility layers from accumulating provider-specific logic that becomes hard to maintain
 
+A model should read reveal modes through `self.tool_deferral_mode` and
+`self.tool_addition_mode`, never directly from the corresponding profile keys. An adapter that
+implements a reveal renderer must declare its supported values in
+`supported_tool_deferral_modes` and `supported_tool_addition_modes`; the inherited empty sets are
+the safe default for adapters with no renderer.
+
+### Third-party model fallback
+
+Custom `Model` subclasses that continue reading `tool_defs` degrade gracefully: all tools are fully
+declared and availability deltas fall back to a system-text announcement. Deferral is not withheld
+on that model. Reading `declared_tool_defs` and `visibility_of()` opts the adapter into withholding.
+
 <!-- /braindump -->

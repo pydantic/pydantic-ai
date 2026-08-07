@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
@@ -23,7 +23,8 @@ else:
 
 
 if TYPE_CHECKING:
-    from .messages import ModelResponse, RetryPromptPart, ToolReturnPart
+    from .messages import ModelMessage, ModelResponse, RetryPromptPart, ToolReturnPart
+    from .usage import RunUsage
 
 __all__ = (
     'ModelRetry',
@@ -35,6 +36,7 @@ __all__ = (
     'UserError',
     'UndrainedPendingMessagesError',
     'AgentRunError',
+    'RunCancelled',
     'SuspendedResponseExpired',
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
@@ -258,6 +260,190 @@ class AgentRunError(RuntimeError):
 
     def __str__(self) -> str:
         return self.message
+
+
+_RUN_CANCELLED_ATTR = '_pydantic_ai_run_cancelled'
+
+
+class RunCancelled(AgentRunError):
+    """Raised when the agent run was cancelled by the application itself.
+
+    Raised by [`AgentRun.cancel()`][pydantic_ai.run.AgentRun.cancel] and
+    [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel].
+    This is a normal, catchable application-level outcome: the run stopped because your own code
+    asked it to. External cancellation of the task running the agent (`asyncio.Task.cancel()`,
+    a timeout scope, workflow cancellation under durable execution) is infrastructure-level and
+    keeps propagating as `asyncio.CancelledError` instead — it is never translated into this
+    exception, and when both race, the external cancellation wins. (On Python 3.10, which lacks
+    `Task.uncancel()`, the race cannot be disambiguated and a requested first-party cancellation
+    wins instead.)
+
+    Everything the run completed before the cancellation took effect — including the partial
+    response of an interrupted stream and the results of tool calls that finished — is preserved
+    in [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages]: pass it as
+    `message_history` to a new run (with a new user prompt or not) to resume the conversation; any
+    tool calls that never produced a result are automatically closed out with synthesized
+    `outcome='interrupted'` returns before the history is sent to a model.
+
+    Cancellation is terminal: capability hooks (`wrap_run`, `wrap_node_run`, `on_run_error`) may
+    observe it and clean up, but cannot recover a cancelled run into a successful result.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        messages: Sequence[ModelMessage] = (),
+        new_message_index: int = 0,
+        usage: RunUsage | None = None,
+        metadata: dict[str, Any] | None = None,
+        run_id: str | None = None,
+        conversation_id: str | None = None,
+    ):
+        if usage is None:
+            from .usage import RunUsage
+
+            usage = RunUsage()
+        self._messages = list(messages)
+        self._new_message_index = new_message_index
+        self._usage = usage
+        self._metadata = metadata
+        self._run_id = run_id
+        self._conversation_id = conversation_id
+        super().__init__(message)
+
+    def __reduce__(self) -> tuple[type, tuple[str], dict[str, Any]]:
+        return self.__class__, (self.message,), self.__dict__
+
+    def _attach_to(self, exc: BaseException) -> None:
+        setattr(exc, _RUN_CANCELLED_ATTR, self)
+
+    @classmethod
+    def from_cancellation(cls, exc: BaseException) -> RunCancelled | None:
+        """Recover run state from a cancellation-related exception.
+
+        External cancellation of a plain `agent.run()` keeps its standard asyncio semantics. Catch
+        it with `except asyncio.CancelledError as exc`, then call
+        `RunCancelled.from_cancellation(exc)` to access the partial run state attached by Pydantic
+        AI. This also works with the `TimeoutError` raised by `asyncio.timeout()` or
+        `asyncio.wait_for()`, whose exception chain contains the original `CancelledError`. An
+        external `CancelledError` must keep propagating for timeouts and task groups to tear down
+        correctly, so re-raise it after capturing the state rather than returning from the handler;
+        only a first-party `RunCancelled` is yours to consume.
+
+        Passing a `RunCancelled` directly returns the same instance, providing uniform handling for
+        first-party and external cancellation paths.
+
+        Python 3.11+ preserves the exception instance across an `await task` boundary. Python 3.10
+        recreates the `CancelledError` there, but chains the original exception — and the attached
+        run state — via `__context__`, which this method traverses; the chain is attached only to
+        the first `await` of the cancelled task, so later awaits of the same task see an unchained
+        exception. Use `capture_run_messages()` as the fallback when only message history is needed.
+        """
+        pending = [exc]
+        visited: set[int] = set()
+        while pending:
+            current = pending.pop()
+            current_id = id(current)
+            if current_id in visited:
+                continue
+            visited.add(current_id)
+
+            if isinstance(current, cls):
+                return current
+            attached = getattr(current, _RUN_CANCELLED_ATTR, None)
+            if isinstance(attached, cls):
+                return attached
+
+            if current.__cause__ is not None:
+                pending.append(current.__cause__)
+            if current.__context__ is not None:
+                pending.append(current.__context__)
+        return None
+
+    def all_messages(self) -> list[ModelMessage]:
+        """Return the complete resumable history of the cancelled run.
+
+        This is a DETACHED snapshot of the run's message history at termination, ready to pass as
+        `message_history` for a resumed run.
+
+        Returns:
+            List of messages.
+        """
+        return self._messages
+
+    def all_messages_json(self) -> bytes:
+        """Return all messages from [`all_messages`][pydantic_ai.exceptions.RunCancelled.all_messages] as JSON bytes.
+
+        Returns:
+            JSON bytes representing the messages.
+        """
+        from .messages import ModelMessagesTypeAdapter
+
+        return ModelMessagesTypeAdapter.dump_json(self.all_messages())
+
+    def new_messages(self) -> list[ModelMessage]:
+        """Return the messages produced during the cancelled run.
+
+        Messages provided via `message_history` and messages from older runs are excluded.
+
+        Returns:
+            List of new messages.
+        """
+        return self._messages[self._new_message_index :]
+
+    def new_messages_json(self) -> bytes:
+        """Return new messages from [`new_messages`][pydantic_ai.exceptions.RunCancelled.new_messages] as JSON bytes.
+
+        Returns:
+            JSON bytes representing the new messages.
+        """
+        from .messages import ModelMessagesTypeAdapter
+
+        return ModelMessagesTypeAdapter.dump_json(self.new_messages())
+
+    @property
+    def response(self) -> ModelResponse:
+        """Return the last response from the message history.
+
+        Raises:
+            ValueError: If the run was cancelled before receiving any model response.
+        """
+        from .messages import ModelResponse
+
+        for message in reversed(self.all_messages()):
+            if isinstance(message, ModelResponse):
+                return message
+        raise ValueError('No response found in the message history')
+
+    @property
+    def timestamp(self) -> datetime:
+        """Return the timestamp of the last response.
+
+        Raises:
+            ValueError: If the run was cancelled before receiving any model response.
+        """
+        return self.response.timestamp
+
+    @property
+    def usage(self) -> RunUsage:
+        """Return the usage of the cancelled run."""
+        return self._usage
+
+    @property
+    def metadata(self) -> dict[str, Any] | None:
+        """Metadata associated with this agent run, if configured."""
+        return self._metadata
+
+    @property
+    def run_id(self) -> str | None:
+        """The unique identifier for the agent run, or `None` if it was cancelled before starting."""
+        return self._run_id
+
+    @property
+    def conversation_id(self) -> str | None:
+        """The conversation identifier, or `None` if the run was cancelled before starting."""
+        return self._conversation_id
 
 
 class SuspendedResponseExpired(AgentRunError):

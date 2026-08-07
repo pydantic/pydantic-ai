@@ -391,11 +391,6 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_prompt_cache_breakpoints=supports_prompt_cache_breakpoints,
         openai_supports_minimal_reasoning_effort=not model_name.startswith('gpt-5.6'),
         supported_native_tools=supported_native_tools,
-        # A Responses request carrying `defer_loading` without `tool_search` is rejected outright:
-        # `Invalid Value: 'tools.defer_loading'. Deferred tools require tools.tool_search.` Set
-        # unconditionally because it describes the API's rule rather than the model's abilities —
-        # it's only ever consulted for a model that supports deferred tools in the first place.
-        deferred_tools_require_tool_search=True,
     )
 
 

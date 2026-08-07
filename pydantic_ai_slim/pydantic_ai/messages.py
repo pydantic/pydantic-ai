@@ -953,6 +953,15 @@ class ToolReturn(Generic[_ToolReturnValueT]):
     metadata: Any = None
     """Additional data accessible by the application but not sent to the LLM."""
 
+    tools: list[str] | None = None
+    """Names of deferred tools made available by this tool call.
+
+    The names are recorded verbatim in message history in a sibling
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], then filtered
+    against the currently served tool definitions at render time. A name that matches no deferred
+    tool, such as a typo or an always-visible tool, is a silent no-op by design.
+    """
+
     kind: Literal['tool-return'] = 'tool-return'
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -1239,6 +1248,12 @@ def parse_tool_kind(value: str) -> ToolPartKind | None:
     bogus discriminator.
     """
     return next((kind for kind in _TOOL_PART_KINDS if kind == value), None)
+
+
+INTERRUPTED_TOOL_RETURN_CONTENT = 'The tool call was interrupted before a result was produced.'
+"""Placeholder content for a tool call that was interrupted before producing a result (e.g. by run
+cancellation). Shared between the agent graph's history repair and the UI adapters' stream closeout
+so both synthesize the same `outcome='interrupted'` return."""
 
 
 @dataclass(repr=False)
@@ -1718,7 +1733,9 @@ class ToolAvailabilityDeltaPart:
     https://github.com/pydantic/pydantic-ai/issues/6985.
     """
 
-    added: list[str] = field(default_factory=lambda: [])
+    tools_added: Annotated[
+        list[str], pydantic.Field(validation_alias=pydantic.AliasChoices('tools_added', 'added'))
+    ] = field(default_factory=lambda: [])
     """Names of tools that became available."""
 
     tool_call_id: str | None = None
@@ -1734,7 +1751,7 @@ class ToolAvailabilityDeltaPart:
         already visible in the request's tool definitions, and a run where the model suddenly can
         call something is unreadable without them.
         """
-        changes = ', '.join(f'+{name}' for name in self.added)
+        changes = ', '.join(f'+{name}' for name in self.tools_added)
         return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {changes}')]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -2548,6 +2565,46 @@ ModelMessagesTypeAdapter = pydantic.TypeAdapter(
     list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
+
+
+def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """The messages from the latest [`CompactionPart`][pydantic_ai.messages.CompactionPart] onward.
+
+    After compaction, the summary replaces everything before it, so this window is what the model
+    effectively works from — at part-level precision: within the response that carries the
+    compaction part, parts before it are excluded and parts after it are kept. With no compaction
+    part in the history, the whole history is returned (as a new list).
+
+    This is the boundary rule Pydantic AI itself uses when deriving model-visible state from
+    history (discovered tools, loaded capabilities). Capability and toolset authors should apply
+    the same rule to their own derived state — anything the model needs to have *seen*
+    (announcements, disclosures, catalogs) should be recomputed from this window rather than
+    remembered in instance attributes, so it self-heals when compaction replaces the history that
+    carried it.
+
+    Deliberately provider-agnostic, unlike the wire-level trim, which is provider-specific
+    because it must be exact for the one request it renders. This window feeds run-level state
+    (`RunContext.discovered_tool_names`, loaded capabilities) that must stay valid across
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] failover and mid-run model
+    switches — at parse time there is no "current" provider to resolve against, so the boundary
+    has to be the conservative intersection: a compaction part another provider would skip on the
+    wire still counts. The asymmetry makes that safe: treating too little as visible only permits
+    a redundant, idempotent re-disclosure; treating too much as visible hides state the model can
+    no longer see.
+    """
+    for message_index in range(len(messages) - 1, -1, -1):
+        message = messages[message_index]
+        if isinstance(message, ModelResponse):
+            for part_index in range(len(message.parts) - 1, -1, -1):
+                if isinstance(message.parts[part_index], CompactionPart):
+                    # Indexed iteration rather than `messages[message_index + 1:]`: the runtime
+                    # `Sequence` contract only requires integer `__getitem__`, so a minimal
+                    # conforming implementation may reject slices. (`message.parts` is a list.)
+                    return [
+                        replace(message, parts=list(message.parts[part_index:])),
+                        *(messages[i] for i in range(message_index + 1, len(messages))),
+                    ]
+    return list(messages)
 
 
 def _narrow_response_part(part: ModelResponsePart) -> ModelResponsePart:
@@ -3541,6 +3598,24 @@ class FunctionToolResultEvent(ToolResultEvent):
     """Event type identifier, used as a discriminator."""
 
 
+@dataclass(repr=False, kw_only=True)
+class ToolAvailabilityDeltaEvent:
+    """An event indicating tools were made available mid-run, carrying the recorded delta part.
+
+    This is request-side because the delta is created while executing a tool, after response-part
+    streaming has finished. It records the post-dedup change, while `ToolReturnPart.tools` preserves
+    the caller's pre-dedup intent, and is emitted for capability loads as well as tool returns.
+    """
+
+    part: ToolAvailabilityDeltaPart
+    """The tool availability delta part that will be recorded in message history."""
+
+    event_kind: Literal['tool_availability_delta'] = 'tool_availability_delta'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False)
 class OutputToolResultEvent(ToolResultEvent):
     """An event indicating the result of an output tool call."""
@@ -3611,6 +3686,7 @@ class DeferredToolResultsEvent:
 HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
+    | ToolAvailabilityDeltaEvent
     | OutputToolCallEvent
     | OutputToolResultEvent
     | DeferredToolRequestsEvent

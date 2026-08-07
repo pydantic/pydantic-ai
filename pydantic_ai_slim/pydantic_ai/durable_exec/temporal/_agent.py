@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 import inspect
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterable, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -19,6 +19,7 @@ from typing_extensions import deprecated
 
 from pydantic_ai import (
     AbstractToolset,
+    CancellationToken,
     _agent_graph,
     _instructions,
     _utils,
@@ -28,13 +29,12 @@ from pydantic_ai import (
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
-from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, RunOutputDataT
+from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, AgentRunEvents, RunOutputDataT
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
-from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -44,7 +44,7 @@ from pydantic_ai.tools import (
     ToolFuncEither,
 )
 
-from .._runtime_toolsets import reject_unsupported_runtime_toolsets
+from .._runtime_toolsets import reject_cancellation_token, reject_unsupported_runtime_toolsets
 from ._activity_execution import execute_activity
 from ._durability import serialization_user_error
 from ._model import TemporalModel, TemporalProviderFactory
@@ -350,6 +350,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -375,6 +376,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -399,6 +401,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -439,6 +442,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Unsupported for Temporal durable execution; passing one raises `UserError`.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -455,6 +459,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
+        reject_cancellation_token(cancellation_token, engine='Temporal')
         if workflow.in_workflow():
             if event_stream_handler is not None:
                 raise UserError(
@@ -502,6 +507,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -527,6 +533,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -551,6 +558,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -589,6 +597,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Unsupported for Temporal durable execution; passing one raises `UserError`.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -605,6 +614,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
+        reject_cancellation_token(cancellation_token, engine='Temporal')
         if workflow.in_workflow():
             raise UserError(
                 '`agent.run_sync()` cannot be used inside a Temporal workflow. Use `await agent.run()` instead.'
@@ -647,6 +657,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -672,6 +683,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -697,6 +709,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -733,6 +746,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Unsupported for Temporal durable execution; passing one raises `UserError`.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -749,6 +763,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
+        reject_cancellation_token(cancellation_token, engine='Temporal')
         if workflow.in_workflow():
             raise UserError(
                 '`agent.run_stream()` cannot be used inside a Temporal workflow. '
@@ -793,6 +808,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -800,7 +816,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[OutputDataT]]]: ...
+    ) -> AbstractAsyncContextManager[AgentRunEvents[OutputDataT]]: ...
 
     @overload
     def run_stream_events(
@@ -817,6 +833,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -824,9 +841,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AbstractAsyncContextManager[
-        AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[RunOutputDataT]]
-    ]: ...
+    ) -> AbstractAsyncContextManager[AgentRunEvents[RunOutputDataT]]: ...
 
     def run_stream_events(
         self,
@@ -842,6 +857,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -849,7 +865,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         spec: dict[str, Any] | AgentSpec | None = None,
-    ) -> AbstractAsyncContextManager[AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]]:
+    ) -> AbstractAsyncContextManager[AgentRunEvents[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
 
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] and
@@ -898,6 +914,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Unsupported for Temporal durable execution; passing one raises `UserError`.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -911,15 +928,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             spec: Optional agent spec to apply for this run.
 
         Returns:
-            An async context manager that yields an async iterator over `AgentStreamEvent`s ending with a final
-            `AgentRunResultEvent` carrying the run result.
+            An async context manager that yields an [`AgentRunEvents`][pydantic_ai.agent.AgentRunEvents]
+            handle over `AgentStreamEvent`s ending with a final `AgentRunResultEvent` carrying the run result.
         """
+        reject_cancellation_token(cancellation_token, engine='Temporal')
         super_run_stream_events = super().run_stream_events
 
         @asynccontextmanager
-        async def run_stream_events_context() -> AsyncGenerator[
-            AsyncIterator[_messages.AgentStreamEvent | AgentRunResultEvent[Any]]
-        ]:
+        async def run_stream_events_context() -> AsyncGenerator[AgentRunEvents[Any]]:
             if workflow.in_workflow():
                 raise UserError(
                     '`agent.run_stream_events()` cannot be used inside a Temporal workflow. '
@@ -965,6 +981,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -989,6 +1006,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1013,6 +1031,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -1099,6 +1118,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Unsupported for Temporal durable execution; passing one raises `UserError`.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run. Accepts a dictionary or a callable taking
                 [`RunContext`][pydantic_ai.tools.RunContext]; merged with the agent's configured metadata.
@@ -1114,6 +1134,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
+        reject_cancellation_token(cancellation_token, engine='Temporal')
         if workflow.in_workflow():
             if not self._temporal_overrides_active.get():
                 raise UserError(

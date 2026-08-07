@@ -71,6 +71,7 @@ For scenarios where you need more control over both the tool's return value and 
 - Separate the structured return value from additional content sent to the model
 - Explicitly send content as a separate user message (rather than in the tool result)
 - Include additional metadata that shouldn't be sent to the LLM
+- Reveal deferred tools by name for the next model request
 
 Here's an example of a computer automation tool that captures screenshots and provides visual feedback:
 
@@ -108,6 +109,7 @@ print(result.output)
 ```
 
 - **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result. Can include multimodal content directly (see [Tool Output](#function-tool-output) above).
+- **`tools`**: Names of tools marked with `defer_loading=True` that this call made available. Pydantic AI records them in a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] immediately after this call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], in the same [`ModelRequest`][pydantic_ai.messages.ModelRequest]. The names remain revealed when history is resumed, while the current tool definitions still come from the agent.
 - **`content`**: Content sent as a **separate user message** after the tool result. Use this when you explicitly want content to appear outside the tool result, or when combining structured return values with rich content.
 - **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature 'artifacts'.
 
@@ -407,6 +409,12 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 | `['tool_a', ...]` | Restrict to specific tools by name. Excludes output tools — same dynamic/direct requirement as `'required'`. |
 | [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]`(function_tools=['...'])` | Restrict function tools while auto-including all output tools. |
 
+Tools hidden by [deferred loading](#tool-search) interact with `tool_choice`: a tool that is still
+hidden names are ignored when forcing by name, and an explicit choice raises only when every requested tool is hidden. `'required'` raises when every function
+tool is hidden. A tool *declared* with its schema deferred can be forced. On providers that carry
+revealed definitions outside the `tools` list (OpenAI Responses `additional_tools`), a revealed
+tool can't be forced by name either, since by-name forcing can only target declared tools.
+
 ### Example
 
 ```python
@@ -621,6 +629,12 @@ async def fast_tool() -> str:
 
 When a timeout occurs, the tool is treated as a retryable failure and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
 
+### Cancelling the Run from a Tool
+
+A tool can abort the entire run by calling [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] -- e.g. when it discovers that further work is pointless, or a stop signal reaches your application while a tool holds the `RunContext`. From outside the run, pass a [`CancellationToken`][pydantic_ai.CancellationToken] to any run method. The run tears down whatever is in flight and raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] to the caller. Tool calls executing [in parallel](#parallel-tool-calls-concurrency) are cancelled and drained, but any that already completed keep their results in the message history, and a tool call that never produced a result is repaired automatically when that history is reused. Both cancellation surfaces require being in the same process as the run, so they do not cross a [durable execution](durable_execution/overview.md) serialization boundary such as a Temporal activity.
+
+See [Cancelling a Run](agent.md#cancelling-a-run) for the full picture, including cancelling from outside the run and accessing the cancelled run's state.
+
 ### Custom Args Validator {#args-validator}
 
 The `args_validator` parameter lets you define custom validation that runs after Pydantic schema validation but before the tool executes. This is useful for business logic validation, cross-field validation, or validating arguments before requesting [human approval](deferred-tools.md) for deferred tools.
@@ -822,13 +836,15 @@ Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`]
 
 Pydantic AI prefers native search whenever available because the discovery exchange happens append-only (a `tool_search_call` + `tool_search_output` pair) while each tool's authored `defer_loading` value remains stable, so prompt caching is preserved across rounds. On the local fallback, revealed tools are tracked separately from their stable definitions and sent only once discovered.
 
-Toolsets that aggregate or wrap deferred definitions can check visibility with [`ctx.is_tool_available(tool_def)`][pydantic_ai.tools.RunContext.is_tool_available] inside `get_tools`. Pass the definition the toolset is holding; the name form depends on the current resolved [`ctx.tools`][pydantic_ai.tools.RunContext.tools] snapshot and is intended for model-request hooks and tool execution.
+Every searchable deferred tool remains in the search corpus for the whole run, including tools the model has already discovered. Repeating a search is safe and lets the model recover a tool after its earlier discovery is no longer visible, such as after [compaction](capabilities/compaction.md). With the default keyword strategy, undiscovered matches always rank ahead of already-available ones, so when `max_results` trims the list, an already-available tool never displaces an undiscovered match — it only fills leftover slots.
 
-A tool owned by an [on-demand capability](capabilities/on-demand.md) is deferred but not *searchable*: it becomes available by loading its capability, never by the model asking for it. So a run whose deferred tools are all capability-owned advertises no tool search at all — not the native tool, and not the local `search_tools` function, which could only ever report no matches. Loading the capability reveals the tools directly.
+Toolsets that aggregate or wrap deferred definitions can check visibility with [`ctx.is_tool_available(tool_def)`][pydantic_ai.tools.RunContext.is_tool_available] inside `get_tools`. A definition is available when it is not deferred or its name has been revealed in history. Pass the definition the toolset is holding; the name form applies the same test to the current resolved [`ctx.tools`][pydantic_ai.tools.RunContext.tools] snapshot and is intended for model-request hooks and tool execution.
 
-A run that also has standalone deferred tools keeps normal model-driven search for those. Because the wire flag that hides a tool is the same one that puts it in the provider's searchable index, search then runs on our side (Anthropic `tool_reference` blocks, OpenAI `execution='client'`) so a query can't return a tool whose capability hasn't loaded.
+Tools gated as a bundle are covered by [on-demand capabilities](capabilities/on-demand.md); they are not part of the searchable corpus.
 
-When an application-driven capability load changes the visible tool set, message history records that control event as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]. The part stores tool names, not schemas; current tool definitions remain authoritative in the model request parameters. Anthropic renders supported changes as native `tool_addition` blocks, naming a tool it already declared with `defer_loading`. OpenAI Responses renders changes as an `additional_tools` input item; a tool already declared keeps its `tools` entry and the item reveals it, while a tool that was never declared travels in the item alone, schema and all. Other models announce the newly available tools when their schemas are already visible, or receive a synthesized tool-search exchange when its result must reveal a withheld schema.
+Each recorded reveal also surfaces as a [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] in the agent event stream and as the corresponding persistent Vercel AI data chunk or AG-UI activity snapshot.
+
+Provider adapters project each availability delta onto their supported history-based reveal mechanism. Anthropic declares each revealed definition in `tools` with `defer_loading=True` — up front in capability-only runs (no search surface can expose them), appended at reveal in mixed runs, which withhold capability-owned definitions until then — and references it from a native `tool_addition` block in the same request. OpenAI Responses carries a revealed definition in an appended `additional_tools` input item: a tool that was never declared travels in the item alone, while a tool already declared as a deferred `tools` entry keeps that entry and the item reveals it. Other models announce the newly available tools when their schemas are already visible, or receive a synthesized tool-search exchange when its result must reveal a withheld schema.
 
 For the model to find tools well, give them descriptive names with consistent prefixes (`github_*`, `slack_*`, `mortgage_*`) and put the keywords a user might search for in the tool's description. A search returns a handful of matches at a time, so the model may iterate (search → discover → call → search again) — instructions can nudge it: "Search by topic when you don't see a tool you need."
 
@@ -918,20 +934,24 @@ Stored history can describe a tool becoming callable as either a model-driven se
 application-driven availability change. Pydantic AI preserves that distinction when the history is
 replayed against a different model:
 
-| Stored representation | Anthropic with `tool_addition` | Anthropic with native search only | OpenAI Responses with native search | First-party OpenAI Responses without native search | OpenAI-compatible Responses without `additional_tools` | Gemini | OpenAI Chat Completions |
+| Stored representation | Anthropic with `tool_addition_mode='by_reference'` | Anthropic with `tool_addition_mode=None` | OpenAI Responses with native search and `tool_addition_mode='with_definitions'` | First-party OpenAI Responses without native search, `tool_addition_mode='with_definitions'` | OpenAI-compatible Responses with `tool_addition_mode=None` | Gemini (`tool_addition_mode=None`) | OpenAI Chat Completions (`tool_addition_mode=None`) |
 |---|---|---|---|---|---|---|---|
-| Local `search_tools` call and result | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
-| Anthropic native search | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
-| OpenAI native search | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
+| Local `search_tools` call and result | Native search | Native search | Native search | Local search + `additional_tools` | Local search | Local search | Local search |
+| Anthropic native search | Native search | Native search | Native search | Local search + `additional_tools` | Local search | Local search | Local search |
+| OpenAI native search | Native search | Native search | Native search | Local search + `additional_tools` | Local search | Local search | Local search |
 | [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] | `tool_addition` | Native search | `additional_tools` | `additional_tools` | Announcement or local search | Announcement | Announcement |
 | `search_tools` result with `metadata['discovered_tools']` | Native search | Native search | Native search | Local search | Local search | Local search | Local search |
 
 Here, **native search** means a paired provider-native search call and result plus the native search
-tool. The revealed tool remains in the deferred corpus, keeping its wire definition stable. **Local
+tool. Searchable deferred tools remain in the deferred corpus. **Local
 search** means a paired `search_tools` function call and result plus the local search tool; the
-revealed tool is present as an eager function tool. For a capability-only corpus, a provider-native
+revealed tool is present as an eager function tool — except on a `with_definitions` target, where a
+structured search result additionally rides an `additional_tools` item and the revealed definition
+travels there instead of occupying a `tools` entry (a plain-text legacy result, the last row, has no
+structured discovery to carry, so it stays plain local search). For a capability-only corpus, a provider-native
 availability change includes neither a search exchange nor a search tool. In a mixed corpus, the
-search tool stays on the wire for the tools that remain searchable.
+search tool stays on the wire for the tools that remain searchable; an Anthropic capability tool is
+appended as a deferred definition when its `tool_addition` is emitted.
 
 A genuine search is evidence of what the model did: it chose a query and received matches. Rewriting
 that exchange as `tool_addition` or `additional_tools` would incorrectly turn model-driven discovery
@@ -943,7 +963,7 @@ local search exchange is synthesized only when its result must reveal a schema t
 withheld, so the tool does not remain locked behind `defer_loading`.
 
 !!! note "Tool discovery and message history"
-    Discovered tools are tracked via metadata in the [message history](message-history.md). If a [history processor](message-history.md#processing-message-history) truncates messages containing discovery metadata, previously discovered tools will require re-discovery.
+    Discovered tools are tracked in typed message parts — search call/result pairs and [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart]s. If a [history processor](message-history.md#processing-message-history) strips that evidence, the tools revert to hidden on the next request; see [Processing Message History](message-history.md#processing-message-history) for the preservation contract.
 
 See [`ToolDefinition.defer_loading`][pydantic_ai.tools.ToolDefinition.defer_loading] and [Deferred Loading](toolsets.md#deferred-loading) for more details.
 
@@ -959,7 +979,7 @@ Tool search works on **every model**, but it only *preserves* the cache where th
 !!! note "Deferring saves context — it is not dynamic registration"
     With either strategy, every tool the model can ever reach must be **declared on the agent or toolset up front**. Deferring keeps unused definitions out of the model's context (and, natively, out of the cached prefix); it does not let you register a brand-new tool the agent was never configured with. Where a provider can append a tool declaration mid-conversation — OpenAI Responses' `additional_tools` item — a tool that was never in the request's `tools` block can still become callable without touching the prefix, because the declaration travels as an appended input item.
 
-For [on-demand capabilities](capabilities/on-demand.md#on-demand-capabilities), loading a capability that reveals no new tool definitions — instructions or model settings only — preserves the cache on every provider, even without native tool search. Revealing a deferred function tool preserves it too wherever the provider can express the change natively: Anthropic declares the tool from the first turn with its schema withheld and unlocks it in place, and OpenAI Responses appends the declaration. Elsewhere the revealed tool enters the tool-definitions prefix, as does a native tool, and as does a deferred `prepare_tools`/`prepare_output_tools` hook that rewrites tool definitions on load. See [Cache implications](capabilities/on-demand.md#cache-implications) for the full breakdown.
+For [on-demand capabilities](capabilities/on-demand.md#on-demand-capabilities), loading a capability that reveals no new tool definitions — instructions or model settings only — preserves the cache on every provider, even without native tool search. Anthropic excludes deferred entries from its cache key: capability-only runs pre-advertise them from turn one, making the one-time deferred preamble part of the initial prefix, while mixed runs pay that preamble through the searchable corpus and append revealed deferred entries outside the cached prefix. No Anthropic capability reveal introduces the deferred preamble midway through a run. First-party OpenAI Responses appends the reveal as an `additional_tools` input item without changing `tools[]`. Elsewhere the revealed tool enters the tool-definitions prefix, as does a native tool, and as does a deferred `prepare_tools`/`prepare_output_tools` hook that rewrites tool definitions on load. See [Cache implications](capabilities/on-demand.md#cache-implications) for the full breakdown.
 
 For a genuinely open-ended tool universe, route everything through a single, stable tool. The harness [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) capability collapses many tools into one `run_code` tool whose definition stays byte-stable; newly discovered tools are surfaced as callables inside the sandbox rather than as new tool schemas, keeping the tool-definitions prefix — and its cache — intact across discoveries.
 
