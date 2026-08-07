@@ -25,12 +25,15 @@ from pydantic_ai import (
     RunContext,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import ToolAvailabilityDeltaPart
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
@@ -104,6 +107,50 @@ def test_call_unknown_tool_has_clear_error() -> None:
 
     with pytest.raises(UserError, match=r"TestModel was configured to call unknown tool 'missing'"):
         agent.run_sync('call missing')
+
+
+def _native_addition_agent(call_tools: list[str] | Literal['all']) -> Agent:
+    """An agent on a delta-native profile: reveals stay in history as `ToolAvailabilityDeltaPart`s
+    and the revealed tool's visibility resolves to `'via_history'` rather than `'visible'`."""
+    profile = ModelProfile(tool_deferral_mode='standalone', tool_addition_mode='with_definitions')
+    agent = Agent(TestModel(profile=profile, call_tools=call_tools))
+
+    @agent.tool_plain
+    def revealer() -> ToolReturn:
+        return ToolReturn(return_value='revealed', tools=['hidden'])
+
+    @agent.tool_plain(defer_loading=True)
+    def hidden() -> str:  # pragma: no cover
+        return 'hidden'
+
+    return agent
+
+
+def test_native_tool_addition_profile_runs_without_crashing() -> None:
+    """The delta part a native-addition profile keeps in history must not blow up usage
+    estimation — it is legitimately present, not a skipped-`prepare_messages` violation."""
+    result = _native_addition_agent('all').run_sync('go')
+
+    assert result.output == snapshot(
+        '{"revealer":"revealed","search_tools":{"discovered_tools":[],"message":"No matching tools found. The tools you need may not be available."}}'
+    )
+    assert any(
+        isinstance(part, ToolAvailabilityDeltaPart)
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
+def test_revealed_via_history_tool_is_callable_in_named_mode() -> None:
+    """A revealed tool whose definition travels via history is callable; replaying its history
+    must not raise the misleading 'must be revealed' error on later steps."""
+    history = _native_addition_agent('all').run_sync('go').all_messages()
+
+    result = _native_addition_agent(['hidden']).run_sync('continue', message_history=history)
+    assert result.output == snapshot(
+        '{"revealer":"revealed","search_tools":{"discovered_tools":[],"message":"No matching tools found. The tools you need may not be available."}}'
+    )
 
 
 def test_custom_output_text():
