@@ -3058,7 +3058,8 @@ def _sanitize_response_parts(
 ) -> list[ModelResponsePart]:
     """Sanitize unsafe metadata and file references in an untrusted response's parts.
 
-    Strips compaction provenance stamps, drops non-allowlisted schemes, and resets non-allowlisted `force_download` values on
+    Strips compaction provenance stamps from `CompactionPart.provider_details`. Drops
+    non-allowlisted schemes and resets non-allowlisted `force_download` values on
     [`FileUrl`][pydantic_ai.messages.FileUrl]s nested in tool return parts, and drops
     [`UploadedFile`][pydantic_ai.messages.UploadedFile]s nested in tool return parts unless
     `allow_uploaded_files` is set. Unresolved (dangling) tool calls are stripped separately, from
