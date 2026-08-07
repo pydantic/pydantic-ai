@@ -40,6 +40,7 @@ from .._utils import (
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import SuspendedResponseExpired, UserError
 from ..messages import (
+    STANDING_PROMPT_PLANTED_KEY,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -2045,7 +2046,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not isinstance(compaction, ResponseCompactionItem):  # pragma: no cover
             raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {compaction.type}')
 
-        part = _map_compaction_item(compaction, self.system)
+        # This compact call's input window explicitly planted the standing prompt (see
+        # `_responses_compact`), so the minted part carries the provenance stamp that lets the
+        # trim rely on the item's retention instead of re-sending the standing prompt.
+        part = _map_compaction_item(compaction, self.system, standing_prompt_planted=True)
         return ModelResponse(
             parts=[part],
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
@@ -2076,11 +2080,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Same ordering rule as `_build_responses_request_params`: the introduced-tools derivation
         # and the mapping must both see the trimmed history, and re-compacting only compacts the
         # current effective window rather than content an earlier compaction already replaced.
-        messages = _trim_messages_before_compaction(messages, self.system, requires_encrypted_content=True)
+        # `standing_prompt_retained=False` (here and in the mapping below): blob-of-blob retention
+        # decayed in probing, so the window sent for re-compaction plants the standing prompt
+        # explicitly rather than relying on the previous compaction item to carry it forward.
+        messages = _trim_messages_before_compaction(
+            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=False
+        )
         instructions, openai_messages = await self._map_messages(
             messages,
             model_settings,
             model_request_parameters,
+            standing_prompt_retained=False,
         )
         if instructions_override is not None:
             instructions = instructions_override
@@ -2517,7 +2527,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `_resolve_server_side_state`, which recovers conversation/response IDs from responses the
         # trim would drop; `_map_messages` applies the same idempotent trim to whatever slice that
         # resolution hands it.
-        trimmed_messages = _trim_messages_before_compaction(messages, self.system, requires_encrypted_content=True)
+        trimmed_messages = _trim_messages_before_compaction(
+            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=True
+        )
         # Call-time import mirroring `models/__init__.py`'s `_tool_search` import: the toolsets
         # package imports `messages` while adapters load, so a module-level import would cycle.
         from ..toolsets._tool_search import parse_discovered_tools
@@ -3155,6 +3167,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         messages: list[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        standing_prompt_retained: bool = True,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -3166,7 +3180,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Raw CoT is sent back to improve model performance in multi-turn conversations.
 
         """
-        messages = _trim_messages_before_compaction(messages, self.system, requires_encrypted_content=True)
+        # `standing_prompt_retained=True` on ordinary requests: the compaction item retains the
+        # window's leading `system` items (single hop, live-verified), so re-sending them would
+        # duplicate the standing prompt. The re-compaction path passes `False`: retention decayed
+        # across a second compaction in probing, so each freshly built window plants it explicitly.
+        messages = _trim_messages_before_compaction(
+            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=standing_prompt_retained
+        )
         profile = self.profile
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
@@ -4885,13 +4905,26 @@ def _support_tool_forcing(
         return True
 
 
-def _map_compaction_item(item: ResponseCompactionItem, system: str) -> CompactionPart:
-    """Convert an OpenAI `ResponseCompactionItem` to a `CompactionPart`."""
+def _map_compaction_item(
+    item: ResponseCompactionItem, system: str, *, standing_prompt_planted: bool = False
+) -> CompactionPart:
+    """Convert an OpenAI `ResponseCompactionItem` to a `CompactionPart`.
+
+    `standing_prompt_planted` stamps the part as minted by our own `responses.compact` call,
+    whose input window explicitly plants the standing prompt — the provenance that lets the trim
+    rely on the compaction item's retention instead of re-sending the standing prompt (see
+    `_trim_messages_before_compaction`). Compaction items arriving in ordinary responses are left
+    unstamped: their window may itself have relied on an earlier item's retention, and retention
+    is only reliable for a single hop.
+    """
+    provider_details = item.model_dump()
+    if standing_prompt_planted:
+        provider_details[STANDING_PROMPT_PLANTED_KEY] = True
     return CompactionPart(
         content=None,
         id=item.id,
         provider_name=system,
-        provider_details=item.model_dump(),
+        provider_details=provider_details,
     )
 
 
