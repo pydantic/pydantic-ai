@@ -246,11 +246,11 @@ Phrase the instruction as what changed rather than as an override of the user. M
 
 Model providers reject a request whose message history has broken tool-call/tool-result pairing — a tool call with no result, or a result with no call. A run that is cancelled or crashes partway through can leave the history in exactly this state, and so can a hand-built, truncated, or context-evicted history. You don't need to clean these up yourself: before each model request, Pydantic AI repairs the history it was given so the provider accepts it.
 
-Tool availability changes are stored as [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] request parts. Replaying history applies each part's `added` names in order, while tool definitions continue to come from the current run's registered tools.
+Tool additions are stored as [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] request parts; tool removal is not represented. A tool returning [`ToolReturn(tools=[...])`][pydantic_ai.messages.ToolReturn] authors the part immediately after its [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] in the same request, with the call's `tool_call_id` as a causal link. The executor deduplicates names in first-occurrence order and omits names already revealed. Replaying history keeps each `added` name revealed; tool definitions continue to come from the current run, so unknown or already-visible names have no effect when rendering a request.
 
 The guiding rule is to massage the history into a shape the provider accepts without ever discarding something you meant to send. Repairs only **add** synthesized parts or **remove** parts that are fundamentally unsendable (no provider could accept them); nothing meaningful is silently dropped. Concretely, before each request Pydantic AI:
 
-- **Adds** a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for a tool call that has no result, telling the model the call was interrupted before a result was produced. It has [`outcome='interrupted'`][pydantic_ai.messages.BaseToolReturnPart.outcome] — a neutral outcome that (unlike `'failed'`) is not surfaced as a provider error — and carries `{'pydantic_ai_synthesized_tool_return': True}` in its [`metadata`][pydantic_ai.messages.BaseToolReturnPart.metadata] so your code can tell it apart from real tool results. This also covers a call whose arguments were cut off mid-stream: the call is kept as-is and closed out the same way.
+- **Adds** a synthesized [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] for a tool call that has no result, telling the model the call was interrupted before a result was produced. It has [`outcome='interrupted'`][pydantic_ai.messages.BaseToolReturnPart.outcome] — a neutral outcome that (unlike `'failed'`) is not surfaced as a provider error — and carries `{'pydantic_ai_synthesized_tool_return': True}` in its [`metadata`][pydantic_ai.messages.BaseToolReturnPart.metadata] so your code can tell it apart from real tool results. This also covers a call whose arguments were cut off mid-stream: the call is kept as-is and closed out the same way. Its arguments stay verbatim in the history, but the request serializers send them as `{"INVALID_JSON": "<raw args>"}` (see [`args_as_json_str`][pydantic_ai.messages.BaseToolCallPart.args_as_json_str]) so that a provider requiring an object still accepts the request.
 - **Removes** an orphaned tool result — a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] whose tool call is absent from the history (including a result placed before its call). If this empties an interior [`ModelRequest`][pydantic_ai.messages.ModelRequest] the request is removed; if it empties the last message, an empty request is kept so the history still ends on a `ModelRequest`.
 
 After the invalid parts are handled, consecutive compatible messages are **merged** into one (two adjacent [`ModelRequest`][pydantic_ai.messages.ModelRequest]s become a single turn, with tool results ordered ahead of user parts). This changes message boundaries but preserves all content, so processed history you inspect afterwards may have fewer messages than you passed in.
@@ -383,6 +383,8 @@ _(This example is complete, it can be run "as is")_
 The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
 
 [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, and removes unresolved tool calls at the end of the history.
+
+Client-supplied compaction items remain compacted, but their provenance stamp is stripped so the server's standing system prompt is always re-inserted. The fast path that skips re-insertion is reserved for histories kept in server-side custody.
 
 ```python {title="sanitize untrusted message history" test="skip" lint="skip"}
 from pydantic_ai import Agent, ModelMessagesTypeAdapter
@@ -693,6 +695,12 @@ you to intercept and modify the message history before each model request.
 !!! warning "History processors replace the message history"
     History processors replace the message history in the state with the processed messages, including the new user prompt part.
     This means that if you want to keep the original message history, you need to make a copy of it.
+
+    When using deferred tools, preserve their
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] entries, or the
+    complete `load_capability` call and return pairs from which Pydantic AI can reconstruct them.
+    Reveal state is derived from the processed history sent to the model. If a processor or
+    summarizer drops both representations, the affected tools become hidden again.
 
 !!! warning "History processors can affect `new_messages()` results"
     [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] returns the messages
