@@ -16,6 +16,7 @@ from pydantic_ai._utils import is_str_dict as _is_str_dict
 
 from ... import _instructions
 from ...messages import (
+    ERROR_OUTCOMES,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -47,10 +48,16 @@ from ...messages import (
     parse_tool_kind,
     tool_return_content_ta,
 )
+from ...models import render_retry_feedback
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
-from .._adapter import resolve_allow_uploaded_files, tool_availability_delta_from_payload
+from .._adapter import (
+    resolve_allow_uploaded_files,
+    retry_feedback_from_payload,
+    retry_feedback_payload,
+    tool_availability_delta_from_payload,
+)
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
@@ -309,7 +316,14 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             if msg.role == 'system':
                 for part in msg.parts:
                     if isinstance(part, TextUIPart):
-                        builder.add(SystemPromptPart(content=part.text))
+                        # A system part only reloads as harness retry feedback when it carries the
+                        # marker this adapter dumped it with; a client-authored system message has
+                        # no such payload and stays a plain `SystemPromptPart`, so it can never gain
+                        # harness provenance. See `retry_feedback_from_payload`.
+                        feedback = retry_feedback_from_payload(
+                            load_provider_metadata(part.provider_metadata).get('retry_feedback')
+                        )
+                        builder.add(feedback if feedback is not None else SystemPromptPart(content=part.text))
                     else:  # pragma: no cover
                         raise ValueError(f'Unsupported system message part type: {type(part)}')
             elif msg.role == 'user':
@@ -558,12 +572,16 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             # subclasses only ever wrap successful, shape-valid content, and readers
                             # like `parse_loaded_capabilities` treat their presence as proof of success.
                             elif part.state == 'output-error':
+                                # `'failed'` and `'retried'` share `output-error`, so the outcome
+                                # claim in the metadata channel is what tells a retry apart from a
+                                # definitive failure; without it the return reloads as `'failed'`.
+                                retried = provider_meta.get('outcome') == 'retried'
                                 builder.add(
                                     ToolReturnPart(
                                         tool_name=tool_name,
                                         tool_call_id=tool_call_id,
                                         content=part.error_text,
-                                        outcome='failed',
+                                        outcome='retried' if retried else 'failed',
                                     )
                                 )
                             elif part.state == 'output-denied':
@@ -658,7 +676,18 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     # Non-tool retries (e.g., output validation errors) become user text
                     user_ui_parts.append(TextUIPart(text=part.model_response(), state='done'))
             elif isinstance(part, RetryFeedbackPart):
-                user_ui_parts.append(TextUIPart(text=part.model_response(), state='done'))
+                # Harness feedback carries the system voice it is rendered in for the model, not the
+                # user's, so it dumps as a system part rather than as text a person appears to have
+                # written (https://github.com/pydantic/pydantic-ai/issues/6404). The part itself
+                # rides in `provider_metadata` so the reload reconstructs it instead of the
+                # `SystemPromptPart` the rendered text alone would produce.
+                system_ui_parts.append(
+                    TextUIPart(
+                        text=render_retry_feedback(part),
+                        state='done',
+                        provider_metadata=dump_provider_metadata(retry_feedback=retry_feedback_payload(part)),
+                    )
+                )
             else:
                 assert_never(part)
 
@@ -757,7 +786,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                             )
                         )
                     elif (
-                        builtin_return.outcome == 'failed'
+                        builtin_return.outcome in ERROR_OUTCOMES
                         or builtin_return.model_response_object(wrap_if_error=False).get('is_error') is True
                     ):
                         response_obj = builtin_return.model_response_object(wrap_if_error=False)
@@ -776,7 +805,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         )
                     else:
                         # `'success'` and `'interrupted'` both render as neutral tool output; only
-                        # `'failed'` is an error, so `'interrupted'` is never surfaced as one.
+                        # the error outcomes are errors, so `'interrupted'` is never surfaced as one.
                         ui_parts.append(
                             ToolOutputAvailablePart(
                                 type=tool_name,
@@ -837,16 +866,21 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
     ) -> list[UIMessagePart]:
         """Convert a ToolCallPart (with optional result) into UIMessageParts."""
         tool_result = tool_results.get(part.tool_call_id)
-        interrupted = isinstance(tool_result, ToolReturnPart) and tool_result.outcome == 'interrupted'
+        # The two outcomes the UI part state can't represent on its own: `'interrupted'` dumps as
+        # neutral `output-available` below, and `'retried'` shares `output-error` with `'failed'`.
+        # Both ride the metadata channel so a dump/load round-trip doesn't degrade them to
+        # `'success'` / `'failed'`, which would change how the return serializes to the provider.
+        carried_outcome = (
+            tool_result.outcome
+            if isinstance(tool_result, ToolReturnPart) and tool_result.outcome in ('interrupted', 'retried')
+            else None
+        )
         call_provider_metadata = dump_provider_metadata(
             id=part.id,
             provider_name=part.provider_name,
             provider_details=part.provider_details,
             tool_kind=part.tool_kind,
-            # `'interrupted'` is the one outcome the UI part state can't represent (it dumps as
-            # neutral `output-available` below), so it rides the metadata channel instead of
-            # degrading to `'success'` on a dump/load round-trip.
-            outcome='interrupted' if interrupted else None,
+            outcome=carried_outcome,
         )
         tool_type = f'tool-{part.tool_name}'
         ui_parts: list[UIMessagePart] = []
@@ -867,7 +901,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         ),
                     )
                 )
-            elif tool_result.outcome == 'failed':
+            elif tool_result.outcome in ERROR_OUTCOMES:
+                # `error_text` is the return's own content, with no wrapper and no instruction
+                # framing: a retry's feedback reaches the frontend as the feedback itself
+                # (https://github.com/pydantic/pydantic-ai/pull/4869).
                 ui_parts.append(
                     ToolOutputErrorPart(
                         type=tool_type,
@@ -879,9 +916,10 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     )
                 )
             else:
-                # `'success'` and `'interrupted'` both render as neutral tool output; only `'failed'`
-                # is an error, so a synthesized `'interrupted'` return (from message-history repair)
-                # shows its interruption message as the output rather than an error.
+                # `'success'` and `'interrupted'` both render as neutral tool output; only the
+                # error outcomes are errors, so a synthesized `'interrupted'` return (from
+                # message-history repair) shows its interruption message as the output rather
+                # than an error.
                 ui_parts.append(
                     ToolOutputAvailablePart(
                         type=tool_type,
@@ -948,13 +986,19 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
 
         Note: The round-trip `dump_messages` -> `load_messages` is not fully lossless for tool
         results. Successful, failed, and denied results each round-trip via their own part type
-        (`ToolOutputAvailablePart` / `ToolOutputErrorPart` / `ToolOutputDeniedPart`), but a
-        `RetryPromptPart` becomes a `ToolReturnPart` with `outcome='failed'` on reload (or a user
-        text part when it has no `tool_name`), since the protocol has no separate retry concept —
-        both a retry prompt and a `ToolFailed` result map to `ToolOutputErrorPart`. A reloaded retry
-        is therefore presented to the model as a definitive failure rather than a request to correct
-        and retry; keep the conversation in-process rather than persisting through the Vercel AI wire
-        format if you need retry semantics to survive a round-trip.
+        (`ToolOutputAvailablePart` / `ToolOutputErrorPart` / `ToolOutputDeniedPart`). A retried
+        result (`outcome='retried'`) shares `ToolOutputErrorPart` with a failed one — the protocol
+        has no separate retry concept — so its outcome rides the `providerMetadata` channel that
+        already carries `'interrupted'`, and is restored from there on reload. A legacy
+        `RetryPromptPart` carries no such claim and still becomes a `ToolReturnPart` with
+        `outcome='failed'` on reload (or a user text part when it has no `tool_name`), so a reloaded
+        one is presented to the model as a definitive failure rather than a request to correct and
+        retry.
+
+        A `RetryFeedbackPart` dumps as a `role='system'` message holding the same text the model is
+        shown, with the part itself in that message's `providerMetadata`; it reloads as a
+        `RetryFeedbackPart` only from there, so a system message the client wrote stays a
+        `SystemPromptPart`.
 
         Tool calls lose one thing too: `ToolCallPart.args` that don't parse as a JSON object are
         rewritten to `{'INVALID_JSON': '<raw args>'}` (see

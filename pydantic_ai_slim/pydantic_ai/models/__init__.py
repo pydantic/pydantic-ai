@@ -2157,6 +2157,25 @@ RETRY_FEEDBACK_MODEL_RETRY = 'The response was not accepted:\n{feedback}'
 hook raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]."""
 
 
+def render_retry_feedback(part: RetryFeedbackPart) -> str:
+    """State in the harness's own voice why the previous response couldn't be used.
+
+    The per-`cause` wording lives here rather than on the part so the stored history stays
+    model-neutral. `prepare_messages` renders this into a mid-conversation `SystemPromptPart`, and the
+    UI adapters render the same string into their protocol's system-role message, so a transcript
+    shows the feedback exactly as the model was shown it.
+    """
+    if part.cause == 'validation_error':
+        template = RETRY_FEEDBACK_VALIDATION_ERROR
+    elif part.cause == 'no_output':
+        template = RETRY_FEEDBACK_NO_OUTPUT
+    elif part.cause == 'model_retry':
+        template = RETRY_FEEDBACK_MODEL_RETRY
+    else:
+        assert_never(part.cause)
+    return template.format(feedback=part.model_response())
+
+
 def _render_retry_feedback_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Render harness retry feedback as a mid-conversation system message.
 
@@ -2190,17 +2209,7 @@ def _render_retry_feedback_messages(messages: list[ModelMessage]) -> list[ModelM
             if not isinstance(part, RetryFeedbackPart):
                 replacement_parts.append(part)
                 continue
-            if part.cause == 'validation_error':
-                template = RETRY_FEEDBACK_VALIDATION_ERROR
-            elif part.cause == 'no_output':
-                template = RETRY_FEEDBACK_NO_OUTPUT
-            elif part.cause == 'model_retry':
-                template = RETRY_FEEDBACK_MODEL_RETRY
-            else:
-                assert_never(part.cause)
-            replacement_parts.append(
-                SystemPromptPart(content=template.format(feedback=part.model_response()), timestamp=part.timestamp)
-            )
+            replacement_parts.append(SystemPromptPart(content=render_retry_feedback(part), timestamp=part.timestamp))
         transformed.append(replace(message, parts=replacement_parts))
 
     return transformed if changed else messages

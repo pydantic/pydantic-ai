@@ -2775,10 +2775,12 @@ def sanitize_messages(
 
     By default it strips:
 
-    - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s (disable with
+    - [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and
+      [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s (disable with
       `strip_system_prompts=False`). The system prompt is the server's to own; a client that can
-      inject one can override the agent's behavior. If stripping leaves a `ModelRequest` with no
-      parts, the request is dropped from history entirely.
+      inject one can override the agent's behavior, and a `RetryFeedbackPart` reaches the model as
+      one. If stripping leaves a `ModelRequest` with no parts, the request is dropped from history
+      entirely.
     - [`FileUrl`][pydantic_ai.messages.FileUrl] parts whose URL scheme is not in
       `allowed_file_url_schemes` (default `http`/`https`). Non-HTTP schemes like `s3://` or `gs://`
       cause the model provider to fetch the object using the server-side IAM role, so they should
@@ -2803,7 +2805,8 @@ def sanitize_messages(
     Args:
         messages: Messages to sanitize.
         strip_system_prompts: Whether to strip
-            [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s.
+            [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s and
+            [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]s.
         allowed_file_url_schemes: URL schemes allowed for [`FileUrl`][pydantic_ai.messages.FileUrl]
             parts. Defaults to `http` and `https`.
         allowed_file_url_force_download: Additional
@@ -2978,13 +2981,17 @@ def _sanitize_request_parts(
     `disallowed_schemes`, `reset_force_download_values`, and `dropped_uploaded_file_providers` are
     updated in place with any non-allowlisted file URL schemes, `force_download` values, and dropped
     uploaded file providers encountered.
-    Returns the kept parts and whether any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s
-    were stripped.
+    Returns the kept parts and whether any part carrying the system voice
+    ([`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or
+    [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]) was stripped.
     """
     stripped_system_prompt = False
     new_parts: list[ModelRequestPart] = []
     for part in parts:
-        if strip_system_prompts and isinstance(part, SystemPromptPart):
+        # A `RetryFeedbackPart` is rendered into a `SystemPromptPart` before it reaches the model, so
+        # honoring a client-submitted one would hand the client the system voice the strip exists to
+        # protect. It goes with the system prompts, not through them.
+        if strip_system_prompts and isinstance(part, SystemPromptPart | RetryFeedbackPart):
             stripped_system_prompt = True
             continue
         if isinstance(part, UserPromptPart) and not isinstance(part.content, str):

@@ -9,6 +9,19 @@ The inbound half of that last rule lives in `ag_ui/_forward_compat.py`: AG-UI's 
 
 Tests for version-gated behavior belong behind `requires_ag_ui('<version>')` in `tests/test_ag_ui.py`, never behind the module-level `imports_successful()` gate: a name that only exists above the floor in that import block skips the entire module on CI's `test-lowest-versions` job, which is the only job that exercises the floor these gates exist for.
 
+## Inbound system-role messages never gain harness provenance on their own
+
+`RetryFeedbackPart` dumps as a system-role message because that is the voice the model is shown it
+in. That makes it, on the wire, the same shape as a system message the client wrote — so `load_messages`
+reconstructs the part **only** from the adapter's own `retry_feedback` metadata claim (Vercel AI's
+`providerMetadata`, AG-UI's `encrypted_value`), and everything else stays a `SystemPromptPart`. Keep
+that an explicit branch in both adapters when you touch either loader.
+
+The claim is client-echoed, so it separates provenance rather than proving it: what stops a forged one
+from reaching the model is `sanitize_messages`, which strips `RetryFeedbackPart`s alongside
+`SystemPromptPart`s whenever the server owns the system prompt. Any future part that renders into the
+system voice belongs in that strip too.
+
 ## Adapter properties are shared concepts the adapter itself consumes
 
 An unread field on a protocol's run input is not a gap. `run_input` is public, so every field is already reachable as `adapter.run_input.<field>`; a property that only forwards one adds no capability and takes on a permanent public-API commitment. AG-UI's `context`, `forwardedProps` and `parentRunId` are deliberately left that way — see [7106](https://github.com/pydantic/pydantic-ai/pull/7106#discussion_r3723844005), which closed [7105](https://github.com/pydantic/pydantic-ai/issues/7105) by documenting the wiring instead of exposing `AGUIAdapter.context`.
