@@ -1,9 +1,10 @@
 """Direct tests for the provider-support helpers in `pydantic_ai.realtime._base`.
 
 These are the pieces a concrete [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] implementation
-builds on — profile resolution and merging, settings merging, reconnect backoff, trace-context
-injection, and history-seeding normalization — rather than anything the session drives itself. They
-have no provider dependency, so they are exercised here against a minimal in-test model.
+builds on — profile resolution and merging, settings merging, reconnect backoff, and history-seeding
+normalization — rather than anything the session drives itself. They have no provider dependency, so
+they are exercised here against a minimal in-test model. (`inject_trace_context` lives in
+`test_instrumentation.py`, which already gates on the OpenTelemetry SDK.)
 """
 
 from __future__ import annotations as _annotations
@@ -15,9 +16,6 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 import pytest
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -42,7 +40,6 @@ from pydantic_ai.realtime import (
     infer_realtime_model,
 )
 from pydantic_ai.realtime._base import (
-    inject_trace_context,
     reconnect_with_backoff,
     seed_pcm_audio,
     seed_speech_content,
@@ -201,23 +198,6 @@ async def test_reconnect_with_backoff_respects_the_session_wide_budget() -> None
 
     policy = ReconnectPolicy(max_reconnects=2)
     assert await reconnect_with_backoff(policy, attempt, reconnects_used=2) is False
-
-
-def test_inject_trace_context_writes_traceparent_for_the_active_span() -> None:
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(InMemorySpanExporter()))
-    headers: dict[str, str] = {}
-
-    with provider.get_tracer('test').start_as_current_span('realtime'):
-        inject_trace_context(headers)
-
-    assert 'traceparent' in headers
-
-
-def test_inject_trace_context_is_a_no_op_without_an_active_span() -> None:
-    headers: dict[str, str] = {}
-    inject_trace_context(headers)
-    assert headers == {}
 
 
 def _patch_download(monkeypatch: pytest.MonkeyPatch, *, data: bytes, data_type: str) -> None:

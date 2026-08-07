@@ -60,6 +60,7 @@ from pydantic_ai.realtime import (
     RealtimeModelSettings,
     RealtimeSession as _RealtimeSession,
 )
+from pydantic_ai.realtime._base import inject_trace_context
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,
@@ -1455,3 +1456,21 @@ def test_provider_attributes_degrade_on_malformed_port() -> None:
     assert attributes['gen_ai.provider.name'] == 'openai'
     assert 'server.address' not in attributes
     assert 'server.port' not in attributes
+
+
+def test_inject_trace_context_writes_traceparent_for_the_active_span() -> None:
+    """A realtime handshake bypasses the provider's `httpx` client, so it injects the header itself."""
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(InMemorySpanExporter()))
+    headers: dict[str, str] = {}
+
+    with provider.get_tracer('test').start_as_current_span('realtime'):
+        inject_trace_context(headers)
+
+    assert 'traceparent' in headers
+
+
+def test_inject_trace_context_is_a_no_op_without_an_active_span() -> None:
+    headers: dict[str, str] = {}
+    inject_trace_context(headers)
+    assert headers == {}
