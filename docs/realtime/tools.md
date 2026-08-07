@@ -72,6 +72,13 @@ that the tool cannot complete during a realtime session.
 A realtime session cannot pause and return a `DeferredToolRequests` output for an out-of-band
 result. Resolve the request during the call or move that workflow to a standard agent run.
 
+A session's tools are fixed when the connection opens, so nothing can reveal a tool mid-call. Tools
+registered with `defer_loading=True` for [tool search](../tools-advanced.md#tool-search), and
+[capabilities](../capabilities/overview.md) with `defer_loading=True` that contribute tools or native
+tools, are therefore rejected with [`UserError`][pydantic_ai.exceptions.UserError] when the session
+opens — rather than advertising a search that could find the tool but never deliver it. Register
+those tools normally for a realtime session, or keep that workflow in a standard agent run.
+
 ## Enqueuing prompts from tools
 
 [`RunContext.enqueue()`][pydantic_ai.tools.RunContext.enqueue] accepts one plain-text prompt per
