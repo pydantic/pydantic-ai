@@ -130,11 +130,15 @@ class OnNodeRunErrorHookFunc(Protocol):
 
 class WrapRunEventStreamHookFunc(Protocol):
     """Protocol for [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] hook functions."""
-    def __call__(self, ctx: RunContext[Any], /, *, stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterable[AgentStreamEvent]: ...
+    def __call__(
+        self, ctx: RunContext[Any], /, *, stream: AsyncIterable[AgentStreamEvent]
+    ) -> AsyncIterable[AgentStreamEvent]: ...
 
 class OnEventHookFunc(Protocol):
     """Protocol for per-event hook functions (convenience over `wrap_run_event_stream`)."""
-    def __call__(self, ctx: RunContext[Any], event: AgentStreamEvent, /) -> AgentStreamEvent | Awaitable[AgentStreamEvent]: ...
+    def __call__(
+        self, ctx: RunContext[Any], event: AgentStreamEvent, /
+    ) -> AgentStreamEvent | Awaitable[AgentStreamEvent]: ...
 
 class BeforeModelRequestHookFunc(Protocol):
     """Protocol for [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook functions."""

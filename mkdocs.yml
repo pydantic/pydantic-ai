@@ -212,6 +212,7 @@ nav:
           - api/output.md
           - api/profiles.md
           - api/providers.md
+          - api/realtime.md
           - api/result.md
           - api/retries.md
           - api/run.md
