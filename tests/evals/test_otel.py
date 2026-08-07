@@ -1025,7 +1025,7 @@ async def test_context_subtree_finalizes_tree_on_exception():
                 pass
             raise RuntimeError('boom')
 
-    assert isinstance(tree, SpanTree)
+    assert isinstance(tree, SpanTree)  # pyright: ignore[reportPossiblyUnboundVariable]
     assert [node.name for node in tree] == ['before-error']
 
 
@@ -1037,8 +1037,8 @@ async def test_context_subtree_clears_exporter_on_exception():
     spans into the shared in-memory exporter.
     """
     from pydantic_evals.otel._context_in_memory_span_exporter import (
-        _add_context_span_exporter,
-        _ContextInMemorySpanExporter,
+        _add_context_span_exporter,  # pyright: ignore[reportPrivateUsage]
+        _ContextInMemorySpanExporter,  # pyright: ignore[reportPrivateUsage]
     )
 
     exporter = _add_context_span_exporter()
