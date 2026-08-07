@@ -47,6 +47,9 @@ class DurableRunCancellation(AbstractCapability[AgentDepsT]):
 
     from pydantic_ai.durable_exec import DurableRunCancellation
 
+    with workflow.unsafe.imports_passed_through():
+        from my_agent import my_temporal_agent
+
 
     @workflow.defn
     class MyAgentWorkflow:
