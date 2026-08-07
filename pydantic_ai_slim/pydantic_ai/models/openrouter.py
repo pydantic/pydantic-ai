@@ -1314,12 +1314,12 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         if reasoning_details := choice.delta.reasoning_details:
             for i, detail in enumerate(reasoning_details):
                 thinking_part = _from_reasoning_detail(detail)
-                # Use unique vendor_part_id for each reasoning detail type to prevent
-                # different detail types (e.g., reasoning.text, reasoning.encrypted)
-                # from being incorrectly merged into a single ThinkingPart.
-                # This is required for Gemini 3 Pro which returns multiple reasoning
-                # detail types that must be preserved separately for thought_signature handling.
-                vendor_id = f'reasoning_detail_{detail.type}_{i}'
+                # OpenRouter's index is stable across chunks, unlike the position in the current
+                # chunk. It distinguishes separate details while merging deltas for one detail.
+                # The type remains part of the identifier because Gemini 3 Pro can emit text and
+                # encrypted details with the same index; those must remain separate ThinkingParts
+                # for thought-signature handling.
+                vendor_id = f'reasoning_detail_{detail.type}_{detail.index if detail.index is not None else i}'
                 yield from self._parts_manager.handle_thinking_delta(
                     vendor_part_id=vendor_id,
                     id=thinking_part.id,
