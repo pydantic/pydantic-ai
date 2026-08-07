@@ -1120,6 +1120,41 @@ async def test_connect_surfaces_http_upgrade_error(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.anyio
+async def test_connect_webrtc_surfaces_http_upgrade_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Attaching a sideband to a call that no longer exists fails like dialing a session does.
+
+    Regression: `connect_webrtc` dialed outside `map_connect_errors`, so an expired/unknown `call_id`
+    (or bad auth, or a rate-limited upgrade) escaped as a raw `websockets.InvalidStatus` instead of the
+    `ModelHTTPError` the realtime error contract documents.
+    """
+    from websockets.datastructures import Headers
+    from websockets.exceptions import InvalidStatus
+    from websockets.http11 import Response
+
+    class _RejectingConnect:
+        def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
+            return self
+
+        async def __aenter__(self) -> Any:
+            raise InvalidStatus(Response(404, 'Not Found', Headers(), body=b'unknown call'))
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
+            return False
+
+    monkeypatch.setattr(rt_openai.websockets, 'connect', _RejectingConnect())
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
+    call = WebRTCSession(provider_name='openai', session_id='rtc_expired')
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with model.connect_webrtc(
+            call, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+        ):
+            pass  # pragma: no cover
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.model_name == 'gpt-realtime'
+    assert exc_info.value.body == 'unknown call'
+
+
+@pytest.mark.anyio
 async def test_connect_surfaces_handshake_connection_close(monkeypatch: pytest.MonkeyPatch) -> None:
     # The server accepts the upgrade but then closes the socket during the handshake (e.g. a gateway
     # rejecting an unknown model) instead of sending an `error` event. Without mapping, the session would
@@ -2641,6 +2676,30 @@ async def test_connect_webrtc_sideband_reconnect_closes_previous_connection(monk
 
     assert events == [RealtimeSessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
+
+
+async def test_connect_webrtc_reconnect_updates_server_reported_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sideband re-dial's `session.updated` refreshes the served model, like the WebSocket path.
+
+    Regression: `connect_webrtc` passed only the `model_name` snapshot taken at construction, so after a
+    reconnect the connection kept reporting the model the *first* socket served.
+    """
+    dropped = _DropAfterHandshake([json.dumps({'type': 'session.updated', 'session': {'model': 'initial-model'}})])
+    good = FakeWebSocket(
+        [
+            json.dumps({'type': 'session.updated', 'session': {'model': 'replacement-model'}}),
+            json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'}),
+        ]
+    )
+    monkeypatch.setattr(rt_openai.websockets, 'connect', _RecordingConnect([dropped, good]))
+    model = OpenAIRealtimeModel('requested-model', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1))
+    call = WebRTCSession(provider_name='openai', session_id='rtc_remodel')
+
+    async with model.connect_webrtc(
+        call, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    ) as conn:
+        await collect_codec_events(conn, sideband=True)
+        assert conn.model_name == 'replacement-model'
 
 
 async def test_reconnect_updates_server_reported_model(monkeypatch: pytest.MonkeyPatch) -> None:

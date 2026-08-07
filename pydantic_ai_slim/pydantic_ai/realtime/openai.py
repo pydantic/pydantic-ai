@@ -1063,6 +1063,9 @@ class OpenAIRealtimeModel(RealtimeModel):
         instructions = get_instructions(messages, model_request_parameters) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
+        # Converted before dialing, like `connect`: content this provider can't replay is the caller's
+        # mistake, not the API's, so it stays outside `map_connect_errors`.
+        seed = await seed_items(messages, profile=self.profile, provider_name=self.system)
 
         cm: AbstractAsyncContextManager[ClientConnection] | None = None
         server_model: str | None = None
@@ -1087,16 +1090,23 @@ class OpenAIRealtimeModel(RealtimeModel):
             return ws
 
         try:
-            ws = await dial()
-            # Seed prior conversation once, after the handshake (as the WebSocket path does).
-            for item in await seed_items(messages, profile=self.profile, provider_name=self.system):
-                await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
+            # Map a rejected sideband upgrade (expired/unknown `call_id`, bad auth, rate limit) to the
+            # same typed exceptions `connect` raises, so attaching to a call fails like dialing a
+            # session does. The reconnect loop dials outside this manager, as there.
+            with map_connect_errors(self.model):
+                ws = await dial()
+                # Seed prior conversation once, after the handshake (as the WebSocket path does).
+                for item in seed:
+                    await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
             yield OpenAIRealtimeConnection(
                 ws,
                 dial=dial,
                 reconnect=self.reconnect,
                 input_transcription_enabled=transcription_enabled,
                 model_name=server_model,
+                # Read live rather than snapshotted: a re-dial's `session.updated` refreshes
+                # `server_model`, and the connection must report what the server serves now.
+                model_name_getter=lambda: server_model,
                 # The media flows browser <-> provider, so this connection never sees output-audio
                 # deltas: it must not clamp a truncation against a byte counter that stays zero, and a
                 # barge-in has to drop the provider's outbound buffer the browser is still playing.
