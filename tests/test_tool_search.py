@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
@@ -26,6 +26,7 @@ from typing_extensions import TypedDict
 import pydantic_ai.agent as agent_module
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
     synthesize_local_from_native_call,
@@ -39,6 +40,7 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    CompactionPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -882,6 +884,103 @@ async def test_tool_search_toolset_max_results():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['tool']}, ctx, search_tool)
     rv = cast(ToolSearchReturnContent, result)
     assert len(rv['discovered_tools']) == 10
+
+
+async def test_tool_search_toolset_ranks_undiscovered_matches_first_when_trimmed() -> None:
+    """An already-available match can never displace an undiscovered one when `max_results`
+    trims: undiscovered-first is the primary sort key, relevance the tiebreak, so discovered
+    tools only fill leftover slots."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def first_tool() -> str:  # pragma: no cover
+        return 'first'
+
+    @toolset.tool_plain(defer_loading=True)
+    def second_tool() -> str:  # pragma: no cover
+        return 'second'
+
+    searchable = ToolSearchToolset(wrapped=toolset, max_results=1)
+    ctx = _build_run_context(None, discovered_tool_names={'first_tool'})
+    search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
+
+    # `first_tool` scores higher (matches both terms) but is already discovered — the
+    # lower-scoring undiscovered `second_tool` still takes the single slot.
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['first', 'tool']}, ctx, search_tool)
+
+    assert result == {'discovered_tools': [{'name': 'second_tool'}]}
+
+    # With room for both, the discovered tool is appended after the undiscovered one rather
+    # than excluded — the corpus never shrinks with discovery.
+    searchable = ToolSearchToolset(wrapped=toolset, max_results=2)
+    search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['first', 'tool']}, ctx, search_tool)
+
+    assert result == {'discovered_tools': [{'name': 'second_tool'}, {'name': 'first_tool'}]}
+
+
+async def test_repeated_searches_paginate_through_a_large_corpus() -> None:
+    """Repeating the same query enumerates a corpus larger than `max_results`.
+
+    Each page's results become discovered and sink below undiscovered matches, so the next
+    identical search surfaces the next tranche — preserving the scan-by-repetition idiom the
+    old corpus subtraction enabled. A page that includes already-available tools is the
+    signal that enumeration is complete."""
+    toolset = FunctionToolset()
+    all_names = [f'mcp_tool_{i:02d}' for i in range(25)]
+    for tool_name in all_names:
+
+        def tool(name: str = tool_name) -> str:  # pragma: no cover
+            return name
+
+        toolset.add_function(tool, name=tool_name, defer_loading=True)
+
+    searchable = ToolSearchToolset(wrapped=toolset)
+    discovered: set[str] = set()
+    pages: list[list[str]] = []
+    for _ in range(3):
+        ctx = _build_run_context(None, discovered_tool_names=set(discovered))
+        search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
+        result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['mcp']}, ctx, search_tool)
+        page = [match['name'] for match in result['discovered_tools']]
+        pages.append(page)
+        discovered.update(page)
+
+    assert len(pages[0]) == len(pages[1]) == 10
+    assert not set(pages[0]) & set(pages[1])
+    # The final page leads with the 5 still-undiscovered tools; already-available ones
+    # fill the leftover slots — the model's signal that it has seen the whole corpus.
+    assert set(pages[0]) | set(pages[1]) | set(pages[2][:5]) == set(all_names)
+    assert set(pages[2][5:]) <= set(pages[0]) | set(pages[1])
+
+
+async def test_search_corpus_includes_already_discovered_tools() -> None:
+    """The corpus a custom `search_fn` receives never shrinks with discovery: an
+    already-discovered tool stays searchable with no compaction boundary in sight."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def first_tool() -> str:  # pragma: no cover
+        return 'first'
+
+    @toolset.tool_plain(defer_loading=True)
+    def second_tool() -> str:  # pragma: no cover
+        return 'second'
+
+    corpora: list[list[str]] = []
+
+    def search(_ctx: RunContext[None], _queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+        corpora.append(sorted(tool.name for tool in tools))
+        return ['first_tool']
+
+    searchable = ToolSearchToolset(wrapped=toolset, search_fn=search)
+    ctx = _build_run_context(None, discovered_tool_names={'first_tool'})
+    search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
+
+    await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['first']}, ctx, search_tool)
+
+    assert corpora == [['first_tool', 'second_tool']]
 
 
 async def test_tool_search_toolset_discovered_tools_keep_defer_loading():
@@ -7400,6 +7499,256 @@ def test_tool_availability_delta_accumulates_onto_earlier_search_returns():
     ]
 
     assert parse_discovered_tools(messages) == {'old_tool', 'kept_tool', 'new_tool'}
+
+
+def test_compaction_resets_discovered_tools_at_part_boundary() -> None:
+    """Compaction hides every discovery representation before the boundary, including
+    earlier parts in the same response, while later visible discoveries still count."""
+    before_compaction = ModelRequest(
+        parts=[
+            ToolSearchReturnPart(
+                content={'discovered_tools': [{'name': 'typed_before'}]}, tool_call_id='search-before'
+            ),
+            ToolAvailabilityDeltaPart(tools_added=['delta_before']),
+            ToolReturnPart(
+                tool_name='search_tools',
+                content='Found legacy_before',
+                tool_call_id='legacy-before',
+                metadata={'discovered_tools': ['legacy_before']},
+            ),
+        ]
+    )
+    compaction = CompactionPart(content='Summary.', provider_name='anthropic')
+    assert parse_discovered_tools([before_compaction, ModelResponse(parts=[compaction])]) == set()
+
+    messages = [
+        before_compaction,
+        ModelResponse(
+            parts=[
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'native_before'}]}, tool_call_id='native-before'
+                ),
+                compaction,
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'native_after'}]}, tool_call_id='native-after'
+                ),
+            ]
+        ),
+    ]
+
+    assert parse_discovered_tools(messages) == {'native_after'}
+
+
+def test_compaction_resets_loaded_capabilities_at_part_boundary() -> None:
+    """A capability load is visible only when its complete call/return pair follows the
+    latest compaction boundary; an unmatched pre-boundary call cannot complete later."""
+    messages = [
+        ModelResponse(
+            parts=[
+                LoadCapabilityCallPart(args={'id': 'before'}, tool_call_id='before'),
+                LoadCapabilityCallPart(args={'id': 'split'}, tool_call_id='split'),
+            ]
+        ),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='before')]),
+        ModelResponse(parts=[CompactionPart(content='Summary.', provider_name='anthropic')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='split')]),
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'after'}, tool_call_id='after')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='after')]),
+    ]
+
+    assert parse_loaded_capabilities(messages) == {'after'}
+
+
+async def test_compaction_rehides_capability_tools_until_reloaded() -> None:
+    """A capability whose load pair is before compaction starts hidden again, then its
+    tool is re-revealed after the model loads the capability in visible history."""
+    capability = Capability[None](id='refunds', description='Refund tools.', defer_loading=True)
+
+    @capability.tool_plain
+    def issue_refund() -> str:  # pragma: no cover
+        return 'refunded'
+
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='old-load')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='old-load')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['issue_refund'], tool_call_id='old-load')]),
+        ModelResponse(parts=[CompactionPart(content='Summary.', provider_name='anthropic')]),
+    ]
+    visible_tools: list[list[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        visible_tools.append([tool.name for tool in info.function_tools])
+        if len(visible_tools) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='load_capability', args={'id': 'refunds'}, tool_call_id='new-load')]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[None, str] = Agent(FunctionModel(model_fn), capabilities=[capability], deps_type=type(None))
+    await agent.run('refund', message_history=history)
+
+    assert visible_tools == [['load_capability'], ['load_capability', 'issue_refund']]
+
+
+class _HookObservingCapability(Capability[None]):
+    """A deferred capability that records its own tool-execute hook activity."""
+
+    def __init__(self) -> None:
+        super().__init__(id='refunds', description='Refund tools.', defer_loading=True)
+        self.hook_log: list[str] = []
+
+    async def before_tool_execute(
+        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.hook_log.append(f'before:{call.tool_name}:loaded={ctx.capability_loaded}')
+        return args
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[None],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: Callable[[dict[str, Any]], Awaitable[Any]],
+    ) -> Any:
+        self.hook_log.append(f'wrap:{call.tool_name}')
+        return await handler(args)
+
+
+async def _call_capability_tool_directly(history: list[ModelMessage]) -> tuple[_HookObservingCapability, list[str]]:
+    """Run an agent whose model calls the capability-owned tool directly, with no (re)load."""
+    capability = _HookObservingCapability()
+    executed: list[str] = []
+
+    @capability.tool_plain
+    def issue_refund() -> str:
+        executed.append('issue_refund')
+        return 'refunded'
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if not executed:
+            return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[None, str] = Agent(FunctionModel(model_fn), capabilities=[capability], deps_type=type(None))
+    await agent.run('refund now', message_history=history)
+    return capability, executed
+
+
+async def test_capability_tool_called_after_compaction_still_runs_owner_hooks() -> None:
+    """The boundary reset must not double as a hook bypass: a capability-owned tool called
+    post-compaction (its load pair is pre-boundary) still runs its owner's execute hooks,
+    with `capability_loaded` truthfully `False`."""
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='old-load')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='old-load')]),
+        ModelResponse(parts=[CompactionPart(content='Summary: refund tooling exists.', provider_name='anthropic')]),
+    ]
+    capability, executed = await _call_capability_tool_directly(history)
+
+    assert executed == ['issue_refund']
+    assert capability.hook_log == ['before:issue_refund:loaded=False', 'wrap:issue_refund']
+
+
+async def test_capability_tool_called_without_any_load_still_runs_owner_hooks() -> None:
+    """The same guarantee for the fabricated-history residual: reveal evidence with no
+    load pair at all keeps the tool callable, so its owner's hooks must run there too."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['issue_refund'])]),
+        ModelResponse(parts=[TextPart('ok')]),
+    ]
+    capability, executed = await _call_capability_tool_directly(history)
+
+    assert executed == ['issue_refund']
+    assert capability.hook_log == ['before:issue_refund:loaded=False', 'wrap:issue_refund']
+
+
+async def test_searchable_corpus_survives_discovery_and_compaction() -> None:
+    """A custom search sees the complete A–E corpus after A–C were discovered, and A can
+    be rediscovered after compaction and called without a runtime availability failure."""
+    toolset = FunctionToolset()
+    executed: list[str] = []
+    for tool_name in ['a', 'b', 'c', 'd', 'e']:
+
+        def tool(name: str = tool_name) -> str:
+            executed.append(name)
+            return name
+
+        toolset.add_function(tool, name=tool_name, defer_loading=True)
+
+    corpora: list[list[str]] = []
+
+    def search(_ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+        corpora.append([tool.name for tool in tools])
+        return ['a', 'b', 'c'] if queries == ['first'] else ['a']
+
+    call = 0
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call
+        call += 1
+        if call == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['first']})])
+        if call == 2:
+            return ModelResponse(
+                parts=[CompactionPart(content='Summary.', provider_name='anthropic'), TextPart('compacted')]
+            )
+        if call == 3:
+            return ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['again']})])
+        if call == 4:
+            return ModelResponse(parts=[ToolCallPart(tool_name='a', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[None, str] = Agent(
+        NoNativeToolSearchModel(model_fn),
+        toolsets=[toolset],
+        capabilities=[ToolSearch(strategy=search)],
+        deps_type=type(None),
+    )
+    first = await agent.run('discover tools')
+    await agent.run('find A again', message_history=first.all_messages())
+
+    assert corpora == [['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c', 'd', 'e']]
+    assert executed == ['a']
+
+
+async def test_pre_compaction_tool_stays_callable_without_rediscovery() -> None:
+    """A model that still remembers a pre-compaction tool (e.g. from the summary) can call
+    it directly: the boundary reset hides the schema again but never revokes execution."""
+    toolset = FunctionToolset()
+    executed: list[str] = []
+
+    @toolset.tool_plain(defer_loading=True)
+    def issue_refund() -> str:
+        executed.append('issue_refund')
+        return 'refunded'
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='discover tools')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['refund']}, tool_call_id='s1')]),
+        ModelRequest(
+            parts=[ToolSearchReturnPart(content={'discovered_tools': [{'name': 'issue_refund'}]}, tool_call_id='s1')]
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(content='Summary: refund tooling exists.', provider_name='anthropic'),
+                TextPart('compacted'),
+            ]
+        ),
+    ]
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if not executed:
+            return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[None, str] = Agent(
+        NoNativeToolSearchModel(model_fn), toolsets=[toolset], capabilities=[ToolSearch()], deps_type=type(None)
+    )
+    await agent.run('refund now', message_history=history)
+
+    assert executed == ['issue_refund']
 
 
 async def test_delta_in_history_reveals_a_capability_tool_without_a_load(allow_model_requests: None):

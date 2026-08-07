@@ -7,6 +7,7 @@ from inline_snapshot import snapshot
 from vcr.cassette import Cassette
 
 from pydantic_ai import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -24,6 +25,7 @@ from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 
 from ..cassette_utils import single_request_body
 
@@ -148,6 +150,28 @@ async def test_delta_naming_a_withheld_tool_does_not_smuggle_its_schema() -> Non
         parameters,
     )
 
+    assert all(item.get('type') != 'additional_tools' for item in items)
+
+
+async def test_pre_compaction_reveal_is_withheld_without_additional_tools() -> None:
+    """A pre-compaction reveal no longer resolves a deferred tool as visible, and its
+    now-invisible delta cannot emit an `additional_tools` schema carrier."""
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
+    tool = ToolDefinition(name='foo', parameters_json_schema={'type': 'object', 'properties': {}}, defer_loading=True)
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
+        ModelResponse(parts=[CompactionPart(content=None, id='cmp_1', provider_name='openai')]),
+    ]
+    _, parameters = model.prepare_request(
+        None,
+        ModelRequestParameters(function_tools=[tool], revealed_tool_names=parse_discovered_tools(messages)),
+    )
+
+    _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, OpenAIResponsesModelSettings(), parameters
+    )
+
+    assert parameters.visibility_of(tool.name) == 'withheld'
     assert all(item.get('type') != 'additional_tools' for item in items)
 
 
