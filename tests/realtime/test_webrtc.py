@@ -446,6 +446,35 @@ async def test_azure_entra_credential_mints_client_secret_with_bearer() -> None:
     assert secret.value == 'ek_az'
 
 
+def test_azure_entra_credential_needs_no_resource_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An Entra-authenticated model constructs without `AZURE_OPENAI_API_KEY`.
+
+    Regression: resolving the default `provider='azure'` went through `AzureProvider.for_realtime()`,
+    which demanded a resource key unconditionally — so the one configuration the credential exists for,
+    a resource locked to managed identity with no key at all, could not be constructed.
+    """
+    monkeypatch.delenv('AZURE_OPENAI_API_KEY', raising=False)
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://my-resource.openai.azure.com')
+    monkeypatch.delenv('OPENAI_API_VERSION', raising=False)
+
+    model = AzureRealtimeModel('gpt-realtime', credential=_FakeCredential())
+    assert model._realtime_url() == (  # pyright: ignore[reportPrivateUsage]
+        'wss://my-resource.openai.azure.com/openai/v1/realtime?model=gpt-realtime'
+    )
+
+    # The explicit form the docs show works the same way.
+    explicit = AzureRealtimeModel(
+        'gpt-realtime',
+        provider=AzureProvider.for_realtime(
+            azure_endpoint='https://my-resource.openai.azure.com', entra_authenticated=True
+        ),
+        credential=_FakeCredential(),
+    )
+    # The SDK's Entra placeholder is never handed out as a credential: asking still reports its absence.
+    with pytest.raises(UserError, match='has no API key'):
+        _ = explicit._azure_provider.api_key  # pyright: ignore[reportPrivateUsage]
+
+
 def test_azure_entra_credential_survives_alongside_a_user_profile() -> None:
     """The Entra credential and the user `profile=` layer coexist on the hand-written `__init__`.
 

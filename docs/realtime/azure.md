@@ -110,7 +110,11 @@ from pydantic_ai.realtime.azure import AzureRealtimeModel
 
 model = AzureRealtimeModel(
     'gpt-realtime',
-    provider=AzureProvider(azure_endpoint='https://my-resource.openai.azure.com'),
+    # `entra_authenticated=True` so no resource key is required — a resource locked to managed
+    # identity has none. Omit `provider=` entirely to take the endpoint from `AZURE_OPENAI_ENDPOINT`.
+    provider=AzureProvider.for_realtime(
+        azure_endpoint='https://my-resource.openai.azure.com', entra_authenticated=True
+    ),
     credential=DefaultAzureCredential(),
 )
 # The realtime session, `answer_webrtc_offer`, and `create_client_secret` now authenticate with an Entra
