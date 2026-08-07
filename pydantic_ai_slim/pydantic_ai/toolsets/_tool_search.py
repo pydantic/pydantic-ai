@@ -57,6 +57,7 @@ from ..messages import (
     ToolAvailabilityDeltaPart,
     ToolReturnPart,
     ToolSearchReturnPart,
+    post_compaction_window,
 )
 from ..native_tools._tool_search import (
     TOOL_SEARCH_FUNCTION_TOOL_NAME,
@@ -193,7 +194,12 @@ def _build_search_args_schema(parameter_description: str) -> tuple[dict[str, Any
 
 
 def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
-    """Scan message history for previously-discovered tool names.
+    """Scan visible message history for previously-discovered tool names.
+
+    Every [`CompactionPart`][pydantic_ai.messages.CompactionPart] resets the derived
+    state at its exact position in a response. This is deliberately provider-agnostic:
+    over-counting can prevent rediscovery or claim a schema is visible when it is not,
+    while under-counting only permits a redundant, idempotent search.
 
     Trusts that any `ToolSearchReturnPart` / `NativeToolSearchReturnPart` in the
     history has a validated `ToolSearchReturnContent`:
@@ -204,14 +210,22 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     Also reads the legacy `metadata['discovered_tools']` sideband (validated against
     a TypedDict) so histories serialized before the typed-content migration continue
     to surface previously-discovered tools.
+
+    Only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] is scanned —
+    the one definition of the boundary — so locating it costs a cheap reverse
+    `isinstance` pass rather than parsing history the boundary would reset anyway.
     """
     return set(discovered_tool_names_in_order(messages))
 
 
 def discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[str, ...]:
-    """Return discovered names in first-appearance order for byte-stable provider tool segments."""
+    """Return discovered names in first-appearance order for byte-stable provider tool segments.
+
+    Scans only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window], so both the
+    reveal set and the wire ordering derive from what the model can actually see.
+    """
     discovered: dict[str, None] = {}
-    for msg in messages:
+    for msg in post_compaction_window(messages):
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if isinstance(part, ToolAvailabilityDeltaPart):
@@ -247,6 +261,7 @@ class _SearchTool(ToolsetTool[AgentDepsT]):
     """
 
     corpus: list[ToolDefinition]
+    revealed_tool_names: set[str]
 
 
 @dataclass
@@ -266,9 +281,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     search_fn: ToolSearchFunc[AgentDepsT] | None = None
     """Optional custom search function. If `None`, the default keyword-overlap algorithm is used.
 
-    Receives the run context, the list of search queries, and the deferred tool definitions, and
-    returns the matching tool names ordered by relevance. Both sync and async implementations
-    are accepted.
+    Receives the run context, the list of search queries, and the full searchable deferred-tool
+    corpus, including tools already discovered during this run, and returns the matching tool names
+    ordered by relevance. Both sync and async implementations are accepted.
     """
 
     max_results: int = _MAX_SEARCH_RESULTS
@@ -319,8 +334,6 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_SEARCH_TOOLS_NAME}' is reserved for tool search. Rename your tool to avoid conflicts."
             )
 
-        discovered_tool_names = ctx.discovered_tool_names
-
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(visible)
 
         # Every deferred tool is hidden until something reveals it — that's `defer_loading`, which
@@ -355,7 +368,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # "unsupported builtin" raise AND leave a redundant function tool on the wire
         # alongside the native builtin on providers that DO support it.
         if self.enable_fallback and searchable:
-            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(ctx, searchable, discovered_tool_names)
+            result[_SEARCH_TOOLS_NAME] = self._build_search_tool(ctx, searchable)
 
         return result
 
@@ -363,15 +376,14 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         searchable: dict[str, ToolsetTool[AgentDepsT]],
-        discovered_tool_names: set[str],
     ) -> _SearchTool[AgentDepsT]:
         parameter_description = self.parameter_description or _DEFAULT_PARAMETER_DESCRIPTION
         schema, args_validator = _build_search_args_schema(parameter_description)
 
-        # Real `ToolDefinition`s for tools still pending discovery — what the user's
+        # Real `ToolDefinition`s for every searchable tool — what the user's
         # search function sees, and what the local keywords search indexes. Capability-gated
         # tools never get here: they aren't searchable, so they aren't in `searchable`.
-        corpus = [tool.tool_def for name, tool in searchable.items() if name not in discovered_tool_names]
+        corpus = [tool.tool_def for tool in searchable.values()]
 
         # `unless_native` tells the adapter to drop this function tool when the native
         # builtin is supported. That's what we want for server-side strategies (the
@@ -398,6 +410,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             max_retries=self.max_retries if self.max_retries is not None else ctx.max_retries,
             args_validator=args_validator,
             corpus=corpus,
+            revealed_tool_names=set(ctx.discovered_tool_names),
         )
 
     async def call_tool(
@@ -417,7 +430,7 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     async def _search_tools(
         self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], search_tool: _SearchTool[AgentDepsT]
     ) -> ToolSearchReturnContent:
-        """Run the configured search strategy over the deferred-but-not-yet-discovered tools."""
+        """Run the configured search strategy over all searchable deferred tools."""
         queries: list[str] = tool_args['queries']
         if not any(q.strip() for q in queries):
             raise ModelRetry('Please provide at least one non-empty search query.')
@@ -441,19 +454,24 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if not terms:
             raise ModelRetry('Please provide at least one non-empty search query.')
 
-        scored_matches: list[tuple[int, ToolSearchMatch]] = []
+        scored_matches: list[tuple[bool, int, ToolSearchMatch]] = []
         for tool_def in search_tool.corpus:
             tool_terms = self._search_terms(tool_def.name, tool_def.description)
             score = len(terms & tool_terms)
             if score == 0:
                 continue
-            scored_matches.append((score, {'name': tool_def.name}))
+            scored_matches.append(
+                (tool_def.name not in search_tool.revealed_tool_names, score, {'name': tool_def.name})
+            )
 
         if not scored_matches:
             return self._empty_return()
 
-        scored_matches.sort(key=lambda item: item[0], reverse=True)
-        matches = [match for _, match in scored_matches[: self.max_results]]
+        # Undiscovered-first is the PRIMARY key, relevance the tiebreak: an already-available
+        # tool must never displace an undiscovered match when `max_results` trims — it only
+        # fills whatever slots are left over.
+        scored_matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        matches = [match for _, _, match in scored_matches[: self.max_results]]
         return self._build_return(matches)
 
     async def _run_search_fn(
