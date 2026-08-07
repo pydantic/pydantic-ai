@@ -1007,6 +1007,24 @@ async def test_run_stream_surfaces_deferred_tool_results_error_on_the_stream():
     )
 
 
+async def test_run_stream_rejecting_the_request_leaves_deps_untouched():
+    """Rejecting the request stops before the run setup, so `deps.state` is not written.
+
+    `deps` belongs to the caller and outlives the request, so a run that can never start must not
+    leave its state behind. The state block also validates the client's state, which would raise at
+    the call site and mask the rejection this is meant to report.
+    """
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')], state={'country': 'Mexico'})
+    adapter = RaisingDeferredResultsAdapter(agent, request)
+    deps = DummyUIDeps(state=DummyUIState())
+
+    events = [event async for event in adapter.run_stream(deps=deps)]
+
+    assert deps.state == snapshot(DummyUIState(country=None))
+    assert "<error type='UserError'>malformed resume payload</error>" in events
+
+
 class BuggyDeferredResultsAdapter(DummyUIAdapter[AgentDepsT, OutputDataT]):
     """Adapter whose `deferred_tool_results` fails on its own bug rather than rejecting the request."""
 
