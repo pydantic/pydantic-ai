@@ -1959,6 +1959,7 @@ class RealtimeSession:
             active = self._active_user
             start_emitted = active is not None
             part = replace(active, transcript=None) if active is not None else SpeechPart(speaker='user')
+            index = self._active_user_index if start_emitted else self._take_part_index()
             self._active_user = None
             self._user_transcript = ''
         else:
@@ -1969,6 +1970,9 @@ class RealtimeSession:
                 if active is not None
                 else SpeechPart(speaker='user', id=item_id, provider_name=self._provider_name)
             )
+            index = self._user_indexes_by_id.pop(item_id, None)
+            if index is None:
+                index = self._take_part_index()
             self._user_transcripts_by_id.pop(item_id, None)
             self._finalized_users_by_id.pop(item_id, None)
             if item_id not in self._user_item_order:
@@ -1992,14 +1996,18 @@ class RealtimeSession:
                     ),
                 )
 
-        self._user_turn_active = False
+        # Recompute like `_finalize_user`: with overlapping user items, one item's failure must not mark
+        # the whole user side idle while another item is still active.
+        self._user_turn_active = bool(
+            self._active_user is not None or self._active_users_by_id or self._pending_user_turn_anchor is not None
+        )
         if item_id is None:
             self._record_user_request(None, self._new_request([part]))
         else:
             self._finalized_users_by_id[item_id] = part
             self._flush_finalized_user_prefix()
-        end = PartEndEvent(index=0, part=part)
-        return [end] if start_emitted else [PartStartEvent(index=0, part=part), end]
+        end = PartEndEvent(index=index, part=part)
+        return [end] if start_emitted else [PartStartEvent(index=index, part=part), end]
 
     def _flush_pending_users(self) -> None:
         """Preserve transcript-bearing user items that never received an explicit final event."""
