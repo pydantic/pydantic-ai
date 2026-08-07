@@ -1804,6 +1804,8 @@ class ModelRequest:
     def __post_init__(self) -> None:
         for part in self.parts:
             if isinstance(part, SpeechPart) and part.speaker != 'user':
+                # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
+                # message history, where a `ValueError` becomes a `ValidationError` with location info.
                 raise ValueError(
                     f"`SpeechPart` in `ModelRequest.parts` must have `speaker='user'`, got {part.speaker!r}"
                 )
@@ -2530,6 +2532,8 @@ class ModelResponse:
     def __post_init__(self) -> None:
         for part in self.parts:
             if isinstance(part, SpeechPart) and part.speaker != 'assistant':
+                # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
+                # message history, where a `ValueError` becomes a `ValidationError` with location info.
                 raise ValueError(
                     f"`SpeechPart` in `ModelResponse.parts` must have `speaker='assistant'`, got {part.speaker!r}"
                 )
