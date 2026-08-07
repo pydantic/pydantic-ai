@@ -36,7 +36,7 @@ def find_skill_examples() -> Iterable[ParameterSet]:
         yield pytest.param(ex, id=f'{path}:{ex.start_line}')
 
 
-@pytest.mark.parametrize('example', find_skill_examples())
+@pytest.mark.parametrize('example', list(find_skill_examples()))
 def test_skill_examples_lint(example: CodeExample, eval_example: EvalExample):
     eval_example.config = ExamplesConfig(
         ruff_ignore=['D', 'Q001'],

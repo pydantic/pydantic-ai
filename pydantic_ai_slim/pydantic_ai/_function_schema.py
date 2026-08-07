@@ -92,8 +92,13 @@ class FunctionSchema:
         ctx: RunContext[Any],
     ) -> tuple[list[Any], dict[str, Any]]:
         args = [ctx] if self.takes_ctx else []
+        if self.positional_fields or self.var_positional_field:
+            # Copy before popping so we never mutate the caller's dict. The same validated-args
+            # dict is later handed to tool-execute hooks (e.g. `after_tool_execute`), which must
+            # still observe the full set of arguments.
+            args_dict = dict(args_dict)
         for positional_field in self.positional_fields:
-            args.append(args_dict.pop(positional_field))  # pragma: no cover
+            args.append(args_dict.pop(positional_field))
         if self.var_positional_field:
             args.extend(args_dict.pop(self.var_positional_field))
 
@@ -145,6 +150,11 @@ def function_schema(  # noqa: C901
 
     description, field_descriptions = doc_descriptions(original_func, sig, docstring_format=docstring_format)
     missing_param_descriptions: set[str] = set()
+
+    # A `POSITIONAL_OR_KEYWORD` parameter that precedes `*args` must be passed positionally at call
+    # time; passing it as a keyword would double-bind with the values unpacked into `*args`. When
+    # there's no `*args`, such parameters keep being passed as keywords (the historical behavior).
+    has_var_positional = any(p.kind is Parameter.VAR_POSITIONAL for p in sig.parameters.values())
 
     for index, (name, p) in enumerate(sig.parameters.items()):
         if index == 0 and takes_ctx is None:
@@ -201,7 +211,9 @@ def function_schema(  # noqa: C901
             metadata = td_schema.setdefault('metadata', {})
             metadata['is_model_like'] = is_model_like(annotation)
 
-            if p.kind == Parameter.POSITIONAL_ONLY:
+            if p.kind == Parameter.POSITIONAL_ONLY or (
+                has_var_positional and p.kind == Parameter.POSITIONAL_OR_KEYWORD
+            ):
                 positional_fields.append(field_name)
             elif p.kind == Parameter.VAR_POSITIONAL:
                 var_positional_field = field_name

@@ -62,13 +62,25 @@ be triggered by code you wrote and observed to fail.
 
 ## Deduplication — mandatory BEFORE filing an issue
 
-Search for existing issues using the MCP
-GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+Open issues were prefetched before the sandbox started. First check this
+sweep's own prior findings with a local label filter:
 
 ```
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[provider-mapping-sweep]" OR "[bug-hunter]"
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open <chosen-provider>
+jq '.[] | select(any(.labels[]; .name == "provider-mapping-sweep")) | {number, title, url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
+
+Only if that is inconclusive, widen to a full open-issue scan and grep locally
+for your chosen provider name (and the `[provider-mapping-sweep]` and
+`[bug-hunter]` prefixes — the latter also files provider bugs):
+
+```
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
+```
+
+Do not enumerate issues with `gh` from inside the sandbox; list requests can
+stall until the workflow times out.
 
 If a matching issue covers the same mapping bug, call `mcp__safeoutputs__noop`.
 
@@ -109,3 +121,10 @@ the impact is cosmetic. One well-evidenced issue beats several weak ones.
 >
 > ## Evidence
 > - [SDK type / docs reference showing the correct shape; `path:line` refs]
+>
+> ## Adversarial review
+> - **Reproduced on `main`:** [exact command + real captured output]
+> - **Existing tests checked:** [tests read; none assert the current behavior, and the fix doesn't break them]
+> - **Ruled out by-design:** [nearby comment / profile / maintainer decision / same in other providers]
+> - **SDK verified for this provider:** [the real type/shape, not inferred by analogy to another provider]
+> - **Not a duplicate:** [label-filtered dedup returned nothing]

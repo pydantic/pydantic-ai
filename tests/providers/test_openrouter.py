@@ -27,7 +27,6 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers.openrouter import (
-        OpenRouterModelProfile,
         OpenRouterProvider,
         _OpenRouterGoogleJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
@@ -56,6 +55,39 @@ def test_openrouter_provider_with_app_attribution():
     assert provider.client.api_key == 'api-key'
     assert provider.client.default_headers['X-Title'] == 'test'
     assert provider.client.default_headers['HTTP-Referer'] == 'test.com'
+
+
+def test_openrouter_provider_app_attribution_from_env(env: TestEnv):
+    """`app_url` and `app_title` fall back to the environment when omitted.
+
+    Asserts the constructed client's `default_headers` rather than a recorded request, since the
+    attribution headers are set once at client construction and a cassette match is not sensitive
+    to them.
+    """
+    env.set('OPENROUTER_APP_URL', 'env.test.com')
+    env.set('OPENROUTER_APP_TITLE', 'env test')
+
+    provider = OpenRouterProvider(api_key='api-key')
+    assert provider.client.default_headers['HTTP-Referer'] == 'env.test.com'
+    assert provider.client.default_headers['X-Title'] == 'env test'
+
+
+def test_openrouter_provider_app_attribution_skipped_for_prebuilt_client(env: TestEnv):
+    """A prebuilt `openai_client` is reused as-is, so the environment fallbacks do not reach it.
+
+    The overloads already stop a caller from passing `app_url`/`app_title` alongside `openai_client`,
+    so the environment variables are the path that can silently go missing: they apply without the
+    caller writing any attribution argument at all.
+    """
+    env.set('OPENROUTER_APP_URL', 'env.test.com')
+    env.set('OPENROUTER_APP_TITLE', 'env test')
+
+    client = openai.AsyncOpenAI(api_key='api-key', base_url='https://openrouter.ai/api/v1')
+    provider = OpenRouterProvider(openai_client=client)
+
+    assert provider.client is client
+    assert 'HTTP-Referer' not in provider.client.default_headers
+    assert 'X-Title' not in provider.client.default_headers
 
 
 def test_openrouter_provider_need_api_key(env: TestEnv) -> None:
@@ -113,77 +145,80 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     google_profile = provider.model_profile('google/gemini-2.5-pro-preview')
     google_model_profile_mock.assert_called_with('gemini-2.5-pro-preview')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == _OpenRouterGoogleJsonSchemaTransformer
+    assert google_profile.get('json_schema_transformer', None) == _OpenRouterGoogleJsonSchemaTransformer
 
     google_profile = provider.model_profile('google/gemma-3n-e4b-it:free')
     google_model_profile_mock.assert_called_with('gemma-3n-e4b-it')
     assert google_profile is not None
-    assert google_profile.json_schema_transformer == _OpenRouterGoogleJsonSchemaTransformer
+    assert google_profile.get('json_schema_transformer', None) == _OpenRouterGoogleJsonSchemaTransformer
 
     openai_profile = provider.model_profile('openai/o1-mini')
     openai_model_profile_mock.assert_called_with('o1-mini')
     assert openai_profile is not None
-    assert openai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert openai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
+    # OpenRouter only accepts the older `max_tokens` field, never `max_completion_tokens` — even for OpenAI
+    # models, whose own profile defaults the flag to `True`; the merge must not clobber OpenRouter's `False`.
+    assert openai_profile.get('openai_chat_supports_max_completion_tokens', True) is False
 
     anthropic_profile = provider.model_profile('anthropic/claude-3.5-sonnet')
     anthropic_model_profile_mock.assert_called_with('claude-3-5-sonnet')
     assert anthropic_profile is not None
-    assert anthropic_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert anthropic_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     anthropic_profile = provider.model_profile('anthropic/claude-sonnet-4.5')
     anthropic_model_profile_mock.assert_called_with('claude-sonnet-4-5')
     assert anthropic_profile is not None
-    assert anthropic_profile.supports_json_schema_output is True
+    assert anthropic_profile.get('supports_json_schema_output', False) is True
 
     anthropic_profile = provider.model_profile('anthropic/claude-haiku-4.5:free')
     anthropic_model_profile_mock.assert_called_with('claude-haiku-4-5')
     assert anthropic_profile is not None
-    assert anthropic_profile.supports_json_schema_output is True
+    assert anthropic_profile.get('supports_json_schema_output', False) is True
 
     mistral_profile = provider.model_profile('mistralai/mistral-large-2407')
     mistral_model_profile_mock.assert_called_with('mistral-large-2407')
     assert mistral_profile is not None
-    assert mistral_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert mistral_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     qwen_profile = provider.model_profile('qwen/qwen-2.5-coder-32b')
     qwen_model_profile_mock.assert_called_with('qwen-2.5-coder-32b')
     assert qwen_profile is not None
-    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     grok_profile = provider.model_profile('x-ai/grok-3')
     grok_model_profile_mock.assert_called_with('grok-3')
     assert grok_profile is not None
-    assert grok_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert grok_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     cohere_profile = provider.model_profile('cohere/command-a')
     cohere_model_profile_mock.assert_called_with('command-a')
     assert cohere_profile is not None
-    assert cohere_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert cohere_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     amazon_profile = provider.model_profile('amazon/titan-text-express-v1')
     amazon_model_profile_mock.assert_called_with('titan-text-express-v1')
     assert amazon_profile is not None
-    assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert amazon_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     deepseek_profile = provider.model_profile('deepseek/deepseek-r1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
     assert deepseek_profile is not None
-    assert deepseek_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert deepseek_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     meta_profile = provider.model_profile('meta-llama/llama-4-maverick')
     meta_model_profile_mock.assert_called_with('llama-4-maverick')
     assert meta_profile is not None
-    assert meta_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
     moonshotai_profile = provider.model_profile('moonshotai/kimi-k2')
     moonshotai_model_profile_mock.assert_called_with('kimi-k2')
     assert moonshotai_profile is not None
-    assert moonshotai_profile.ignore_streamed_leading_whitespace is True
-    assert moonshotai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert moonshotai_profile.get('ignore_streamed_leading_whitespace', False) is True
+    assert moonshotai_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('unknown/model')
     assert unknown_profile is not None
-    assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
+    assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
 @pytest.mark.parametrize(
@@ -248,10 +283,38 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
 def test_openrouter_model_profile_cache_capabilities(model_name: str, expected_flags: dict[str, object]) -> None:
     """Cache capability flags are derived from the downstream provider, not model-name matching."""
     provider = OpenRouterProvider(api_key='api-key')
-    profile = OpenRouterModelProfile.from_profile(provider.model_profile(model_name))
+    profile = provider.model_profile(model_name)
+    assert profile is not None
 
-    actual = {flag: getattr(profile, flag) for flag in expected_flags}
+    actual = {flag: value for flag, value in profile.items() if flag in expected_flags}
     assert actual == expected_flags
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        # Anthropic rejects a forced `tool_choice` while thinking is enabled; OpenRouter swallows that
+        # incompatibility by dropping `reasoning`, so the gateway marks the combination unsupported.
+        ('anthropic/claude-sonnet-4.6', False),
+        ('~anthropic/claude-sonnet-latest', False),
+        # Other downstream providers honor `reasoning` alongside a forced `tool_choice`.
+        ('google/gemini-2.5-flash', True),
+        ('openai/gpt-5-mini', True),
+        ('unknown/model', True),
+    ],
+)
+def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: str, expected: bool) -> None:
+    """Forced-`tool_choice`-with-thinking support is derived from the downstream provider."""
+    provider = OpenRouterProvider(api_key='api-key')
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openrouter_supports_forced_tool_choice_with_thinking') is expected
+
+
+def test_openrouter_model_profile_requires_provider_prefix() -> None:
+    provider = OpenRouterProvider(api_key='api-key')
+    with pytest.raises(UserError, match=re.escape("e.g. 'openai/gpt-4o', not 'gpt-4o'")):
+        provider.model_profile('gpt-4o')
 
 
 def test_openrouter_google_json_schema_transformer():

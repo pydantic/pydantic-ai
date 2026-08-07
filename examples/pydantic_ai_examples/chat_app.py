@@ -161,7 +161,7 @@ class Database:
         cls, file: Path = THIS_DIR / '.chat_app_messages.sqlite'
     ) -> AsyncGenerator[Database]:
         with logfire.span('connect to DB'):
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             executor = ThreadPoolExecutor(max_workers=1)
             con = await loop.run_in_executor(executor, cls._connect, file)
             slf = cls(con, loop, executor)
@@ -212,10 +212,10 @@ class Database:
     async def _asyncify(
         self, func: Callable[P, R], *args: P.args, **kwargs: P.kwargs
     ) -> R:
-        return await self._loop.run_in_executor(  # type: ignore
+        return await self._loop.run_in_executor(  # pyright: ignore[reportUnknownVariableType]
             self._executor,
             partial(func, **kwargs),
-            *args,  # type: ignore
+            *args,  # pyright: ignore[reportCallIssue]
         )
 
 

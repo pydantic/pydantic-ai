@@ -53,13 +53,24 @@ Distinguish **silent drops** (input accepted, quietly ignored — a bug) from
 
 ## Deduplication — mandatory BEFORE filing an issue
 
-Search for existing issues using the MCP
-GitHub tools (not `gh` CLI — it's blocked by the firewall proxy):
+Open issues were prefetched before the sandbox started. First check this
+sweep's own prior findings with a local label filter:
 
 ```
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open "[provider-parity-explore]" OR "parity"
-mcp__github__search_issues repo:pydantic/pydantic-ai is:issue is:open <capability you're auditing>
+jq '.[] | select(any(.labels[]; .name == "provider-parity-explore")) | {number, title, url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
 ```
+
+Only if that is inconclusive, widen to a full open-issue scan and grep locally
+for "parity" and the capability you're auditing:
+
+```
+jq '.[] | {number, title, labels: [.labels[].name], url}' \
+  /tmp/gh-aw/agent/github-context/open-issues.json
+```
+
+Do not enumerate issues with `gh` from inside the sandbox; list requests can
+stall until the workflow times out.
 
 If a matching issue exists, call `mcp__safeoutputs__noop` immediately.
 
@@ -91,3 +102,10 @@ run.
 >
 > ## Evidence
 > - [SDK/docs references; `path:line`; a short snippet showing the silent drop]
+>
+> ## Adversarial review
+> - **Reproduced on `main`:** [exact command + real output demonstrating the gap]
+> - **Existing tests checked:** [tests read; none assert this behavior is intentional]
+> - **Ruled out by-design:** [nearby comment / profile / maintainer decision checked]
+> - **SDK verified for this provider:** [the real type/shape, not inferred by analogy to another provider]
+> - **Not a duplicate:** [label-filtered dedup returned nothing]

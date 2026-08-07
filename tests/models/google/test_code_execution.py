@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 from datetime import timezone
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pytest
@@ -24,10 +25,6 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
-)
 from pydantic_ai.native_tools import CodeExecutionTool
 from pydantic_ai.usage import RequestUsage
 
@@ -51,12 +48,6 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
     pytest.mark.filterwarnings('ignore:.*is deprecated and will reach end-of-life.*:DeprecationWarning'),
 ]
 
@@ -128,12 +119,17 @@ print(result)\
                 usage=RequestUsage(
                     input_tokens=507,
                     output_tokens=276,
+                    input_text_tokens=507,
                     details={
                         'thoughts_tokens': 168,
                         'tool_use_prompt_tokens': 360,
                         'text_prompt_tokens': 147,
                         'text_tool_use_prompt_tokens': 360,
                     },
+                    output_reasoning_tokens=168,
+                    input_tool_tokens=360,
+                    input_text_tool_tokens=360,
+                    cost=Decimal('0.0010815'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -219,31 +215,6 @@ print(result)\
                     provider_details={'thought_signature': IsStr()},
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args={
-                        'code': """\
-result = 65465 - 6544 * 65464 - 6 + 1.02255
-print(result)\
-""",
-                        'language': 'PYTHON',
-                        'id': '8xju7mua',
-                    },
-                    tool_call_id=IsStr(),
-                    provider_name='google',
-                    provider_details={'thought_signature': IsStr()},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n', 'id': '8xju7mua'},
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='google',
-                )
-            ),
         ]
     )
 
@@ -327,12 +298,17 @@ print(datetime.datetime.now())
                 usage=RequestUsage(
                     input_tokens=1989,
                     output_tokens=943,
+                    input_text_tokens=1928,
                     details={
                         'thoughts_tokens': 773,
                         'tool_use_prompt_tokens': 1732,
                         'text_prompt_tokens': 196,
                         'text_tool_use_prompt_tokens': 1732,
                     },
+                    output_reasoning_tokens=773,
+                    input_tool_tokens=1732,
+                    input_text_tool_tokens=1732,
+                    cost=Decimal('0.0038235'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -422,12 +398,17 @@ print(f"Time in Utrecht: {now}")
                 usage=RequestUsage(
                     input_tokens=3949,
                     output_tokens=1418,
+                    input_text_tokens=3842,
                     details={
                         'thoughts_tokens': 1312,
                         'tool_use_prompt_tokens': 3056,
                         'text_prompt_tokens': 786,
                         'text_tool_use_prompt_tokens': 3056,
                     },
+                    output_reasoning_tokens=1312,
+                    input_tool_tokens=3056,
+                    input_text_tool_tokens=3056,
+                    cost=Decimal('0.0062285'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),

@@ -7,9 +7,6 @@ team that standardises how frontend applications communicate with AI agents, wit
 !!! note
     The AG-UI integration was originally built by the team at [Rocket Science](https://www.rocketscience.gg/) and contributed in collaboration with the Pydantic AI and CopilotKit teams. Thanks Rocket Science!
 
-!!! warning "On 1.x and migrating to 2.0?"
-    [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui], [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp], and the `pydantic_ai.ag_ui` shim module are deprecated in 1.x and will be removed in 2.0. Skip to [Migrating from deprecated APIs](#migrating-from-deprecated-apis) at the bottom for before/after examples.
-
 ## Installation
 
 The only dependencies are:
@@ -26,7 +23,7 @@ pip/uv-add 'pydantic-ai-slim[ag-ui]'
 
 To run the examples you'll also need:
 
-- [uvicorn](https://www.uvicorn.org/) or another ASGI compatible server
+- [uvicorn](https://uvicorn.dev) or another ASGI compatible server
 
 ```bash
 pip/uv-add uvicorn
@@ -39,6 +36,11 @@ There are three ways to run a Pydantic AI agent based on AG-UI run input with st
 1. The [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream] method, when called on an [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] instantiated with an agent and an AG-UI [`RunAgentInput`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput) object, will run the agent and return a stream of AG-UI events. It also takes optional [`Agent.iter()`][pydantic_ai.agent.Agent.iter] arguments including `deps`. Use this if you're using a web framework not based on Starlette (e.g. Django or Flask) or want to modify the input or output some way.
 2. The [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] class method takes an agent and a Starlette request (e.g. from FastAPI) coming from an AG-UI frontend, and returns a streaming Starlette response of AG-UI events that you can return directly from your endpoint. It also takes optional [`Agent.iter()`][pydantic_ai.agent.Agent.iter] arguments including `deps`, that you can vary for each request (e.g. based on the authenticated user). This is a convenience method that combines [`AGUIAdapter.from_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.from_request], [`AGUIAdapter.run_stream()`][pydantic_ai.ui.ag_ui.AGUIAdapter.run_stream], and [`AGUIAdapter.streaming_response()`][pydantic_ai.ui.ag_ui.AGUIAdapter.streaming_response].
 3. Build a stand-alone [`Starlette`](https://www.starlette.io/applications/) app with a single `/` route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]. The same Starlette app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a path in an existing FastAPI app.
+
+When a run ends in [first-party cancellation](../agent.md#cancelling-a-run) — `ctx.cancel()`, `AgentRun.cancel()`, or a [`CancellationToken`][pydantic_ai.CancellationToken] your server wires to a cancel endpoint — the adapter closes any open text or tool events and emits a bare `RUN_FINISHED`. AG-UI currently has no cancelled outcome, so cancellation is not reported as `RUN_ERROR`. Pass an `on_cancel` callback (see the `run_stream()` example below) to persist the resumable message history from [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages].
+
+!!! note "Client disconnects are external cancellation"
+    A client that disconnects (or aborts its request) is seen by the server as an external `asyncio.CancelledError` rather than a first-party cancellation (see [why cancellation arrives in two shapes](../agent.md#cancelling-a-run)), so the bare `RUN_FINISHED` and `on_cancel` do not fire on a disconnect. To observe a stop gesture this way, keep the stream connected and cancel the run first-party via a [`CancellationToken`][pydantic_ai.CancellationToken] triggered from a separate cancel endpoint.
 
 ### Handle run input and output directly
 
@@ -54,13 +56,18 @@ from fastapi.requests import Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunCancelled
 from pydantic_ai.ui import SSE_CONTENT_TYPE
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 agent = Agent('openai:gpt-5.2', instructions='Be fun!')
 
 app = FastAPI()
+
+
+async def on_cancel(cancelled: RunCancelled) -> None:
+    messages = cancelled.all_messages()  # the resumable history to persist
+    print(f'cancelled after {len(messages)} messages')
 
 
 @app.post('/')
@@ -76,7 +83,7 @@ async def run_agent(request: Request) -> Response:
         )
 
     adapter = AGUIAdapter(agent=agent, run_input=run_input, accept=accept)
-    event_stream = adapter.run_stream() # (2)
+    event_stream = adapter.run_stream(on_cancel=on_cancel)  # (2)
 
     sse_event_stream = adapter.encode_stream(event_stream)
     return StreamingResponse(sse_event_stream, media_type=accept) # (3)
@@ -109,6 +116,7 @@ from pydantic_ai.ui.ag_ui import AGUIAdapter
 agent = Agent('openai:gpt-5.2', instructions='Be fun!')
 
 app = FastAPI()
+
 
 @app.post('/')
 async def run_agent(request: Request) -> Response:
@@ -242,6 +250,118 @@ uvicorn ag_ui_state:app --host 0.0.0.0 --port 9000
 AG-UI frontend tools are seamlessly provided to the Pydantic AI agent, enabling rich
 user experiences with frontend user interfaces.
 
+### Context
+
+Alongside messages, an AG-UI client can send a `context` array of `description`/`value` pairs describing things it considers relevant to the run: the originating platform, the requesting user, or a channel's standing instructions. Every entry is a claim the client made — it can send any `description`/`value` it likes — so they describe a request, they never establish who is making it.
+
+These entries are not passed to the model automatically, and they don't belong in [instructions][pydantic_ai.agent.Agent.instructions]. Instructions carry operator authority — they're treated as *your* instruction to the model — so building them out of text a client sent lets a prompt injection inherit that authority. Delivering them as data denies them that authority but doesn't make them safe: they're still indirect prompt-injection input, so scope and re-authorize side-effecting tools from `deps` your server established, never from an entry's `description` or `value`. See [Mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts) and the [trust model](./overview.md#trust-model-for-client-submitted-messages).
+
+Read the entries off `adapter.run_input.context` and deliver them to the model as **data**. Facts your server established — the authenticated user, the workspace — are what go in instructions:
+
+```py {title="ag_ui_context.py"}
+from dataclasses import dataclass
+
+from ag_ui.core import Context
+from starlette.requests import Request
+from starlette.responses import Response
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+
+@dataclass
+class ChannelDeps:
+    workspace: str  # (1)!
+    context: list[Context]  # (2)!
+
+
+agent = Agent('openai:gpt-5.2', deps_type=ChannelDeps)
+
+
+@agent.instructions
+def workspace(ctx: RunContext[ChannelDeps]) -> str:
+    return f'You are answering in the {ctx.deps.workspace} workspace.'
+
+
+@agent.tool
+def frontend_context(ctx: RunContext[ChannelDeps]) -> list[str]:
+    """Context the frontend says is relevant to this conversation."""
+    return [f'{entry.description}: {entry.value}' for entry in ctx.deps.context]
+
+
+def authenticated_workspace(request: Request) -> str:
+    """Whatever your auth layer already established — a session, a signed token, an API key."""
+    ...
+
+
+async def run_agent(request: Request) -> Response:
+    adapter = await AGUIAdapter.from_request(request, agent=agent)
+    deps = ChannelDeps(workspace=authenticated_workspace(request), context=adapter.run_input.context)
+    return adapter.streaming_response(adapter.run_stream(deps=deps))
+```
+
+1. Established by your server, so it can shape how the agent behaves.
+2. Sent by the client, so it reaches the model as tool output the agent can read — never as an instruction.
+
+To let a client-supplied fact change how the agent behaves, authenticate it first: verify the caller or channel, look up the policy *your* server holds for it, and write the instruction from that. The entry itself stays data.
+
+Anything that isn't meant for the model at all — a Slack channel ID, a locale — is better carried in `forwardedProps`, which the adapter passes through untouched as `adapter.run_input.forwarded_props`. Validating it proves shape, not identity: who the user is, what tenant they're in, and what they're allowed to do come from authenticated server state.
+
+`context`, `forwardedProps` and `parentRunId` are read straight off [`run_input`][pydantic_ai.ui.UIAdapter.run_input] rather than through adapter properties of their own. The adapter's properties — `messages`, `toolset`, `state`, `conversation_id`, `deferred_tool_results` — are the concepts every UI protocol shares and that the adapter itself feeds into the agent run. These three are AG-UI-specific and consumed only by your code, so they stay on the protocol object where their types are the protocol's own.
+
+### Tool approval (interrupts)
+
+Tools declared with `requires_approval=True` map onto AG-UI's [interrupt-aware run lifecycle](https://docs.ag-ui.com/concepts/interrupts). When the model proposes such a call, the run pauses and the adapter ends the SSE stream with a `RUN_FINISHED` event whose `outcome.type` is `"interrupt"` and whose `outcome.interrupts[]` describes each pending approval. The client renders an approval UI from that list and POSTs the next `RunAgentInput` with a `resume[]` array of `ResumeEntry` items addressing each interrupt.
+
+The mapping the adapter applies (matching the AG-UI Python SDK field names):
+
+| AG-UI direction         | Pydantic AI source / sink                                                                                       |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `Interrupt.reason`      | Always `"tool_call"` for `requires_approval=True` tools                                                         |
+| `Interrupt.tool_call_id`| The `ToolCallPart.tool_call_id` of the proposed call                                                            |
+| `Interrupt.id`          | `f"int-{tool_call_id}"` (round-trips back to `tool_call_id` on resume)                                          |
+| `Interrupt.metadata`    | `DeferredToolRequests.metadata.get(tool_call_id)`                                                               |
+| `ResumeEntry.payload`   | `{ "approved": bool, "editedArgs"?: object, "reason"?: string }`, validated against `Interrupt.response_schema`; a payload that fails validation denies, including when the offending field is not `approved` itself — a wrongly-typed `editedArgs` or `reason` denies even alongside `approved=True`, while omitting either optional field or sending it as `null` is accepted |
+| `payload.approved=True` | [`ToolApproved`][pydantic_ai.tools.ToolApproved]                                                                |
+| `payload.editedArgs`    | [`ToolApproved.override_args`][pydantic_ai.tools.ToolApproved.override_args] (fully replaces the proposed args) |
+| `payload.approved=False`| [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message=payload.reason`. `approved` is required, so a payload that omits it denies on validation and its `reason` is not used — send `approved: false` explicitly to have your `reason` reach the model |
+| `status="cancelled"`    | [`ToolDenied`][pydantic_ai.tools.ToolDenied] with `message="Cancelled by user."` regardless of payload          |
+
+The agent must include [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] in its `output_type` so the run can pause cleanly instead of erroring on the proposed call:
+
+```python {title="ag_ui_tool_approval.py"}
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.routing import Route
+
+from pydantic_ai import Agent
+from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+agent = Agent('openai:gpt-5.2', output_type=[str, DeferredToolRequests])
+
+
+@agent.tool_plain(requires_approval=True)
+def delete_file(path: str) -> str:
+    """Delete a file. Pauses on a `RUN_FINISHED` interrupt outcome until the user approves."""
+    return f'deleted {path}'
+
+
+async def run_agent(request: Request) -> Response:
+    return await AGUIAdapter.dispatch_request(request, agent=agent)
+
+
+app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
+```
+
+On the resumed turn the agent re-executes the tool against the **original** `tool_call_id`, so only a `TOOL_CALL_RESULT` event is emitted for that id — no fresh `TOOL_CALL_START`. This preserves the audit trail the AG-UI spec requires.
+
+See [Deferred tools and human-in-the-loop tool approval](../deferred-tools.md) for the underlying Pydantic AI primitive that also works outside AG-UI.
+
+!!! note "Version requirement"
+    Interrupts require `ag-ui-protocol >= 0.1.19` ([PR #1569](https://github.com/ag-ui-protocol/ag-ui/pull/1569)). On older installs the adapter silently falls back to emitting a bare `RUN_FINISHED` event without an outcome, and `resume[]` is ignored even if a client sends it.
+
 ### Events
 
 Pydantic AI tools can send [AG-UI events](https://docs.ag-ui.com/concepts/events) simply by returning a
@@ -323,9 +443,32 @@ Since `app` is an ASGI application, it can be used with any ASGI server:
 uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 ```
 
+### Protocol version compatibility
+
+Pydantic AI supports every `ag-ui-protocol` release from `0.1.10` on, and features added after that floor are gated on the version you have installed rather than requiring an upgrade.
+
+That gate runs in both directions. On the way out, content an older protocol version can't express is downgraded or omitted — see [`AGUIAdapter.ag_ui_version`][pydantic_ai.ui.ag_ui.AGUIAdapter.ag_ui_version] for the negotiated thresholds. On the way in, a message `role` or input content `type` your installed `ag-ui-protocol` has no class for is skipped with a `UserWarning` naming the tag, and the rest of the request runs — so a frontend on a newer protocol version than your server keeps working, minus the content your install has no type for. For instance, a gateway that forwards image attachments as typed multimodal content (`ag-ui-protocol >= 0.1.15`) still delivers the accompanying text to an agent running on an older install.
+
+What gets skipped is decided by the tag alone: any `role` or `type` string the installed models don't declare qualifies, so a client that misspells `"txet"` is skipped with the same warning as one sending genuinely newer content — the server has no way to tell those apart. The skip is scoped to well-formed items: a message must still carry a string `id`, the field every AG-UI message type requires.
+
+Everything else is still rejected with `422 Unprocessable Entity` — a payload that is malformed under a `role` or `type` the install *does* know, a `role` or `type` that isn't a string at all, and a body that isn't valid JSON. If you see the warning and the content was real, upgrading `ag-ui-protocol` is what makes it reach your agent.
+
 ### Trust model
 
-AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview.
+AG-UI's `RunAgentInput.messages` is fully client-controlled. The [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
+
+### Preserving failed tool outcomes
+
+AG-UI's [`ToolCallResultEvent`](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/sdk/python/core/events.mdx#L284-L304) has no error or outcome field. Although [encrypted reasoning continuity](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/concepts/reasoning.mdx#L6-L29) is the intended use of [`ReasoningEncryptedValueEvent`](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/sdk/python/core/events.mdx#L555-L577), it is also AG-UI's standard event for attaching `encrypted_value` to a message or tool call. Pydantic AI uses that attachment mechanism with a namespaced payload to preserve `outcome='failed'` from [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] when using `ag-ui-protocol >= 0.1.13`.
+
+If the client sends those messages back on a later run, the adapter restores the failed outcome. This is a history-continuity mechanism: it does not set [`ToolMessage.error`](https://github.com/ag-ui-protocol/ag-ui/blob/11f03fa65c4fa22a8637d3f6e06e77d8c1b9ae78/docs/concepts/messages.mdx#L143-L163) or guarantee that a frontend visually renders the result as an error. Event streams produced with earlier protocol versions have no metadata carrier for the outcome, so reloading them reconstructs the tool result as `outcome='success'`.
+
+### Preserving files across round-trips
+
+AG-UI has no native representation for agent-generated files ([`FilePart`][pydantic_ai.messages.FilePart]) or [`UploadedFile`][pydantic_ai.messages.UploadedFile] references, so they are omitted from `dump_messages` output by default. Set [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data] to `True` to round-trip them through reserved `pydantic_ai_*` [activity messages](https://docs.ag-ui.com/concepts/messages), which a frontend completes by echoing those activity messages back on the next request. This is a representation opt-in, not a security one: an `UploadedFile` reconstructed from a round-tripped activity message is still subject to the inbound [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] gate before it reaches the agent.
+
+!!! warning "Behavior change"
+    `preserve_file_data` used to gate honoring inbound client-submitted `UploadedFile` references. It is now representation-only. If your app set `AGUIAdapter(preserve_file_data=True)` to accept inbound uploaded files, you must now also set [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]`=True`, since the two concerns are now separate flags.
 
 ### System prompts and instructions
 
@@ -364,95 +507,3 @@ For more examples see
 [`pydantic_ai_examples.ag_ui`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples/ag_ui),
 which includes a server for use with the
 [AG-UI Dojo](https://docs.ag-ui.com/tutorials/debugging#the-ag-ui-dojo).
-
-## Migrating from deprecated APIs
-
-[`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui], [`AGUIApp`][pydantic_ai.ui.ag_ui.app.AGUIApp], and the `pydantic_ai.ag_ui` shim module are deprecated in 1.x and will be removed in 2.0. Each maps directly to [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] composition shown in [Usage](#usage). The migrations below also work in 1.x today.
-
-### `pydantic_ai.ag_ui` → `pydantic_ai.ui.ag_ui` + `pydantic_ai.ui`
-
-The shim module re-exports symbols that live in two different locations in 2.0:
-
-- [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] is in [`pydantic_ai.ui.ag_ui`][pydantic_ai.ui.ag_ui].
-- [`SSE_CONTENT_TYPE`][pydantic_ai.ui.SSE_CONTENT_TYPE], [`StateDeps`][pydantic_ai.ui.StateDeps], [`StateHandler`][pydantic_ai.ui.StateHandler], and [`OnCompleteFunc`][pydantic_ai.ui.OnCompleteFunc] are in [`pydantic_ai.ui`][pydantic_ai.ui].
-- The `handle_ag_ui_request` and `run_ag_ui` helpers are removed in 2.0 — call [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] or compose [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] directly as shown in [Usage](#usage).
-
-=== "Before (deprecated)"
-
-    ```python {title="ag_ui_shim_before.py" test="skip" noqa="F401 I001"}
-    from pydantic_ai.ag_ui import AGUIAdapter, SSE_CONTENT_TYPE, StateDeps
-    ```
-
-=== "After"
-
-    ```python {title="ag_ui_shim_after.py" noqa="F401 I001"}
-    from pydantic_ai.ui import SSE_CONTENT_TYPE, StateDeps
-    from pydantic_ai.ui.ag_ui import AGUIAdapter
-    ```
-
-### `Agent.to_ag_ui()` → `AGUIAdapter.dispatch_request`
-
-Mount a Starlette/FastAPI route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request] (same shape as [Handle a Starlette request](#handle-a-starlette-request)):
-
-=== "Before (deprecated)"
-
-    ```python {title="agent_to_ag_ui_before.py" test="skip"}
-    from pydantic_ai import Agent
-
-    agent = Agent('openai:gpt-5.2', instructions='Be fun!')
-    app = agent.to_ag_ui()
-    ```
-
-=== "After"
-
-    ```python {title="agent_to_ag_ui_after.py"}
-    from fastapi import FastAPI
-    from starlette.requests import Request
-    from starlette.responses import Response
-
-    from pydantic_ai import Agent
-    from pydantic_ai.ui.ag_ui import AGUIAdapter
-
-    agent = Agent('openai:gpt-5.2', instructions='Be fun!')
-
-    app = FastAPI()
-
-    @app.post('/')
-    async def run_agent(request: Request) -> Response:
-        return await AGUIAdapter.dispatch_request(request, agent=agent)
-    ```
-
-### `AGUIApp` → `Starlette` + `AGUIAdapter.dispatch_request`
-
-Build the ASGI app directly with a [`Starlette`](https://www.starlette.io/applications/) route that calls [`AGUIAdapter.dispatch_request()`][pydantic_ai.ui.ag_ui.AGUIAdapter.dispatch_request]:
-
-=== "Before (deprecated)"
-
-    ```python {title="agui_app_before.py" test="skip"}
-    from pydantic_ai import Agent
-    from pydantic_ai.ui.ag_ui.app import AGUIApp
-
-    agent = Agent('openai:gpt-5.2', instructions='Be fun!')
-    app = AGUIApp(agent)
-    ```
-
-=== "After"
-
-    ```python {title="agui_app_after.py"}
-    from starlette.applications import Starlette
-    from starlette.requests import Request
-    from starlette.responses import Response
-    from starlette.routing import Route
-
-    from pydantic_ai import Agent
-    from pydantic_ai.ui.ag_ui import AGUIAdapter
-
-    agent = Agent('openai:gpt-5.2', instructions='Be fun!')
-
-
-    async def run_agent(request: Request) -> Response:
-        return await AGUIAdapter.dispatch_request(request, agent=agent)
-
-
-    app = Starlette(routes=[Route('/', run_agent, methods=['POST'])])
-    ```

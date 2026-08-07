@@ -3,8 +3,8 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass, replace
 
+from .. import _utils
 from .._run_context import AgentDepsT, RunContext
-from .._warnings import warn_on_prepare_callback_returned_none
 from ..exceptions import UserError
 from ..tools import ToolsPrepareFunc
 from .abstract import ToolsetTool
@@ -26,9 +26,9 @@ class PreparedToolset(WrapperToolset[AgentDepsT]):
         result = self.prepare_func(ctx, original_tool_defs)
         if inspect.isawaitable(result):
             result = await result
-        if result is None:
-            warn_on_prepare_callback_returned_none(self.prepare_func)
-        prepared_tool_defs_by_name = {tool_def.name: tool_def for tool_def in (result or [])}
+        prepared_tool_defs_by_name = {
+            tool_def.name: tool_def for tool_def in _utils.check_tools_prepare_func_result(result, self.prepare_func)
+        }
 
         if len(prepared_tool_defs_by_name.keys() - original_tools.keys()) > 0:
             raise UserError(

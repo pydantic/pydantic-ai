@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+title: Pydantic AI
+message: 'If you use this software, please cite it as below.'
+type: software
+authors:
+  - family-names: Maan
+    given-names: Douwe
+  - family-names: Sanchez
+    given-names: David
+  - family-names: Vardhan
+    given-names: Aditya
+  - family-names: Montague
+    given-names: David
+  - family-names: Trylesinski
+    given-names: Marcelo
+  - family-names: Hall
+    given-names: Alex
+  - family-names: Colvin
+    given-names: Samuel
+repository-code: 'https://github.com/pydantic/pydantic-ai'
+url: 'https://ai.pydantic.dev'
+abstract: >-
+  Pydantic AI is a Python agent framework designed to make it less
+  painful to build production grade applications and workflows with
+  Generative AI. Provider-agnostic, type-safe, and built by the team
+  behind Pydantic.
+keywords:
+  - python
+  - ai
+  - agents
+  - llm
+  - agent-framework
+  - genai
+  - pydantic
+license: MIT

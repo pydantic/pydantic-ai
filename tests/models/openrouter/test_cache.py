@@ -7,6 +7,7 @@ OpenRouter API).
 
 from __future__ import annotations as _annotations
 
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pytest
@@ -448,7 +449,9 @@ async def test_openrouter_cache_point_anthropic_e2e(
                 usage=RequestUsage(
                     input_tokens=176,
                     output_tokens=34,
+                    output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                    cost=Decimal('0.001038'),
                 ),
                 model_name='anthropic/claude-4.6-sonnet-20260217',
                 timestamp=IsDatetime(),
@@ -459,6 +462,8 @@ async def test_openrouter_cache_point_anthropic_e2e(
                     'downstream_provider': 'Amazon Bedrock',
                     'cost': 0.001038,
                     'upstream_inference_cost': 0.001038,
+                    'upstream_inference_prompt_cost': 0.000528,
+                    'upstream_inference_completions_cost': 0.00051,
                     'is_byok': False,
                     'timestamp': IsDatetime(),
                 },
@@ -514,7 +519,9 @@ async def test_openrouter_cache_point_gemini_e2e(
                 usage=RequestUsage(
                     input_tokens=168,
                     output_tokens=11,
+                    output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                    cost=Decimal('0.0000779'),
                 ),
                 model_name='google/gemini-2.5-flash',
                 timestamp=IsDatetime(),
@@ -525,6 +532,8 @@ async def test_openrouter_cache_point_gemini_e2e(
                     'downstream_provider': 'Google',
                     'cost': 7.79e-05,
                     'upstream_inference_cost': 7.79e-05,
+                    'upstream_inference_prompt_cost': 5.04e-05,
+                    'upstream_inference_completions_cost': 2.75e-05,
                     'is_byok': False,
                     'timestamp': IsDatetime(),
                 },
@@ -575,7 +584,9 @@ async def test_openrouter_cache_instructions_e2e(
                 usage=RequestUsage(
                     input_tokens=260,
                     output_tokens=10,
+                    output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                    cost=Decimal('0.00093'),
                 ),
                 model_name='anthropic/claude-4.6-sonnet-20260217',
                 timestamp=IsDatetime(),
@@ -586,6 +597,8 @@ async def test_openrouter_cache_instructions_e2e(
                     'downstream_provider': 'Amazon Bedrock',
                     'cost': 0.00093,
                     'upstream_inference_cost': 0.00093,
+                    'upstream_inference_prompt_cost': 0.00078,
+                    'upstream_inference_completions_cost': 0.00015,
                     'is_byok': False,
                     'timestamp': IsDatetime(),
                 },
@@ -635,7 +648,9 @@ async def test_openrouter_cache_messages_e2e(
                 usage=RequestUsage(
                     input_tokens=17,
                     output_tokens=5,
+                    output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                    cost=Decimal('0.000126'),
                 ),
                 model_name='anthropic/claude-4.6-sonnet-20260217',
                 timestamp=IsDatetime(),
@@ -646,6 +661,8 @@ async def test_openrouter_cache_messages_e2e(
                     'downstream_provider': 'Amazon Bedrock',
                     'cost': 0.000126,
                     'upstream_inference_cost': 0.000126,
+                    'upstream_inference_prompt_cost': 5.1e-05,
+                    'upstream_inference_completions_cost': 7.5e-05,
                     'is_byok': False,
                     'timestamp': IsDatetime(),
                 },
@@ -710,7 +727,9 @@ I have one tool available:
                 usage=RequestUsage(
                     input_tokens=566,
                     output_tokens=27,
+                    output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                    cost=Decimal('0.002103'),
                 ),
                 model_name='anthropic/claude-4.6-sonnet-20260217',
                 timestamp=IsDatetime(),
@@ -721,6 +740,8 @@ I have one tool available:
                     'downstream_provider': 'Amazon Bedrock',
                     'cost': 0.002103,
                     'upstream_inference_cost': 0.002103,
+                    'upstream_inference_prompt_cost': 0.001698,
+                    'upstream_inference_completions_cost': 0.000405,
                     'is_byok': False,
                     'timestamp': IsDatetime(),
                 },
@@ -856,8 +877,10 @@ async def test_openrouter_cache_streaming_e2e(
                 parts=[TextPart(content='Hello!')],
                 usage=RequestUsage(
                     input_tokens=254,
+                    output_reasoning_tokens=0,
                     output_tokens=5,
                     details={'is_byok': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                    cost=Decimal('0.000837'),
                 ),
                 model_name='anthropic/claude-4.6-sonnet-20260217',
                 timestamp=IsDatetime(),

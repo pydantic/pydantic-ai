@@ -1,0 +1,79 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '199'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2? Reply with just the number.
+        role: user
+      model: qwen/qwen3-32b
+      n: 1
+      reasoning_effort: default
+      service_tier: on_demand
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1338'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: |-
+            <think>
+            Okay, let's see... The user is asking for the sum of 2 and 2. Hmm, this seems straightforward. First, I should confirm that the numbers are in decimal, not binary or another base. Since the question uses the standard digits and the "+" symbol, I assume it's decimal. The problem is basic arithmetic. So, 2 plus 2 is 4. Wait, is there any trick here? Sometimes questions like this can be rhetorical or test if you're paying attention. But the user just wants the number, so I should give the correct answer without any extra text. Let me double-check. 2 added to 2 equals 4. Yeah, that's right. The user specified to reply with just the number, so I'll make sure to output "4" without any explanation.
+            </think>
+
+            4
+          role: assistant
+      created: 1781546279
+      id: chatcmpl-48e23aac-1cab-4d4c-806f-b9493b71287e
+      model: qwen/qwen3-32b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_d58dbe76cd
+      usage:
+        completion_time: 0.457417271
+        completion_tokens: 173
+        prompt_time: 0.001217545
+        prompt_tokens: 21
+        queue_time: 0.465072232
+        total_time: 0.458634816
+        total_tokens: 194
+      usage_breakdown: null
+      x_groq:
+        id: req_01kv66xqrmeekaxvfvcsa0znzj
+        seed: 415292537
+    status:
+      code: 200
+      message: OK
+version: 1

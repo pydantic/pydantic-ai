@@ -95,7 +95,7 @@ print(dice_result.all_messages())
                 tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(input_tokens=54, output_tokens=2),
+        usage=RequestUsage(cost=Decimal('0.000033'), input_tokens=54, output_tokens=2),
         model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -121,7 +121,7 @@ print(dice_result.all_messages())
                 tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(input_tokens=55, output_tokens=4),
+        usage=RequestUsage(cost=Decimal('0.0000395'), input_tokens=55, output_tokens=4),
         model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -147,7 +147,7 @@ print(dice_result.all_messages())
                 content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
-        usage=RequestUsage(input_tokens=56, output_tokens=12),
+        usage=RequestUsage(cost=Decimal('0.000064'), input_tokens=56, output_tokens=12),
         model_name='gemini-3-flash-preview',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -357,6 +357,7 @@ print(test_model.last_model_request_parameters.function_tools)
             'type': 'object',
         },
         description='This is a Foobar',
+        toolset_id='<agent>',
     )
 ]
 """
@@ -391,5 +392,5 @@ For more tool features and integrations, see:
 - [Toolsets](toolsets.md) - Managing collections of tools
 - [Native Tools](native-tools.md) - Native tools provided by LLM providers
 - [Common Tools](common-tools.md) - Ready-to-use tool implementations
-- [Third-Party Tools](third-party-tools.md) - Integrations with MCP, LangChain, ACI.dev and other tool libraries
+- [Third-Party Tools](third-party-tools.md) - Integrations with MCP, LangChain, and other tool libraries
 - [Deferred Tools](deferred-tools.md) - Tools requiring approval or external execution

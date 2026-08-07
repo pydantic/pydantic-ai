@@ -180,7 +180,7 @@ def test_langchain_tool_defaults():
     )
     pydantic_tool = tool_from_langchain(langchain_tool)
 
-    result = pydantic_tool.function(pattern='something')  # type: ignore
+    result = pydantic_tool.function(pattern='something')  # pyright: ignore[reportCallIssue]
     assert result == snapshot("I was called with {'dir_path': '.', 'pattern': 'something'}")
 
 
@@ -205,7 +205,7 @@ def test_langchain_tool_positional():
     pydantic_tool = tool_from_langchain(langchain_tool)
 
     with pytest.raises(AssertionError, match='This should always be called with kwargs'):
-        pydantic_tool.function('something')  # type: ignore
+        pydantic_tool.function('something')  # pyright: ignore[reportArgumentType]
 
 
 def test_langchain_tool_default_override():
@@ -228,7 +228,7 @@ def test_langchain_tool_default_override():
     )
     pydantic_tool = tool_from_langchain(langchain_tool)
 
-    result = pydantic_tool.function(pattern='something', dir_path='somewhere')  # type: ignore
+    result = pydantic_tool.function(pattern='something', dir_path='somewhere')  # pyright: ignore[reportCallIssue]
     assert result == snapshot("I was called with {'dir_path': 'somewhere', 'pattern': 'something'}")
 
 

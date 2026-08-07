@@ -149,6 +149,9 @@ class LengthScore(Evaluator):
             return score
 ```
 
+!!! note "Scores must be finite"
+    Numeric scores have to be finite. An evaluator that returns `NaN` or `±inf` — as a scalar, inside an [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason], or as a value in a returned dict — produces an [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] for that case instead of a score, so a non-comparable value is surfaced as a failed evaluator rather than silently recorded.
+
 ### String Labels
 
 Categorical classifications:

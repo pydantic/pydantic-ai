@@ -8,7 +8,8 @@ upstream metric and run it inside any Pydantic Evals dataset. This page shows wo
 the common ones.
 
 !!! tip "Prefer a native evaluator where you can"
-    If a rubric-based [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] or a
+    If a rubric-based [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] (see the
+    [standard quality metrics](standard-quality-metrics.md) page for ready-made rubrics) or a
     [custom evaluator](custom.md) covers your use case, that's usually simpler — zero extra
     dependencies and the scores slot into reports cleanly. Reach for the integrations below
     when you specifically want the *exact* upstream implementation (for reproducibility with

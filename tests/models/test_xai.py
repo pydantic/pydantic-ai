@@ -64,8 +64,6 @@ from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     CachePoint,
     UploadedFile,
 )
@@ -76,7 +74,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsNow, IsStr, try_import
+from ..conftest import IsDatetime, IsNow, IsStr, message, message_part, try_import
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
@@ -112,18 +110,34 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.xai import XaiProvider
 
+    from .xai_proto_cassettes import get_recorded_request_messages
+
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
-    ),
-    pytest.mark.filterwarnings(
-        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolReturnPart` instead.:DeprecationWarning'
-    ),
 ]
+
+
+def test_xai_hidden_tools_stay_off_the_wire():
+    """Guard xAI's single-line switch from `tool_defs` to `declared_tool_defs`."""
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(api_key='foobar'))
+    hidden = ToolDefinition(
+        name='process_refund',
+        description='Process a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    visible = ToolDefinition(name='visible')
+
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+    assert prepared.tool_visibility == {'process_refund': 'withheld', 'visible': 'visible'}
+
+    tool_defs, _ = model._get_tool_choice({}, prepared)  # pyright: ignore[reportPrivateUsage]
+    assert list(tool_defs) == ['visible']
+
 
 # Test model constants
 XAI_NON_REASONING_MODEL = 'grok-4-fast-non-reasoning'
@@ -156,11 +170,11 @@ async def test_xai_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.00')))
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.00')))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -171,6 +185,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -188,6 +203,7 @@ async def test_xai_request_simple_success(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -212,7 +228,7 @@ async def test_xai_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
-    assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_cost_calculation(allow_model_requests: None):
@@ -230,8 +246,7 @@ async def test_xai_cost_calculation(allow_model_requests: None):
     assert result.output == 'world'
 
     # Verify cost is calculated via genai-prices
-    last_message = result.all_messages()[-1]
-    assert isinstance(last_message, ModelResponse)
+    last_message = message(result.all_messages(), ModelResponse, index=-1)
     assert last_message.cost().total_price == snapshot(Decimal('0.000045'))
 
 
@@ -272,7 +287,9 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=420, cache_read_tokens=157, output_tokens=16),
+                usage=RequestUsage(
+                    input_tokens=420, cache_read_tokens=157, output_tokens=16, cost=Decimal('0.00006845')
+                ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -304,7 +321,9 @@ async def test_xai_request_structured_response_tool_output(allow_model_requests:
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=RequestUsage(input_tokens=448, cache_read_tokens=436, output_tokens=36),
+                usage=RequestUsage(
+                    input_tokens=448, cache_read_tokens=436, output_tokens=36, cost=Decimal('0.0000422')
+                ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -383,6 +402,262 @@ async def test_xai_multiple_tool_calls_in_history_are_grouped(allow_model_reques
                         'function': {'name': 'tool_b', 'arguments': '{}'},
                     },
                 ],
+            }
+        ]
+    )
+
+
+async def test_xai_thinking_part_groups_with_following_tool_calls_in_history(allow_model_requests: None):
+    """A reasoning `ThinkingPart` followed by `ToolCallPart`s maps to one assistant message.
+
+    The encrypted reasoning trace must stay attached to the tool calls it produced — matching
+    `xai_sdk`'s `Chat.append` — rather than splitting into a reasoning message and a separate
+    tool-call message.
+    """
+    response1 = create_response(
+        reasoning_content='Let me call the tools',
+        encrypted_content='encrypted_signature_123',
+        tool_calls=[
+            create_tool_call('call_a', 'tool_a', {}),
+            create_tool_call('call_b', 'tool_b', {}),
+        ],
+        finish_reason='tool_call',
+        usage=create_usage(prompt_tokens=10, completion_tokens=5),
+    )
+    response2 = create_response(
+        content='done',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_a() -> str:
+        return 'a'
+
+    @agent.tool_plain
+    async def tool_b() -> str:
+        return 'b'
+
+    result = await agent.run('Run tools')
+    assert result.output == 'done'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 2
+    second_messages = kwargs[1]['messages']
+    assistant_msgs = [m for m in second_messages if m.get('role') == 'ROLE_ASSISTANT']
+    assert assistant_msgs == snapshot(
+        [
+            {
+                'content': [{'text': ''}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call_a',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_a', 'arguments': '{}'},
+                    },
+                    {
+                        'id': 'call_b',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_b', 'arguments': '{}'},
+                    },
+                ],
+                'reasoning_content': 'Let me call the tools',
+                'encrypted_content': 'encrypted_signature_123',
+            }
+        ]
+    )
+
+
+async def test_xai_text_part_groups_with_following_tool_calls_in_history(allow_model_requests: None):
+    """A `TextPart` followed by `ToolCallPart`s maps to one assistant message carrying both.
+
+    The relaxed grouping also packs text with the tool calls it precedes — matching `xai_sdk`'s
+    `Chat.append`, which puts `content` and `tool_calls` on a single assistant message — rather
+    than splitting them into a text message and a separate tool-call message.
+    """
+    response1 = create_response(
+        content='Calling the tools',
+        tool_calls=[
+            create_tool_call('call_a', 'tool_a', {}),
+            create_tool_call('call_b', 'tool_b', {}),
+        ],
+        finish_reason='tool_call',
+        usage=create_usage(prompt_tokens=10, completion_tokens=5),
+    )
+    response2 = create_response(
+        content='done',
+        usage=create_usage(prompt_tokens=20, completion_tokens=5),
+    )
+    mock_client = MockXai.create_mock([response1, response2])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def tool_a() -> str:
+        return 'a'
+
+    @agent.tool_plain
+    async def tool_b() -> str:
+        return 'b'
+
+    result = await agent.run('Run tools')
+    assert result.output == 'done'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert len(kwargs) == 2
+    second_messages = kwargs[1]['messages']
+    assistant_msgs = [m for m in second_messages if m.get('role') == 'ROLE_ASSISTANT']
+    assert assistant_msgs == snapshot(
+        [
+            {
+                'content': [{'text': 'Calling the tools'}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call_a',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_a', 'arguments': '{}'},
+                    },
+                    {
+                        'id': 'call_b',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'tool_b', 'arguments': '{}'},
+                    },
+                ],
+            }
+        ]
+    )
+
+
+async def test_xai_thinking_tool_call_grouping_round_trip(allow_model_requests: None, xai_provider: XaiProvider):
+    """End-to-end proof for #5329: the real xAI API accepts grouped reasoning + tool-call history.
+
+    Turn 1 on a reasoning model (with `xai_include_encrypted_content=True`) returns a `ThinkingPart`
+    carrying an encrypted signature AND a `ToolCallPart` in the same response. After the tool runs,
+    turn 2 sends that history back: `_append_tool_call` packs the encrypted reasoning and the tool
+    call onto ONE assistant message, and xAI accepts it and continues the run. The mock grouping
+    tests pin the exact mapped request shape; this proves the grouped shape round-trips against the
+    live API — the orphaned-reasoning split #5329 reports would make turn 2 fail.
+    """
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(m, model_settings=XaiModelSettings(xai_include_encrypted_content=True))
+
+    @agent.tool_plain
+    async def get_weather(city: str) -> str:
+        return 'It is sunny and 25°C.'
+
+    result = await agent.run('What is the weather in London? Use the get_weather tool, then answer.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the weather in London? Use the get_weather tool, then answer.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The question is: "What is the weather in London? Use the get_weather tool, then answer."\n',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args='{"city":"London"}',
+                        tool_call_id='call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=221,
+                    cache_read_tokens=128,
+                    output_tokens=122,
+                    output_reasoning_tokens=111,
+                    details={'reasoning_tokens': 111},
+                    cost=Decimal('0.0000860'),
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='tool_call',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='It is sunny and 25°C.',
+                        tool_call_id='call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The tool returned: "It is sunny and 25°C."\n',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='It is sunny and 25°C in London.'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=358,
+                    cache_read_tokens=192,
+                    output_tokens=57,
+                    output_reasoning_tokens=47,
+                    details={'reasoning_tokens': 47},
+                    cost=Decimal('0.0000713'),
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    # The grouped single assistant message that xAI accepted on the second request.
+    requests = get_recorded_request_messages(xai_provider.client)
+    assert len(requests) == 2
+    assistant_msgs = [msg for msg in requests[1] if msg.get('role') == 'ROLE_ASSISTANT']
+    assert assistant_msgs == snapshot(
+        [
+            {
+                'content': [{'text': ''}],
+                'role': 'ROLE_ASSISTANT',
+                'tool_calls': [
+                    {
+                        'id': 'call-f4eb21f4-64dc-4636-8a28-5ac4b6f2dbf9-0',
+                        'type': 'TOOL_CALL_TYPE_CLIENT_SIDE_TOOL',
+                        'status': 'TOOL_CALL_STATUS_COMPLETED',
+                        'function': {'name': 'get_weather', 'arguments': '{"city":"London"}'},
+                    }
+                ],
+                'reasoning_content': 'The question is: "What is the weather in London? Use the get_weather tool, then answer."\n',
+                'encrypted_content': IsStr(),
             }
         ]
     )
@@ -583,7 +858,9 @@ async def test_xai_request_structured_response_native_output(allow_model_request
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=439, cache_read_tokens=314, output_tokens=16),
+                usage=RequestUsage(
+                    input_tokens=439, cache_read_tokens=314, output_tokens=16, cost=Decimal('0.0000487')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -608,7 +885,9 @@ async def test_xai_request_structured_response_native_output(allow_model_request
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=RequestUsage(input_tokens=467, cache_read_tokens=455, output_tokens=13),
+                usage=RequestUsage(
+                    input_tokens=467, cache_read_tokens=455, output_tokens=13, cost=Decimal('0.00003165')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -651,8 +930,10 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 usage=RequestUsage(
                     input_tokens=351,
                     cache_read_tokens=148,
-                    output_tokens=53,
+                    output_tokens=276,
+                    output_reasoning_tokens=223,
                     details={'reasoning_tokens': 223},
+                    cost=Decimal('0.0001860'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -691,8 +972,10 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
                 usage=RequestUsage(
                     input_tokens=670,
                     cache_read_tokens=601,
-                    output_tokens=63,
+                    output_tokens=146,
+                    output_reasoning_tokens=83,
                     details={'reasoning_tokens': 83},
+                    cost=Decimal('0.00011685'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -711,8 +994,10 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
             cache_read_tokens=749,
             input_tokens=1021,
             details={'reasoning_tokens': 306},
-            output_tokens=116,
+            output_reasoning_tokens=306,
+            output_tokens=422,
             tool_calls=1,
+            cost=Decimal('0.00030285'),
         )
     )
 
@@ -751,7 +1036,7 @@ async def test_xai_model_multiple_tool_calls(allow_model_requests: None):
 
     result = await agent.run('Get data for KEY_1 and process data returning the output')
     assert result.output == 'the result is: 5'
-    assert result.usage == snapshot(RunUsage(requests=3, tool_calls=2))
+    assert result.usage == snapshot(RunUsage(requests=3, cost=Decimal('0.00'), tool_calls=2))
     assert tool_was_called_get
     assert tool_was_called_process
 
@@ -937,6 +1222,188 @@ async def test_tool_choice_multiple_tools_filters(allow_model_requests: None) ->
     )
 
 
+async def test_xai_web_search_user_location(allow_model_requests: None) -> None:
+    """`WebSearchTool.user_location` should be forwarded to xAI's `web_search` location fields.
+
+    This pins the outgoing tool payload directly. The proto-cassette replay client
+    (see `test_xai_web_search_user_location_recorded`) ignores the request it's handed,
+    so a regression that dropped `user_location` would still replay green — only this
+    payload assertion catches it.
+    """
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        native_tools=[
+            WebSearchTool(
+                user_location={
+                    'city': 'San Francisco',
+                    'country': 'US',
+                    'region': 'California',
+                    'timezone': 'America/Los_Angeles',
+                }
+            )
+        ]
+    )
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings={},
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'web_search': {
+                    'enable_image_understanding': False,
+                    'user_location': {
+                        'country': 'US',
+                        'city': 'San Francisco',
+                        'region': 'California',
+                        'timezone': 'America/Los_Angeles',
+                    },
+                    'enable_image_search': False,
+                }
+            }
+        ]
+    )
+
+
+async def test_xai_web_search_user_location_partial(allow_model_requests: None) -> None:
+    """A partially-populated `user_location` forwards only the set fields.
+
+    `user_location.get(...)` yields `None` for the unset fields, and the xAI SDK omits
+    `None` values from the `WebSearchUserLocation` proto — so only `country` reaches the wire.
+    """
+    response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    params = ModelRequestParameters(
+        native_tools=[
+            WebSearchTool(
+                user_location={
+                    'country': 'US',
+                }
+            )
+        ]
+    )
+
+    await model._create_chat(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        model_settings={},
+        model_request_parameters=params,
+    )
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)
+    assert kwargs[0]['tools'] == snapshot(
+        [
+            {
+                'web_search': {
+                    'enable_image_understanding': False,
+                    'user_location': {
+                        'country': 'US',
+                    },
+                    'enable_image_search': False,
+                }
+            }
+        ]
+    )
+
+
+async def test_xai_web_search_user_location_recorded(allow_model_requests: None, xai_provider: XaiProvider) -> None:
+    """Live-recorded proof that xAI accepts `WebSearchTool.user_location` fields.
+
+    Recorded against the real xAI API (proto cassette); the committed cassette's request
+    payload shows the `user_location` fields xAI accepted without error. The mapping itself
+    is pinned by `test_xai_web_search_user_location` — the replay client ignores the request.
+    """
+    m = XaiModel(XAI_REASONING_MODEL, provider=xai_provider)
+    agent = Agent(
+        m,
+        capabilities=[
+            NativeTool(
+                WebSearchTool(
+                    user_location={
+                        'city': 'San Francisco',
+                        'country': 'US',
+                        'region': 'California',
+                        'timezone': 'America/Los_Angeles',
+                    }
+                )
+            )
+        ],
+        model_settings=XaiModelSettings(
+            xai_include_encrypted_content=True,
+            xai_include_web_search_output=True,
+        ),
+    )
+
+    result = await agent.run('Search the web for one popular tourist attraction near me and name it.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Search the web for one popular tourist attraction near me and name it.',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The question is: "Search the web for one popular tourist attraction near me and name it."\n',
+                        signature=IsStr(),
+                        provider_name='xai',
+                    ),
+                    NativeToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'popular tourist attractions San Francisco', 'num_results': '5'},
+                        tool_call_id=IsStr(),
+                        provider_name='xai',
+                        provider_details={'function_name': 'web_search'},
+                    ),
+                    ThinkingPart(content='', signature=IsStr(), provider_name='xai'),
+                    NativeToolReturnPart(
+                        tool_name='web_search',
+                        content=None,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    ThinkingPart(content='', signature=IsStr(), provider_name='xai'),
+                    TextPart(
+                        content='**Golden Gate Bridge** is one of the most popular tourist attractions near you in San Francisco.'
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2747,
+                    cache_read_tokens=1280,
+                    output_tokens=260,
+                    output_reasoning_tokens=237,
+                    details={'reasoning_tokens': 237, 'server_side_tools_web_search': 1},
+                    cost=Decimal('0.0004874'),
+                ),
+                model_name='grok-4-fast-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_xai_stream_text(allow_model_requests: None):
     stream = [get_grok_text_chunk('hello '), get_grok_text_chunk('world')]
     mock_client = MockXai.create_mock_stream([stream])
@@ -947,7 +1414,7 @@ async def test_xai_stream_text(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_stream_text_finish_reason(allow_model_requests: None):
@@ -1019,7 +1486,9 @@ async def test_xai_stream_structured(allow_model_requests: None):
 
     assert agent_run.result is not None
     assert agent_run.result.output == snapshot({'first': 'One', 'second': 'Two'})
-    assert agent_run.usage == snapshot(RunUsage(input_tokens=20, output_tokens=1, requests=1))
+    assert agent_run.usage == snapshot(
+        RunUsage(input_tokens=20, output_tokens=1, requests=1, cost=Decimal('0.0000045'))
+    )
 
     # Verify event types: one PartStartEvent, then PartDeltaEvents for args
     # (UI adapters like Vercel AI and AG-UI expect deltas, not repeated starts)
@@ -1127,7 +1596,7 @@ async def test_xai_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 async def test_xai_none_delta(allow_model_requests: None):
@@ -1144,7 +1613,7 @@ async def test_xai_none_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1))
+        assert result.usage == snapshot(RunUsage(input_tokens=2, output_tokens=1, requests=1, cost=Decimal('9E-7')))
 
 
 @pytest.mark.parametrize('parallel_tool_calls', [True, False])
@@ -1209,7 +1678,9 @@ async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiPro
                         content="Paris is the capital of France. It's the largest city in the country and a major global center for art, fashion, and culture."
                     )
                 ],
-                usage=RequestUsage(input_tokens=181, cache_read_tokens=162, output_tokens=27),
+                usage=RequestUsage(
+                    input_tokens=181, cache_read_tokens=162, output_tokens=27, cost=Decimal('0.0000254')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1247,7 +1718,9 @@ async def test_xai_system_prompt(allow_model_requests: None, xai_provider: XaiPr
                         content="Paris is the capital of France. It's the largest city in the country and a major global center for art, fashion, and culture."
                     )
                 ],
-                usage=RequestUsage(input_tokens=181, cache_read_tokens=180, output_tokens=27),
+                usage=RequestUsage(
+                    input_tokens=181, cache_read_tokens=180, output_tokens=27, cost=Decimal('0.0000227')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1370,7 +1843,9 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=356, cache_read_tokens=314, output_tokens=15),
+                usage=RequestUsage(
+                    input_tokens=356, cache_read_tokens=314, output_tokens=15, cost=Decimal('0.0000316')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1397,7 +1872,9 @@ async def test_xai_image_url_tool_response(allow_model_requests: None, xai_provi
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a single raw potato.')],
-                usage=RequestUsage(input_tokens=657, cache_read_tokens=371, output_tokens=8),
+                usage=RequestUsage(
+                    input_tokens=657, cache_read_tokens=371, output_tokens=8, cost=Decimal('0.00007975')
+                ),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -1659,7 +2136,7 @@ async def test_uploaded_file_wrong_provider_xai(allow_model_requests: None):
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(UserError, match="provider_name='anthropic'.*cannot be used with XaiModel"):
+    with pytest.raises(UserError, match=r"provider_name='anthropic'.*cannot be used with XaiModel"):
         await agent.run(['Analyze this file', UploadedFile(file_id='file-abc123', provider_name='anthropic')])
 
 
@@ -1745,10 +2222,7 @@ async def test_xai_response_with_logprobs(allow_model_requests: None):
 
     result = await agent.run('What is the capital of Minas Gerais?')
     messages = result.all_messages()
-    response_msg = messages[1]
-    assert isinstance(response_msg, ModelResponse)
-    text_part = response_msg.parts[0]
-    assert isinstance(text_part, TextPart)
+    text_part = message_part(messages, TextPart, message_index=1)
     assert text_part.provider_details is not None
     assert 'logprobs' in text_part.provider_details
     assert text_part.provider_details['logprobs'] == snapshot(
@@ -1832,11 +2306,13 @@ async def test_xai_builtin_web_search_tool(allow_model_requests: None, xai_provi
                 usage=RequestUsage(
                     input_tokens=2332,
                     cache_read_tokens=1540,
-                    output_tokens=38,
+                    output_tokens=348,
+                    output_reasoning_tokens=310,
                     details={
                         'reasoning_tokens': 310,
                         'server_side_tools_web_search': 1,
                     },
+                    cost=Decimal('0.0004094'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -1930,11 +2406,13 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                 usage=RequestUsage(
                     input_tokens=4441,
                     cache_read_tokens=2530,
-                    output_tokens=135,
+                    output_tokens=766,
+                    output_reasoning_tokens=631,
                     details={
                         'reasoning_tokens': 631,
                         'server_side_tools_web_search': 2,
                     },
+                    cost=Decimal('0.0008917'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2086,42 +2564,6 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     content='Today in San Francisco, the current temperature is 7°C. Expect a high of 16°C and a low of 7°C, with partly cloudy conditions.'
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'San Francisco weather today Celsius'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'web_search'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='web_search',
-                    args={'url': 'https://www.theweathernetwork.com/en/city/us/california/san-francisco/current'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'browse_page'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
         ]
     )
 
@@ -2188,11 +2630,13 @@ async def test_xai_builtin_code_execution_tool(allow_model_requests: None, xai_p
                 usage=RequestUsage(
                     input_tokens=1889,
                     cache_read_tokens=1347,
-                    output_tokens=52,
+                    output_tokens=213,
+                    output_reasoning_tokens=161,
                     details={
                         'reasoning_tokens': 161,
                         'server_side_tools_code_execution': 1,
                     },
+                    cost=Decimal('0.00028225'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2264,6 +2708,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
                     cache_read_tokens=1037,
                     output_tokens=31,
                     details={'server_side_tools_code_execution': 1},
+                    cost=Decimal('0.00020355'),
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -2313,24 +2758,6 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
             PartStartEvent(index=2, part=TextPart(content='4'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartEndEvent(index=2, part=TextPart(content='4')),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='code_execution',
-                    args={'code': 'print(2 + 2)'},
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'code_execution'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='code_execution',
-                    content={'stdout': '4\n', 'stderr': '', 'output_files': {}, 'error': '', 'ret': ''},
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
         ]
     )
 
@@ -2421,6 +2848,7 @@ Return just the final number with no other text.\
                         'server_side_tools_web_search': 1,
                         'server_side_tools_code_execution': 1,
                     },
+                    cost=Decimal('0.00130995'),
                 ),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
@@ -2500,8 +2928,10 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 usage=RequestUsage(
                     input_tokens=743,
                     cache_read_tokens=170,
-                    output_tokens=15,
+                    output_tokens=498,
+                    output_reasoning_tokens=483,
                     details={'reasoning_tokens': 483},
+                    cost=Decimal('0.0003721'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2564,11 +2994,13 @@ async def test_xai_builtin_tools_with_custom_tools(allow_model_requests: None, x
                 usage=RequestUsage(
                     input_tokens=2973,
                     cache_read_tokens=1506,
-                    output_tokens=150,
+                    output_tokens=318,
+                    output_reasoning_tokens=168,
                     details={
                         'reasoning_tokens': 168,
                         'server_side_tools_web_search': 1,
                     },
+                    cost=Decimal('0.0005277'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2708,11 +3140,13 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
                 usage=RequestUsage(
                     input_tokens=1844,
                     cache_read_tokens=771,
-                    output_tokens=140,
+                    output_tokens=342,
+                    output_reasoning_tokens=202,
                     details={
                         'reasoning_tokens': 202,
                         'server_side_tools_mcp_server': 1,
                     },
+                    cost=Decimal('0.00042415'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -2836,11 +3270,13 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                 usage=RequestUsage(
                     input_tokens=1783,
                     cache_read_tokens=853,
-                    output_tokens=141,
+                    output_tokens=403,
+                    output_reasoning_tokens=262,
                     details={
                         'reasoning_tokens': 262,
                         'server_side_tools_mcp_server': 1,
                     },
+                    cost=Decimal('0.00043015'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -3031,55 +3467,6 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                     content="Pydantic/pydantic-ai is a GenAI Agent Framework built on Pydantic for creating type-safe Generative AI applications. It unifies interactions with LLMs from providers like OpenAI, Anthropic, Google, and others; supports agent orchestration, graph-based execution, tools, durable workflows, and multi-agent patterns. It's a monorepo with core packages for slim framework, graphs, and evals."
                 ),
             ),
-            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
-                part=NativeToolCallPart(
-                    tool_name='mcp_server:deepwiki',
-                    args={
-                        'action': 'call_tool',
-                        'tool_name': 'ask_question',
-                        'tool_args': {
-                            'repoName': 'pydantic/pydantic-ai',
-                            'question': 'Provide a short summary of the repository, including its purpose and main features.',
-                        },
-                    },
-                    tool_call_id=IsStr(),
-                    provider_name='xai',
-                    provider_details={'function_name': 'deepwiki.ask_question'},
-                )
-            ),
-            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
-                result=NativeToolReturnPart(
-                    tool_name='mcp_server:deepwiki',
-                    content="""\
-This repository, `pydantic/pydantic-ai`, is a GenAI Agent Framework that leverages Pydantic for building Generative AI applications . Its main purpose is to provide a unified and type-safe way to interact with various large language models (LLMs) from different providers, manage agent execution flows, and integrate with external tools and services .
-
-## Purpose
-The primary purpose of `pydantic-ai` is to simplify the development of robust and reliable Generative AI applications by providing a structured, type-safe, and extensible framework . It aims to abstract away the complexities of interacting with different LLM providers and managing agent workflows, allowing developers to focus on application logic .
-
-## Main Features
-The `pydantic-ai` repository offers several core features:
-*   **Agent System**: The `Agent` class serves as the main orchestrator for managing interactions with LLMs and executing tasks . Agents can be configured with generic types for dependency injection and output validation, ensuring type safety throughout the application .
-*   **Model Integration**: The framework provides a unified interface for integrating with various LLM providers, including OpenAI, Anthropic, Google, Groq, Cohere, Mistral, Bedrock, and HuggingFace . Each model integration follows a consistent settings pattern with provider-specific prefixes .
-*   **Graph-based Execution**: Pydantic AI uses `pydantic-graph` to manage the execution flow of agents, representing it as a finite state machine .
-*   **Tool System**: Function tools enable models to perform actions and retrieve additional information . Tools can be registered using decorators like `@agent.tool` or `@agent.tool_plain` .
-*   **Output Handling**: The framework supports various output types, including `TextOutput`, `ToolOutput`, `NativeOutput`, and `PromptedOutput` .
-*   **Durable Execution**: Pydantic AI integrates with durable execution systems like DBOS and Temporal, allowing agents to maintain state and resume execution after failures or restarts .
-*   **Multi-Agent Patterns and Integrations**: The repository supports multi-agent applications and various integrations, including Pydantic Evals, Pydantic Graph, Logfire, Agent-User Interaction (AG-UI), Agent2Agent (A2A), and Clai .
-
-## Notes
-The repository is organized as a monorepo with core packages like `pydantic-ai-slim` (core framework), `pydantic-graph` (execution engine), and `pydantic-evals` (evaluation tools) . The documentation is built using MkDocs  and includes API references and examples .
-
-Wiki pages you might want to explore:
-- [OpenAI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.2)
-- [Google Gemini and Vertex AI Models (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#3.4)
-
-View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summary-of-the_72abe8b9-cee5-4e55-80ce-3f1117e36815
-""",
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='xai',
-                )
-            ),
         ]
     )
 
@@ -3141,6 +3528,7 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
             xai_user='test-user-123',
             xai_store_messages=True,
             xai_previous_response_id='prev-resp-456',
+            xai_max_turns=3,
         ),
     )
 
@@ -3171,9 +3559,41 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
                 'user': 'test-user-123',
                 'store_messages': True,
                 'previous_response_id': 'prev-resp-456',
+                'max_turns': 3,
             }
         ]
     )
+
+
+@pytest.mark.parametrize('agent_count', [4, 16])
+async def test_xai_agent_count_forwarded(allow_model_requests: None, agent_count: int):
+    """xai_agent_count is forwarded to the SDK as agent_count when set."""
+    response = create_response(content='response with agent count')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(
+        m,
+        model_settings=XaiModelSettings(xai_agent_count=agent_count),
+    )
+
+    result = await agent.run('hello')
+    assert result.output == 'response with agent count'
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    assert kwargs['agent_count'] == agent_count
+
+
+async def test_xai_agent_count_unset(allow_model_requests: None):
+    """agent_count is not sent when xai_agent_count is unset (server default applies)."""
+    response = create_response(content='response without agent count')
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    await agent.run('hello')
+
+    kwargs = get_mock_chat_create_kwargs(mock_client)[0]
+    assert 'agent_count' not in kwargs
 
 
 async def test_xai_model_properties():
@@ -3206,6 +3626,7 @@ async def test_xai_reasoning_simple(allow_model_requests: None):
                     ThinkingPart(content='...', signature='sig-123', provider_name='xai'),
                     TextPart(content='4'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -3239,6 +3660,7 @@ async def test_xai_encrypted_content_only(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='', signature='sig-abc', provider_name='xai'), TextPart(content='4')],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -3324,8 +3746,10 @@ The first 10 prime numbers are: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\
                 usage=RequestUsage(
                     input_tokens=165,
                     cache_read_tokens=151,
-                    output_tokens=40,
+                    output_tokens=161,
+                    output_reasoning_tokens=121,
                     details={'reasoning_tokens': 121},
+                    cost=Decimal('0.00009085'),
                 ),
                 model_name='grok-4-fast-reasoning',
                 timestamp=IsDatetime(),
@@ -3430,9 +3854,11 @@ async def test_xai_usage_with_reasoning_tokens(allow_model_requests: None):
     assert result.usage == snapshot(
         RunUsage(
             input_tokens=10,
-            output_tokens=2,
+            output_tokens=9,
             requests=1,
+            output_reasoning_tokens=7,
             details={'reasoning_tokens': 7},
+            cost=Decimal('0.0000065'),
         )
     )
 
@@ -3452,7 +3878,7 @@ async def test_xai_usage_without_details(allow_model_requests: None):
     assert result.output == 'Simple answer'
 
     # Verify usage without details (empty dict when no additional usage info)
-    assert result.usage == snapshot(RunUsage(input_tokens=20, output_tokens=10, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=20, output_tokens=10, requests=1, cost=Decimal('0.000009')))
 
 
 def test_xai_usage_fallback_when_extract_fails(monkeypatch: pytest.MonkeyPatch):
@@ -3497,7 +3923,13 @@ async def test_xai_usage_with_server_side_tools(allow_model_requests: None):
 
     # Verify usage includes server_side_tools_used in details
     assert result.usage == snapshot(
-        RunUsage(input_tokens=50, output_tokens=30, details={'server_side_tools_web_search': 2}, requests=1)
+        RunUsage(
+            input_tokens=50,
+            output_tokens=30,
+            details={'server_side_tools_web_search': 2},
+            requests=1,
+            cost=Decimal('0.000025'),
+        )
     )
 
 
@@ -3551,7 +3983,7 @@ async def test_xai_logprobs(allow_model_requests: None) -> None:
                         },
                     )
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -3600,7 +4032,7 @@ async def test_xai_code_execution_default_output(allow_model_requests: None) -> 
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -3649,7 +4081,7 @@ async def test_xai_web_search_default_output(allow_model_requests: None) -> None
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -3715,7 +4147,7 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -3792,8 +4224,8 @@ Fix the errors and try again.\
     # Verify the retry prompt was sent as a user message
     messages = result.all_messages()
     assert len(messages) == 4  # UserPrompt, ModelResponse, RetryPrompt, ModelResponse
-    assert isinstance(messages[2].parts[0], RetryPromptPart)
-    assert messages[2].parts[0].tool_name is None
+    part = message_part(messages, RetryPromptPart, message_index=2)
+    assert part.tool_name is None
 
 
 async def test_xai_thinking_part_in_message_history(allow_model_requests: None):
@@ -3875,7 +4307,7 @@ First reasoning
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='First reasoning'), TextPart(content='first response')],
-                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                usage=RequestUsage(input_tokens=10, output_tokens=5, cost=Decimal('0.0000045')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -3907,7 +4339,7 @@ First reasoning
             ),
             ModelResponse(
                 parts=[TextPart(content='second response')],
-                usage=RequestUsage(input_tokens=20, output_tokens=5),
+                usage=RequestUsage(input_tokens=20, output_tokens=5, cost=Decimal('0.0000065')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -3994,7 +4426,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
                     ThinkingPart(content='First reasoning', signature=IsStr(), provider_name='xai'),
                     TextPart(content='first response'),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                usage=RequestUsage(input_tokens=10, output_tokens=5, cost=Decimal('0.0000045')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4012,7 +4444,7 @@ async def test_xai_thinking_part_with_content_and_signature_in_history(allow_mod
             ),
             ModelResponse(
                 parts=[TextPart(content='second response')],
-                usage=RequestUsage(input_tokens=20, output_tokens=5),
+                usage=RequestUsage(input_tokens=20, output_tokens=5, cost=Decimal('0.0000065')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4094,7 +4526,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
                     ThinkingPart(content='', signature=IsStr(), provider_name='xai'),
                     TextPart(content='first response'),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=5),
+                usage=RequestUsage(input_tokens=10, output_tokens=5, cost=Decimal('0.0000045')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4112,7 +4544,7 @@ async def test_xai_thinking_part_with_signature_only_in_history(allow_model_requ
             ),
             ModelResponse(
                 parts=[TextPart(content='second response')],
-                usage=RequestUsage(input_tokens=20, output_tokens=5),
+                usage=RequestUsage(input_tokens=20, output_tokens=5, cost=Decimal('0.0000065')),
                 model_name=XAI_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4210,6 +4642,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4227,7 +4660,7 @@ async def test_xai_builtin_tool_call_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='The result was 4')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -4277,6 +4710,7 @@ def test_builtin_tool_call_part_failed_status(allow_model_requests: None):
                         timestamp=IsDatetime(),
                     ),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4391,7 +4825,7 @@ async def test_xai_builtin_tool_failed_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='I understand the tool failed')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -4579,7 +5013,7 @@ async def test_xai_stream_tool_call_without_name_ignored(allow_model_requests: N
                 final_response = response
 
     assert final_response is not None
-    assert not any(isinstance(p, ToolCallPart) for p in final_response.parts)
+    assert not final_response.tool_calls
 
 
 async def test_xai_stream_client_side_tool_call_prefers_delta_when_accumulated_missing_or_empty(
@@ -4631,7 +5065,7 @@ async def test_xai_stream_client_side_tool_call_prefers_delta_when_accumulated_m
                 final_response = response
 
     assert final_response is not None
-    tool_calls = [p for p in final_response.parts if isinstance(p, ToolCallPart)]
+    tool_calls = final_response.tool_calls
     assert tool_calls, 'expected at least one client-side ToolCallPart'
     assert any(p.tool_name == 'final_result' and p.args == '{"first": "One"}' for p in tool_calls)
 
@@ -4669,7 +5103,7 @@ async def test_xai_stream_client_tool_args_non_prefix_path(allow_model_requests:
     assert final_response is not None
     # The tool call part should have args that include both delta applications
     # (the behavior is to concatenate, so we get 'ABCXYZ')
-    tool_calls = [p for p in final_response.parts if isinstance(p, ToolCallPart)]
+    tool_calls = final_response.tool_calls
     assert tool_calls, 'expected at least one client-side ToolCallPart'
     assert any(p.tool_name == 'final_result' and p.args == 'ABCXYZ' for p in tool_calls)
 
@@ -4729,7 +5163,7 @@ async def test_xai_prompted_output_json_object(allow_model_requests: None):
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     # Use PromptedOutput explicitly - uses json_object mode when no tools
-    agent: Agent[None, SimpleResult] = Agent(m, output_type=PromptedOutput(SimpleResult))
+    agent: Agent[object, SimpleResult] = Agent(m, output_type=PromptedOutput(SimpleResult))
 
     result = await agent.run('What is the meaning of life?')
     assert result.output == SimpleResult(answer='42')
@@ -4847,7 +5281,7 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
             ),
             ModelResponse(
                 parts=[TextPart(content='First')],
-                usage=RequestUsage(input_tokens=5, output_tokens=2),
+                usage=RequestUsage(input_tokens=5, output_tokens=2, cost=Decimal('0.000002')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4865,7 +5299,7 @@ async def test_xai_user_prompt_cache_point_only_skipped(allow_model_requests: No
             ),
             ModelResponse(
                 parts=[TextPart(content='Second')],
-                usage=RequestUsage(input_tokens=5, output_tokens=2),
+                usage=RequestUsage(input_tokens=5, output_tokens=2, cost=Decimal('0.000002')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -4914,7 +5348,7 @@ async def test_xai_empty_usage_response(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='No usage tracked')],
-                usage=RequestUsage(),  # Empty usage
+                usage=RequestUsage(cost=Decimal('0.00')),  # Empty usage
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -4926,7 +5360,7 @@ async def test_xai_empty_usage_response(allow_model_requests: None):
             ),
         ]
     )
-    assert result.usage == snapshot(RunUsage(requests=1))
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.00')))
 
 
 async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
@@ -4985,6 +5419,7 @@ async def test_xai_parse_tool_args_invalid_json(allow_model_requests: None):
                     ),
                     TextPart(content='Search complete'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5093,20 +5528,13 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
     result1 = await agent.run('Search for test')
     result2 = await agent.run('What did you find?', message_history=result1.new_messages())
 
-    # `enable_image_search` is only present in the `web_search` proto from xai-sdk>=1.14.0; the floor
-    # (1.12.2) omits it. We never set it, so drop it to keep the snapshot SDK-version-agnostic.
-    kwargs = get_mock_chat_create_kwargs(mock_client)
-    for call in kwargs:
-        for tool in call['tools']:
-            tool['web_search'].pop('enable_image_search', None)
-
     # Verify kwargs - second call should have WebSearchTool builtin call mapped
-    assert kwargs == snapshot(
+    assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
             {
                 'model': XAI_NON_REASONING_MODEL,
                 'messages': [{'content': [{'text': 'Search for test'}], 'role': 'ROLE_USER'}],
-                'tools': [{'web_search': {'enable_image_understanding': False}}],
+                'tools': [{'web_search': {'enable_image_understanding': False, 'enable_image_search': False}}],
                 'tool_choice': 'auto',
                 'response_format': None,
                 'use_encrypted_content': False,
@@ -5131,7 +5559,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                     {'content': [{'text': 'Tool completed successfully.'}], 'role': 'ROLE_ASSISTANT'},
                     {'content': [{'text': 'What did you find?'}], 'role': 'ROLE_USER'},
                 ],
-                'tools': [{'web_search': {'enable_image_understanding': False}}],
+                'tools': [{'web_search': {'enable_image_understanding': False, 'enable_image_search': False}}],
                 'tool_choice': 'auto',
                 'response_format': None,
                 'use_encrypted_content': False,
@@ -5166,6 +5594,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5183,7 +5612,7 @@ async def test_xai_web_search_tool_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='The search found results')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -5284,6 +5713,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
                     ),
                     TextPart(content='Tool completed successfully.'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5301,7 +5731,7 @@ async def test_xai_mcp_server_tool_in_history(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='MCP returned data')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -5382,7 +5812,7 @@ async def test_xai_builtin_tool_without_tool_call_id(allow_model_requests: None)
             ),
             ModelResponse(
                 parts=[TextPart(content='Done')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_url='https://api.x.ai/v1',
@@ -5649,6 +6079,7 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
                     ),
                     TextPart(content='Found your attachments.'),
                 ],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name=XAI_NON_REASONING_MODEL,
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5708,7 +6139,7 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='hello ')],
-                usage=RequestUsage(input_tokens=2, output_tokens=1),
+                usage=RequestUsage(input_tokens=2, output_tokens=1, cost=Decimal('9E-7')),
                 model_name='grok-4-fast-non-reasoning',
                 timestamp=IsDatetime(),
                 provider_name='xai',
@@ -5749,6 +6180,62 @@ async def test_xai_close_stream_only_suppresses_async_generator_race(error_messa
             await response.close_stream()
     else:
         await response.close_stream()
+
+
+async def test_xai_legacy_grok_provider_name_in_history(allow_model_requests: None):
+    """`provider_name='grok'` from 1.x histories (when `GrokProvider` existed) must still route through the native xAI paths on replay."""
+    response = create_response(content='second response', usage=create_usage(prompt_tokens=20, completion_tokens=5))
+    mock_client = MockXai.create_mock([response])
+    m = XaiModel(XAI_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=XaiModelSettings(xai_include_encrypted_content=True))
+
+    # Hardcoded `provider_name='grok'` simulates a history serialized in 1.x with the old `GrokProvider`.
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='First question')]),
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='legacy reasoning', signature='sig-legacy', provider_name='grok'),
+                NativeToolCallPart(
+                    tool_name=WebSearchTool.kind,
+                    args={'query': 'legacy query'},
+                    tool_call_id='legacy-call-1',
+                    provider_name='grok',
+                ),
+                NativeToolReturnPart(
+                    tool_name=WebSearchTool.kind,
+                    content=None,
+                    tool_call_id='legacy-call-1',
+                    provider_name='grok',
+                ),
+                TextPart(content='first response'),
+            ],
+            model_name=XAI_REASONING_MODEL,
+            provider_name='grok',
+        ),
+    ]
+    result = await agent.run('Second question', message_history=message_history)
+    assert result.output == 'second response'
+
+    sent_messages = get_mock_chat_create_kwargs(mock_client)[0]['messages']
+    assistant_msgs = [m for m in sent_messages if m['role'] == 'ROLE_ASSISTANT']
+    # The `ThinkingPart(provider_name='grok')` must surface as native `reasoning_content` + `encrypted_content`,
+    # NOT wrapped in `<think>` tags (which is the fallback for foreign providers).
+    native_thinking = [m for m in assistant_msgs if m.get('reasoning_content') or m.get('encrypted_content')]
+    assert len(native_thinking) == 1, (
+        f'Expected exactly one assistant message with native thinking content; got {assistant_msgs!r}'
+    )
+    assert native_thinking[0]['reasoning_content'] == 'legacy reasoning'
+    assert native_thinking[0]['encrypted_content'] == 'sig-legacy'
+    # The `NativeToolCallPart(provider_name='grok')` must be forwarded as a native xAI builtin tool call.
+    tool_call_msgs = [m for m in assistant_msgs if m.get('tool_calls')]
+    assert len(tool_call_msgs) == 1
+    tool_calls = tool_call_msgs[0]['tool_calls']
+    assert len(tool_calls) == 1
+    assert tool_calls[0]['id'] == 'legacy-call-1'
+    # No `<think>...</think>` fallback text should appear in any assistant content.
+    for m in assistant_msgs:
+        for part in m.get('content', []):
+            assert '<think>' not in part.get('text', '')
 
 
 # End of tests

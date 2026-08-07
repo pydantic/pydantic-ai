@@ -205,25 +205,25 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
     def as_node(self, inputs: InputT) -> JoinNode[StateT, DepsT]: ...
 
     def as_node(self, inputs: InputT | None = None) -> JoinNode[StateT, DepsT]:
-        """Create a step node with bound inputs.
+        """Create a join node with bound inputs.
 
         Args:
-            inputs: The input data to bind to this step, or None
+            inputs: The input data to bind to this join, or None
 
         Returns:
-            A [`StepNode`][pydantic_graph.step.StepNode] with this step and the bound inputs
+            A [`JoinNode`][pydantic_graph.join.JoinNode] with this join and the bound inputs
         """
         return JoinNode(self, inputs)
 
 
 @dataclass
 class JoinNode(BaseNode[StateT, DepsT, Any]):
-    """A base node that represents a join item with bound inputs.
+    """A `BaseNode` that represents a builder join with bound inputs.
 
-    JoinNode bridges between the v1 and v2 graph execution systems by wrapping
-    a [`Join`][pydantic_graph.join.Join] with bound inputs in a BaseNode interface.
-    It is not meant to be run directly but rather used to indicate transitions
-    to v2-style steps.
+    `JoinNode` lets a [`BaseNode`][pydantic_graph.BaseNode] subclass hand off to a builder
+    [`Join`][pydantic_graph.join.Join] by wrapping the join together with the value it should
+    receive as `inputs`. It is not meant to be run directly; returning a `JoinNode` from a
+    `BaseNode.run` method tells the graph builder which join to invoke next.
     """
 
     join: Join[StateT, DepsT, Any, Any]
@@ -245,5 +245,5 @@ class JoinNode(BaseNode[StateT, DepsT, Any]):
             NotImplementedError: Always raised as StepNode is not meant to be run directly
         """
         raise NotImplementedError(
-            '`JoinNode` is not meant to be run directly, it is meant to be used in `BaseNode` subclasses to indicate a transition to v2-style steps.'
+            '`JoinNode` is not meant to be run directly, it is meant to be returned from a `BaseNode` subclass to indicate a transition to a builder join.'
         )

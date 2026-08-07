@@ -1,9 +1,3 @@
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .persistence import SnapshotStatus
-
-
 class GraphSetupError(TypeError):
     """Error caused by an incorrectly configured graph."""
 
@@ -48,15 +42,18 @@ class GraphRuntimeError(RuntimeError):
         super().__init__(message)
 
 
-class GraphNodeStatusError(GraphRuntimeError):
-    """Error caused by trying to run a node that already has status `'running'`, `'success'`, or `'error'`."""
+class UnsupportedEventLoopError(RuntimeError):
+    """Error caused by calling a synchronous method on an event loop that cannot be driven by the caller.
 
-    def __init__(self, actual_status: 'SnapshotStatus'):
-        self.actual_status = actual_status
-        super().__init__(f"Incorrect snapshot status {actual_status!r}, must be 'created' or 'pending'.")
+    Synchronous methods run their asynchronous implementation using `loop.run_until_complete()`, which not every
+    event loop implements. Temporal's workflow event loop is one that doesn't: it can only be driven by Temporal.
 
-    @classmethod
-    def check(cls, status: 'SnapshotStatus') -> None:
-        """Check if the status is valid."""
-        if status not in {'created', 'pending'}:
-            raise cls(status)
+    Pydantic AI's synchronous methods report this as a `pydantic_ai.exceptions.UserError` instead.
+    """
+
+    message: str
+    """The error message."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)

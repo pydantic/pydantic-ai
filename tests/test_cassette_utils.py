@@ -83,9 +83,9 @@ def test_get_first_post_body_skips_non_post_request() -> None:
     from vcr.request import Request
 
     cassette = Cassette('fake.yaml')
-    cassette.append(Request('GET', 'https://example.com', None, {}), {})  # pyright: ignore[reportUnknownMemberType]
+    cassette.append(Request('GET', 'https://example.com', None, dict[str, str]()), {})  # pyright: ignore[reportUnknownMemberType]
     cassette.append(  # pyright: ignore[reportUnknownMemberType]
-        Request('POST', 'https://example.com', b'{"key": "value"}', {}),
+        Request('POST', 'https://example.com', b'{"key": "value"}', dict[str, str]()),
         {},
     )
 

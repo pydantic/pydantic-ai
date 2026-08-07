@@ -98,11 +98,6 @@ def _build_model(case: WireCase, *, anthropic_api_key: str, openai_api_key: str,
     raise ValueError(f'unknown provider {case.provider!r}')  # pragma: no cover
 
 
-# When the model actually invokes the native tool, the agent yields the legacy (v2-deprecated) builtin-tool
-# events. These tests assert the request wire body (built before any response), so the event deprecation is
-# irrelevant here and would otherwise turn into an error under `filterwarnings = ['error']`.
-@pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
-@pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in CASES])
 async def test_thinking_with_native_tool_wire_contract(
     case: WireCase,

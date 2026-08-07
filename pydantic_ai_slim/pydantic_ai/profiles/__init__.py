@@ -2,179 +2,248 @@ from __future__ import annotations as _annotations
 
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass, field, fields, replace
 from textwrap import dedent
-from typing import Any, ClassVar
+from typing import Literal, TypeAlias, cast
 
-from typing_extensions import Self
+from typing_extensions import TypedDict
 
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
-from .._utils import install_deprecated_kwarg_alias
-from .._warnings import PydanticAIDeprecationWarning
+from ..exceptions import PydanticAIDeprecationWarning
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
 
 __all__ = [
     'ModelProfile',
     'ModelProfileSpec',
+    'ToolAdditionMode',
+    'ToolDeferralMode',
     'DEFAULT_PROFILE',
+    'DEFAULT_PROMPTED_OUTPUT_TEMPLATE',
+    'DEFAULT_THINKING_TAGS',
     'InlineDefsJsonSchemaTransformer',
     'JsonSchemaTransformer',
+    'merge_profile',
 ]
 
-
-# Maps deprecated kwarg/attribute names to their renamed targets for `ModelProfile`.
-# Used by `ModelProfile.__getattr__` for read access. Constructor aliasing is installed
-# lazily on first instantiation of each subclass via `ModelProfile.__new__`, since
-# `@dataclass` regenerates `__init__` on each subclass and overwrites a single base wrap.
-# Subclasses extend this map by declaring their own `_deprecated_kwarg_aliases` class
-# attribute; `__new__` walks the MRO to collect entries from every level.
-_MODEL_PROFILE_DEPRECATED_FIELD_ALIASES: dict[str, str] = {
-    'supported_builtin_tools': 'supported_native_tools',
-}
-
-# Tracks which subclasses have already had their deprecated-kwarg aliases installed,
-# so the `__new__` lazy-install runs exactly once per class.
-_DEPRECATED_KWARG_ALIASES_INSTALLED: set[type] = set()
+ToolDeferralMode: TypeAlias = Literal['standalone', 'with_tool_search']
+ToolAdditionMode: TypeAlias = Literal['by_reference', 'with_definitions']
 
 
-@dataclass(kw_only=True)
-class ModelProfile:
-    """Describes how requests to and responses from specific models or families of models need to be constructed and processed to get the best results, independent of the model and provider classes used."""
+DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
+    """
+    Always respond with a JSON object that's compatible with this schema:
 
-    # Maps deprecated `__init__` kwarg names to their renamed targets. Subclasses can extend
-    # this by declaring their own `_deprecated_kwarg_aliases = {...}`; `__new__` walks the
-    # MRO at first instantiation to collect every level's entries.
-    _deprecated_kwarg_aliases: ClassVar[dict[str, str]] = {
-        'supported_builtin_tools': 'supported_native_tools',
-    }
+    {schema}
 
-    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
-        # Lazy install of deprecated-kwarg aliases on first instantiation of each subclass.
-        # `@dataclass` regenerates `__init__` on each subclass, so a base-level wrap is lost.
-        # `__new__` runs before `__init__` (via `type.__call__`), so we can wrap the
-        # subclass's `__init__` exactly once before the constructor receives the legacy kwarg.
-        if cls not in _DEPRECATED_KWARG_ALIASES_INSTALLED:
-            _DEPRECATED_KWARG_ALIASES_INSTALLED.add(cls)
-            collected: dict[str, str] = {}
-            for klass in reversed(cls.__mro__):
-                collected.update(getattr(klass, '_deprecated_kwarg_aliases', None) or {})
-            for old, new in collected.items():
-                install_deprecated_kwarg_alias(cls, old=old, new=new)
-        return super().__new__(cls)
+    Don't include any text or Markdown fencing before or after.
+    """
+)
+"""Default instructions template for prompted structured output. The `{schema}` placeholder is replaced with the JSON schema for the output."""
 
-    supports_tools: bool = True
-    """Whether the model supports tools."""
-    supports_tool_return_schema: bool = False
-    """Whether the model natively supports tool return schemas.
+DEFAULT_THINKING_TAGS: tuple[str, str] = ('<think>', '</think>')
+"""Default `(start_tag, end_tag)` pair for parsing thinking content out of text responses."""
+
+
+class ModelProfile(TypedDict, total=False):
+    """Describes how requests to and responses from specific models or families of models need to be constructed and processed to get the best results, independent of the model and provider classes used.
+
+    All fields are optional; absent keys mean "use the documented default" (defaults are documented per field below and applied at access sites).
+
+    Subclasses (`OpenAIModelProfile`, `AnthropicModelProfile`, ...) add provider-specific keys; cross-class merging via dict-spread is supported.
+    """
+
+    supports_tools: bool
+    """Whether the model supports tools. Default: `True`."""
+
+    supports_tool_return_schema: bool
+    """Whether the model natively supports tool return schemas. Default: `False`.
 
     When True, the model's API accepts a structured return schema alongside each tool definition.
     When False, return schemas are injected as JSON text into tool descriptions as a fallback.
     """
-    supports_json_schema_output: bool = False
-    """Whether the model supports JSON schema output.
+
+    supports_json_schema_output: bool
+    """Whether the model supports JSON schema output. Default: `False`.
 
     This is also referred to as 'native' support for structured output.
     Relates to the `NativeOutput` output type.
     """
-    supports_json_object_output: bool = False
-    """Whether the model supports a dedicated mode to enforce JSON output, without necessarily sending a schema.
+
+    supports_json_object_output: bool
+    """Whether the model supports a dedicated mode to enforce JSON output, without necessarily sending a schema. Default: `False`.
 
     E.g. [OpenAI's JSON mode](https://platform.openai.com/docs/guides/structured-outputs#json-mode)
     Relates to the `PromptedOutput` output type.
     """
-    supports_image_output: bool = False
-    """Whether the model supports image output."""
-    supports_inline_system_prompts: bool = False
-    """Whether the provider's API accepts `SystemPromptPart`s inline at any position.
 
-    When `False` (default), non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
+    supports_image_output: bool
+    """Whether the model supports image output. Default: `False`."""
+
+    supports_inline_system_prompts: bool
+    """Whether the provider's API accepts `SystemPromptPart`s inline at any position. Default: `False`.
+
+    When `False`, non-leading `SystemPromptPart`s are wrapped as `UserPromptPart`s with
     `<system>...</system>` content in `Model.prepare_messages`. Leading ones still hoist to the
     provider's top-level system parameter.
+
+    APIs that only accept an inline system prompt in certain positions (e.g. Anthropic requires it
+    to follow a user turn) still set this to `True`; it's on their model adapters to make the
+    positions the API rejects legal. Preserving the part's authority is worth more than preserving
+    the exact position it was authored at — an instruction only governs the generation that follows
+    it, and that's the same generation either way — so prefer adjusting placement over falling back
+    to the `<system>...</system>` rendering, which the model reads as user-authored. Anthropic slides
+    the entry past intervening user turns and gives it a minimal user turn to follow when nothing
+    legal precedes it.
+
+    `Provider.model_profile` is resolved from the model name alone, so when support also turns on
+    something it can't see — which SDK client the provider was built with, say — the adapter narrows
+    this in its own `Model.profile` override, as Anthropic does for Microsoft Foundry. Narrowing the
+    flag rather than special-casing the adapter's own rendering keeps `Model.prepare_messages` the
+    only place that knows the `<system>...</system>` fallback.
     """
-    default_structured_output_mode: StructuredOutputMode = 'tool'
-    """The default structured output mode to use for the model."""
-    prompted_output_template: str = dedent(
-        """
-        Always respond with a JSON object that's compatible with this schema:
 
-        {schema}
+    default_structured_output_mode: StructuredOutputMode
+    """The default structured output mode to use for the model. Default: `'tool'`."""
 
-        Don't include any text or Markdown fencing before or after.
-        """
-    )
-    """The instructions template to use for prompted structured output. The '{schema}' placeholder will be replaced with the JSON schema for the output."""
-    native_output_requires_schema_in_instructions: bool = False
-    """Whether to add prompted output template in native structured output mode"""
-    json_schema_transformer: type[JsonSchemaTransformer] | None = None
-    """The transformer to use to make JSON schemas for tools and structured output compatible with the model."""
+    prompted_output_template: str
+    """The instructions template to use for prompted structured output. The `{schema}` placeholder will be replaced with the JSON schema for the output. Default: `DEFAULT_PROMPTED_OUTPUT_TEMPLATE`."""
 
-    supports_thinking: bool = False
-    """Whether the model supports thinking/reasoning configuration.
+    native_output_requires_schema_in_instructions: bool
+    """Whether to add prompted output template in native structured output mode. Default: `False`."""
+
+    json_schema_transformer: type[JsonSchemaTransformer] | None
+    """The transformer to use to make JSON schemas for tools and structured output compatible with the model. Default: `None`."""
+
+    supports_thinking: bool
+    """Whether the model supports thinking/reasoning configuration. Default: `False`.
 
     When False, the unified `thinking` setting in `ModelSettings` is silently ignored.
     """
 
-    thinking_always_enabled: bool = False
-    """Whether the model always uses thinking/reasoning (e.g., OpenAI o-series, DeepSeek R1).
+    thinking_always_enabled: bool
+    """Whether the model always uses thinking/reasoning (e.g., OpenAI o-series, DeepSeek R1). Default: `False`.
 
     When True, `thinking=False` is silently ignored since the model cannot disable thinking.
     Implies `supports_thinking=True`.
     """
 
-    thinking_tags: tuple[str, str] = ('<think>', '</think>')
-    """The tags used to indicate thinking parts in the model's output. Defaults to ('<think>', '</think>')."""
+    thinking_tags: tuple[str, str]
+    """The tags used to indicate thinking parts in the model's output. Default: [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS]."""
 
-    ignore_streamed_leading_whitespace: bool = False
-    """Whether to ignore leading whitespace when streaming a response.
+    ignore_streamed_leading_whitespace: bool
+    """Whether to ignore leading whitespace when streaming a response. Default: `False`.
 
     This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
     which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
 
-    This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, and `GroqModel`.
+    This is currently only used by `OpenAIChatModel`, `HuggingFaceModel`, `GroqModel`, and `BedrockConverseModel`.
     """
 
-    supported_native_tools: frozenset[type[AbstractNativeTool]] = field(default_factory=lambda: SUPPORTED_NATIVE_TOOLS)
-    """The set of native tool types that this model/profile supports.
+    supported_native_tools: frozenset[type[AbstractNativeTool]]
+    """The set of native tool types that this model/profile supports. Default: `SUPPORTED_NATIVE_TOOLS` (all)."""
 
-    Defaults to ALL native tools. Profile functions should explicitly
-    restrict this based on model capabilities.
+    tool_deferral_mode: ToolDeferralMode | None
+    """When the provider permits a `tools` entry whose schema is withheld. Default: `None`.
+
+    `'standalone'` permits the deferral flag on its own. `'with_tool_search'` permits it only when a
+    tool-search tool is present in the same request. `None` means hidden tools can only be withheld
+    from the wire. Unsupported deferral is handled on a best-effort basis by withholding the tool.
     """
 
-    @classmethod
-    def from_profile(cls, profile: ModelProfile | None) -> Self:
-        """Build a ModelProfile subclass instance from a ModelProfile instance."""
-        if isinstance(profile, cls):
-            return profile
-        return cls().update(profile)
+    tool_addition_mode: ToolAdditionMode | None
+    """How the model natively expresses tools added mid-conversation. Default: `None`.
 
-    def update(self, profile: ModelProfile | None) -> Self:
-        """Update this ModelProfile (subclass) instance with the non-default values from another ModelProfile instance."""
-        if not profile:
-            return self
-        field_names = set(f.name for f in fields(self))
-        non_default_attrs = {
-            f.name: getattr(profile, f.name)
-            for f in fields(profile)
-            if f.name in field_names and getattr(profile, f.name) != f.default
-        }
-        return replace(self, **non_default_attrs)
+    `'by_reference'` reveals a tool already declared in the request's tool definitions (Anthropic
+    `tool_addition` blocks referencing a `defer_loading` entry); `'with_definitions'` carries the full
+    newly available definitions in the reveal (OpenAI Responses `additional_tools` items). `None` means
+    no native channel: `Model.prepare_messages` projects the change into messages. Additions only —
+    tool removal (#6985) is not modeled yet and will get its own field.
+    """
 
-    def __getattr__(self, name: str) -> Any:
-        # Deprecated alias for read access to a renamed field. Only warns when the renamed
-        # target field actually exists on this class — otherwise raise `AttributeError` so
-        # genuine typos still surface clearly.
-        new_name = _MODEL_PROFILE_DEPRECATED_FIELD_ALIASES.get(name)
-        if new_name is not None and new_name in {f.name for f in fields(type(self))}:
-            warnings.warn(
-                f'`{type(self).__name__}.{name}` is deprecated, use `.{new_name}` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=2,
-            )
-            return getattr(self, new_name)
-        raise AttributeError(name)
+    tool_additions: ToolAdditionMode | None
+    """Deprecated: use `tool_addition_mode` instead.
+
+    Translated (with a deprecation warning) whenever profiles are merged; an explicit
+    `tool_addition_mode` in the same profile wins.
+    """
+
+    deferred_tools_require_tool_search: bool
+    """Deprecated: use `tool_deferral_mode` instead.
+
+    `True` translates to `tool_deferral_mode='with_tool_search'` (with a deprecation warning)
+    whenever profiles are merged. `False` carried no signal on its own — deferral capability came
+    from native tool-search support — so it is dropped; an explicit `tool_deferral_mode` in the
+    same profile wins.
+    """
 
 
-ModelProfileSpec = ModelProfile | Callable[[str], ModelProfile | None]
+def _translate_legacy_profile_keys(profile: ModelProfile) -> ModelProfile:
+    """Translate keys renamed after their v2.23 release into their current spellings, warning."""
+    if 'tool_additions' not in profile and 'deferred_tools_require_tool_search' not in profile:
+        return profile
+    translated = dict(profile)
+    if 'tool_additions' in translated:
+        warnings.warn(
+            '`ModelProfile` key `tool_additions` is deprecated, use `tool_addition_mode` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=3,
+        )
+        value = translated.pop('tool_additions')
+        translated.setdefault('tool_addition_mode', value)
+    if 'deferred_tools_require_tool_search' in translated:
+        warnings.warn(
+            '`ModelProfile` key `deferred_tools_require_tool_search` is deprecated, use '
+            "`tool_deferral_mode='with_tool_search'` instead.",
+            PydanticAIDeprecationWarning,
+            stacklevel=3,
+        )
+        if translated.pop('deferred_tools_require_tool_search'):
+            translated.setdefault('tool_deferral_mode', 'with_tool_search')
+    return cast('ModelProfile', translated)
 
-DEFAULT_PROFILE = ModelProfile()
+
+DEFAULT_PROFILE: ModelProfile = {
+    'supports_tools': True,
+    'supports_tool_return_schema': False,
+    'supports_json_schema_output': False,
+    'supports_json_object_output': False,
+    'supports_image_output': False,
+    'default_structured_output_mode': 'tool',
+    'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
+    'native_output_requires_schema_in_instructions': False,
+    'json_schema_transformer': None,
+    'supports_thinking': False,
+    'thinking_always_enabled': False,
+    'thinking_tags': DEFAULT_THINKING_TAGS,
+    'ignore_streamed_leading_whitespace': False,
+    'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
+    'tool_deferral_mode': None,
+    'tool_addition_mode': None,
+}
+"""Fully populated default `ModelProfile`. Used as the base layer when resolving a model's effective profile."""
+
+
+ModelProfileSpec: TypeAlias = ModelProfile | Callable[['ModelProfile'], 'ModelProfile']
+"""Acceptable shapes for the `profile=` argument on a `Model`.
+
+- A `ModelProfile` dict — a partial profile, merged on top of the provider's resolved default.
+- A `Callable[[ModelProfile], ModelProfile]` — receives the provider's resolved default (with `DEFAULT_PROFILE` already merged in) and returns the final profile (full control: replace, derive, ignore the default).
+
+Provider classes still expose `Provider.model_profile(model_name)` (`Callable[[str], ModelProfile | None]`) — that's a separate concept used internally by `Model.profile` to resolve the provider's default for a given model name.
+"""
+
+
+def merge_profile(base: ModelProfile | None, *overrides: ModelProfile | None) -> ModelProfile:
+    """Merge profiles via dict-spread. Later arguments override earlier ones; `None` is treated as empty.
+
+    This is the canonical way to layer profiles in providers and tests; replaces the old `ModelProfile.update()` method.
+    Deprecated key spellings are translated per input before spreading, so a legacy key in an
+    override still overrides the base.
+    """
+    result: ModelProfile = {}
+    if base:
+        result = {**result, **_translate_legacy_profile_keys(base)}
+    for override in overrides:
+        if override:
+            result = {**result, **_translate_legacy_profile_keys(override)}
+    return result

@@ -1,0 +1,196 @@
+interactions:
+- request:
+    body: "--e8f15f8bcbb90a26bab475c6e6f4dc99\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type:
+      text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--e8f15f8bcbb90a26bab475c6e6f4dc99--\r\n"
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '198'
+      content-type:
+      - multipart/form-data; boundary=e8f15f8bcbb90a26bab475c6e6f4dc99
+      host:
+      - api.anthropic.com
+    method: POST
+    uri: https://api.anthropic.com/v1/files?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '190'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=253
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      created_at: '2026-06-25T16:16:09.340000Z'
+      downloadable: false
+      filename: data.csv
+      id: file_011CcQH3nbP5brKi4DsVcj7j
+      mime_type: text/csv
+      size_bytes: 30
+      type: file
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '389'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Use the code execution tool to read the uploaded CSV file and report the sum of the `value` column.
+          type: text
+        - file_id: file_011CcQH3nbP5brKi4DsVcj7j
+          type: container_upload
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      tools:
+      - name: code_execution
+        type: code_execution_20260120
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1740'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-124ce3031891967ade49cab5e1ae119b-801632d85d8d160c-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container:
+        expires_at: '2026-06-25T17:16:14.434245Z'
+        id: container_01WfczkmsEMSmoNwCxagV4xL
+      content:
+      - id: srvtoolu_012hrYtwqs67C1hwVJGUfBvV
+        input:
+          command: |
+            python3 -c "
+            import csv, os
+
+            file_path = os.path.join(os.environ['INPUT_DIR'], 'data.csv')
+
+            total = 0
+            with open(file_path, newline='') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    total += float(row['value'])
+
+            print(f'Sum of value column: {total}')
+            "
+        name: bash_code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            Sum of value column: 100.0
+          type: bash_code_execution_result
+        tool_use_id: srvtoolu_012hrYtwqs67C1hwVJGUfBvV
+        type: bash_code_execution_tool_result
+      - text: "The sum of the `value` column in **data.csv** is **100.0**. \n\nHere's a quick breakdown of what was done:\n1.
+          **Read the file** using Python's `csv.DictReader`, which parsed the CSV using the header row as column names.\n2.
+          **Iterated through each row**, extracting the `value` column and converting it to a float.\n3. **Summed all values**
+          and printed the result.\n\nLet me know if you'd like any further analysis on the file!"
+        type: text
+      id: msg_017QZ67Jz76ms38ctthCEN8Q
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 4727
+        output_tokens: 278
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: DELETE
+    uri: https://api.anthropic.com/v1/files/file_011CcQH3nbP5brKi4DsVcj7j?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '63'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=453
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      id: file_011CcQH3nbP5brKi4DsVcj7j
+      type: file_deleted
+    status:
+      code: 200
+      message: OK
+version: 1

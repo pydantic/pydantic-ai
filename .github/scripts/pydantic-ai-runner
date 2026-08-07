@@ -2,10 +2,22 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "pydantic-ai-slim[anthropic,mcp]>=1.95.1",
+#   "pydantic-ai-slim[anthropic,mcp]",
+#   # The file/shell tools (Bash/Read/Write/Edit/Grep/Glob/LS) are backed by
+#   # harness FileSystem/Shell, which ship as stable top-level modules from 0.4.0
+#   # onwards. Keep these in sync with the out-of-band installs in CI and the Makefile;
+#   # the adjacent script lock pins the production dependency graph and hashes.
+#   "pydantic-ai-harness==0.7.0",
 #   "logfire",
 #   "opentelemetry-instrumentation-httpx",
 # ]
+#
+# # The shim's code is this checkout, so its library must be too: resolving
+# # `pydantic-ai-slim` from PyPI pinned the runner to the last *release*, and any
+# # PR adding a `pydantic_ai` symbol the shim uses died at import until that
+# # symbol shipped (#6998, #7103). The path is relative to this script.
+# [tool.uv.sources]
+# pydantic-ai-slim = { path = "../../pydantic_ai_slim" }
 # ///
 """Pydantic AI gh-aw shim launcher.
 

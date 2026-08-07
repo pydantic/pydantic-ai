@@ -10,6 +10,7 @@ from openai import AsyncOpenAI
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -56,28 +57,40 @@ class AzureProvider(Provider[AsyncOpenAI]):
             'deepseek': deepseek_model_profile,
             'mistralai-': mistral_model_profile,
             'mistral': mistral_model_profile,
+            'ministral': mistral_model_profile,
+            'magistral': mistral_model_profile,
             'cohere-': cohere_model_profile,
             'grok': grok_model_profile,
         }
 
+        base: ModelProfile | None = None
+        is_mistral = False
         for prefix, profile_func in prefix_to_profile.items():
             if model_name.startswith(prefix):
                 if prefix.endswith('-'):
                     model_name = model_name[len(prefix) :]
+                # Three-layer merge: see OpenRouter for the rationale.
+                base = merge_profile(
+                    OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+                    profile_func(model_name),
+                )
+                is_mistral = profile_func is mistral_model_profile
+                break
+        if base is None:
+            # OpenAI models are unprefixed.
+            base = openai_model_profile(model_name)
 
-                profile = profile_func(model_name)
+        # Azure Chat Completions API doesn't support document input.
+        base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_document_input=False))
 
-                # As AzureProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-                # we need to maintain that behavior unless json_schema_transformer is set explicitly
-                # Azure Chat Completions API doesn't support document input
-                return OpenAIModelProfile(
-                    json_schema_transformer=OpenAIJsonSchemaTransformer,
-                    openai_chat_supports_document_input=False,
-                ).update(profile)
+        # Reported in #6593 (not verified against the live API here): Azure AI Foundry's
+        # Mistral gateway rejects `max_completion_tokens` with a 422 and accepts the legacy
+        # `max_tokens` field, so route the `max_tokens` setting to the legacy field.
+        # See https://github.com/pydantic/pydantic-ai/issues/6593
+        if is_mistral:
+            base = merge_profile(base, OpenAIModelProfile(openai_chat_supports_max_completion_tokens=False))
 
-        # OpenAI models are unprefixed
-        # Azure Chat Completions API doesn't support document input
-        return OpenAIModelProfile(openai_chat_supports_document_input=False).update(openai_model_profile(model_name))
+        return base
 
     @overload
     def __init__(self, *, openai_client: AsyncAzureOpenAI) -> None: ...

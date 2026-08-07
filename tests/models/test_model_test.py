@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import re
 from datetime import timezone
 from typing import Annotated, Any, Literal
 
@@ -24,16 +25,49 @@ from pydantic_ai import (
     RunContext,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.messages import ToolAvailabilityDeltaPart
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel, _chars, _JsonSchemaTestData  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr
+
+
+def test_response_metadata_consistent_between_run_and_run_stream():
+    """Regression test for #6062: TestModel response metadata should not depend on run mode."""
+    agent = Agent(model=TestModel())
+
+    run_result = agent.run_sync('hello')
+
+    stream_result = agent.run_stream_sync('hello')
+    list(stream_result.stream_text())
+
+    run_responses = [message for message in run_result.all_messages() if isinstance(message, ModelResponse)]
+    stream_responses = [message for message in stream_result.all_messages() if isinstance(message, ModelResponse)]
+
+    expected_responses = snapshot(
+        [
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            )
+        ]
+    )
+    assert run_responses == expected_responses
+    assert stream_responses == expected_responses
 
 
 def test_call_one():
@@ -55,12 +89,88 @@ def test_call_one():
     assert calls == ['a']
 
 
+def test_call_hidden_tool_has_clear_error() -> None:
+    agent = Agent(TestModel(call_tools=['hidden']))
+
+    @agent.tool_plain(defer_loading=True)
+    def hidden() -> str:  # pragma: no cover
+        return 'hidden'
+
+    with pytest.raises(
+        UserError,
+        match=r"Tool 'hidden' has visibility 'withheld'.*revealed.*before `TestModel` can call it",
+    ):
+        agent.run_sync('call hidden')
+
+
+def test_call_unknown_tool_has_clear_error() -> None:
+    agent = Agent(TestModel(call_tools=['missing']))
+
+    with pytest.raises(UserError, match=r"TestModel was configured to call unknown tool 'missing'"):
+        agent.run_sync('call missing')
+
+
+def _native_addition_agent(call_tools: list[str] | Literal['all']) -> Agent:
+    """An agent on a delta-native profile: reveals stay in history as `ToolAvailabilityDeltaPart`s
+    and the revealed tool's visibility resolves to `'via_history'` rather than `'visible'`."""
+    profile = ModelProfile(tool_deferral_mode='standalone', tool_addition_mode='with_definitions')
+    agent = Agent(TestModel(profile=profile, call_tools=call_tools))
+
+    @agent.tool_plain
+    def revealer() -> ToolReturn:
+        return ToolReturn(return_value='revealed', tools=['hidden'])
+
+    @agent.tool_plain(defer_loading=True)
+    def hidden() -> str:  # pragma: no cover
+        return 'hidden'
+
+    return agent
+
+
+def test_native_tool_addition_profile_runs_without_crashing() -> None:
+    """The delta part a native-addition profile keeps in history must not blow up usage
+    estimation — it is legitimately present, not a skipped-`prepare_messages` violation."""
+    result = _native_addition_agent('all').run_sync('go')
+
+    assert result.output == snapshot(
+        '{"revealer":"revealed","search_tools":{"discovered_tools":[],"message":"No matching tools found. The tools you need may not be available."}}'
+    )
+    assert any(
+        isinstance(part, ToolAvailabilityDeltaPart)
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
+
+
+async def test_delta_part_without_native_profile_still_raises() -> None:
+    """On the default profile (no native addition channel), a delta part in a direct
+    `Model.request()` history still means `prepare_messages` was skipped — keep teaching that."""
+    model = TestModel()
+    messages: list[Any] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden'])]),
+    ]
+    with pytest.raises(UserError, match=r'Call `model.prepare_messages\(messages\)` first'):
+        await model.request(messages, None, ModelRequestParameters())
+
+
+def test_revealed_via_history_tool_is_callable_in_named_mode() -> None:
+    """A revealed tool whose definition travels via history is callable; replaying its history
+    must not raise the misleading 'must be revealed' error on later steps."""
+    history = _native_addition_agent('all').run_sync('go').all_messages()
+
+    result = _native_addition_agent(['hidden']).run_sync('continue', message_history=history)
+    assert result.output == snapshot(
+        '{"revealer":"revealed","search_tools":{"discovered_tools":[],"message":"No matching tools found. The tools you need may not be available."}}'
+    )
+
+
 def test_custom_output_text():
     agent = Agent()
     result = agent.run_sync('x', model=TestModel(custom_output_text='custom'))
     assert result.output == snapshot('custom')
     agent = Agent(output_type=tuple[str, str])
-    with pytest.raises(AssertionError, match='Plain response not allowed, but `custom_output_text` is set.'):
+    with pytest.raises(AssertionError, match=re.escape('Plain response not allowed, but `custom_output_text` is set.')):
         agent.run_sync('x', model=TestModel(custom_output_text='custom'))
 
 
@@ -91,6 +201,7 @@ def test_custom_output_args():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -143,6 +254,7 @@ def test_custom_output_args_model():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -191,6 +303,7 @@ def test_output_type():
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -240,6 +353,7 @@ def test_tool_retry():
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -261,6 +375,7 @@ def test_tool_retry():
                 parts=[ToolCallPart(tool_name='my_ret', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=61, output_tokens=8),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -279,6 +394,7 @@ def test_tool_retry():
                 parts=[TextPart(content='{"my_ret":"1"}')],
                 usage=RequestUsage(input_tokens=62, output_tokens=12),
                 model_name='test',
+                provider_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -297,7 +413,7 @@ def test_output_tool_retry_error_handled():
     call_count = 0
 
     @agent.output_validator
-    def validate_output(ctx: RunContext[None], output: OutputModel) -> OutputModel:
+    def validate_output(ctx: RunContext, output: OutputModel) -> OutputModel:
         nonlocal call_count
         call_count += 1
         raise ModelRetry('Fail')
@@ -330,7 +446,8 @@ async def test_multiple_concurrent_tool_retries():
         if ctx.deps.run_id not in retried_run_ids:
             retried_run_ids.add(ctx.deps.run_id)
             raise ModelRetry('Fail')
-        if len(retried_run_ids) == len(run_ids):  # pragma: no branch  # won't branch if all runs happen very quickly
+        # Won't branch if all runs happen very quickly.
+        if len(retried_run_ids) == len(run_ids):  # pragma: no branch
             event.set()
         await event.wait()  # ensure a retry is done by all runs before any of them finish their flow
         return None

@@ -73,3 +73,20 @@ model = CohereModel(
 agent = Agent(model)
 ...
 ```
+
+## Model settings
+
+You can customize model behavior using [`CohereModelSettings`][pydantic_ai.models.cohere.CohereModelSettings]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.cohere import CohereModel, CohereModelSettings
+
+model = CohereModel('command-r7b-12-2024')
+settings = CohereModelSettings(
+    temperature=0.2,
+    top_k=40,
+)
+agent = Agent(model, model_settings=settings)
+...
+```

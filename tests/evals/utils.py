@@ -1,11 +1,10 @@
 from io import StringIO
 
-from rich.console import Console
-from rich.table import Table
+from rich.console import Console, RenderableType
 
 
-def render_table(table: Table) -> str:
-    """Render a rich Table as a string."""
+def render_table(table: RenderableType) -> str:
+    """Render a rich renderable as a string."""
     string_io = StringIO()
     Console(width=300, file=string_io).print(table)
     rendered = string_io.getvalue()

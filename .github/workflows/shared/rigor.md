@@ -15,3 +15,11 @@
   or speculative issue or review.
 - If you need to hedge with "might", "could", or "possibly", it is not
   ready.
+
+## Adversarial self-review
+
+- Before emitting any issue, discussion, or review, switch sides: assume your
+  finding is WRONG and try your hardest to refute it. Emit it only if it
+  survives your own strongest counter-argument.
+- A false or by-design report costs maintainers more than a missed one.
+  Precision beats recall — when in doubt, `mcp__safeoutputs__noop`.

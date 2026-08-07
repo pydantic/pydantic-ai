@@ -1,0 +1,58 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "show me my expenses"}]}, {"role": "assistant", "content":
+      [{"toolUse": {"toolUseId": "t1", "name": "get_expenses", "input": {}}}]}, {"role": "user", "content": [{"toolResult":
+      {"toolUseId": "t1", "content": [{"text": "ok"}], "status": "success"}}]}, {"role": "assistant", "content": [{"text":
+      "."}]}, {"role": "user", "content": [{"text": "What is in this document?"}, {"document": {"name": "Document 1", "format":
+      "txt", "source": {"bytes": "RHVtbXkgVFhUIGZpbGUK"}}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools":
+      [{"toolSpec": {"name": "get_expenses", "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type":
+      "object"}}}}], "toolChoice": {"auto": {}}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        OWZkOTM0NjctY2EyMy00ZDc1LWIwY2MtMjk2NjRjMWFmNGZk
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '750'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '514'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2100
+      output:
+        message:
+          content:
+          - text: |-
+              The document is titled "Document 1.txt" and contains only the text:
+
+              **"Dummy TXT file"**
+
+              It appears to be a placeholder or test file with no substantial content.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 658
+        outputTokens: 45
+        serverToolUsage: {}
+        totalTokens: 703
+    status:
+      code: 200
+      message: OK
+version: 1

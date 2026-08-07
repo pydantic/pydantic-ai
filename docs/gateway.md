@@ -5,10 +5,7 @@ status: new
 
 # Pydantic AI Gateway
 
-**[Pydantic AI Gateway](https://logfire.pydantic.dev/)** is a unified interface for accessing multiple AI providers with a single key, managed through [Pydantic Logfire](https://logfire.pydantic.dev/). Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the other tools in the [Pydantic stack](https://pydantic.dev/).
-
-!!! warning "Migrated to Pydantic Logfire"
-    The AI Gateway has moved from `gateway.pydantic.dev` to [Pydantic Logfire](https://logfire.pydantic.dev/). If you were using the standalone gateway, see [Pydantic AI Gateway is Moving to Pydantic Logfire](https://logfire.pydantic.dev/docs/gateway-migration/).
+**[Pydantic AI Gateway](https://pydantic.dev/ai-gateway)** is a unified interface for accessing multiple AI providers with a single key, managed through [Pydantic Logfire](https://pydantic.dev/logfire). Features include built-in OpenTelemetry observability, real-time cost monitoring, failover management, and native integration with the other tools in the [Pydantic stack](https://pydantic.dev/).
 
 Sign up at [logfire.pydantic.dev](https://logfire.pydantic.dev/).
 

@@ -6,7 +6,7 @@ from .abstract import AbstractToolset, ToolsetTool
 from .approval_required import ApprovalRequiredToolset
 from .combined import CombinedToolset
 from .deferred_loading import DeferredLoadingToolset
-from .external import DeferredToolset, ExternalToolset  # pyright: ignore[reportDeprecated]
+from .external import ExternalToolset
 from .filtered import FilteredToolset
 from .function import FunctionToolset
 from .include_return_schemas import IncludeReturnSchemasToolset
@@ -22,12 +22,9 @@ AgentToolset = Union[AbstractToolset[AgentDepsT], ToolsetFunc[AgentDepsT]]  # no
 __all__ = (
     'AbstractToolset',
     'AgentToolset',
-    'ToolsetFunc',
-    'ToolsetTool',
     'ApprovalRequiredToolset',
     'CombinedToolset',
     'DeferredLoadingToolset',
-    'DeferredToolset',
     'ExternalToolset',
     'FilteredToolset',
     'FunctionToolset',
@@ -36,5 +33,7 @@ __all__ = (
     'PreparedToolset',
     'RenamedToolset',
     'SetMetadataToolset',
+    'ToolsetFunc',
+    'ToolsetTool',
     'WrapperToolset',
 )

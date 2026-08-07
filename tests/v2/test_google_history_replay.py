@@ -35,7 +35,7 @@ def _set_google_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _gemini_api_model() -> GoogleModel:
-    return GoogleModel('gemini-2.5-flash', provider=GoogleProvider())
+    return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='mock-api-key'))
 
 
 def _google_cloud_model() -> GoogleModel:

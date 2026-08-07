@@ -1,10 +1,10 @@
-## Version Policy
+# Version Policy
 
-We will not intentionally make breaking changes in minor releases of V1. V2 will be released in April 2026 at the earliest, 6 months after the release of V1 in September 2025.
+Pydantic AI V1 was released in September 2025, and the stable V2.0 was released on June 23, 2026; see the [Upgrade Guide](changelog.md) for what's in V2, how to install it, and how to upgrade.
 
-Once we release V2, we'll continue to provide security fixes for V1 for another 6 months minimum, so you have time to upgrade your applications.
+We will not intentionally make breaking changes in minor releases. Functionality marked as deprecated in a release is not removed until the next major version, which we won't release sooner than 3 months after V2.0.
 
-Functionality marked as deprecated will not be removed until V2.
+We'll continue to provide security fixes for V1 for at least 6 months after V2's stable release, so you have time to upgrade your applications. When you're ready to make the jump, the [Upgrade Guide](changelog.md) lists the breaking changes for each version, along with our recommended path to V2.
 
 Of course, some apparently safe changes and bug fixes will inevitably break some users' code &mdash; obligatory link to [xkcd](https://xkcd.com/1172/).
 

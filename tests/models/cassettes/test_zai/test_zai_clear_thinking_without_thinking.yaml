@@ -1,0 +1,94 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '137'
+      content-type:
+      - application/json
+      host:
+      - api.z.ai
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: glm-4.7
+      stream: false
+      thinking:
+        clear_thinking: false
+    uri: https://api.z.ai/api/paas/v4/chat/completions
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1860'
+      content-type:
+      - application/json; charset=UTF-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+      - Origin
+      - Access-Control-Request-Method
+      - Access-Control-Request-Headers
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: '4'
+          reasoning_content: |2-
+
+            1.  **Analyze the Request:** The user is asking a very basic arithmetic question: "What is 2 + 2?".
+
+            2.  **Identify the Core Task:** This is a simple math problem. No complex reasoning, no hidden meanings, no political or sensitive topics. It's a fact-based query.
+
+            3.  **Determine the Answer:** The answer is 4. This is a fundamental, universally accepted mathematical truth.
+
+            4.  **Formulate the Response:**
+                *   **Direct Answer:** The most direct and correct answer is simply "4".
+                *   **Optional Elaboration:** I could add more, like "2 plus 2 equals 4," or provide a tiny bit of context. However, for a question this simple, being direct is best.
+                *   **Tone:** The tone should be helpful, neutral, and concise. Avoid being condescending or overly complex.
+
+            5.  **Draft the Final Response:**
+                *   *Draft 1:* 4.
+                *   *Draft 2:* The answer is 4.
+                *   *Draft 3:* 2 + 2 = 4.
+
+                Draft 1 is perfectly fine. It's the most direct answer. Draft 2 is also good and slightly more conversational. Draft 3 is clear and explicit. All are good options. I'll go with a clear, simple statement.
+
+            6.  **Final Polish:** "4" is the best answer. It's simple, direct, and accurate. I will simply state it.
+
+            7.  **Final Check:** Does this answer the user's question? Yes. Is it accurate? Yes. Is it safe? Yes. No issues.
+
+                So, the response is just "4".
+          role: assistant
+      created: 1782272662
+      id: 20260624114409535a87fce7444fbe
+      model: glm-4.7
+      object: chat.completion
+      request_id: 20260624114409535a87fce7444fbe
+      usage:
+        completion_tokens: 369
+        completion_tokens_details:
+          reasoning_tokens: 366
+        prompt_tokens: 13
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 382
+    status:
+      code: 200
+      message: OK
+version: 1

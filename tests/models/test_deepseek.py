@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
+from decimal import Decimal
 
 import pytest
 
@@ -33,6 +34,20 @@ pytestmark = [
 ]
 
 
+@pytest.fixture
+def freeze_deepseek_off_peak_pricing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make DeepSeek's time-of-day pricing deterministic for snapshot assertions."""
+    timestamp = datetime(2025, 4, 22, tzinfo=timezone.utc)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return timestamp if tz is not None else timestamp.replace(tzinfo=None)
+
+    monkeypatch.setattr('pydantic_ai._utils.datetime', FrozenDatetime)
+
+
+@pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after ToolSearch discovery')
 async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: None, deepseek_api_key: str):
     """Regression test for #5829: real-API check that deferred capabilities work on a DeepSeek thinking model.
 
@@ -80,7 +95,9 @@ async def test_deepseek_deferred_capability_with_thinking(allow_model_requests: 
     )
 
 
-async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek_api_key: str):
+async def test_deepseek_model_thinking_part(
+    allow_model_requests: None, deepseek_api_key: str, freeze_deepseek_off_peak_pricing: None
+):
     deepseek_model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
     agent = Agent(model=deepseek_model)
     result = await agent.run('How do I cross the street?')
@@ -105,6 +122,7 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
                         'prompt_cache_miss_tokens': 12,
                         'reasoning_tokens': 415,
                     },
+                    cost=Decimal('0.00043557'),
                 ),
                 model_name='deepseek-reasoner',
                 timestamp=IsDatetime(),
@@ -123,14 +141,17 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
     )
 
 
-async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepseek_api_key: str):
+async def test_deepseek_model_thinking_stream(
+    allow_model_requests: None, deepseek_api_key: str, freeze_deepseek_off_peak_pricing: None
+):
     deepseek_model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
     agent = Agent(model=deepseek_model)
 
     result: AgentRunResult | None = None
-    async for event in agent.run_stream_events(user_prompt='How do I cross the street?'):
-        if isinstance(event, AgentRunResultEvent):
-            result = event.result
+    async with agent.run_stream_events(user_prompt='How do I cross the street?') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, AgentRunResultEvent):
+                result = event.result
 
     assert result is not None
     assert result.all_messages() == snapshot(
@@ -159,6 +180,7 @@ async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepse
                     input_tokens=6,
                     output_tokens=212,
                     details={'prompt_cache_hit_tokens': 0, 'prompt_cache_miss_tokens': 6, 'reasoning_tokens': 198},
+                    cost=Decimal('0.00011741'),
                 ),
                 model_name='deepseek-reasoner',
                 timestamp=IsDatetime(),

@@ -20,6 +20,7 @@ from pydantic import (
     field_validator,
     model_serializer,
     model_validator,
+    with_config,
 )
 from pydantic_core import to_jsonable_python
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
@@ -204,7 +205,6 @@ def load_from_registry(
     custom_types_param: str,
     context: str | None = None,
     instantiate: Callable[[type[T], tuple[Any, ...], dict[str, Any]], T] | None = None,
-    legacy_aliases: Mapping[str, str] | None = None,
 ) -> T:
     """Load an object from the registry based on a specification.
 
@@ -215,25 +215,11 @@ def load_from_registry(
         custom_types_param: Name of the parameter for custom types, used in error messages.
         context: Optional context for error messages.
         instantiate: Optional callback to instantiate the class. Default: `cls(*args, **kwargs)`.
-        legacy_aliases: Optional mapping of deprecated spec names to their current names.
-            When a spec uses a legacy name, a `PydanticAIDeprecationWarning` is emitted and
-            the lookup is redirected to the current name.
 
     Returns:
         An initialized instance.
     """
     name = spec.name
-    if legacy_aliases is not None and (renamed := legacy_aliases.get(name)) is not None:
-        import warnings
-
-        from pydantic_ai._warnings import PydanticAIDeprecationWarning
-
-        warnings.warn(
-            f"In {label.lower()} specs, {label.lower()} name '{name}' is deprecated, use '{renamed}' instead.",
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        name = renamed
     cls = registry.get(name)
     if cls is None:
         raise ValueError(
@@ -329,10 +315,7 @@ def build_schema_types(
 
         def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
             td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
-            config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
-            # TODO: Replace with pydantic.with_config once pydantic 2.11 is the min supported version
-            td.__pydantic_config__ = config  # pyright: ignore[reportAttributeAccessIssue]
-            return td
+            return with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(td)
 
         # Shortest form: just the name
         if len(type_hints) == 0 or not required_type_hints:

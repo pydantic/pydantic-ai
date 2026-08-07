@@ -4,13 +4,10 @@ from __future__ import annotations as _annotations
 
 import os
 import re
-import warnings
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
 
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 
@@ -73,7 +70,7 @@ def gateway_provider(
 
 @overload
 def gateway_provider(
-    upstream_provider: Literal['gemini', 'google-cloud', 'google-vertex'],
+    upstream_provider: Literal['google', 'google-cloud'],
     /,
     *,
     route: str | None = None,
@@ -99,6 +96,7 @@ ModelProvider = Literal[
     'groq',
     'anthropic',
     'bedrock',
+    'google',
     'google-cloud',
 ]
 
@@ -110,7 +108,6 @@ APIFlavor = Literal[
     'chat',
     'responses',
     'converse',
-    'gemini',
 ]
 
 UpstreamProvider = ModelProvider | APIFlavor
@@ -150,14 +147,15 @@ def gateway_provider(
         base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', os.getenv('PAIG_BASE_URL')) or _infer_base_url(api_key)
     )
 
+    canonical = normalize_gateway_provider(upstream_provider)
     if route is None:
         # Use the implied providerId as the default route.
-        route = normalize_gateway_provider(upstream_provider)
+        route = _gateway_route(canonical)
 
     base_url = _merge_url_path(base_url, route)
 
     # Bedrock uses the AWS SDK (botocore) rather than httpx, so skip http_client creation.
-    if upstream_provider in ('bedrock', 'converse'):
+    if canonical == 'bedrock':
         from .bedrock import BedrockProvider
 
         return BedrockProvider(
@@ -168,11 +166,11 @@ def gateway_provider(
 
     own_http_client = http_client is None
     http_client = http_client or create_async_http_client()
-    http_client.event_hooks = {'request': [_request_hook(api_key)]}
+    _add_request_hook(http_client, _GatewayRequestHook(api_key))
 
     def _http_client_factory() -> httpx.AsyncClient:
         client = create_async_http_client()
-        client.event_hooks = {'request': [_request_hook(api_key)]}
+        _add_request_hook(client, _GatewayRequestHook(api_key))
         return client
 
     def _with_http_client(provider: Provider[Any]) -> Provider[Any]:
@@ -181,15 +179,15 @@ def gateway_provider(
             provider._http_client_factory = _http_client_factory  # pyright: ignore[reportPrivateUsage]
         return provider
 
-    if upstream_provider in ('openai', 'openai-chat', 'openai-responses', 'chat', 'responses'):
+    if canonical in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
         return _with_http_client(OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client))
-    elif upstream_provider == 'groq':
+    elif canonical == 'groq':
         from .groq import GroqProvider
 
         return _with_http_client(GroqProvider(api_key=api_key, base_url=base_url, http_client=http_client))
-    elif upstream_provider == 'anthropic':
+    elif canonical == 'anthropic':
         from anthropic import AsyncAnthropic
 
         from .anthropic import AnthropicProvider
@@ -199,7 +197,10 @@ def gateway_provider(
                 anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
             )
         )
-    elif upstream_provider in ('google-cloud', 'google-vertex', 'gemini'):
+    elif canonical == 'google-cloud':
+        # `gateway/google` is a convenience alias for `gateway/google-cloud` — the Gateway
+        # server only exposes the Google Cloud (Vertex) route today, so both shorthands
+        # land here via `normalize_gateway_provider`.
         from .google_cloud import GoogleCloudProvider
 
         return _with_http_client(GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client))
@@ -207,13 +208,18 @@ def gateway_provider(
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
 
-def _request_hook(api_key: str) -> Callable[[httpx.Request], Awaitable[httpx.Request]]:
+class _GatewayRequestHook:
     """Request hook for the gateway provider.
 
-    It adds the `"traceparent"` and `"Authorization"` headers to the request.
+    It adds the `"traceparent"` and `"Authorization"` headers to the request. Implemented as a
+    typed callable class (rather than a closure with a marker attribute) so that `_add_request_hook`
+    can dedupe the gateway's own hook via `isinstance` on repeated calls with the same client.
     """
 
-    async def _hook(request: httpx.Request) -> httpx.Request:
+    def __init__(self, api_key: str) -> None:
+        self._api_key = api_key
+
+    async def __call__(self, request: httpx.Request) -> httpx.Request:
         from opentelemetry.propagate import inject
 
         headers: dict[str, Any] = {}
@@ -221,11 +227,20 @@ def _request_hook(api_key: str) -> Callable[[httpx.Request], Awaitable[httpx.Req
         request.headers.update(headers)
 
         if 'Authorization' not in request.headers:
-            request.headers['Authorization'] = f'Bearer {api_key}'
+            request.headers['Authorization'] = f'Bearer {self._api_key}'
 
         return request
 
-    return _hook
+
+def _add_request_hook(http_client: httpx.AsyncClient, hook: _GatewayRequestHook) -> None:
+    """Add a request hook without replacing caller-provided HTTPX hooks."""
+    request_hooks = [
+        existing_hook
+        for existing_hook in http_client.event_hooks.get('request', [])
+        if not isinstance(existing_hook, _GatewayRequestHook)
+    ]
+    request_hooks.append(hook)
+    http_client.event_hooks['request'] = request_hooks
 
 
 def _merge_url_path(base_url: str, path: str) -> str:
@@ -238,40 +253,44 @@ def _merge_url_path(base_url: str, path: str) -> str:
     return base_url.rstrip('/') + '/' + path.lstrip('/')
 
 
-def normalize_gateway_provider(provider: str) -> str:
-    """Normalize a gateway provider name.
+# Wire-value remaps for the PAIG URL route. Keyed by canonical class-lookup names
+# (the output of `normalize_gateway_provider`); defaults to identity. Only providers
+# whose Gateway wire value differs from the canonical name are listed.
+# PAIG's canonical OpenAI route is `openai` (per the gateway's own 404 list of
+# supported values). The Chat-vs-Responses API flavor is selected by the OpenAI
+# SDK appending `/chat/completions` or `/responses` on top of the base URL, so all
+# OpenAI flavors share the same wire route.
+_GATEWAY_ROUTE_REMAP: dict[str, str] = {
+    'openai-chat': 'openai',
+    'openai-responses': 'openai',
+    # Gateway team still uses the old name; flip this entry when they rename their side.
+    'google-cloud': 'google-vertex',
+}
 
-    Args:
-        provider: The provider name to normalize.
+
+def _gateway_route(provider: str) -> str:
+    """Translate a canonical provider name into the Gateway URL route segment."""
+    return _GATEWAY_ROUTE_REMAP.get(provider, provider)
+
+
+# User-facing aliases resolved to canonical class-lookup names. `gateway/google` collapses
+# onto `google-cloud` as a convenience — the Gateway server only exposes the Google Cloud
+# (Vertex) route today, so both prefixes land on the same backend.
+_GATEWAY_PROVIDER_ALIASES: dict[str, str] = {
+    'chat': 'openai-chat',
+    'responses': 'openai-responses',
+    'converse': 'bedrock',
+    'google': 'google-cloud',
+}
+
+
+def normalize_gateway_provider(provider: str) -> str:
+    """Strip the `gateway/` prefix and resolve user-facing aliases to a canonical class-lookup name.
+
+    Wire-value remapping for the Gateway URL belongs in `_gateway_route`.
     """
     provider = provider.removeprefix('gateway/')
-
-    if provider == 'google-vertex':
-        warnings.warn(
-            "The 'gateway/google-vertex:' prefix is deprecated and will be removed in v2.0. "
-            "Use 'gateway/google-cloud:' instead.",
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-    elif provider == 'gemini':
-        warnings.warn(
-            "The 'gateway/gemini:' prefix is deprecated and will be removed in v2.0. "
-            "Use 'gateway/google-cloud:' instead.",
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-
-    if provider in ('openai', 'openai-chat', 'chat'):
-        return 'openai'
-    elif provider in ('openai-responses', 'responses'):
-        return 'openai-responses'
-    elif provider in ('gemini', 'google-cloud', 'google-vertex'):
-        # The Gateway API still expects `google-vertex` as the upstream-provider wire value.
-        # When the Gateway team renames their side, flip this to `google-cloud`.
-        return 'google-vertex'
-    elif provider in ('bedrock', 'converse'):
-        return 'bedrock'
-    return provider
+    return _GATEWAY_PROVIDER_ALIASES.get(provider, provider)
 
 
 _PYDANTIC_TOKEN_PATTERN = re.compile(r'^pylf_v(?P<version>[0-9]+)_(?P<region>[a-z]+)_[a-zA-Z0-9-_]+$')

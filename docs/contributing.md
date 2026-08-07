@@ -25,7 +25,7 @@ If the fix could reasonably go more than one way, or you're unsure it's actually
 
 ### Features, integrations, or API changes
 
-Before writing code, ask whether the change needs to live in core at all. Most new agent behaviors belong in [**Pydantic AI Harness**](https://github.com/pydantic/pydantic-ai-harness), the official capability library — not in this repo. Pydantic AI core is for the agent loop, model providers, and capabilities that require model-specific support or are fundamental to the agent experience. Standalone capabilities — guardrails, memory, context management, file system access, etc. — belong in the harness, where they can iterate faster. See [What goes where?](harness/overview.md#what-goes-where) for the full distinction.
+Before writing code, ask whether the change needs to live in core at all. Most new agent behaviors belong in [**Pydantic AI Harness**](https://github.com/pydantic/pydantic-ai-harness), the official capability library — not in this repo. Pydantic AI core is for the agent loop, model providers, and capabilities that require model-specific support or are fundamental to the agent experience. Standalone capabilities — guardrails, memory, context management, file system access, etc. — belong in the harness, where they can iterate faster. See [What goes where?](https://pydantic.dev/docs/ai/harness/#what-goes-where) for the full distinction.
 
 **If your idea is a capability**, open an issue on [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness/issues) instead. You can also publish capabilities as your own package using the `pydantic-ai-<name>` convention — see [Publishing capability packages](extensibility.md#publishing-capability-packages). Once a capability has real users and a stable shape, we can talk about upstreaming to harness or core.
 
@@ -67,6 +67,8 @@ On any PR, we may push commits to your branch, open a follow-up PR that supersed
 
 Please don't spend effort chasing green CI, addressing every automated review comment, or rebasing for merge conflicts on a PR we haven't pre-aligned on. If we take the change forward, that polish gets thrown away when we rewrite. Get the approach working, then stop and ping us on Slack.
 
+Do not force-push updates to an open PR. Rewriting its commits invalidates previous reviews; push follow-up commits instead. We will squash them when merging.
+
 ### Automated review is advisory, not a gate
 
 PRs are automatically reviewed by Devin and our own tooling. These reviews are advisory:
@@ -84,7 +86,7 @@ How we weigh priorities:
 - **User demand** -- features that more users need get priority. Champion-backed features with production use cases outrank speculative additions.
 - **Provider significance** -- work that affects frontier providers (Anthropic, OpenAI, Google) or providers we know are heavily used gets priority. A model integration for a niche provider will wait; a fix for Anthropic won't.
 - **Roadmap alignment** -- features that align with our current focus areas get priority. Right now that includes the capabilities/hooks API, provider-adaptive tools, and the [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) capability library.
-- **Capabilities over core** -- features that could live as a [capability](capabilities.md) should go to [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) or ship as your own package — that's often the fastest path. Once it has traction, come back and we can talk about upstreaming.
+- **Capabilities over core** -- features that could live as a [capability](capabilities/overview.md) should go to [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) or ship as your own package — that's often the fastest path. Once it has traction, come back and we can talk about upstreaming.
 
 ## If your PR or issue has gone quiet
 
