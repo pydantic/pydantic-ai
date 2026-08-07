@@ -1302,7 +1302,7 @@ async def test_concurrent_run_stream_events_handles_do_not_cross_consume():
 
 
 async def test_run_stream_events_cancel_from_worker_thread():
-    """The documented loop marshalling pattern cancels a run from a worker thread."""
+    """`cancel()` is thread-safe: a direct call from a worker thread cancels the run."""
     started = asyncio.Event()
     agent = Agent(TestModel())
 
@@ -1312,11 +1312,11 @@ async def test_run_stream_events_cancel_from_worker_thread():
         await asyncio.Event().wait()
         return 'never reached'  # pragma: no cover
 
-    loop = asyncio.get_running_loop()
     async with agent.run_stream_events('go') as events:
         consumer = asyncio.create_task(_consume_events(events))
         await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
-        worker = threading.Thread(target=loop.call_soon_threadsafe, args=(events.cancel,))
+        # Call `cancel()` directly from the thread — the controller marshals onto the run's loop.
+        worker = threading.Thread(target=events.cancel)
         worker.start()
         await to_thread.run_sync(worker.join)
 

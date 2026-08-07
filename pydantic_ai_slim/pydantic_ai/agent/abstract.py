@@ -178,9 +178,9 @@ class AgentRunEvents(
         """Request cancellation of the whole run.
 
         This method is idempotent, is a no-op after completion, and is safe to call from another
-        task (e.g. a TUI's key handler), but not from another thread — marshal onto the event loop
-        first (e.g. `loop.call_soon_threadsafe(events.cancel)`). It does not affect external
-        cancellation of the consumer task. If iteration continues, cancellation surfaces as
+        task (e.g. a TUI's key handler) or thread — the underlying controller marshals onto the
+        run's event loop, just like [`CancellationToken.cancel()`][pydantic_ai.CancellationToken.cancel].
+        It does not affect external cancellation of the consumer task. If iteration continues, cancellation surfaces as
         [`RunCancelled`][pydantic_ai.exceptions.RunCancelled]; leaving the context instead performs
         quiet teardown. Cancelling before the first iteration prevents the run from starting at
         all; iterating afterwards raises `RunCancelled` with empty `messages`.
@@ -188,16 +188,25 @@ class AgentRunEvents(
         self._binding.cancellation.cancel()
 
     def all_messages(self) -> list[_messages.ModelMessage]:
-        """Return all messages from the run, including messages supplied as history."""
+        """Return all messages from the run, including messages supplied as history.
+
+        Raises `UserError` if accessed before the first iteration has started the run.
+        """
         return self._agent_run().all_messages()
 
     def new_messages(self) -> list[_messages.ModelMessage]:
-        """Return only messages created by the run."""
+        """Return only messages created by the run.
+
+        Raises `UserError` if accessed before the first iteration has started the run.
+        """
         return self._agent_run().new_messages()
 
     @property
     def usage(self) -> _usage.RunUsage:
-        """Return the run's current usage."""
+        """Return the run's current usage.
+
+        Raises `UserError` if accessed before the first iteration has started the run.
+        """
         return self._agent_run().usage
 
     @property
