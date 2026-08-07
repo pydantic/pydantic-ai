@@ -3446,6 +3446,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_request_parameters = models.resolve_request_tools(
                 model_request_parameters, model_profile.get('supported_native_tools', frozenset())
             )
+            # A `defer_loading=True` tool is hidden until tool search reveals it, which a session whose
+            # tools are fixed at connect can never do — the model would be handed a `search_tools`
+            # affordance that finds the tool and then can't have it. Rejected up front for the same
+            # reason a deferred *capability* that contributes tools is (see `_resolve_run_capabilities`
+            # above), rather than silently advertising a search that leads nowhere.
+            deferred_tool_names = [tool.name for tool in model_request_parameters.function_tools if tool.defer_loading]
+            if deferred_tool_names:
+                formatted_names = ', '.join(repr(name) for name in deferred_tool_names)
+                raise exceptions.UserError(
+                    'Realtime sessions cannot reveal tools mid-session, so tools with '
+                    f'`defer_loading=True` are not supported; remove it from: {formatted_names}.'
+                )
             # Realtime codecs read `function_tools` directly, so hidden tools are dropped from the
             # connect-time advertisement entirely — the same physical removal this path applied
             # before visibility became a resolved table.
@@ -3470,6 +3482,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 raise exceptions.UserError(
                     f'The {model.model_name!r} realtime model does not support seeding a session with '
                     '`message_history`.'
+                )
+
+            output_modality = (effective_model_settings or {}).get('output_modality', 'audio')
+            # Unlike a setting the provider merely ignores, this one changes what the caller gets back:
+            # a model that can't do it either fails the handshake (Gemini) or answers with speech anyway
+            # (xAI), so it is rejected here rather than after a connection is open.
+            if output_modality == 'text' and not model_profile.get('supports_text_output', True):
+                raise exceptions.UserError(
+                    f"The {model.model_name!r} realtime model does not support `output_modality='text'`; "
+                    'it only generates audio. Read the spoken answer from the transcript on the '
+                    '`SpeechPart` instead.'
                 )
 
             async with model.connect(
@@ -3502,7 +3525,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     agent_description=(
                         self.render_description(deps) if session_instrumentation_settings is not None else None
                     ),
-                    output_modality=(effective_model_settings or {}).get('output_modality', 'audio'),
+                    output_modality=output_modality,
                     # Surfaced on the session span so the session's configured native tools and realtime
                     # settings are inspectable, respecting `include_model_request_parameters`.
                     model_request_parameters=model_request_parameters,

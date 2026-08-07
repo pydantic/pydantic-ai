@@ -25,6 +25,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelAPIError,
+    RunCancelled,
     ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -108,7 +109,7 @@ from pydantic_ai.realtime.codec import (
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
@@ -244,6 +245,7 @@ def _profile(
     supports_manual_turn_control: bool = True,
     supports_interruption: bool = True,
     supports_output_truncation: bool = True,
+    supports_text_output: bool = True,
     supports_session_seeding: bool = True,
     supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(
         {WebSearchTool, WebFetchTool, CodeExecutionTool}
@@ -255,6 +257,7 @@ def _profile(
         supports_manual_turn_control=supports_manual_turn_control,
         supports_interruption=supports_interruption,
         supports_output_truncation=supports_output_truncation,
+        supports_text_output=supports_text_output,
         supports_session_seeding=supports_session_seeding,
         supported_native_tools=supported_native_tools,
     )
@@ -316,7 +319,7 @@ class FakeRealtimeModel(RealtimeModel):
     ) -> None:
         self._connection = connection
         self.settings = settings
-        self._profile = profile or _profile()
+        self._fixed_profile = profile or _profile()
         self.last_instructions: str | None = None
         self.last_tools: list[ToolDefinition] | None = None
         self.last_native_tools: list[AbstractNativeTool] | None = None
@@ -333,7 +336,9 @@ class FakeRealtimeModel(RealtimeModel):
 
     @property
     def profile(self) -> RealtimeModelProfile:
-        return self._profile
+        # A fixed, already-resolved profile: these tests pin session behavior per flag, not the
+        # default/provider/user layering the base class does (covered in the provider tests).
+        return self._fixed_profile
 
     @asynccontextmanager
     async def connect(
@@ -3933,13 +3938,39 @@ def _grounding_parts() -> list[NativeToolCallPart | NativeToolReturnPart]:
 
 
 def _native_part_events(
-    parts: list[NativeToolCallPart | NativeToolReturnPart],
+    parts: list[NativeToolCallPart | NativeToolReturnPart], *, first_index: int = 0
 ) -> list[PartStartEvent | PartEndEvent]:
+    """Start/end pairs for native-tool parts, numbered from `first_index`.
+
+    A connection numbers these from its own counter (so the default `0`), while the session remaps
+    them onto its session-unique allocator before forwarding — hence the two numberings.
+    """
     return [
         event
-        for index, part in enumerate(parts)
+        for index, part in enumerate(parts, start=first_index)
         for event in (PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part))
     ]
+
+
+async def test_native_part_end_without_a_start_gets_an_index_of_its_own() -> None:
+    # A `PartEndEvent` the session never saw a start for closes nothing, so it must not inherit the
+    # connection's index: that index isn't session-unique and would name a live part — here the
+    # assistant's speech part, which also holds index 0.
+    part = _grounding_parts()[0]
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='It is sunny in Rome', is_final=True),
+            PartEndEvent(index=0, part=part),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
+    events = await collect_events(session)
+
+    speech_indexes = {event.index for event in events if isinstance(event, PartStartEvent)}
+    orphan = next(event for event in events if isinstance(event, PartEndEvent) and event.part == part)
+    assert speech_indexes == {0}
+    assert orphan.index not in speech_indexes
 
 
 async def test_grounding_streams_and_folds_native_tool_parts() -> None:
@@ -3964,7 +3995,11 @@ async def test_grounding_streams_and_folds_native_tool_parts() -> None:
                 speaker='assistant', transcript_delta='It is sunny in Rome', transcript='It is sunny in Rome'
             ),
         ),
-        *_native_part_events(grounding),
+        # The connection numbered these `0` and `1` from its own counter, which would have collided
+        # with the speech part's index `0` above — a repeated index *replaces* the part at it, so a
+        # consumer keyed on the index would have shown the search in place of the model's answer. The
+        # session remaps them onto its own allocator, which had already handed `0` to the speech part.
+        *_native_part_events(grounding, first_index=1),
         PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='It is sunny in Rome')),
         RealtimeTurnCompleteEvent(),
     ]
@@ -4169,6 +4204,39 @@ async def test_agent_realtime_session_rejects_seeding_when_unsupported() -> None
     with pytest.raises(UserError, match='does not support seeding a session'):
         async with agent.realtime(model, message_history=seed).session():
             pass  # pragma: no cover
+
+
+async def test_agent_realtime_session_rejects_text_output_when_unsupported() -> None:
+    # A model that only speaks rejects `output_modality='text'` up front, before dialing. Unlike a
+    # setting the provider merely ignores, this one changes what the caller gets back: Gemini fails the
+    # handshake over it and xAI would quietly answer with audio.
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn, profile=_profile(supports_text_output=False))
+    with pytest.raises(UserError, match="does not support `output_modality='text'`"):
+        async with agent.realtime(model, model_settings=RealtimeModelSettings(output_modality='text')).session():
+            pass  # pragma: no cover
+
+    # The same model is fine for the default audio modality, so the guard is scoped to the request.
+    async with agent.realtime(model, model_settings=RealtimeModelSettings(output_modality='audio')).session():
+        pass
+
+
+async def test_agent_realtime_session_allows_text_output_by_default() -> None:
+    # `supports_text_output` defaults to `True` — a realtime model that can't write is the exception —
+    # so a profile that says nothing about it still accepts `output_modality='text'`.
+    assert 'supports_text_output' not in _profile_without_text_output()
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn, profile=_profile_without_text_output())
+    async with agent.realtime(model, model_settings=RealtimeModelSettings(output_modality='text')).session():
+        pass
+    assert (model.last_model_settings or {}).get('output_modality') == 'text'
+
+
+def _profile_without_text_output() -> RealtimeModelProfile:
+    """A profile that never mentions `supports_text_output`, to pin the `True` default."""
+    return RealtimeModelProfile(supports_session_seeding=True)
 
 
 async def test_agent_realtime_session_audio_retention_forwarded() -> None:
@@ -4667,8 +4735,12 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         call_part: ToolCallPart,
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
+        *,
+        run_step: int,
+        reserved_budget: bool,
     ) -> tuple[ToolReturnPart, None]:
         del call, validation_done, execution_prerequisites
+        del run_step, reserved_budget
         session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
@@ -4681,6 +4753,10 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         validation_done,
         (),
         completion,
+        run_step=0,
+        reserved_budget=True,
+        order_index=0,
+        ordered_events=False,
     )
 
     assert TextInput('after tool') in conn.sent
@@ -4710,8 +4786,12 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
         call_part: ToolCallPart,
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
+        *,
+        run_step: int,
+        reserved_budget: bool,
     ) -> tuple[ToolReturnPart, None]:
         del call, validation_done, execution_prerequisites
+        del run_step, reserved_budget
         session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
@@ -4725,6 +4805,10 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
             asyncio.Event(),
             (),
             asyncio.Event(),
+            run_step=0,
+            reserved_budget=True,
+            order_index=0,
+            ordered_events=False,
         )
     )
     task.add_done_callback(session._tool_task_done)  # pyright: ignore[reportPrivateUsage]
@@ -5003,6 +5087,322 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
     assert isinstance(result.part, ToolReturnPart)
     assert result.part.outcome == 'denied'
     assert 'denied' in str(result.part.content).lower()
+
+
+# --- declarative `requires_approval=True` gating ------------------------------------------------
+#
+# A tool can be deferred *declaratively* (`requires_approval=True` → `ToolDefinition.kind='unapproved'`)
+# as well as by raising `ApprovalRequired`. The graph pipeline classifies by kind before executing
+# anything; the session's `handle_call` path used to execute first and react to what was raised, so a
+# `requires_approval=True` tool ran with approval silently skipped and no handler ever consulted. The
+# four tests below pin the whole matrix, and each asserts *whether the body ran* — the thing that
+# actually matters when the gate is approval.
+
+
+def _approval_agent() -> tuple[Agent[None, str], list[str]]:
+    """An agent whose only tool is declaratively approval-gated, plus an execution log."""
+    executed: list[str] = []
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain(requires_approval=True)
+    def transfer_funds() -> str:
+        executed.append('ran')
+        return 'transferred'
+
+    return agent, executed
+
+
+async def test_standard_run_pauses_on_a_declaratively_approval_gated_tool() -> None:
+    # The reference behavior the session has to match: the run ends with the call awaiting approval,
+    # and the body never runs.
+    agent, executed = _approval_agent()
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('transfer_funds', {}, tool_call_id='tc')])
+
+    result = await agent.run('go', model=FunctionModel(call_tool), output_type=[str, DeferredToolRequests])
+    assert isinstance(result.output, DeferredToolRequests)
+    assert [call.tool_name for call in result.output.approvals] == ['transfer_funds']
+    assert executed == []
+
+
+async def test_realtime_session_does_not_execute_an_approval_gated_tool_without_a_handler() -> None:
+    # No handler to resolve the approval: the session answers the model with the documented
+    # explanation and — the point of the gate — never runs the tool.
+    agent, executed = _approval_agent()
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='transfer_funds', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session() as session:
+        events = [e async for e in session]
+
+    assert executed == []
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert 'requires approval' in str(result.part.content)
+    assert 'cannot be completed during a realtime session' in str(result.part.content)
+    # A refused approval is recorded as a failure, so a handoff to `Agent.run` can't read it as a
+    # tool that ran and returned an error-shaped string.
+    assert result.part.outcome == 'failed'
+
+
+async def test_realtime_session_denies_an_approval_gated_tool_through_a_handler() -> None:
+    # A `HandleDeferredToolCalls` handler that denies is now actually consulted, and the denial is
+    # recorded as such rather than as a successful return.
+    agent, executed = _approval_agent()
+
+    def deny(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: False for call in requests.approvals})
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='transfer_funds', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, capabilities=[HandleDeferredToolCalls(handler=deny)]).session() as session:
+        events = [e async for e in session]
+
+    assert executed == []
+    lifecycle = [event for event in events if isinstance(event, DeferredToolRequestsEvent)]
+    assert lifecycle == [
+        DeferredToolRequestsEvent(
+            DeferredToolRequests(approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')])
+        )
+    ]
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert result.part.outcome == 'denied'
+
+
+async def test_realtime_session_executes_an_approval_gated_tool_once_approved() -> None:
+    # Approval granted inline: the tool runs and its real return reaches the model, so the gate
+    # blocks rather than breaks the tool.
+    agent, executed = _approval_agent()
+
+    def approve(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='transfer_funds', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, capabilities=[HandleDeferredToolCalls(handler=approve)]).session() as session:
+        events = [e async for e in session]
+
+    assert executed == ['ran']
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert result.part.content == 'transferred'
+    assert result.part.outcome == 'success'
+
+
+async def test_deferred_call_does_not_consume_the_tool_call_limit() -> None:
+    # A `requires_approval=True` call with no handler is refused and never reaches the tool body, so it
+    # never increments `usage.tool_calls`. The graph leaves such calls out of its pre-check projection
+    # entirely (`function_indices` is built from `('function', 'unknown')`), so charging the budget for
+    # one here would trip the limit over a call that costs nothing.
+    agent, executed = _approval_agent()
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='transfer_funds', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    # A budget of zero: any charge at all would raise `UsageLimitExceeded`.
+    async with agent.realtime(model, usage_limits=UsageLimits(tool_calls_limit=0)).session() as session:
+        events = [e async for e in session]
+
+    assert executed == []
+    assert session.usage.tool_calls == 0
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert 'requires approval' in str(result.part.content)
+
+
+async def test_executed_call_still_consumes_the_tool_call_limit() -> None:
+    # The other side of the same branch: an ordinary tool is charged exactly as before, so skipping the
+    # reservation for deferred calls didn't quietly stop enforcing the limit.
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def ordinary() -> str:  # pragma: no cover — the limit trips before the body runs
+        return 'ran'
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='ordinary', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    with pytest.raises(UsageLimitExceeded):
+        async with agent.realtime(model, usage_limits=UsageLimits(tool_calls_limit=0)).session() as session:
+            _ = [e async for e in session]
+
+
+async def test_tools_from_one_response_share_a_run_step() -> None:
+    # Pins the graph's invariant: every call from one response runs at the step in effect when that
+    # response produced it, the way a graph batch shares the step advanced before its request.
+    #
+    # This passes against the previous code too — reading `self._tool_run_step` inside `_execute_tool`
+    # happened to be safe, because `on_validate` sets `validation_done` *before* awaiting the barrier
+    # and the pump blocks on it, pinning every manager sync ahead of the next upstream event. The
+    # capture makes the invariant the code's own rather than a consequence of that interleaving, and
+    # this test is what would catch it if either side of that subtle arrangement moved.
+    seen_steps: list[int] = []
+    agent: Agent[None, str] = Agent(deps_type=type(None))
+
+    @agent.tool(sequential=True)
+    def barrier(ctx: RunContext[None]) -> str:
+        seen_steps.append(ctx.run_step)
+        return 'first'
+
+    @agent.tool
+    def follower(ctx: RunContext[None]) -> str:
+        seen_steps.append(ctx.run_step)
+        return 'second'
+
+    # The OpenAI shape: both calls belong to one response whose usage — and so whose finalization,
+    # which advances the step — arrives after them. The follower is held behind the barrier until
+    # after that advance, which is exactly when reading the step late would diverge.
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='tc1', tool_name='barrier', args='{}', response_usage_follows=True),
+            ToolCall(tool_call_id='tc2', tool_name='follower', args='{}', response_usage_follows=True),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=5)),
+            ResponseDone(),
+        ]
+    )
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session() as session:
+        _ = [e async for e in session]
+
+    assert len(seen_steps) == 2
+    assert seen_steps[0] == seen_steps[1]
+
+
+def _ordered_events_agent() -> Agent[None, str]:
+    """Two tools where the *second* call finishes first, so completion order != call order."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    async def slow() -> str:
+        await asyncio.sleep(0.05)
+        return 'slow'
+
+    @agent.tool_plain
+    async def quick() -> str:
+        return 'quick'
+
+    return agent
+
+
+async def test_parallel_ordered_events_emits_results_in_call_order() -> None:
+    # `parallel_ordered_events` promises parallel execution with events in call order. The session used
+    # to read the mode only to spot `'sequential'`, so this fell through to plain parallel and results
+    # streamed in completion order — the setting silently did nothing.
+    agent = _ordered_events_agent()
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='tc1', tool_name='slow', args='{}'),
+            ToolCall(tool_call_id='tc2', tool_name='quick', args='{}'),
+            ResponseDone(),
+        ]
+    )
+    model = FakeRealtimeModel(conn)
+    with ToolManager.parallel_execution_mode('parallel_ordered_events'):
+        async with agent.realtime(model).session() as session:
+            events = [e async for e in session]
+
+    results = [e.part.tool_name for e in events if isinstance(e, FunctionToolResultEvent)]
+    assert results == ['slow', 'quick']
+    # Execution stays concurrent — the provider still gets each result as it lands, so the fast tool's
+    # `ToolResult` goes out first even though its event is held back.
+    sent = [s.tool_call_id for s in conn.sent if isinstance(s, ToolResult)]
+    assert sent == ['tc2', 'tc1']
+
+
+async def test_parallel_default_still_emits_results_in_completion_order() -> None:
+    # The other side of the branch: the default mode is unchanged, so the ordering buffer only engages
+    # where it was asked for.
+    agent = _ordered_events_agent()
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='tc1', tool_name='slow', args='{}'),
+            ToolCall(tool_call_id='tc2', tool_name='quick', args='{}'),
+            ResponseDone(),
+        ]
+    )
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session() as session:
+        events = [e async for e in session]
+
+    results = [e.part.tool_name for e in events if isinstance(e, FunctionToolResultEvent)]
+    assert results == ['quick', 'slow']
+
+
+async def test_parallel_ordered_events_are_not_stranded_by_a_failing_sibling() -> None:
+    # The buffer is released from the tool task's done-callback, which runs even when the tool raised,
+    # so a sibling that produces no events can't leave the batch waiting forever.
+    agent: Agent[None, str] = Agent()
+    fine_finished = asyncio.Event()
+
+    @agent.tool_plain
+    async def boom() -> str:
+        # Fail only once the sibling has fully run: `fine`'s buffered events are then waiting on this
+        # first-in-order call to settle, which is exactly the state a hung release would strand.
+        await fine_finished.wait()
+        raise RuntimeError('tool exploded')
+
+    @agent.tool_plain
+    async def fine() -> str:
+        fine_finished.set()
+        return 'fine'
+
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='tc1', tool_name='boom', args='{}'),
+            ToolCall(tool_call_id='tc2', tool_name='fine', args='{}'),
+            ResponseDone(),
+        ]
+    )
+    model = FakeRealtimeModel(conn)
+    with ToolManager.parallel_execution_mode('parallel_ordered_events'):
+        with pytest.raises(RuntimeError, match='tool exploded'):
+            async with agent.realtime(model).session() as session:
+                _ = [e async for e in session]
+
+
+async def test_nested_run_cancellation_is_isolated_into_a_failed_tool_return() -> None:
+    # A sub-agent run awaited inside a tool that cancels *itself* must not take the session with it.
+    # The graph isolates exactly this into a failed tool return (#7199); the session's own cancellation
+    # arrives as `CancelledError`, so a `RunCancelled` seen in a tool body is always a nested run's.
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def delegate() -> str:
+        raise RunCancelled('the sub-agent run was cancelled')
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='delegate', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session() as session:
+        events = [e async for e in session]
+
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert result.part.outcome == 'failed'
+    assert 'sub-agent run was cancelled' in str(result.part.content)
+    # The session drained normally rather than re-raising, and the failed return is in history for the
+    # model to react to — the conversation survives the sub-agent's decision.
+    assert result.part in session.all_messages()[-1].parts
+
+
+async def test_realtime_session_explains_a_declaratively_external_tool() -> None:
+    # `kind='external'` diverged the same way, differently: `execute_tool_call` refuses outright with
+    # `RuntimeError('External tools cannot be called')`, which would have escaped the session as an
+    # internal error. Classified with the same helper, it now takes the `CallDeferred` path and gets
+    # the documented explanation instead.
+    agent: Agent[None, str] = Agent(
+        toolsets=[ExternalToolset(tool_defs=[ToolDefinition(name='lookup', kind='external')])]
+    )
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='lookup', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session() as session:
+        events = [e async for e in session]
+
+    assert not any(isinstance(e, RealtimeSessionErrorEvent) for e in events)
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert 'runs externally' in str(result.part.content)
+    assert 'cannot be completed during a realtime session' in str(result.part.content)
 
 
 async def test_agent_realtime_session_resolves_per_run_toolsets() -> None:
