@@ -34,6 +34,7 @@ CASSETTES_DIR = Path(__file__).parent / 'cassettes'
 def _realtime_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     """Provide placeholder API keys so realtime models can resolve their default providers offline.
 
+    The realtime models resolve their provider (and its API client) eagerly at construction, like
     `OpenAIChatModel` / `GoogleModel`. Network-free tests never hit the network, so a placeholder key
     is enough to let `OpenAIRealtimeModel()` / `GoogleRealtimeModel()` build their default providers.
 
