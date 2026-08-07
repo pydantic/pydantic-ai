@@ -7,6 +7,8 @@ the Thinking capability, and end-to-end integration via FunctionModel.
 # pyright: reportPrivateUsage=false, reportArgumentType=false
 from __future__ import annotations
 
+import re
+from dataclasses import replace
 from typing import Any, Literal
 
 import pytest
@@ -14,6 +16,7 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import CAPABILITY_TYPES, Thinking
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -36,6 +39,7 @@ with try_import() as anthropic_imports:
     from anthropic import omit as anthropic_omit
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as openai_imports:
     from openai import omit as openai_omit
@@ -625,58 +629,108 @@ class TestGroqThinkingTranslation:
 
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
-class TestAnthropicUnifiedThinkingConflict:
-    """Test how unified thinking interacts with the output tools conflict path in prepare_request,
-    distinguishing adaptive thinking (compatible with Tool Output) from manual extended thinking."""
+class TestAnthropicThinkingOutputToolsConflict:
+    """Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended
+    thinking but accepts alongside adaptive thinking, so only the former switches the output mode.
 
-    def test_unified_thinking_adaptive_keeps_tool_output_mode(self):
-        """Unified thinking on an adaptive-capable profile maps to adaptive thinking, which is
-        compatible with Tool Output, so auto mode is retained as 'tool' (not switched to native)."""
-        model = AnthropicModel.__new__(AnthropicModel)
-        model._profile = AnthropicModelProfile(
-            supports_thinking=True,
-            supports_json_schema_output=True,
-            anthropic_supports_adaptive_thinking=True,
-        )
-        model._settings = None
+    The exception is a model that rejects forcing outright (`claude-fable-5`, `claude-mythos-5`):
+    there, Tool Output could only fall back to a soft `tool_choice='auto'` the model may ignore, so
+    adaptive thinking keeps switching away from it too.
 
-        output_tool = ToolDefinition(name='output', description='', parameters_json_schema={}, kind='output')
-        output_object = OutputObjectDefinition(json_schema={'type': 'object', 'properties': {}})
-        params = ModelRequestParameters(
-            output_tools=[output_tool],
-            output_object=output_object,
+    These are pre-request guards, so no request is ever made and there is nothing to record. Real
+    model names are used so the shipped profile flags — not hand-built ones — decide each case.
+    """
+
+    @pytest.fixture
+    def output_tool_params(self) -> ModelRequestParameters:
+        return ModelRequestParameters(
+            output_tools=[ToolDefinition(name='output', description='', parameters_json_schema={}, kind='output')],
+            output_object=OutputObjectDefinition(json_schema={'type': 'object', 'properties': {}}),
             output_mode='auto',
         )
-        settings = ModelSettings(thinking='high')
 
-        _, resolved_params = model.prepare_request(settings, params)
-        # Adaptive thinking is compatible with output tools, so 'auto' resolves to the profile default 'tool'.
-        assert resolved_params.output_mode == 'tool'
-        assert resolved_params.thinking == 'high'
+    @pytest.mark.parametrize(
+        'model_name,settings,expected_output_mode',
+        [
+            pytest.param(
+                'claude-opus-4-6',
+                ModelSettings(thinking='high'),
+                'tool',
+                id='unified_thinking_on_adaptive_profile_keeps_tool_output',
+            ),
+            pytest.param(
+                'claude-sonnet-4-5',
+                ModelSettings(thinking='high'),
+                'native',
+                id='unified_thinking_on_non_adaptive_profile_switches_to_native',
+            ),
+            pytest.param(
+                'claude-fable-5',
+                ModelSettings(thinking='high'),
+                'native',
+                id='adaptive_profile_that_cannot_force_switches_to_native',
+            ),
+            pytest.param(
+                'claude-opus-4-6',
+                AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}),
+                'tool',
+                id='explicit_adaptive_keeps_tool_output',
+            ),
+            pytest.param(
+                'claude-opus-4-6',
+                AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
+                'native',
+                id='explicit_extended_thinking_switches_to_native',
+            ),
+        ],
+    )
+    def test_auto_output_mode(
+        self,
+        anthropic_api_key: str,
+        output_tool_params: ModelRequestParameters,
+        model_name: str,
+        settings: ModelSettings,
+        expected_output_mode: str,
+    ):
+        model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
 
-    def test_unified_thinking_enabled_switches_to_native_output_mode(self):
-        """Unified thinking on a non-adaptive profile maps to manual extended thinking, which IS
-        incompatible with Tool Output, so auto mode switches to native."""
-        model = AnthropicModel.__new__(AnthropicModel)
-        model._profile = AnthropicModelProfile(
-            supports_thinking=True,
-            supports_json_schema_output=True,
-        )
-        model._settings = None
+        _, resolved_params = model.prepare_request(settings, output_tool_params)
 
-        output_tool = ToolDefinition(name='output', description='', parameters_json_schema={}, kind='output')
-        output_object = OutputObjectDefinition(json_schema={'type': 'object', 'properties': {}})
-        params = ModelRequestParameters(
-            output_tools=[output_tool],
-            output_object=output_object,
-            output_mode='auto',
-        )
-        settings = ModelSettings(thinking='high')
+        assert resolved_params.output_mode == expected_output_mode
 
-        _, resolved_params = model.prepare_request(settings, params)
-        # Manual extended thinking is incompatible with output tools, so auto switches to native.
-        assert resolved_params.output_mode == 'native'
-        assert resolved_params.thinking == 'high'
+    @pytest.mark.parametrize(
+        'model_name,settings,expected_message',
+        [
+            pytest.param(
+                'claude-fable-5',
+                ModelSettings(thinking='high'),
+                "'claude-fable-5' does not support output tools while thinking, because it rejects a "
+                'forced tool choice. Use `output_type=NativeOutput(...)` instead.',
+                id='adaptive_profile_that_cannot_force_names_the_model',
+            ),
+            pytest.param(
+                'claude-opus-4-6',
+                AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
+                'Anthropic does not support extended thinking and output tools at the same time. '
+                'Use `output_type=NativeOutput(...)` instead. Alternatively, '
+                "`anthropic_thinking={'type': 'adaptive'}` supports output tools.",
+                id='extended_thinking_on_adaptive_profile_suggests_adaptive',
+            ),
+        ],
+    )
+    def test_explicit_tool_output_raises(
+        self,
+        anthropic_api_key: str,
+        output_tool_params: ModelRequestParameters,
+        model_name: str,
+        settings: ModelSettings,
+        expected_message: str,
+    ):
+        model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
+        params = replace(output_tool_params, output_mode='tool', allow_text_output=False)
+
+        with pytest.raises(UserError, match=re.escape(expected_message)):
+            model.prepare_request(settings, params)
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='boto3 not installed')

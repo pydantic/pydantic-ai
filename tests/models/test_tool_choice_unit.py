@@ -7,6 +7,7 @@ and blocks 'required' and list[str] values before they reach the model-specific 
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -339,7 +340,7 @@ async def test_thinking_with_forced_tool_choice_raises(
             'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
             'tool_choice': tool_choice,
         }
-        match = 'Anthropic does not support .* with manual extended thinking'
+        match = 'Anthropic does not support .* with extended thinking'
     else:  # bedrock
         mock_client = MagicMock()
         provider = BedrockProvider(bedrock_client=mock_client)
@@ -424,43 +425,60 @@ def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_t
 
 @skip_if_no_anthropic
 @pytest.mark.parametrize(
-    'settings,expected',
+    'settings,params_thinking,expected',
     [
         pytest.param(
             {'anthropic_thinking': {'type': 'disabled'}},
+            None,
             True,
             id='disabled_thinking_allows_forcing',
         ),
         pytest.param(
             {'thinking': True},
+            None,
             False,
             id='unified_thinking_blocks_forcing',
         ),
         pytest.param(
             {'thinking': 'high'},
+            None,
             False,
             id='unified_thinking_effort_blocks_forcing',
         ),
         pytest.param(
             {'thinking': False},
+            None,
             True,
             id='unified_thinking_false_allows_forcing',
         ),
         pytest.param(
             {'anthropic_thinking': {'type': 'adaptive'}},
+            None,
             True,
             id='provider_specific_adaptive_allows_forcing',
         ),
         pytest.param(
             {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}, 'thinking': False},
+            None,
             False,
             id='provider_specific_takes_precedence',
         ),
+        pytest.param(
+            {'anthropic_thinking': {'type': 'disabled'}},
+            'high',
+            True,
+            id='provider_specific_disabled_takes_precedence_over_params_thinking',
+        ),
     ],
 )
-def test_support_tool_forcing_thinking_detection(settings: Any, expected: bool):
-    """Thinking detection checks anthropic_thinking, unified thinking field, and `params.thinking`."""
-    result = anthropic_support_tool_forcing(settings, ModelRequestParameters(), 'required')
+def test_support_tool_forcing_thinking_detection(settings: Any, params_thinking: Any, expected: bool):
+    """Thinking detection checks anthropic_thinking, unified thinking field, and `params.thinking`.
+
+    `anthropic_thinking` wins over both unified sources, matching `_translate_thinking`: with an
+    explicit `{'type': 'disabled'}` the wire payload really does disable thinking, so forcing stays
+    available even though `Model.prepare_request` moved a unified `thinking` into `params.thinking`.
+    """
+    result = anthropic_support_tool_forcing(settings, ModelRequestParameters(thinking=params_thinking), 'required')
     assert result is expected
 
 
@@ -474,12 +492,31 @@ def test_support_tool_forcing_thinking_detection(settings: Any, expected: bool):
 )
 def test_support_tool_forcing_adaptive_profile_mapping(supports_adaptive_thinking: bool, expected: bool):
     """Unified thinking maps to adaptive (compatible with forcing) on adaptive-capable profiles and
-    to manual extended thinking (incompatible) otherwise."""
+    to extended thinking (incompatible) otherwise."""
     settings: AnthropicModelSettings = {'thinking': 'high'}
     result = anthropic_support_tool_forcing(
         settings, ModelRequestParameters(), 'required', supports_adaptive_thinking=supports_adaptive_thinking
     )
     assert result is expected
+
+
+@skip_if_no_anthropic
+def test_support_tool_forcing_suggests_adaptive_thinking_when_the_model_supports_it():
+    """On an adaptive-capable model, explicit extended thinking still blocks forcing — but the error
+    points at the mode that doesn't."""
+    settings: AnthropicModelSettings = {
+        'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
+        'tool_choice': 'required',
+    }
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Anthropic does not support forcing specific tools with extended thinking. Disable '
+            "thinking or use `tool_choice='auto'`. Alternatively, `anthropic_thinking={'type': "
+            "'adaptive'}` supports forcing."
+        ),
+    ):
+        anthropic_support_tool_forcing(settings, ModelRequestParameters(), 'required', supports_adaptive_thinking=True)
 
 
 @skip_if_no_anthropic

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '483'
+      - '520'
       content-type:
       - application/json
       host:
@@ -22,6 +22,8 @@ interactions:
           type: text
         role: user
       model: claude-opus-4-6
+      output_config:
+        effort: high
       stream: false
       thinking:
         type: adaptive
@@ -54,7 +56,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-a3159e2cc8e4622de71e44077798ac1c-afb3b62149ade058-01
+      - 00-2845b2f11d21a9bb13eb54ada9a00e58-f075b345f3d5905f-01
       transfer-encoding:
       - chunked
       vary:
@@ -63,13 +65,13 @@ interactions:
       content:
       - caller:
           type: direct
-        id: toolu_019SXChyL3r8MfUDbGWncjDL
+        id: toolu_01Ntv7EChXSFhgkJcMTHdksQ
         input:
           city: Paris
           country: France
         name: final_result
         type: tool_use
-      id: msg_011Cdno1KpnpFckwobcq5wxH
+      id: msg_011Cdof1KE9dF97gueQXJ39E
       model: claude-opus-4-6
       role: assistant
       stop_details: null

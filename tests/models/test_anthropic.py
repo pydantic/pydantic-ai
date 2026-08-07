@@ -4726,16 +4726,27 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
 
 
 @pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'model_settings',
+    [
+        pytest.param(AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}), id='provider_specific'),
+        pytest.param(ModelSettings(thinking='high'), id='unified'),
+    ],
+)
 async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(
-    allow_model_requests: None, anthropic_api_key: str
+    allow_model_requests: None, anthropic_api_key: str, model_settings: ModelSettings
 ):
     """Adaptive thinking is compatible with Tool Output, so the request keeps `output_mode='tool'`.
 
     Tool Output without a text fallback resolves to `tool_choice={'type': 'any'}`, i.e. forced tool
-    use, so this exchange proves both halves of the compatibility claim at once. Only manual extended
+    use, so this exchange proves both halves of the compatibility claim at once. Only extended
     thinking conflicts: the same request with `{'type': 'enabled'}` is rejected by the API with
     `Thinking may not be enabled when tool_choice forces tool use.`, which is why that mode still
     switches away from Tool Output.
+
+    Both ways of asking for thinking are exercised, because they reach the compatibility guards
+    differently: the provider-specific setting carries the type itself, while a unified `thinking`
+    only resolves to `adaptive` via the profile's `anthropic_supports_adaptive_thinking` flag.
 
     The outbound `thinking`/`tool_choice` pair is asserted via an httpx event hook so it runs against
     what the client actually sent, not what the cassette happens to hold.
@@ -4757,11 +4768,7 @@ async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(
         city: str
         country: str
 
-    agent = Agent(
-        m,
-        output_type=ToolOutput(CityLocation),
-        model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}),
-    )
+    agent = Agent(m, output_type=ToolOutput(CityLocation), model_settings=model_settings)
     result = await agent.run('What is the capital of France?')
 
     assert result.output == snapshot(CityLocation(city='Paris', country='France'))
@@ -9348,7 +9355,7 @@ async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, a
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Anthropic does not support manual extended thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+            'Anthropic does not support extended thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
         ),
     ):
         await agent.run('What is 3 + 3?')
@@ -11856,6 +11863,39 @@ async def test_anthropic_count_tokens_keeps_memory_tool(allow_model_requests: No
     assert usage.input_tokens > 0
     request_body = json.loads(vcr.requests[0].body)
     assert {'name': 'memory', 'type': 'memory_20250818'} in request_body['tools']
+
+
+@pytest.mark.vcr()
+async def test_anthropic_count_tokens_with_adaptive_thinking_and_output_tools(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+):
+    """`/v1/messages/count_tokens` accepts the forced `tool_choice` that adaptive thinking now keeps.
+
+    `count_tokens` builds its payload from the same `prepare_request` result as the real request, so
+    adaptive thinking + Tool Output reaches this endpoint with `tool_choice={'type': 'any'}` too. The
+    endpoint rejects that pair under extended thinking, which would turn a token pre-check into a hard
+    run failure; the recording pins that it does not reject it under adaptive thinking.
+    """
+    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(
+        m,
+        output_type=ToolOutput(CityLocation),
+        model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}),
+    )
+    result = await agent.run(
+        'What is the capital of France?', usage_limits=UsageLimits(count_tokens_before_request=True)
+    )
+
+    assert result.output == snapshot(CityLocation(city='Paris', country='France'))
+    count_tokens_body = json.loads(vcr.requests[0].body)
+    assert (count_tokens_body['thinking'], count_tokens_body['tool_choice']) == snapshot(
+        ({'type': 'adaptive'}, {'type': 'any'})
+    )
 
 
 @pytest.mark.vcr()
