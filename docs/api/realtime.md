@@ -166,8 +166,9 @@ mapping, seeding, the WebSocket connection). Turn-taking uses the shared
 server-VAD control, `xai_turn_detection` accepts
 [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] and fully overrides the shared setting. It
 diverges only where xAI does: it supports
-cancellation-based interruption but not output truncation, has no image input, and surfaces input
-transcription at the end of each user turn. Authentication comes from an
+cancellation-based interruption but not output truncation, has no image input, and streams input
+transcription as cumulative snapshots that may revise earlier text, rather than as incremental deltas.
+Authentication comes from an
 [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider], mirroring [`XaiModel`][pydantic_ai.models.xai.XaiModel].
 
 ::: pydantic_ai.realtime.xai
