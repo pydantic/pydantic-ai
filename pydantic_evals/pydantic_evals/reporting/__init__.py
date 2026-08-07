@@ -479,17 +479,21 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     ) -> None:
         """Print this report to the console, optionally comparing it to a baseline report.
 
-        If the console writes to a stream that can't encode the `✔`, `✗` and `→` glyphs — as Windows does when
-        stdout is redirected to a file or a pipe — `v`, `x` and `->` are used instead.
+        On a console `rich` reports as ASCII-only — a non-UTF-8 stream, as Windows produces when stdout is
+        redirected to a file or a pipe — `v`, `x` and `->` stand in for the `✔`, `✗` and `→` glyphs. The `µs`
+        unit sub-millisecond durations render with is not covered yet, so a code page that can't encode `µ`
+        (`cp932`, `cp936`, `cp949`, `cp950`) can still raise: see
+        [#7291](https://github.com/pydantic/pydantic-ai/issues/7291).
 
-        If you want more control over the output, use `console_table` instead and pass it to `rich.Console.print`.
+        If you want more control over the output, use `console_table` instead and pass it to `rich.Console.print`,
+        passing `ascii_only=True` when your own console needs the fallback.
         """
         if console is None:  # pragma: no branch
             console = Console(width=width)
         ascii_only = console.options.ascii_only
 
         metadata_panel = self._metadata_panel(baseline=baseline, ascii_only=ascii_only)
-        renderable: RenderableType = self._build_table(
+        renderable: RenderableType = self.console_table(
             baseline=baseline,
             include_input=include_input,
             include_metadata=include_metadata,
@@ -559,63 +563,16 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         duration_config: RenderNumberConfig | None = None,
         include_reasons: bool = False,
         with_title: bool = True,
+        ascii_only: bool = False,
     ) -> RenderableType:
         """Return a table containing the data from this report.
 
         If a baseline is provided, returns a diff between this report and the baseline report.
         Optionally include input and output details.
-        """
-        return self._build_table(
-            baseline=baseline,
-            include_input=include_input,
-            include_metadata=include_metadata,
-            include_expected_output=include_expected_output,
-            include_output=include_output,
-            include_durations=include_durations,
-            include_total_duration=include_total_duration,
-            include_removed_cases=include_removed_cases,
-            include_averages=include_averages,
-            include_evaluator_failures=include_evaluator_failures,
-            input_config=input_config,
-            metadata_config=metadata_config,
-            output_config=output_config,
-            score_configs=score_configs,
-            label_configs=label_configs,
-            metric_configs=metric_configs,
-            duration_config=duration_config,
-            include_reasons=include_reasons,
-            with_title=with_title,
-            ascii_only=False,
-        )
 
-    def _build_table(
-        self,
-        *,
-        baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None,
-        include_input: bool,
-        include_metadata: bool,
-        include_expected_output: bool,
-        include_output: bool,
-        include_durations: bool,
-        include_total_duration: bool,
-        include_removed_cases: bool,
-        include_averages: bool,
-        include_evaluator_failures: bool,
-        input_config: RenderValueConfig | None,
-        metadata_config: RenderValueConfig | None,
-        output_config: RenderValueConfig | None,
-        score_configs: dict[str, RenderNumberConfig] | None,
-        label_configs: dict[str, RenderValueConfig] | None,
-        metric_configs: dict[str, RenderNumberConfig] | None,
-        duration_config: RenderNumberConfig | None,
-        include_reasons: bool,
-        with_title: bool,
-        ascii_only: bool,
-    ) -> RenderableType:
-        """Build the report (or diff) table, selecting ASCII glyphs when the target console needs them.
-
-        `ascii_only` is not part of `console_table`'s signature because only the code holding the console
-        the table will be printed to knows whether its stream can encode the glyphs.
+        Pass `ascii_only=True` to render `v`, `x` and `->` in place of the `✔`, `✗` and `→` glyphs, for a
+        console whose stream can't encode them. Only the caller holding that console can answer this, so
+        it defaults to `False`; `print` reads it off the console it was given.
         """
         renderer = EvaluationRenderer(
             include_input=include_input,
@@ -1048,7 +1005,7 @@ class ReportCaseRenderer:
     label_renderers: Mapping[str, _ValueRenderer]
     metric_renderers: Mapping[str, _NumberRenderer]
     duration_renderer: _NumberRenderer
-    ascii_only: bool
+    ascii_only: bool = False
 
     def build_base_table(self, title: str) -> Table:
         """Build and return a Rich Table for the diff output."""
@@ -1492,7 +1449,7 @@ class EvaluationRenderer:
     include_evaluator_failures: bool
 
     ascii_only: bool = False
-    """Whether to render ASCII fallbacks for the glyphs a non-UTF-8 console can't encode."""
+    """Whether to render `v`, `x` and `->` in place of the `✔`, `✗` and `→` glyphs."""
 
     def include_scores(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
         return any(case.scores for case in self._all_cases(report, baseline))
