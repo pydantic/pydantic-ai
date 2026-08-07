@@ -73,6 +73,7 @@ from ..profiles import (
     ModelProfileSpec,
     ToolAdditionMode,
     ToolDeferralMode,
+    _translate_legacy_profile_keys,  # pyright: ignore[reportPrivateUsage]
     merge_profile,
 )
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
@@ -985,7 +986,9 @@ class Model(ABC, Generic[InterfaceClient]):
         if user is None:
             pass
         elif callable(user):
-            resolved = user(resolved)
+            # The callable form's result bypasses `merge_profile`, so translate deprecated key
+            # spellings here too.
+            resolved = _translate_legacy_profile_keys(user(resolved))
         else:
             # Partial dict — merge on top
             resolved = merge_profile(resolved, user)
