@@ -314,8 +314,6 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             else:
                 async for e in self.on_error(exc):
                     yield e
-        finally:
-            await _utils.aclose_if_supported(stream)
 
         async for e in self._turn_to(None):
             yield e
