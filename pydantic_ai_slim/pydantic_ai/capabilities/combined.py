@@ -269,8 +269,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self.capabilities:
             if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
                 tool_defs = await capability.prepare_tools(cap_ctx, tool_defs)
-            else:
-                tool_defs = await _prepare_own_tools(capability, ctx, tool_defs)
         return tool_defs
 
     async def prepare_output_tools(
@@ -476,7 +474,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: str | dict[str, Any],
     ) -> str | dict[str, Any]:
         for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_tool_hook(capability, ctx, tool_def)) is not None:
+            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
                 args = await capability.before_tool_validate(cap_ctx, call=call, tool_def=tool_def, args=args)
         return args
 
@@ -489,7 +487,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
     ) -> dict[str, Any]:
         for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_tool_hook(capability, ctx, tool_def)) is not None:
+            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
                 args = await capability.after_tool_validate(cap_ctx, call=call, tool_def=tool_def, args=args)
         return args
 
@@ -504,7 +502,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> dict[str, Any]:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_tool_hook(capability, ctx, tool_def) is not None:
+            if _ctx_for_available_cap(capability, ctx) is not None:
                 chain = _make_tool_validate_wrap(capability, ctx, call, tool_def, chain)
         return await chain(args)
 
@@ -518,7 +516,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: ValidationError | ModelRetry,
     ) -> dict[str, Any]:
         for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_tool_hook(capability, ctx, tool_def)
+            cap_ctx = _ctx_for_available_cap(capability, ctx)
             if cap_ctx is None:
                 continue
             try:
@@ -542,7 +540,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
     ) -> dict[str, Any]:
         for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_tool_hook(capability, ctx, tool_def)) is not None:
+            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
                 args = await capability.before_tool_execute(cap_ctx, call=call, tool_def=tool_def, args=args)
         return args
 
@@ -556,7 +554,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         result: Any,
     ) -> Any:
         for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_tool_hook(capability, ctx, tool_def)) is not None:
+            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
                 result = await capability.after_tool_execute(
                     cap_ctx, call=call, tool_def=tool_def, args=args, result=result
                 )
@@ -573,7 +571,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_tool_hook(capability, ctx, tool_def) is not None:
+            if _ctx_for_available_cap(capability, ctx) is not None:
                 chain = _make_tool_execute_wrap(capability, ctx, call, tool_def, chain)
         return await chain(args)
 
@@ -587,7 +585,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: Exception,
     ) -> Any:
         for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_tool_hook(capability, ctx, tool_def)
+            cap_ctx = _ctx_for_available_cap(capability, ctx)
             if cap_ctx is None:
                 continue
             try:
@@ -884,57 +882,6 @@ def _ctx_for_available_cap(
     if capability.defer_loading is True and not capability_loaded:
         return None
     return replace(ctx, capability_loaded=capability_loaded)
-
-
-def _ctx_for_tool_hook(
-    capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT], tool_def: ToolDefinition
-) -> RunContext[AgentDepsT] | None:
-    """The context for a tool validate/execute hook, or `None` when the hook must not run.
-
-    Like `_ctx_for_available_cap`, but a capability's *own* tool always activates its hooks:
-    a capability-owned tool stays callable while its capability counts as unloaded — reveal
-    evidence in history with no load pair, or a load pair reset at a `CompactionPart`
-    boundary — and executing it without its owner's validation/approval hooks would turn
-    model-visibility state into a hook bypass. `capability_loaded` on the returned context
-    stays truthful, so a hook can still distinguish the two states.
-    """
-    cap_ctx = _ctx_for_available_cap(capability, ctx)
-    if cap_ctx is None and _owns_tool(capability, tool_def):
-        return _ctx_for_cap(capability, ctx)
-    return cap_ctx
-
-
-async def _prepare_own_tools(
-    capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
-) -> list[ToolDefinition]:
-    """Run an unavailable capability's `prepare_tools` over the tools it owns.
-
-    The `_ctx_for_tool_hook` rule applied to `prepare_tools`: a capability-owned tool stays
-    callable while its capability counts as unloaded, and `prepare_tools` filtering removes a
-    tool from `ToolManager.tools`, so skipping the hook entirely would let a direct call reach a
-    tool its own owner meant to filter, harden, or gate. The hook sees *only* the capability's
-    own tools here — an unloaded capability still must not reach into unrelated ones, or leak its
-    existence into what the model is offered — and `capability_loaded` stays truthful, so a hook
-    can distinguish the two states.
-    """
-    own_indexes = [i for i, tool_def in enumerate(tool_defs) if _owns_tool(capability, tool_def)]
-    if not own_indexes:
-        return tool_defs
-
-    prepared = await capability.prepare_tools(_ctx_for_cap(capability, ctx), [tool_defs[i] for i in own_indexes])
-    # Splice the result back where the capability's first own tool sat, so tools it did not see
-    # keep their order and any tool it dropped stays dropped.
-    first = own_indexes[0]
-    own = set(own_indexes)
-    return [
-        *(tool_def for i, tool_def in enumerate(tool_defs) if i < first and i not in own),
-        *prepared,
-        *(tool_def for i, tool_def in enumerate(tool_defs) if i > first and i not in own),
-    ]
-
-
-def _owns_tool(capability: AbstractCapability[AgentDepsT], tool_def: ToolDefinition) -> bool:
-    return tool_def.capability_id is not None and tool_def.capability_id == capability.id
 
 
 def _capability_loaded(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:

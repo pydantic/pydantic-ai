@@ -2043,6 +2043,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
+        # Re-derive reveals now that the response is in history: a provider-side tool search
+        # reveals a tool *inside* the response that goes on to call it, and the model saw that
+        # schema before emitting the call. The step-start refresh ran before the response existed.
+        # A `load_capability` call in the same response is deliberately *not* covered — it has not
+        # executed yet, so its capability stays unavailable and its tools stay uncallable until the
+        # next request carries the capability's instructions.
+        _refresh_discovered_tool_names(ctx)
+
         run_context = build_run_context(ctx)
         run_context = replace(
             run_context,

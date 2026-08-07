@@ -136,6 +136,14 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that succeeded in this run step."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
+    _available_capability_ids: frozenset[str] = frozenset()
+    """Capabilities available when this step's tools were assembled.
+
+    Snapshotted rather than read live: the `load_capability` tool body adds to
+    `ctx.loaded_capability_ids` as it runs, so a live read would let a capability loaded by one call
+    in a response make its own tools callable by a sibling call in that same response — before the
+    next request has carried the capability's instructions to the model.
+    """
 
     @classmethod
     @contextmanager
@@ -181,6 +189,7 @@ class ToolManager(Generic[AgentDepsT]):
             ctx=ctx,
             tools=await toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
+            _available_capability_ids=frozenset(ctx.available_capability_ids),
         )
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
@@ -467,7 +476,7 @@ class ToolManager(Generic[AgentDepsT]):
         return tool_result
 
     def _resolve_tool(self, call: ToolCallPart) -> tuple[str, ToolsetTool[AgentDepsT]]:
-        """Resolve tool name to ResolvedTool, raising ModelRetry for unknown tools."""
+        """Resolve tool name to ResolvedTool, raising ModelRetry for unknown or unavailable tools."""
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
@@ -480,7 +489,35 @@ class ToolManager(Generic[AgentDepsT]):
             else:
                 msg = 'No tools available.'
             raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+        if (unavailable := self._unavailable_reason(tool.tool_def)) is not None:
+            raise ModelRetry(unavailable)
         return name, tool
+
+    def _unavailable_reason(self, tool_def: ToolDefinition) -> str | None:
+        """Why this tool cannot be called yet, or `None` when it is available.
+
+        A deferred tool is callable only once the model has been shown it. The message says *not
+        available yet* rather than "unknown tool" so the model searches or loads again instead of
+        concluding the tool does not exist — and the resulting search/load exchange restores the
+        history that justifies the call, which is what keeps a compacted history coherent.
+        """
+        if not tool_def.defer_loading:
+            return None
+        assert self.ctx is not None
+        if (capability_id := tool_def.capability_id) is not None:
+            if capability_id not in self._available_capability_ids:
+                return (
+                    f'Tool {tool_def.name!r} is not available yet: it belongs to capability '
+                    f'{capability_id!r}. Call `load_capability` for it first, then call the tool on a '
+                    "later turn, once the capability's instructions are in view."
+                )
+            return None
+        if tool_def.name not in self.ctx.discovered_tool_names:
+            return (
+                f'Tool {tool_def.name!r} is not available yet: search for it first, then call it once '
+                'the search result has shown you its schema.'
+            )
+        return None
 
     def _make_validation_success(
         self,

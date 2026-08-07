@@ -95,6 +95,10 @@ def _reject_unloaded_capability_reveals(tools: Sequence[str], tool_manager: Tool
     activates the whole bundle — instructions, hooks, model settings — while a bare name
     reveal would surface the tool with its capability's hooks skipped. (`load_capability`
     itself passes: the loader marks the capability loaded before returning its names.)
+
+    Gated on *availability*, not loadedness: an always-on capability is never
+    `load_capability`-ed, so testing `loaded_capability_ids` rejected its own search-gated tool
+    with an error naming a load the developer cannot perform.
     """
     run_ctx = tool_manager.ctx
     for name in tools:
@@ -103,7 +107,7 @@ def _reject_unloaded_capability_reveals(tools: Sequence[str], tool_manager: Tool
             toolset_tool is not None
             and (capability_id := toolset_tool.tool_def.capability_id) is not None
             and run_ctx is not None
-            and capability_id not in run_ctx.loaded_capability_ids
+            and capability_id not in run_ctx.available_capability_ids
         ):
             raise exceptions.UserError(
                 f'`ToolReturn.tools` cannot reveal {name!r}: it belongs to capability '
