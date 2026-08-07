@@ -98,7 +98,7 @@ class RealtimeError(ModelAPIError):
     A subclass of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], since losing the connection
     to a realtime provider is the same kind of failure as a request-response call that couldn't reach
     the API. Catch it specifically to separate the session's own failures from those of any text agent
-    the session [delegates to](../realtime/tools.md#delegating-work-during-a-call).
+    the session delegates to.
     """
 
 
