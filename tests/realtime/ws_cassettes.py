@@ -6,16 +6,16 @@ replay the actual JSON frames exchanged with the provider, letting cassette-back
 the *real* protocol offline:
 
 - OpenAI Realtime and Azure OpenAI connect through the OpenAI realtime module's `websockets`
-  reference.
+  reference; xAI uses its own module reference.
 - Gemini Live connects through the `google-genai` SDK, which itself uses `websockets` under
   `google.genai.live.ws_connect` (patched there). The SDK calls `.send`, `.recv(decode=False)`, and
   `.close` on the returned object, so the same raw-frame engine serves both providers.
 
 The replay path validates outbound frames as well as replaying inbound ones, so a cassette pins both
 provider behaviour *and* the exact wire messages the library sends. Recording scrubs anything
-secret-looking, redacts internal provider backend config a provider may echo back (a `session.updated`
-can carry VAD/ASR tuning and an internal service address), and truncates inbound audio payloads so
-cassettes stay small.
+secret-looking, redacts internal provider backend config a provider may echo back (e.g. xAI's
+`session.updated` carries VAD/ASR tuning and an internal service address), and truncates inbound audio
+payloads so cassettes stay small.
 """
 
 from __future__ import annotations as _annotations
@@ -42,7 +42,7 @@ _MessageKind = Literal['message']
 _CloseKind = Literal['close']
 _Direction = Literal['sent', 'received']
 
-ProviderName = Literal['openai', 'gemini']
+ProviderName = Literal['openai', 'gemini', 'xai']
 
 # Outbound frame fields that carry random client-generated ids, normalized to stable placeholders so
 # replay can validate frame *structure* without depending on a fresh random value each run.
@@ -63,9 +63,9 @@ _SECRET_RE = re.compile(r'(sk-[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,}|Bearer\
 _SECRET_PLACEHOLDER = '<scrubbed>'
 
 # Frame keys whose values are internal provider backend config, not part of the public wire protocol
-# the session consumes. Providers can echo these back on inbound frames (a `session.updated` can carry
-# VAD/ASR tuning blocks that include an internal gRPC service address and model artifact names), so
-# their whole subtree is redacted to keep provider infrastructure details out of cassettes.
+# the session consumes. Providers can echo these back on inbound frames (xAI's `session.updated`
+# carries VAD/ASR tuning blocks that include an internal gRPC service address and model artifact
+# names), so their whole subtree is redacted to keep provider infrastructure details out of cassettes.
 # Redacting inbound values is safe: the session ignores these fields and no test asserts on them.
 _INTERNAL_CONFIG_KEYS = frozenset(
     {
@@ -391,6 +391,12 @@ def _connect_target(provider: ProviderName) -> tuple[Any, str]:
         from pydantic_ai.realtime import openai as rt_openai
 
         return rt_openai.websockets, 'connect'
+    if provider == 'xai':
+        # xAI clones the OpenAI Realtime protocol and connects with the `websockets` library directly,
+        # so the same raw-frame engine serves it (patched at its own module reference).
+        from pydantic_ai.realtime import xai as rt_xai
+
+        return rt_xai.websockets, 'connect'
     from google.genai import live
 
     return live, 'ws_connect'
