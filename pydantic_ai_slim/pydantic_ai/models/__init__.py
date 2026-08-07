@@ -21,7 +21,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
 
 import httpx
-from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
+from typing_extensions import Self, TypeAliasType, TypedDict, assert_never, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
@@ -51,6 +51,7 @@ from ..messages import (
     NativeToolSearchReturnPart as NativeToolSearchReturnPart,
     PartEndEvent,
     PartStartEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -677,6 +678,9 @@ class Model(ABC, Generic[InterfaceClient]):
         `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
         provider-agnostic exchange.
 
+        Renders each `RetryFeedbackPart` as the `SystemPromptPart` that states, in the harness's own
+        voice, why the previous response couldn't be used.
+
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`.
 
@@ -747,6 +751,8 @@ class Model(ABC, Generic[InterfaceClient]):
 
         target_provider_name = self.system if supports_native_tool_search else None
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
+
+        messages = _render_retry_feedback_messages(messages)
 
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages)
@@ -2102,6 +2108,26 @@ def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ign
     )
 
 
+def _unrendered_retry_feedback_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
+    """The error for a `RetryFeedbackPart` that reached an adapter with no way to render it.
+
+    `prepare_messages` renders every feedback part into the system voice this part exists to reach,
+    so an adapter only ever sees a raw one when that step didn't run. Running a model through an agent
+    always runs it, but [`Model.request`][pydantic_ai.models.Model.request] and
+    [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens] are public and don't — the same
+    contract, and the same `UserError`, as `_unsynthesized_tool_availability_delta_error`.
+
+    Raising beats falling back to user text: a retry the model reads as something a person wrote is
+    the exact confusion this part was introduced to end.
+    """
+    return UserError(
+        '`RetryFeedbackPart` cannot be rendered by this model. '
+        'Call `model.prepare_messages(messages)` first and pass the result — that renders the part '
+        'in the system voice every model understands. `Agent` does this for you; a direct '
+        '`Model.request()` or `Model.count_tokens()` call has to do it itself.'
+    )
+
+
 TOOL_AVAILABILITY_ANNOUNCEMENT = 'The following tool(s) are now available: {names}'
 """What a tool-availability change says to a model whose API can't express one itself.
 
@@ -2111,6 +2137,73 @@ leaves it unable to explain a list that grew mid-conversation. Naming them is en
 more — urging the model to use them, explaining why they arrived — is an instruction nobody asked
 for, on a turn the user didn't write.
 """
+
+
+RETRY_FEEDBACK_VALIDATION_ERROR = 'The response failed validation:\n{feedback}'
+"""What a `RetryFeedbackPart` says to a model when its output didn't match the expected schema.
+
+Like [`TOOL_AVAILABILITY_ANNOUNCEMENT`][pydantic_ai.models.TOOL_AVAILABILITY_ANNOUNCEMENT], these
+render as a statement of fact and nothing more. The errors already say what is wrong and where; a
+model that is shown them and left to act needs no instruction on top, and adding one ("fix the errors
+and try again") spends the harness's system voice on a directive nobody authored — the very thing
+this part exists to keep honest.
+"""
+
+RETRY_FEEDBACK_NO_OUTPUT = 'The response contained no usable output. {feedback}'
+"""What a `RetryFeedbackPart` says to a model when its response carried nothing usable as output."""
+
+RETRY_FEEDBACK_MODEL_RETRY = 'The response was not accepted:\n{feedback}'
+"""What a `RetryFeedbackPart` says to a model when an output validator, output function, or model
+hook raised [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]."""
+
+
+def _render_retry_feedback_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Render harness retry feedback as a mid-conversation system message.
+
+    A [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] is retained model-neutrally in the
+    history and given its provider-facing shape here, the same way
+    `_announce_tool_availability_delta_messages` renders an availability delta: replaced in place, so
+    a request that also holds a user prompt keeps the order it was authored in, and append-only, so
+    the cached prefix ahead of it survives.
+
+    On a model that takes a mid-conversation system message this lands as a real one, carrying the
+    operator authority the statement deserves; elsewhere `_wrap_non_leading_system_prompts` — which
+    runs after this — degrades it to `<system>`-tagged user text. Either way the model can tell it
+    apart from something a person wrote, which is what a `RetryPromptPart` rendered as bare user text
+    never allowed (https://github.com/pydantic/pydantic-ai/issues/6404).
+
+    Feedback always answers a response, so the part can never open the first request and
+    `_standing_system_prompt_count` can't mistake what it renders to for the run's standing prompt.
+    """
+    transformed: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if not isinstance(message, ModelRequest) or not any(
+            isinstance(part, RetryFeedbackPart) for part in message.parts
+        ):
+            transformed.append(message)
+            continue
+
+        changed = True
+        replacement_parts: list[ModelRequestPart] = []
+        for part in message.parts:
+            if not isinstance(part, RetryFeedbackPart):
+                replacement_parts.append(part)
+                continue
+            if part.cause == 'validation_error':
+                template = RETRY_FEEDBACK_VALIDATION_ERROR
+            elif part.cause == 'no_output':
+                template = RETRY_FEEDBACK_NO_OUTPUT
+            elif part.cause == 'model_retry':
+                template = RETRY_FEEDBACK_MODEL_RETRY
+            else:
+                assert_never(part.cause)
+            replacement_parts.append(
+                SystemPromptPart(content=template.format(feedback=part.model_response()), timestamp=part.timestamp)
+            )
+        transformed.append(replace(message, parts=replacement_parts))
+
+    return transformed if changed else messages
 
 
 def _legacy_fabricated_tool_search_reveals(

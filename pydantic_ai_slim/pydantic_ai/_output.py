@@ -119,11 +119,28 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
 
 
 def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
+    """Build the retry signal for output that failed validation or asked to be retried.
+
+    An output *tool* call answers its own call, so its retry is a tool result. Text, native and
+    prompted output have no call to answer, so theirs is harness feedback the model renders in its
+    own voice rather than as a fabricated user turn.
+    """
+    if run_context.tool_name is None:
+        if isinstance(e, ValidationError):
+            return ToolRetryError(
+                _messages.RetryFeedbackPart(
+                    content=e.errors(include_url=False, include_context=False), cause='validation_error'
+                )
+            )
+        return ToolRetryError(_messages.RetryFeedbackPart(content=e.message, cause='model_retry'))
+
     if isinstance(e, ValidationError):
-        content: list[Any] | str = e.errors(include_url=False, include_context=False)
+        content: list[Any] | str = _messages.error_details_ta.dump_python(
+            e.errors(include_url=False, include_context=False), mode='json'
+        )
     else:
         content = e.message
-    m = _messages.RetryPromptPart(content=content, tool_name=run_context.tool_name)
+    m = _messages.ToolReturnPart(tool_name=run_context.tool_name, content=content, outcome='retried')
     if run_context.tool_call_id:
         m.tool_call_id = run_context.tool_call_id
     return ToolRetryError(m)
@@ -393,10 +410,9 @@ async def execute_output_function(
         return await function_schema.call(args, run_context)
     except ModelRetry as r:
         if wrap_validation_errors:
-            m = _messages.RetryPromptPart(
-                content=r.message,
-                tool_name=run_context.tool_name,
-            )
+            if run_context.tool_name is None:
+                raise ToolRetryError(_messages.RetryFeedbackPart(content=r.message, cause='model_retry')) from r
+            m = _messages.ToolReturnPart(tool_name=run_context.tool_name, content=r.message, outcome='retried')
             if run_context.tool_call_id:
                 m.tool_call_id = run_context.tool_call_id  # pragma: no cover
             raise ToolRetryError(m) from r

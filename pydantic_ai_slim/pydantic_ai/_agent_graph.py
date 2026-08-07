@@ -1781,10 +1781,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelRequestNode[DepsT, NodeRunEndT]:
         """Build a retry ModelRequestNode from a ModelRetry exception.
 
-        Increments the retry counter and creates a new request with a RetryPromptPart.
+        Increments the retry counter and creates a new request with a `RetryFeedbackPart`.
         """
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error)
-        m = _messages.RetryPromptPart(content=error.message)
+        m = _messages.RetryFeedbackPart(content=error.message, cause='model_retry')
         retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
         self._result = retry_node
         return retry_node
@@ -2016,8 +2016,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 # handle responses with only parts that don't constitute output.
                 # This can happen with models that support thinking mode when they don't provide
                 # actionable output alongside their thinking content. so we tell the model to try again.
-                m = _messages.RetryPromptPart(
+                m = _messages.RetryFeedbackPart(
                     content=f'Please {" or ".join(alternatives)}.',
+                    cause='no_output',
                 )
                 raise ToolRetryError(m)
             except ToolRetryError as e:

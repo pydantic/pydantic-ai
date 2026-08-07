@@ -175,6 +175,7 @@ def test_tool_retry_error_pickle_round_trip():
 
     assert type(restored) is ToolRetryError
     assert str(restored) == str(exc)
+    assert isinstance(restored.tool_retry, RetryPromptPart)
     assert restored.tool_retry.content == 'retry this'
     assert restored.tool_retry.tool_name == 'my_tool'
     assert restored.tool_retry.tool_call_id == part.tool_call_id

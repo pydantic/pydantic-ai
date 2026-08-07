@@ -33,6 +33,7 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryFeedbackPart,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
 )
@@ -197,7 +198,8 @@ class InstrumentationSettings:
         for message in messages:
             if isinstance(message, ModelRequest):
                 for is_system, group in itertools.groupby(
-                    message.parts, key=lambda p: isinstance(p, SystemPromptPart | ToolAvailabilityDeltaPart)
+                    message.parts,
+                    key=lambda p: isinstance(p, SystemPromptPart | RetryFeedbackPart | ToolAvailabilityDeltaPart),
                 ):
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:

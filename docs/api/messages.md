@@ -8,6 +8,7 @@ graph RL
     UserPromptPart(UserPromptPart) --- ModelRequestPart
     ToolReturnPart(ToolReturnPart) --- ModelRequestPart
     RetryPromptPart(RetryPromptPart) --- ModelRequestPart
+    RetryFeedbackPart(RetryFeedbackPart) --- ModelRequestPart
     ToolAvailabilityDeltaPart(ToolAvailabilityDeltaPart) --- ModelRequestPart
     TextPart(TextPart) --- ModelResponsePart
     ToolCallPart(ToolCallPart) --- ModelResponsePart

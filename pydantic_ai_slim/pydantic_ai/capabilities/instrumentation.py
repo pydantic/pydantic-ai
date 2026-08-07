@@ -412,9 +412,15 @@ class Instrumentation(AbstractCapability[Any]):
                 raise
             except ToolRetryError as e:
                 if handle_tool_control_flow and include_content and span.is_recording():
-                    # Tool retries are surfaced as model-visible errors; record the prompt
+                    # Tool retries are surfaced as model-visible errors; record the feedback
                     # the model will see as the tool result before re-raising.
-                    span.set_attribute(names.tool_result_attr, e.tool_retry.model_response())
+                    retry_part = e.tool_retry
+                    span.set_attribute(
+                        names.tool_result_attr,
+                        retry_part.model_response_str(wrap_if_error=False)
+                        if retry_part.part_kind == 'tool-return'
+                        else retry_part.model_response(),
+                    )
                 span.record_exception(e, escaped=True)
                 span.set_status(StatusCode.ERROR)
                 raise

@@ -34,6 +34,7 @@ from ...messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -510,7 +511,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     # A non-success outcome claim (the return would otherwise reload as `'success'`,
                     # changing how it serializes to the provider) also keeps the return untyped.
                     tool_kind = None
-                    outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
+                    outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] = 'success'
                     encrypted_outcome = (
                         parse_encrypted_outcome(tool_msg.encrypted_value) if use_encrypted_value else None
                     )
@@ -745,6 +746,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
                 else:
                     user_content.append(TextInputContent(type='text', text=part.model_response()))
+            elif isinstance(part, RetryFeedbackPart):
+                user_content.append(TextInputContent(type='text', text=part.model_response()))
             else:
                 assert_never(part)
 

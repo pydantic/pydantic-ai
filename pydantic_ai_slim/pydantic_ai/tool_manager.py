@@ -235,12 +235,17 @@ class ToolManager(Generic[AgentDepsT]):
 
     @staticmethod
     def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
-        """Convert a ValidationError or ModelRetry to a ToolRetryError with a RetryPromptPart."""
+        """Convert a ValidationError or ModelRetry to a ToolRetryError with a retried `ToolReturnPart`."""
         if isinstance(error, ValidationError):
-            content: list[Any] | str = error.errors(include_url=False, include_context=False)
+            # Serialized here so the details travel as structured tool-result content: `ctx` is
+            # dropped by `include_context=False`, and `input` stays so the model sees the arguments
+            # it sent next to the error.
+            content: list[Any] | str = _messages.error_details_ta.dump_python(
+                error.errors(include_url=False, include_context=False), mode='json'
+            )
         else:
             content = error.message
-        m = _messages.RetryPromptPart(tool_name=name, content=content, tool_call_id=call.tool_call_id)
+        m = _messages.ToolReturnPart(tool_name=name, content=content, tool_call_id=call.tool_call_id, outcome='retried')
         return ToolRetryError(m)
 
     @staticmethod
@@ -1104,10 +1109,11 @@ class ToolManager(Generic[AgentDepsT]):
             return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         if isinstance(tool_call_result, ModelRetry):
             raise ToolRetryError(
-                _messages.RetryPromptPart(
+                _messages.ToolReturnPart(
                     content=tool_call_result.message,
                     tool_name=call.tool_name,
                     tool_call_id=call.tool_call_id,
+                    outcome='retried',
                 )
             )
         if isinstance(tool_call_result, _messages.RetryPromptPart):

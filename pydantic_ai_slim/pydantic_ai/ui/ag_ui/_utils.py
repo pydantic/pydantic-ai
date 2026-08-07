@@ -141,7 +141,8 @@ provider blob in the same slot is never mistaken for our data."""
 
 
 def tool_kind_encrypted_value(
-    tool_kind: ToolPartKind | None, outcome: Literal['success', 'failed', 'denied', 'interrupted'] | None = None
+    tool_kind: ToolPartKind | None,
+    outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
 ) -> str | None:
     """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
@@ -180,7 +181,7 @@ def tool_kind_encrypted_value_kwargs(
     tool_kind: ToolPartKind | None,
     *,
     supported: bool,
-    outcome: Literal['success', 'failed', 'denied', 'interrupted'] | None = None,
+    outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
 ) -> _EncryptedValueKwargs:
     """`ToolCall`/`ToolMessage` kwargs carrying claims as an `encrypted_value`, or empty to omit it.
 
@@ -241,7 +242,9 @@ def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | Non
     return parse_tool_kind(tool_kind) if isinstance(tool_kind, str) else None
 
 
-def parse_encrypted_outcome(encrypted_value: str | None) -> Literal['failed', 'denied', 'interrupted'] | None:
+def parse_encrypted_outcome(
+    encrypted_value: str | None,
+) -> Literal['failed', 'denied', 'interrupted', 'retried'] | None:
     """Read an outcome claim from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
 
     Only non-`'success'` outcomes are ever carried (`'success'` is the default), so an absent or
@@ -252,7 +255,7 @@ def parse_encrypted_outcome(encrypted_value: str | None) -> Literal['failed', 'd
     if namespaced is None:
         return None
     outcome = namespaced.get('outcome')
-    if outcome == 'failed' or outcome == 'denied' or outcome == 'interrupted':
+    if outcome == 'failed' or outcome == 'denied' or outcome == 'interrupted' or outcome == 'retried':
         return outcome
     return None
 

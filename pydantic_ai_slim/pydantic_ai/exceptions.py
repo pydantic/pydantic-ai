@@ -23,7 +23,7 @@ else:
 
 
 if TYPE_CHECKING:
-    from .messages import ModelMessage, ModelResponse, RetryPromptPart, ToolReturnPart
+    from .messages import ModelMessage, ModelResponse, RetryFeedbackPart, RetryPromptPart, ToolReturnPart
     from .usage import RunUsage
 
 __all__ = (
@@ -596,15 +596,24 @@ class FallbackExceptionGroup(ExceptionGroup[Any]):
 
 
 class ToolRetryError(Exception):
-    """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
+    """Exception used to signal a retry message should be returned to the LLM.
 
-    def __init__(self, tool_retry: RetryPromptPart):
+    `tool_retry` is whichever part the retry travels as: a `ToolReturnPart` with `outcome='retried'`
+    when it answers a tool call, a `RetryFeedbackPart` when it doesn't, or a `RetryPromptPart` when it
+    came from user code (a handler returning one through `DeferredToolResults`).
+    """
+
+    def __init__(self, tool_retry: RetryPromptPart | RetryFeedbackPart | ToolReturnPart):
         self.tool_retry = tool_retry
-        message = (
-            tool_retry.content
-            if isinstance(tool_retry.content, str)
-            else self._format_error_details(tool_retry.content, tool_retry.tool_name)
-        )
+        if tool_retry.part_kind == 'tool-return':
+            # A retried tool return already carries its validation details as serialized content, so
+            # there are no `ErrorDetails` left to format.
+            message = tool_retry.model_response_str(wrap_if_error=False)
+        elif isinstance(tool_retry.content, str):
+            message = tool_retry.content
+        else:
+            tool_name = tool_retry.tool_name if tool_retry.part_kind == 'retry-prompt' else None
+            message = self._format_error_details(tool_retry.content, tool_name)
         super().__init__(message)
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
