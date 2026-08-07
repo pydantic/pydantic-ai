@@ -3924,6 +3924,27 @@ def _native_part_events(
     ]
 
 
+async def test_native_part_end_without_a_start_gets_an_index_of_its_own() -> None:
+    # A `PartEndEvent` the session never saw a start for closes nothing, so it must not inherit the
+    # connection's index: that index isn't session-unique and would name a live part — here the
+    # assistant's speech part, which also holds index 0.
+    part = _grounding_parts()[0]
+    conn = FakeRealtimeConnection(
+        [
+            OutputTranscript(text='It is sunny in Rome', is_final=True),
+            PartEndEvent(index=0, part=part),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner, model_name='gemini-live-2.5-flash')
+    events = await collect_events(session)
+
+    speech_indexes = {event.index for event in events if isinstance(event, PartStartEvent)}
+    orphan = next(event for event in events if isinstance(event, PartEndEvent) and event.part == part)
+    assert speech_indexes == {0}
+    assert orphan.index not in speech_indexes
+
+
 async def test_grounding_streams_and_folds_native_tool_parts() -> None:
     # Grounding parts stream to the consumer and fold into the assistant response ahead of speech,
     # mirroring the classic `GoogleModel`.

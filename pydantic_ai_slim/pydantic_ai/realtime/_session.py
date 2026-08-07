@@ -1299,8 +1299,10 @@ class RealtimeSession:
             self._native_tool_parts.append(event.part)
             index = self._native_part_indexes[event.index] = self._take_part_index()
         else:
-            # An end without a recorded start can't have collided with anything, so it passes through.
-            index = self._native_part_indexes.pop(event.index, event.index)
+            # An end with no recorded start closes nothing, so it gets an index of its own rather than
+            # the connection's — which is not session-unique and could name a live part.
+            index = self._native_part_indexes.pop(event.index, None)
+            index = self._take_part_index() if index is None else index
         return [replace(event, index=index)]
 
     def _handle_assistant_transcript(
