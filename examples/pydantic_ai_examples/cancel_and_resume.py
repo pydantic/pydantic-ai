@@ -51,7 +51,7 @@ async def _run_interactive_turn(
     agent: Agent[None],
     prompt: str,
     history: list[ModelMessage],
-) -> tuple[list[ModelMessage], bool]:
+) -> list[ModelMessage]:
     token = CancellationToken()
     chunks: list[str] = []
     bindings = KeyBindings()
@@ -85,7 +85,7 @@ async def _run_interactive_turn(
     messages, was_cancelled = await turn_task
     if was_cancelled:
         print('⏹ cancelled')
-    return messages, was_cancelled
+    return messages
 
 
 async def main() -> None:
@@ -107,7 +107,7 @@ async def main() -> None:
             continue
 
         # A cancelled token stays cancelled, so each turn gets a fresh one.
-        history, _ = await _run_interactive_turn(agent, prompt, history)
+        history = await _run_interactive_turn(agent, prompt, history)
 
 
 if __name__ == '__main__':
