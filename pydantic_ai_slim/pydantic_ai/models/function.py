@@ -168,7 +168,7 @@ class FunctionModel(Model):
         if not response.usage.has_values():  # pragma: no branch
             response.usage = _estimate_usage(
                 chain(messages, [response]),
-                allow_tool_availability_deltas=self.profile.get('tool_addition_mode') is not None,
+                allow_tool_availability_deltas=self.tool_addition_mode is not None,
             )
         return response
 

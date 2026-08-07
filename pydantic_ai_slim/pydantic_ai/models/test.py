@@ -133,7 +133,7 @@ class TestModel(Model):
         model_response = self._request(messages, model_settings, model_request_parameters)
         model_response.usage = _estimate_usage(
             [*messages, model_response],
-            allow_tool_availability_deltas=self.profile.get('tool_addition_mode') is not None,
+            allow_tool_availability_deltas=self.tool_addition_mode is not None,
         )
         model_response.provider_name = self._system
         return model_response
@@ -159,7 +159,7 @@ class TestModel(Model):
             _structured_response=model_response,
             _messages=messages,
             _provider_name=self._system,
-            _allow_tool_availability_deltas=self.profile.get('tool_addition_mode') is not None,
+            _allow_tool_availability_deltas=self.tool_addition_mode is not None,
         )
 
     @property
