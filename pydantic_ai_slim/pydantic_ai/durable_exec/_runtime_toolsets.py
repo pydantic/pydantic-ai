@@ -41,7 +41,7 @@ def cancellation_token_unsupported_error(engine: str) -> UserError:
         f'`cancellation_token` cannot be used with {engine} durable execution because it is a same-process '
         'handle and cannot cross the durable execution boundary. To cancel a durable run from outside it, '
         "pass a `DurableRunCancellation` capability to the run and trigger it from the engine's "
-        'external-cancellation handler (a `@workflow.signal` for Temporal); or cancel the whole workflow or flow.'
+        'external-cancellation handler; or cancel the whole workflow or flow.'
     )
 
 

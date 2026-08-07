@@ -45,6 +45,7 @@ class DurableRunCancellation(AbstractCapability[AgentDepsT]):
     ```python {test="skip"}
     from temporalio import workflow
 
+    from pydantic_ai import RunCancelled
     from pydantic_ai.durable_exec import DurableRunCancellation
 
     with workflow.unsafe.imports_passed_through():
@@ -59,8 +60,13 @@ class DurableRunCancellation(AbstractCapability[AgentDepsT]):
 
         @workflow.run
         async def run(self, prompt: str) -> str:
-            result = await my_temporal_agent.run(prompt, capabilities=[self.cancellation])
-            return result.output
+            try:
+                result = await my_temporal_agent.run(prompt, capabilities=[self.cancellation])
+                return result.output
+            except RunCancelled:
+                # Catch `RunCancelled` and complete normally: letting it escape the workflow
+                # uncaught is not replay-safe and can wedge the workflow.
+                return 'The run was cancelled.'
 
         @workflow.signal
         def cancel(self) -> None:
