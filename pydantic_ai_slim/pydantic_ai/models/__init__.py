@@ -1925,9 +1925,9 @@ def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) 
                 new_messages.append(replace(message, parts=request_parts))
         else:
             # A barge-in cuts the model off mid-sentence, so the last speech part's transcript stops
-            # short. Note that inline, or a standard model reads the fragment as a complete utterance
-            # and may repeat itself. The note is written here, on the way to the model, and never
-            # persisted: history keeps the interruption on `SpeechPart.interrupted_at_ms`.
+            # short. Without an inline `[Interrupted]` marker, a standard model reads the fragment as a
+            # complete utterance and may repeat itself. The marker is written here, on the way to the
+            # model, and never persisted: history keeps the interruption on `SpeechPart.interrupted_at_ms`.
             last_speech = max(
                 (index for index, part in enumerate(message.parts) if isinstance(part, SpeechPart)),
                 default=None,
