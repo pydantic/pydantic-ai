@@ -14201,6 +14201,7 @@ def test_tool_sync_function_returning_coroutine():
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('my_tool', {})])
         tool_return = next(p for m in messages for p in m.parts if isinstance(p, ToolReturnPart))
+        assert isinstance(tool_return.content, str)
         return ModelResponse(parts=[TextPart(tool_return.content)])
 
     agent = Agent(FunctionModel(call_tool))
