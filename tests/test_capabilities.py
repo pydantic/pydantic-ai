@@ -7358,6 +7358,31 @@ class TestUnavailableCapabilityToolsAreNotCallable:
         with pytest.raises(UnexpectedModelBehavior, match="Tool 'secret_op' exceeded max retries"):
             await stubborn.run('hello')
 
+    async def test_an_availability_refusal_is_charged_against_the_tools_own_budget(self):
+        """A tool's configured `max_retries` governs its refusals, not the manager's default.
+
+        The refusal is raised while resolving, before the caller has bound the resolved tool, so
+        the budget could easily be taken from the manager default that an unresolvable name gets.
+        A tool that asked for a larger budget must still get it.
+        """
+        refusals = 0
+
+        def keep_calling(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal refusals
+            refusals = len(list(iter_message_parts(messages, ModelRequest, RetryPromptPart)))
+            return ModelResponse(parts=[ToolCallPart(tool_name='secret_op', args={}, tool_call_id=f's{refusals}')])
+
+        toolset = FunctionToolset[Any]()
+        toolset.add_function(secret_op, name='secret_op', retries=4)
+        capability = Capability[Any](id='guarded', description='Guarded.', toolsets=[toolset], defer_loading=True)
+
+        agent = Agent(FunctionModel(keep_calling), capabilities=[capability])
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 4'):
+            await agent.run('hello')
+
+        # The tool's own budget of 4, plus the one extra an availability refusal is granted.
+        assert refusals == snapshot(5)
+
     async def test_unavailable_capability_tool_is_not_advertised(self):
         """The tool is withheld as well as uncallable — never visible-but-unusable."""
         advertised: list[list[str]] = []

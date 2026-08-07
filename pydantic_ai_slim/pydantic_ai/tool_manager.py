@@ -93,7 +93,15 @@ class _ToolUnavailable(ModelRetry):
 
     A distinct type only so `_make_validation_failure` can widen the retry budget for it. It
     reaches the model as an ordinary retry prompt, exactly like the `ModelRetry` it replaced.
+
+    Carries the tool it refused: the refusal is raised while resolving, before the caller has
+    bound the resolved tool, and the budget this failure is charged against is the tool's own
+    `max_retries` — not the manager's default, which is all an unresolved name could offer.
     """
+
+    def __init__(self, message: str, tool: ToolsetTool[Any]):
+        super().__init__(message)
+        self.tool = tool
 
 
 class _ValidationDeferral(Exception):
@@ -494,7 +502,7 @@ class ToolManager(Generic[AgentDepsT]):
                 msg = 'No tools available.'
             raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
         if (unavailable := self._unavailable_reason(tool.tool_def)) is not None:
-            raise _ToolUnavailable(unavailable)
+            raise _ToolUnavailable(unavailable, tool)
         return name, tool
 
     def _unavailable_reason(self, tool_def: ToolDefinition) -> str | None:
@@ -649,6 +657,11 @@ class ToolManager(Generic[AgentDepsT]):
         except (ValidationError, ModelRetry) as e:
             if not wrap_validation_errors:
                 raise
+            if isinstance(e, _ToolUnavailable):
+                # Raised during resolution, so `tool` above was never bound — but the tool exists
+                # and its own `max_retries` is the budget this refusal belongs to. Only a name that
+                # resolves to nothing falls back to the manager's default.
+                tool = e.tool
             return self._make_validation_failure(call.tool_name, call, tool, ctx, e)
         except ToolFailed as e:
             if not wrap_validation_errors:
