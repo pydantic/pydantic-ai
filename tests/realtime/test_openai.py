@@ -3105,12 +3105,29 @@ async def test_connection_iter_skips_unmapped_events(monkeypatch: pytest.MonkeyP
     ]
 
 
-async def test_agent_realtime_session_does_not_advertise_a_withheld_tool(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A `defer_loading=True` tool is withheld: it exists in `function_tools` but is meant to stay off
-    # the wire until tool search reveals it, which a realtime session — whose tools are fixed when the
-    # connection opens — can never do. `_open_realtime_session` therefore narrows `function_tools` to
-    # `declared_function_tools` before dialing, and this pins that at the wire: the `session.update`
-    # frame must advertise the visible tool and nothing else.
+async def test_agent_realtime_session_rejects_a_deferred_tool() -> None:
+    # A `defer_loading=True` tool is hidden until tool search reveals it, which a session whose tools
+    # are fixed at connect can never do. Advertising it silently would hand the model a `search_tools`
+    # affordance that finds the tool and then can't have it — a dead end — so the session refuses to
+    # open, exactly as it does for a deferred *capability* that contributes tools.
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain(defer_loading=True)
+    def withheld_tool() -> str:  # pragma: no cover — the session raises before any tool can run
+        return 'withheld'
+
+    with pytest.raises(
+        UserError,
+        match=r'cannot reveal tools mid-session.*`defer_loading=True`.*"?\'withheld_tool\'"?',
+    ):
+        async with agent.realtime(OpenAIRealtimeModel('gpt-realtime')).session():
+            pass  # pragma: no cover
+
+
+async def test_agent_realtime_session_advertises_only_visible_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    # With no deferred tools left to search for, tool search registers no `search_tools` affordance
+    # either, so the wire carries exactly the tools the agent declared — pinning that
+    # `_open_realtime_session` narrows `function_tools` to `declared_function_tools` before dialing.
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
 
@@ -3120,21 +3137,13 @@ async def test_agent_realtime_session_does_not_advertise_a_withheld_tool(monkeyp
     def visible_tool() -> str:  # pragma: no cover — never called, only advertised
         return 'visible'
 
-    @agent.tool_plain(defer_loading=True)
-    def withheld_tool() -> str:  # pragma: no cover — withheld, so never advertised or called
-        return 'withheld'
-
     model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
     async with agent.realtime(model).session():
         pass
 
     update = json.loads(ws.sent[0])
     assert update['type'] == 'session.update'
-    advertised = [tool['name'] for tool in update['session']['tools']]
-    assert 'withheld_tool' not in advertised
-    # `search_tools` is tool search's own local affordance, registered because a deferred tool exists;
-    # it is not the deferred tool itself.
-    assert advertised == ['visible_tool', 'search_tools']
+    assert [tool['name'] for tool in update['session']['tools']] == ['visible_tool']
 
 
 async def test_agent_realtime_session_rejects_native_tools() -> None:
