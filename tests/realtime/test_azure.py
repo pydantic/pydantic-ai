@@ -10,6 +10,8 @@ from pydantic_ai.tools import ToolDefinition
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    from openai.types.realtime.realtime_audio_config_output import VoiceID
+
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime import TurnDetection
@@ -105,6 +107,20 @@ def test_voice_live_session_config_options() -> None:
     )
     assert config['turn_detection']['threshold'] == 0.3
     assert config['input_audio_transcription'] == {'model': 'azure-speech'}
+
+
+def test_voice_live_rejects_openai_custom_voice_id() -> None:
+    """Voice Live addresses a voice by provider + name, so an OpenAI custom `VoiceID` fails loudly."""
+    provider = AzureProvider(
+        azure_endpoint='https://resource.services.ai.azure.com',
+        api_version='2026-04-10',
+        api_key='azure-key',
+    )
+    model = AzureRealtimeModel('phi-4-mm-realtime', provider=provider)
+    settings = AzureRealtimeModelSettings(azure_voice_live=True, openai_voice=VoiceID(id='voice_custom'))
+
+    with pytest.raises(UserError, match='does not accept an OpenAI custom `VoiceID`'):
+        model._session_config('Be concise.', None, settings)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.anyio
