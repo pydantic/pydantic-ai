@@ -17,7 +17,7 @@ import math
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import KW_ONLY, InitVar, dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from typing_extensions import TypeAliasType
 
@@ -91,6 +91,7 @@ from ._base import (
 from ._openai_protocol import (
     AUDIO_DELTA_TYPES,
     INPUT_TRANSCRIPT_DONE_TYPES,
+    RealtimeHandshakeError,
     SemanticVAD,
     ServerVAD,
     expect_event,
@@ -301,6 +302,11 @@ def _map_transcription_usage(usage: RealtimeTranscriptionUsage | None) -> Reques
         # one second instead, so a short utterance is visible rather than free.
         details['input_transcription_seconds'] = max(1, round(usage.seconds))
     return RequestUsage(details=details) if details else None
+
+
+def _frame_error(error: ValueError) -> RealtimeSessionErrorEvent:
+    """Report a malformed frame as a recoverable session error, rather than tearing the session down."""
+    return RealtimeSessionErrorEvent(message=f'Failed to parse OpenAI realtime event: {error}', recoverable=True)
 
 
 def _describe_close(ws: ClientConnection) -> str:
@@ -527,9 +533,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     except ValueError as e:
                         # A malformed frame (bad JSON or audio payload) shouldn't tear down the whole
                         # session; surface it as a recoverable error and keep reading.
-                        yield RealtimeSessionErrorEvent(
-                            message=f'Failed to parse OpenAI realtime event: {e}', recoverable=True
-                        )
+                        yield _frame_error(e)
                         continue
                     for event in events:
                         yield event
@@ -592,6 +596,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             return []
         events: list[RealtimeCodecEvent] = []
         superseded = False
+        if event_type == 'response.done':
+            # Settled *before* the frame is mapped: mapping a malformed `response.done` raises
+            # `ValueError`, which `__aiter__` surfaces as a recoverable frame error and keeps reading —
+            # but the frame was still the only terminal its response will ever get, and bailing before
+            # the state updates would leave `_response_active` held forever, queueing every later
+            # `response.create` behind a response that already ended.
+            done_events, superseded = await self._handle_response_done(data)
+            events.extend(done_events)
         event = self._map_event(data)
         if event_type == 'response.created':
             response_data = data.get('response')
@@ -620,16 +632,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     self._generated_audio_bytes = len(event.data)
                 else:
                     self._generated_audio_bytes += len(event.data)
-        elif event_type == 'response.done':
-            done_events, superseded = await self._handle_response_done(data)
-            events.extend(done_events)
         if event is not None and not (event_type == 'response.done' and superseded):
             events.append(event)
             if isinstance(event, InputTranscript) and event.is_final and event_type in INPUT_TRANSCRIPT_DONE_TYPES:
-                _validate_usage_shape(data.get('usage'), transcription=True)
-                completed = ConversationItemInputAudioTranscriptionCompletedEvent.construct(**data)
-                if (asr := _map_transcription_usage(completed.usage)) is not None:
-                    events.append(SessionUsageEvent(usage=asr, response_scoped=False))
+                # The transcript is already recorded, so a malformed `usage` payload costs the usage
+                # event, not the user's words: report it as the same recoverable frame error `__aiter__`
+                # would have raised rather than discarding the whole frame along with it.
+                try:
+                    _validate_usage_shape(data.get('usage'), transcription=True)
+                except ValueError as e:
+                    events.append(_frame_error(e))
+                else:
+                    completed = ConversationItemInputAudioTranscriptionCompletedEvent.construct(**data)
+                    if (asr := _map_transcription_usage(completed.usage)) is not None:
+                        events.append(SessionUsageEvent(usage=asr, response_scoped=False))
         return events
 
     async def _handle_response_done(self, data: dict[str, Any]) -> tuple[list[RealtimeCodecEvent], bool]:
@@ -641,9 +657,15 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         boundary).
         """
         events: list[RealtimeCodecEvent] = []
-        response_data = validate_response_data(data)
+        try:
+            response_data = validate_response_data(data)
+        except ValueError:
+            # A `response` payload of the wrong shape carries no id to reason about, so it is handled
+            # exactly like a missing one below. The error itself is not swallowed: mapping the same
+            # frame raises it again, and `__aiter__` reports it as a recoverable frame error.
+            response_data = {}
         if not response_data:
-            # A `response.done` with no `response` object is malformed, but it is still the only
+            # A `response.done` with no usable `response` object is malformed, but it is still the only
             # terminal we will ever get for the response it was meant to close. Treating it as "no
             # information" leaves `_response_active` set forever, and every later `create_response()`
             # then queues behind a response that can never complete.
@@ -740,15 +762,25 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         assert self._dial is not None
         try:
             self._ws = await self._dial()
-        except (websockets.WebSocketException, OSError, TimeoutError):
+        except (websockets.WebSocketException, OSError, TimeoutError, RealtimeHandshakeError):
             # Expected dial/handshake failures: protocol/connection errors, network failures (DNS,
-            # refused, reset), and the handshake timeout. A retry may still succeed. Anything else is a
-            # bug in `dial()` and propagates rather than masquerading as a failed reconnect.
+            # refused, reset), the handshake timeout, and a re-dial the server rejected with an `error`
+            # frame or answered with a frame we couldn't parse — `map_connect_errors` only wraps the
+            # *initial* dial, so `expect_event`'s `RealtimeHandshakeError` reaches this loop raw. A retry
+            # may still succeed. Anything else is a bug in `dial()` and propagates rather than
+            # masquerading as a failed reconnect.
             return False
+        # A `response.create` deferred behind the response that died with the socket will never be
+        # released by that response's `response.done`, so replay it on the fresh socket (which has just
+        # replayed the call) rather than dropping it and leaving the session waiting for a turn that can
+        # never start.
+        replay_response = self._pending_response
         self._clear_active_response()
         # A fresh socket also drops anything the old one was still holding for us.
         self._pending_response = False
         self._cancelled_response_id = None
+        if replay_response:
+            await self._request_response()
         return True
 
     def _clear_active_response(self) -> None:
@@ -783,6 +815,10 @@ class OpenAIRealtimeModel(RealtimeModel):
             non-recoverable session error; `RealtimeSession` raises
             [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from iteration.
     """
+
+    # The connection class `connect` yields; a protocol clone (Azure) overrides it to correct the
+    # vendor a closed or rejecting connection names in its errors.
+    _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = OpenAIRealtimeConnection
 
     model: str = 'gpt-realtime'
     _: KW_ONLY
@@ -876,11 +912,18 @@ class OpenAIRealtimeModel(RealtimeModel):
         return realtime_websocket_url(self._provider.base_url, model=self.model)
 
     async def _auth_headers(self) -> dict[str, str]:
-        # `AsyncOpenAI` accepts an async `api_key` provider, in which case `client.api_key` is empty
-        # until resolved. The raw WebSocket handshake bypasses the SDK's request path (which resolves
-        # it per request), so resolve it here via the SDK's own refresh — a no-op returning the static
-        # key when no provider is configured, so the handshake stays byte-identical in that case.
-        api_key = await self._provider.client._refresh_api_key()  # pyright: ignore[reportPrivateUsage]
+        # The raw WebSocket handshake bypasses the SDK's request path, which is where `AsyncOpenAI`
+        # resolves anything but a static key, so both dynamic forms are resolved the same way here.
+        client = self._provider.client
+        # A `workload_identity` client leaves `client.api_key` set to a placeholder string and
+        # exchanges it for a real token per request; sending the placeholder would fail the handshake
+        # with an opaque auth error.
+        if (workload_identity := client._workload_identity_auth) is not None:  # pyright: ignore[reportPrivateUsage]
+            return {'Authorization': f'Bearer {await workload_identity.get_token_async()}'}
+        # An async `api_key` provider leaves `client.api_key` empty until resolved. The SDK's own
+        # refresh is a no-op returning the static key when no provider is configured, so the handshake
+        # stays byte-identical in that case.
+        api_key = await client._refresh_api_key()  # pyright: ignore[reportPrivateUsage]
         return {'Authorization': f'Bearer {api_key}'}
 
     @asynccontextmanager
@@ -950,7 +993,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 # instead (from inside `dial`), which supersedes this history.
                 for item in seed:
                     await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
-            connection = OpenAIRealtimeConnection(
+            connection = self._connection_type(
                 ws,
                 dial=dial,
                 reconnect=self.reconnect,

@@ -110,9 +110,12 @@ def realtime_websocket_url(base_url: str, *, model: str | None = None) -> str:
     Swaps the HTTP scheme for the WebSocket one and appends the `realtime` path, so the default
     OpenAI base URL `https://api.openai.com/v1/` yields `wss://api.openai.com/v1/realtime`. The
     path lands *before* any query string the base URL carries — which is preserved, with `model`
-    merged into it — rather than being appended after it into the wrong endpoint.
+    merged into it — rather than being appended after it into the wrong endpoint. A fragment is
+    likewise split off first, so it can't swallow the path and the `model` parameter (which the
+    handshake would then never send) into the client-side part of the URL.
     """
-    url, _, query = base_url.partition('?')
+    url, _, fragment = base_url.partition('#')
+    url, _, query = url.partition('?')
     url = url.rstrip('/')
     if url.startswith('https://'):
         url = 'wss://' + url[len('https://') :]
@@ -122,7 +125,8 @@ def realtime_websocket_url(base_url: str, *, model: str | None = None) -> str:
     if model is not None:
         model_param = f'model={quote(model, safe="")}'
         query = f'{query}&{model_param}' if query else model_param
-    return f'{url}?{query}' if query else url
+    url = f'{url}?{query}' if query else url
+    return f'{url}#{fragment}' if fragment else url
 
 
 AUTO_TRANSCRIPTION_MODEL = 'auto'
