@@ -18,7 +18,7 @@ from pydantic_ai.durable_exec._toolset import (
     wrap_tool_call_result,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._activity_execution import execute_activity
@@ -63,7 +63,11 @@ def temporalize_dynamic_toolset(
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         async with heartbeating():
             ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
-            return await wrap_tool_call_result(call_dynamic_tool(toolset, params.name, params.tool_args, ctx))
+            tool_def = params.tool_def
+            assert isinstance(tool_def, ToolDefinition)
+            return await wrap_tool_call_result(
+                call_dynamic_tool(toolset, params.name, params.tool_args, ctx, timeout=tool_def.timeout)
+            )
 
     call_tool_activity.__annotations__['deps'] = deps_type
     registered_call_tool = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{toolset.id}__call_tool')(

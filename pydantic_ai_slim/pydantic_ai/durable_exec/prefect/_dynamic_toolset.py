@@ -36,9 +36,16 @@ def prefectify_dynamic_toolset(
         return await get_dynamic_tools(wrapped, ctx)
 
     @task
-    async def call_tool_task(tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> Any:
+    async def call_tool_task(
+        tool_name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+    ) -> Any:
         task_ctx = guard_task_enqueue(ctx)
-        return await wrap_tool_call_result(call_dynamic_tool(wrapped, tool_name, tool_args, task_ctx))
+        return await wrap_tool_call_result(
+            call_dynamic_tool(wrapped, tool_name, tool_args, task_ctx, timeout=tool.tool_def.timeout)
+        )
 
     async def call_tool_operation(
         name: str,
@@ -48,7 +55,9 @@ def prefectify_dynamic_toolset(
         config: Mapping[str, Any],
     ) -> Any:
         merged_config = with_non_retryable_errors(cast('TaskConfig', base_config | dict(config)))
-        result = await call_tool_task.with_options(name=f'Call Tool: {name}', **merged_config)(name, tool_args, ctx)
+        result = await call_tool_task.with_options(name=f'Call Tool: {name}', **merged_config)(
+            name, tool_args, ctx, tool
+        )
         # A persisted cache entry written before this task wrapped control-flow exceptions (still
         # reachable under a custom `cache_policy` that omits `TASK_SOURCE`) holds the raw result.
         return unwrap_recorded_tool_call_result(result)

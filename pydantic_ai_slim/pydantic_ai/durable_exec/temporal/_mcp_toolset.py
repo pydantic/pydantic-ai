@@ -7,6 +7,7 @@ from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import ToolsetTool
+from pydantic_ai._tool_timeout import run_with_tool_timeout
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableMCPToolset,
@@ -60,10 +61,14 @@ def temporalize_mcp_toolset(
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         async with heartbeating():
             ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
-            assert isinstance(params.tool_def, ToolDefinition)
+            tool_def = params.tool_def
+            assert isinstance(tool_def, ToolDefinition)
             return await wrap_tool_call_result(
-                toolset.call_tool(
-                    params.name, params.tool_args, ctx, toolset.tool_for_tool_def(params.tool_def, ctx=ctx)
+                run_with_tool_timeout(
+                    lambda: toolset.call_tool(
+                        params.name, params.tool_args, ctx, toolset.tool_for_tool_def(tool_def, ctx=ctx)
+                    ),
+                    tool_def.timeout,
                 )
             )
 

@@ -11,12 +11,14 @@ from typing_extensions import Self, assert_never
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._cancel import RunCancellation
 from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._tool_timeout import run_with_tool_timeout
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
+from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPToolset
@@ -81,7 +83,12 @@ async def get_dynamic_tools(toolset: AbstractToolset[AgentDepsT], ctx: RunContex
 
 
 async def call_dynamic_tool(
-    toolset: AbstractToolset[AgentDepsT], name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]
+    toolset: AbstractToolset[AgentDepsT],
+    name: str,
+    tool_args: dict[str, Any],
+    ctx: RunContext[AgentDepsT],
+    *,
+    timeout: float | None = None,
 ) -> Any:
     """Resolve a dynamic toolset fresh, re-validate the tool args, and call the tool.
 
@@ -99,7 +106,7 @@ async def call_dynamic_tool(
                 'The dynamic toolset function may have returned a different toolset than expected.'
             )
         args = tool.args_validator.validate_python(tool_args)
-        return await run_toolset.call_tool(name, args, ctx, tool)
+        return await run_with_tool_timeout(lambda: run_toolset.call_tool(name, args, ctx, tool), timeout)
 
 
 @dataclass
@@ -383,6 +390,15 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
         self._call_tool_operation = call_tool_operation
         self._resolve_tool_config = resolve_tool_config
 
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        tools = await self.wrapped.get_tools(ctx)
+        if not self._in_durable_context():
+            return tools
+        return {
+            name: replace(tool, timeout_managed_by_toolset=True) if isinstance(tool, FunctionToolsetTool) else tool
+            for name, tool in tools.items()
+        }
+
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
@@ -442,16 +458,19 @@ class DurableDynamicToolset(DurableToolsetBase[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         result = await self._get_tools_operation(ctx)
         self._run_instructions = result.instructions
-        return {
-            name: ToolsetTool(
+        tools: dict[str, ToolsetTool[AgentDepsT]] = {}
+        for name, info in result.tools.items():
+            tool = ToolsetTool(
                 toolset=self,
                 tool_def=info.tool_def,
                 max_retries=info.max_retries,
                 # Only parse here; the real tool validates again inside the durable unit.
                 args_validator=TOOL_SCHEMA_VALIDATOR,
             )
-            for name, info in result.tools.items()
-        }
+            if self._resolve_tool_config(tool, name) is not False:
+                tool = replace(tool, timeout_managed_by_toolset=True)
+            tools[name] = tool
+        return tools
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> Instructions:
         # Set by `get_tools`, which the framework runs earlier in each step.
@@ -497,15 +516,29 @@ class DurableMCPToolset(DurableToolsetBase[AgentDepsT]):
         self._resolve_tool_config = resolve_tool_config
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        if not self._in_durable_context() or self._get_tools_operation is None:
+        if not self._in_durable_context():
             return await self.wrapped.get_tools(ctx)
-        cache_key = self.id or ''
-        if self._mcp_toolset.cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
-            return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in cached.items()}
-        tool_defs = await self._get_tools_operation(ctx)
-        if self._mcp_toolset.cache_tools:
-            ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
-        return {name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in tool_defs.items()}
+
+        if self._get_tools_operation is None:
+            tools = await self.wrapped.get_tools(ctx)
+        else:
+            cache_key = self.id or ''
+            if self._mcp_toolset.cache_tools and (cached := ctx._mcp_tool_defs_cache.get(cache_key)) is not None:  # pyright: ignore[reportPrivateUsage]
+                tool_defs = cached
+            else:
+                tool_defs = await self._get_tools_operation(ctx)
+                if self._mcp_toolset.cache_tools:
+                    ctx._mcp_tool_defs_cache[cache_key] = tool_defs  # pyright: ignore[reportPrivateUsage]
+            tools = {
+                name: self._mcp_toolset.tool_for_tool_def(tool_def, ctx=ctx) for name, tool_def in tool_defs.items()
+            }
+
+        return {
+            name: replace(tool, timeout_managed_by_toolset=True)
+            if self._resolve_tool_config(tool, name) is not False
+            else tool
+            for name, tool in tools.items()
+        }
 
     async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> Instructions:
         if not self._mcp_toolset.include_instructions:

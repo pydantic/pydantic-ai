@@ -17,6 +17,7 @@ from ._output import (
     run_output_validate_hooks,
 )
 from ._run_context import AgentDepsT, RunContext
+from ._tool_timeout import run_with_tool_timeout
 from .exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -136,6 +137,8 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that succeeded in this run step."""
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
+    default_timeout: float | None = None
+    """Agent-level fallback timeout for tools without a configured timeout."""
 
     @classmethod
     @contextmanager
@@ -174,13 +177,22 @@ class ToolManager(Generic[AgentDepsT]):
             ctx = replace(ctx, retries=retries)
 
         toolset = await self.toolset.for_run_step(ctx)
+        tools = await toolset.get_tools(ctx)
+        if self.default_timeout is not None:
+            tools = {
+                name: replace(tool, tool_def=replace(tool.tool_def, timeout=self.default_timeout))
+                if tool.timeout_managed_by_toolset and tool.tool_def.timeout is None
+                else tool
+                for name, tool in tools.items()
+            }
 
         new_tm = self.__class__(
             toolset=toolset,
             root_capability=self.root_capability,
             ctx=ctx,
-            tools=await toolset.get_tools(ctx),
+            tools=tools,
             default_max_retries=self.default_max_retries,
+            default_timeout=self.default_timeout,
         )
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
@@ -921,13 +933,16 @@ class ToolManager(Generic[AgentDepsT]):
         assert validated.validated_args is not None
 
         name = validated.call.tool_name
+        tool = validated.tool
+        validated_args = validated.validated_args
+
+        timeout = None
+        if not tool.timeout_managed_by_toolset:
+            timeout = tool.tool_def.timeout if tool.tool_def.timeout is not None else self.default_timeout
 
         try:
-            tool_result = await self.toolset.call_tool(
-                name,
-                validated.validated_args,
-                validated.ctx,
-                validated.tool,
+            tool_result = await run_with_tool_timeout(
+                lambda: self.toolset.call_tool(name, validated_args, validated.ctx, tool), timeout
             )
         except ToolFailed as e:
             if not wrap_validation_errors:
@@ -936,7 +951,7 @@ class ToolManager(Generic[AgentDepsT]):
         except ModelRetry as e:
             if not wrap_validation_errors:
                 raise
-            self._check_max_retries(name, validated.tool.max_retries, e)
+            self._check_max_retries(name, tool.max_retries, e)
             self.failed_tools.add(name)
             raise self._wrap_error_as_retry(name, validated.call, e) from e
 

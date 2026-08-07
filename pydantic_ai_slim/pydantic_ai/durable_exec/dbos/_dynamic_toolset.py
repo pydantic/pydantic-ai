@@ -32,11 +32,22 @@ def dbosify_dynamic_toolset(
         return await get_dynamic_tools(wrapped, guard_enqueue_in_workflow(ctx))
 
     @DBOS.step(name=f'{name}.call_tool', **(step_config or {}))
-    async def call_tool_step(tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> CallToolResult:
+    async def call_tool_step(
+        tool_name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+    ) -> CallToolResult:
         # DBOS has no selective non-retryable-exception support, so control-flow
         # exceptions must cross the step boundary as successful values.
         return await wrap_tool_call_result(
-            call_dynamic_tool(wrapped, tool_name, tool_args, guard_enqueue_in_workflow(ctx))
+            call_dynamic_tool(
+                wrapped,
+                tool_name,
+                tool_args,
+                guard_enqueue_in_workflow(ctx),
+                timeout=tool.tool_def.timeout,
+            )
         )
 
     async def call_tool_operation(
@@ -48,7 +59,7 @@ def dbosify_dynamic_toolset(
     ) -> Any:
         # A recovering workflow may replay outputs this step recorded before it wrapped
         # control-flow exceptions as values; those recordings are the raw tool result.
-        return unwrap_recorded_tool_call_result(await call_tool_step(name, tool_args, ctx))
+        return unwrap_recorded_tool_call_result(await call_tool_step(name, tool_args, ctx, tool))
 
     return DurableDynamicToolset(
         wrapped,
