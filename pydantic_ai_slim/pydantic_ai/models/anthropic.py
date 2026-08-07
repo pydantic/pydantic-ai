@@ -721,12 +721,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             if (
                 model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
             ):  # pragma: no branch
-                # This would result in `tool_choice=required`, which Anthropic does not support with thinking.
+                # This would result in `tool_choice=required`, which Anthropic does not support with
+                # manual extended thinking.
                 suggested_output_type = (
                     'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
                 )
                 raise UserError(
-                    f'Anthropic does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
+                    f'Anthropic does not support manual extended thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
                 )
 
         # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
@@ -3524,7 +3525,7 @@ def _effective_thinking_type(
     anthropic_thinking: BetaThinkingConfigParam | None,
     unified_thinking: ThinkingLevel | None,
     supports_adaptive_thinking: bool,
-) -> str | None:
+) -> Literal['enabled', 'adaptive'] | None:
     """Resolve the effective Anthropic thinking type for the output-tool and tool-forcing guards.
 
     Manual extended thinking (`{'type': 'enabled'}`) is incompatible with forced tool use and Tool

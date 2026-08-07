@@ -4725,22 +4725,37 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
     assert kwargs['extra_body'] == {'metadata': {'keep': True}}
 
 
-async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(allow_model_requests: None):
-    """Adaptive thinking is compatible with Tool Output (manual extended thinking is not).
+@pytest.mark.vcr()
+async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(
+    allow_model_requests: None, anthropic_api_key: str
+):
+    """Adaptive thinking is compatible with Tool Output, so the request keeps `output_mode='tool'`.
+
+    Tool Output without a text fallback resolves to `tool_choice={'type': 'any'}`, i.e. forced tool
+    use, so this exchange proves both halves of the compatibility claim at once. Only manual extended
+    thinking conflicts: the same request with `{'type': 'enabled'}` is rejected by the API with
+    `Thinking may not be enabled when tool_choice forces tool use.`, which is why that mode still
+    switches away from Tool Output.
+
+    The outbound `thinking`/`tool_choice` pair is asserted via an httpx event hook so it runs against
+    what the client actually sent, not what the cassette happens to hold.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/7195.
     """
-    responses = [
-        completion_message(
-            [BetaToolUseBlock(id='1', input={'city': 'Paris'}, name='final_result', type='tool_use')],
-            usage=BetaUsage(input_tokens=2, output_tokens=1),
-        ),
-    ]
-    mock_client = MockAnthropic.create_mock(responses)
-    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    sent_bodies: list[dict[str, Any]] = []
+
+    async def capture_request(request: httpx.Request) -> None:
+        sent_bodies.append(json.loads(request.read()))
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    m = AnthropicModel(
+        'claude-opus-4-6',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client),
+    )
 
     class CityLocation(BaseModel):
         city: str
+        country: str
 
     agent = Agent(
         m,
@@ -4748,7 +4763,11 @@ async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(allow_mod
         model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}),
     )
     result = await agent.run('What is the capital of France?')
-    assert result.output == CityLocation(city='Paris')
+
+    assert result.output == snapshot(CityLocation(city='Paris', country='France'))
+    assert [(body['thinking'], body['tool_choice']) for body in sent_bodies] == snapshot(
+        [({'type': 'adaptive'}, {'type': 'any'})]
+    )
 
 
 async def test_multiple_system_prompt_formatting(allow_model_requests: None):
@@ -9329,7 +9348,7 @@ async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, a
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+            'Anthropic does not support manual extended thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
         ),
     ):
         await agent.run('What is 3 + 3?')

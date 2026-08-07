@@ -553,6 +553,8 @@ On a model that doesn't support forcing:
 - An explicit `tool_choice='required'` (or a list of tool names) raises a [`UserError`][pydantic_ai.exceptions.UserError]; use `tool_choice='auto'` instead.
 - A `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back softly to `'auto'`, with the available tools filtered to the requested set so the model can still only pick from them. Filtering the tool definitions invalidates Anthropic's prompt cache, since the cached prefix includes the tool array.
 
+Because [Tool Output](../output.md#tool-output) resolves to a forced tool choice, manual extended thinking is also incompatible with it: a bare structured `output_type` switches to [Native Output](../output.md#native-output) (or [Prompted Output](../output.md#prompted-output) on models without JSON schema support), and an explicit `ToolOutput(...)` raises a [`UserError`][pydantic_ai.exceptions.UserError]. Adaptive thinking keeps Tool Output.
+
 ## Message Compaction
 
 Anthropic supports [automatic context compaction](https://docs.anthropic.com/en/docs/build-with-claude/compaction) to manage long conversations. When input tokens exceed a configured threshold, the API automatically generates a summary that replaces older messages while preserving context.

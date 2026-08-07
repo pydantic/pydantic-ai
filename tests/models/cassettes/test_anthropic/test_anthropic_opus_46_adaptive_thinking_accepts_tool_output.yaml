@@ -1,0 +1,94 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '483'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What is the capital of France?
+          type: text
+        role: user
+      model: claude-opus-4-6
+      stream: false
+      thinking:
+        type: adaptive
+      tool_choice:
+        type: any
+      tools:
+      - description: The final response which ends this conversation
+        input_schema:
+          properties:
+            city:
+              type: string
+            country:
+              type: string
+          required:
+          - city
+          - country
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '661'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-a3159e2cc8e4622de71e44077798ac1c-afb3b62149ade058-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - caller:
+          type: direct
+        id: toolu_019SXChyL3r8MfUDbGWncjDL
+        input:
+          city: Paris
+          country: France
+        name: final_result
+        type: tool_use
+      id: msg_011Cdno1KpnpFckwobcq5wxH
+      model: claude-opus-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 671
+        output_tokens: 55
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
