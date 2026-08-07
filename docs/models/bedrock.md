@@ -87,7 +87,8 @@ agent = Agent(model)
 ```
 
 These apply to clients the provider builds itself. A prebuilt `bedrock_client` is used as-is, so
-configure its timeouts on the client.
+configure its timeouts on the client. See [Timeouts](../timeouts.md) for how request timeouts work
+across model classes, including why `ModelSettings['timeout']` does not reach Bedrock.
 
 ### Customizing Bedrock Runtime API
 
