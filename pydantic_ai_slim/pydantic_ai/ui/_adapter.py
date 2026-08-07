@@ -4,7 +4,7 @@ import re
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import KW_ONLY, Field, dataclass, replace
+from dataclasses import KW_ONLY, Field, dataclass
 from functools import cached_property
 from http import HTTPStatus
 from typing import (
@@ -30,8 +30,8 @@ from pydantic_ai.messages import (
     CompactionPart,
     ForceDownloadMode,
     ModelMessage,
-    ModelResponse,
     ToolAvailabilityDeltaPart,
+    _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
 from pydantic_ai.models import KnownModelName, Model
@@ -143,29 +143,6 @@ def compaction_part_from_payload(payload: Mapping[str, Any]) -> CompactionPart |
         return _COMPACTION_PART_ADAPTER.validate_python(payload)
     except ValidationError:
         return None
-
-
-def _drop_compaction_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
-    """Drop client-supplied compaction parts from a mixed-custody run's frontend messages.
-
-    A compaction part is the latest history boundary: provider adapters trim everything before it
-    from the request, and [`post_compaction_window`][pydantic_ai.messages.post_compaction_window]
-    derives model-visible state from it. When the caller passed server-side `message_history`,
-    honoring a client-supplied boundary would let the client hide that trusted prefix from the
-    model, replacing it with the client's own summary or blob — so mixed-custody runs keep only the
-    server's boundaries. With no server-side history, the client owns the conversation, boundaries
-    included, and its compaction parts are honored. A response left with no parts is dropped
-    entirely.
-    """
-    result: list[ModelMessage] = []
-    for message in messages:
-        if isinstance(message, ModelResponse) and any(isinstance(part, CompactionPart) for part in message.parts):
-            parts = [part for part in message.parts if not isinstance(part, CompactionPart)]
-            if parts:
-                result.append(replace(message, parts=parts))
-        else:
-            result.append(message)
-    return result
 
 
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
