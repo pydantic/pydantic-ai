@@ -37,6 +37,49 @@ with try_import() as imports_successful:
 pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='websockets not installed')]
 
 
+async def test_text_output_modality_returns_text(
+    azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette],
+) -> None:
+    """`output_modality='text'` really produces text, which is why the profile reports it supported.
+
+    Recorded against the live service rather than inferred from the session config: Gemini Live also
+    *accepts* `modalities: ['text']` on the wire and then rejects the combination at session setup, so
+    the plumbing mapping the setting through proves nothing on its own. Voice Live answers with text
+    deltas and no audio, so `supports_text_output` stays `True` and `Agent.realtime`'s guard lets the
+    session open.
+    """
+    provider, cassette = azure_voice_live_ws_cassette
+    model = AzureRealtimeModel(
+        'gpt-realtime',
+        provider=provider,
+        settings=AzureRealtimeModelSettings(azure_voice_live=True, output_modality='text'),
+    )
+    agent = Agent(instructions='Answer in two or three words.')
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch - breaks on the recorded terminal event
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    # Only `text` is requested, and the session opens rather than being rejected at setup.
+    assert [frame['session']['modalities'] for frame in sent_frames_containing(cassette, 'two or three words')] == (
+        snapshot([['text']])
+    )
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
+
+    messages = session.all_messages()
+    response = messages[1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    # A `TextPart`, not a `SpeechPart` with a transcript: the model wrote rather than spoke.
+    assert isinstance(part, TextPart)
+    assert part.content == snapshot('Hello there!')
+
+
 async def test_text_in_audio_out_turn(
     azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette],
 ) -> None:
