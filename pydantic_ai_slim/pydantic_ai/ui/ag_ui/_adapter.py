@@ -727,7 +727,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         id=_new_message_id(),
                         activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
                         content={
-                            'added': part.added,
+                            'added': part.tools_added,
                             'tool_call_id': part.tool_call_id,
                         },
                     )

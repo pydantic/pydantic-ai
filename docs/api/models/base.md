@@ -6,6 +6,7 @@
         - KnownModelName
         - known_model_names
         - ModelRequestParameters
+        - ToolVisibility
         - ModelRequestContext
         - ModelResolutionContext
         - ModelSelectionContext

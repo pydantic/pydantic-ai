@@ -353,6 +353,8 @@ agent = Agent(
 
 By default, `OpenAICompaction` runs in **stateful mode**: it configures OpenAI's server-side auto-compaction via the `context_management` field on the regular `/responses` request, and OpenAI triggers compaction whenever the input token count crosses a threshold it manages for you. This mode is compatible with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) and [`openai_conversation_id`](#using-durable-conversations).
 
+After compaction, subsequent requests send only the compacted window, from the latest compaction item onward. The Responses API processes and bills replayed items that precede a compaction item, so omitting them keeps the compacted context from growing again.
+
 To override the threshold, pass [`token_threshold`][pydantic_ai.models.openai.OpenAICompaction]:
 
 ```python {title="openai_compaction_token_threshold.py" test="skip"}
