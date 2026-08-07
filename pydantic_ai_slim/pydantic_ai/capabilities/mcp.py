@@ -158,6 +158,12 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             description=self.description,
         )
 
+    def _default_toolset_id(self) -> str | None:
+        # `_derive_id` rather than `_resolved_id`: a bare non-URL local client has nothing to derive
+        # from and stays id-less, which is the documented behaviour — raising here would reject a
+        # configuration that works fine outside durable execution.
+        return self._derive_id(self.url)
+
     def _native_unique_id(self) -> str:
         return f'mcp_server:{self._resolved_id}'
 

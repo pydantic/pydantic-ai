@@ -8251,6 +8251,30 @@ class TestMCPCapability:
         tools = await toolset.get_tools(_build_run_context())
         assert tools['local_tool'].tool_def.unless_native == 'mcp_server:dynamic-mcp'
 
+    def test_mcp_local_callable_toolset_gets_the_url_derived_id(self):
+        """A bare callable `local=` gets the same URL-derived id `MCP` gives its `MCPToolset` leaves.
+
+        `MCP` is the fifth `NativeOrLocalTool` subclass, so it defaults its contributed toolset's id
+        too — but off the server URL rather than its own name, which is why several can run on one
+        agent. An explicit `id=` still wins, and a client with no URL and no id stays id-less.
+        """
+
+        def local_tool() -> str:
+            return 'local result'  # pragma: no cover
+
+        derived = MCP(url='https://mcp.example.com/api', local=local_tool).get_toolset()
+        assert isinstance(derived, FunctionToolset)
+        assert derived.id == 'mcp.example.com-api'
+
+        explicit = MCP(url='https://mcp.example.com/api', local=local_tool, id='explicit').get_toolset()
+        assert isinstance(explicit, FunctionToolset)
+        assert explicit.id == 'explicit'
+
+        # Nothing to derive from, so it stays id-less and durable execution still demands an `id`.
+        bare = MCP(local=local_tool).get_toolset()
+        assert isinstance(bare, FunctionToolset)
+        assert bare.id is None
+
     def test_mcp_sse_transport(self):
         """MCP with /sse URL routes to an MCPToolset using FastMCP's SSE transport."""
         from fastmcp.client.transports import SSETransport
