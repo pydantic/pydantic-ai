@@ -35,6 +35,7 @@ from ..messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
+    UserContent,
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
@@ -365,28 +366,37 @@ class CohereModel(Model[AsyncClientV2]):
         )
 
     @classmethod
+    def _map_user_prompt(cls, part: UserPromptPart) -> ChatMessageV2:
+        if isinstance(part.content, str):
+            return UserChatMessageV2(role='user', content=part.content)
+        cohere_content: list[CohereContent] = []
+        for c in part.content:
+            if isinstance(c, str | TextContent):
+                cohere_content.append(CohereTextContent(text=c if isinstance(c, str) else c.content))
+            elif isinstance(c, CachePoint):
+                continue
+            else:
+                raise RuntimeError('Cohere does not yet support multi-modal inputs.')
+        return UserChatMessageV2(role='user', content=cohere_content)
+
+    @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[ChatMessageV2]:
+        file_content: list[UserContent] = []
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield SystemChatMessageV2(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                if isinstance(part.content, str):
-                    yield UserChatMessageV2(role='user', content=part.content)
-                else:
-                    cohere_content: list[CohereContent] = []
-                    for c in part.content:
-                        if isinstance(c, str | TextContent):
-                            cohere_content.append(CohereTextContent(text=c if isinstance(c, str) else c.content))
-                        elif isinstance(c, CachePoint):
-                            continue
-                        else:
-                            raise RuntimeError('Cohere does not yet support multi-modal inputs.')
-                    yield UserChatMessageV2(role='user', content=cohere_content)
+                yield cls._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
+                # Cohere's tool message takes text only, so returned files spill into a trailing user
+                # message like the other text-only tool APIs. That message is mapped the same way as
+                # any other, so media Cohere can't carry raises there rather than vanishing here.
+                tool_text, tool_file_content = part.model_response_str_and_user_content()
+                file_content.extend(tool_file_content)
                 yield ToolChatMessageV2(
                     role='tool',
                     tool_call_id=_guard_tool_call_id(t=part),
-                    content=part.model_response_str(),
+                    content=tool_text,
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
@@ -403,6 +413,8 @@ class CohereModel(Model[AsyncClientV2]):
                 raise _unsynthesized_tool_availability_delta_error()
             else:
                 assert_never(part)
+        if file_content:
+            yield cls._map_user_prompt(UserPromptPart(content=file_content))
 
 
 def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model: str) -> usage.RequestUsage:

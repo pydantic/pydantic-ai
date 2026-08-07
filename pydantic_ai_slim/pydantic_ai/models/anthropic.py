@@ -20,6 +20,7 @@ from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import ModelAPIError, UserError
 from ..messages import (
+    ERROR_OUTCOMES,
     AudioUrl,
     BinaryContent,
     CachePoint,
@@ -37,6 +38,7 @@ from ..messages import (
     NativeToolReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -86,6 +88,7 @@ from . import (
     ToolVisibility,
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
     _trim_messages_before_compaction,  # pyright: ignore[reportPrivateUsage]
+    _unrendered_retry_feedback_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -1794,10 +1797,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             tool_use_id=_guard_tool_call_id(t=request_part),
                             type='tool_result',
                             content=tool_result_content or '',
-                            is_error=request_part.outcome == 'failed',
+                            is_error=request_part.outcome in ERROR_OUTCOMES,
                         )
                         user_content_params.append(tool_result_block_param)
-                    elif isinstance(request_part, RetryPromptPart):  # pragma: no branch
+                    elif isinstance(request_part, RetryPromptPart):
                         if request_part.tool_name is None:
                             text = request_part.model_response()
                             retry_param = BetaTextBlockParam(type='text', text=text)
@@ -1809,6 +1812,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 is_error=True,
                             )
                         user_content_params.append(retry_param)
+                    elif isinstance(request_part, RetryFeedbackPart):  # pragma: no cover
+                        raise _unrendered_retry_feedback_error()
+                    else:
+                        assert_never(request_part)
                 # A marker that ends the request has the instruction authored before it and nothing
                 # authored after it, so the `system` entry's final block is exactly its boundary. A
                 # marker with content after it can't have both, and lands where it was authored: the

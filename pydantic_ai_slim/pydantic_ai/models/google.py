@@ -17,6 +17,7 @@ from .. import UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
+    ERROR_OUTCOMES,
     BinaryContent,
     CachePoint,
     CompactionPart,
@@ -1157,11 +1158,13 @@ class GoogleModel(Model[Client]):
                 function_response_parts.append(fr_part)
             else:
                 fallback_refs.append(f'See file {file.identifier}.')
-                fallback_parts.append({'text': f'This is file {file.identifier}:'})
+                fallback_parts.append(
+                    {'text': f'This is file {file.identifier}, returned by the {part.tool_name} tool:'}
+                )
                 file_part = await self._map_file_to_part(file)
                 fallback_parts.append(file_part)
 
-        if part.outcome == 'failed':
+        if part.outcome in ERROR_OUTCOMES:
             # Google's function-response schema prescribes an `error` key (mirroring the `output` key
             # used for success) for reporting a failed tool call, so this is Gemini's native error
             # channel, not the generic `{"error": ...}` wrapper other providers fall back to — hence

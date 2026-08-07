@@ -1499,7 +1499,9 @@ class BaseToolReturnPart:
 
         For providers whose tool result API only accepts text. Multimodal files are referenced
         by identifier in the tool result text ('See file {id}.') and included in full in the
-        returned file content list ('This is file {id}:' followed by the file).
+        returned file content list ('This is file {id}, returned by the {tool_name} tool:' followed
+        by the file). Naming the tool is what keeps the spilled file from reading as something the
+        user attached: it lands in a user message, one turn removed from the result it belongs to.
 
         Args:
             wrap_if_error: Whether to wrap errored tool returns (see
@@ -1516,7 +1518,7 @@ class BaseToolReturnPart:
         for item in self.content_items(mode='str', wrap_if_error=False):
             if is_multi_modal_content(item):
                 tool_content_parts.append(f'See file {item.identifier}.')
-                file_content.append(f'This is file {item.identifier}:')
+                file_content.append(f'This is file {item.identifier}, returned by the {self.tool_name} tool:')
                 file_content.append(item)
             elif isinstance(item, str):  # pragma: no branch
                 tool_content_parts.append(item)
