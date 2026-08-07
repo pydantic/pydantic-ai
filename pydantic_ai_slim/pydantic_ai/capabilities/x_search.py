@@ -91,7 +91,7 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         enable_image_understanding: bool | None = None,
         enable_video_understanding: bool | None = None,
         include_output: bool | None = None,
-        id: str | None = 'x_search',
+        id: str | None = None,
         description: str | None = None,
         defer_loading: bool = False,
     ) -> None:
@@ -136,6 +136,9 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
 
     def _default_native(self) -> XSearchTool:
         return XSearchTool(**self._xsearch_kwargs())
+
+    def _default_toolset_id(self) -> str:
+        return 'x_search'
 
     def _native_unique_id(self) -> str:
         return XSearchTool.kind

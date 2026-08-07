@@ -61,7 +61,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         allowed_domains: list[str] | None = None,
         max_uses: int | None = None,
         external_web_access: bool | None = None,
-        id: str | None = 'web_search',
+        id: str | None = None,
         defer_loading: bool = False,
         description: str | None = None,
     ) -> None:
@@ -93,6 +93,9 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         if self.external_web_access is not None:
             kwargs['external_web_access'] = self.external_web_access
         return WebSearchTool(**kwargs)
+
+    def _default_toolset_id(self) -> str:
+        return 'web_search'
 
     def _native_unique_id(self) -> str:
         return WebSearchTool.kind

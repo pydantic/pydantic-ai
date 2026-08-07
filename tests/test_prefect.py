@@ -51,6 +51,7 @@ from pydantic_ai.capabilities import (
     ProcessEventStream,
     ResolveModelId,
     Toolset,
+    WebSearch,
 )
 from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset
 from pydantic_ai.exceptions import (
@@ -865,6 +866,27 @@ async def test_capability_contributed_toolset_id_from_capability():
     # under a stable id; the `billing` function toolset carries the capability id.
     assert any(isinstance(ts, MCPToolset) and ts.id == 'mcp.example.com-api' for ts in leaves)
     assert any(isinstance(ts, FunctionToolset) and ts.id == 'billing' for ts in leaves)
+
+
+async def test_durability_accepts_single_purpose_capability_without_explicit_id():
+    """A single-purpose capability's default toolset `id` names the leaf Prefect wraps.
+
+    Prefect requires an `id` on every leaf toolset, and the local fallback of a `WebSearch` is a
+    toolset the user never constructed, so the capability's default is what makes it usable without
+    configuration. Temporal has the same requirement and its own twin of this test; DBOS wraps only
+    dynamic and MCP toolsets, so it never needed one.
+
+    Not a VCR test: everything asserted is settled at `Agent(...)` construction time, before any
+    model request.
+    """
+    agent = Agent(
+        model,
+        name='web_search_agent',
+        capabilities=[WebSearch(local='duckduckgo'), PrefectDurability()],
+    )
+    bound = PrefectDurability.from_agent(agent)
+    assert bound is not None
+    assert 'web_search' in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_prefect_agent():

@@ -131,7 +131,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
         size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None,
         aspect_ratio: ImageAspectRatio | None = None,
-        id: str | None = 'image_generation',
+        id: str | None = None,
         defer_loading: bool = False,
         description: str | None = None,
     ) -> None:
@@ -185,6 +185,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     def _default_native(self) -> ImageGenerationTool:
         return ImageGenerationTool(**self._image_gen_kwargs())
+
+    def _default_toolset_id(self) -> str:
+        return 'image_generation'
 
     def _native_unique_id(self) -> str:
         return ImageGenerationTool.kind
