@@ -5101,6 +5101,9 @@ async def test_realtime_session_does_not_execute_an_approval_gated_tool_without_
     assert isinstance(result.part, ToolReturnPart)
     assert 'requires approval' in str(result.part.content)
     assert 'cannot be completed during a realtime session' in str(result.part.content)
+    # A refused approval is recorded as a failure, so a handoff to `Agent.run` can't read it as a
+    # tool that ran and returned an error-shaped string.
+    assert result.part.outcome == 'failed'
 
 
 async def test_realtime_session_denies_an_approval_gated_tool_through_a_handler() -> None:

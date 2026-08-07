@@ -2306,6 +2306,10 @@ class RealtimeSession:
                 tool_name=call.tool_name,
                 content=f'Error: The {call.tool_name!r} tool {reason} and cannot be completed during a realtime session.',
                 tool_call_id=call.tool_call_id,
+                # Marked as a failure, not left at the default `'success'`: the call was refused, and an
+                # approval gate that records its refusals as successful returns is a misleading audit
+                # trail — `all_messages()` handed to `Agent.run` would read this as a tool that ran.
+                outcome='failed',
             )
             user_content = None
         else:
