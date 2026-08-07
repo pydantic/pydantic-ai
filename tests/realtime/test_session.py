@@ -3933,11 +3933,16 @@ def _grounding_parts() -> list[NativeToolCallPart | NativeToolReturnPart]:
 
 
 def _native_part_events(
-    parts: list[NativeToolCallPart | NativeToolReturnPart],
+    parts: list[NativeToolCallPart | NativeToolReturnPart], *, first_index: int = 0
 ) -> list[PartStartEvent | PartEndEvent]:
+    """Start/end pairs for native-tool parts, numbered from `first_index`.
+
+    A connection numbers these from its own counter (so the default `0`), while the session remaps
+    them onto its session-unique allocator before forwarding — hence the two numberings.
+    """
     return [
         event
-        for index, part in enumerate(parts)
+        for index, part in enumerate(parts, start=first_index)
         for event in (PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part))
     ]
 
@@ -3964,7 +3969,11 @@ async def test_grounding_streams_and_folds_native_tool_parts() -> None:
                 speaker='assistant', transcript_delta='It is sunny in Rome', transcript='It is sunny in Rome'
             ),
         ),
-        *_native_part_events(grounding),
+        # The connection numbered these `0` and `1` from its own counter, which would have collided
+        # with the speech part's index `0` above — a repeated index *replaces* the part at it, so a
+        # consumer keyed on the index would have shown the search in place of the model's answer. The
+        # session remaps them onto its own allocator, which had already handed `0` to the speech part.
+        *_native_part_events(grounding, first_index=1),
         PartEndEvent(index=0, part=SpeechPart(speaker='assistant', transcript='It is sunny in Rome')),
         RealtimeTurnCompleteEvent(),
     ]
