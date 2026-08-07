@@ -30,7 +30,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     ```
 
     Or subclassed to set defaults by overriding `_default_native`, `_default_local`,
-    and `_requires_native`.
+    `_default_toolset_id`, and `_requires_native`.
     The built-in [`WebSearch`][pydantic_ai.capabilities.WebSearch],
     [`WebFetch`][pydantic_ai.capabilities.WebFetch], and
     [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] capabilities

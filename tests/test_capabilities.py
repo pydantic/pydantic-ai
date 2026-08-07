@@ -11,7 +11,7 @@ import threading
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field, replace, replace as dc_replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from importlib.util import find_spec
 from pathlib import Path
@@ -72,7 +72,7 @@ from pydantic_ai.capabilities._pending_messages import PendingMessageDrainCapabi
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
-from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap, NativeTool as NativeToolCapDirect
+from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap
 from pydantic_ai.common_tools.x_search import XSearchSubagentTool, x_search_tool
 from pydantic_ai.exceptions import (
     AgentRunError,
@@ -111,7 +111,6 @@ from pydantic_ai.messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
-    ToolReturn as _ToolReturn,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -151,7 +150,6 @@ from pydantic_ai.tools import (
     DeferredToolRequests,
     DeferredToolResults,
     Tool,
-    Tool as ToolDirect,
     ToolApproved,
     ToolDefinition,
     ToolDenied,
@@ -2850,13 +2848,17 @@ def test_native_or_local_stamps_id_on_local_toolset():
     assert leaf.id == 'search'
 
 
+def _bare_local(query: str) -> str:
+    return 'result'  # pragma: no cover
+
+
 @pytest.mark.parametrize(
     'capability,expected_toolset_id,expected_capability_id',
     [
-        pytest.param(WebSearch[object](local='duckduckgo'), 'web_search', None, id='web_search'),
-        pytest.param(WebSearch[object](local='duckduckgo', id='custom'), 'custom', 'custom', id='web_search-override'),
-        pytest.param(WebFetch[object](local=True), 'web_fetch', None, id='web_fetch'),
-        pytest.param(WebFetch[object](local=True, id='custom'), 'custom', 'custom', id='web_fetch-override'),
+        pytest.param(WebSearch[object](local=_bare_local), 'web_search', None, id='web_search'),
+        pytest.param(WebSearch[object](local=_bare_local, id='custom'), 'custom', 'custom', id='web_search-override'),
+        pytest.param(WebFetch[object](local=_bare_local), 'web_fetch', None, id='web_fetch'),
+        pytest.param(WebFetch[object](local=_bare_local, id='custom'), 'custom', 'custom', id='web_fetch-override'),
         pytest.param(
             ImageGeneration[object](fallback_model='openai-responses:gpt-5.4'),
             'image_generation',
@@ -2873,17 +2875,33 @@ def test_native_or_local_stamps_id_on_local_toolset():
         pytest.param(
             XSearch[object](fallback_model='xai:grok-4.3', id='custom'), 'custom', 'custom', id='x_search-override'
         ),
+        # The carve-outs, both only reachable on `NativeOrLocalTool` itself: it has no fixed identity
+        # to default to, and a toolset the user built and named keeps its own `id`. (The four
+        # subclasses don't accept an `AbstractToolset` as `local=` at all.)
+        pytest.param(
+            NativeOrLocalTool[object](native=WebSearchTool(), local=_bare_local), None, None, id='no-fixed-identity'
+        ),
+        pytest.param(
+            NativeOrLocalTool[object](native=WebSearchTool(), local=FunctionToolset([Tool(_bare_local)], id='mine')),
+            'mine',
+            None,
+            id='user-toolset',
+        ),
     ],
 )
 def test_single_purpose_capability_defaults_its_toolset_id(
-    capability: NativeOrLocalTool[object], expected_toolset_id: str, expected_capability_id: str | None
+    capability: NativeOrLocalTool[object], expected_toolset_id: str | None, expected_capability_id: str | None
 ):
     """The single-purpose built-ins stamp a fixed default `id` on the toolset they contribute, so the
     local fallback works with durable execution without the user naming a toolset they never
-    constructed. A user-supplied `id=` still wins.
+    constructed. A user-supplied `id=` still wins, and a toolset the user passed as `local=` keeps
+    its own `id` — the default is only ever applied to a toolset we built for them.
 
     The capability's own `id` stays `None` unless the user set it, so the run keeps deriving it from
     the class name and keeps auto-resolving duplicates, exactly as for every other capability.
+
+    Not a VCR test: everything asserted is settled when the capability is constructed, before any
+    model request.
     """
     assert capability.id == expected_capability_id
     toolset = capability.get_toolset()
@@ -3222,6 +3240,9 @@ def test_single_purpose_capabilities_still_stack_without_an_explicit_id() -> Non
     — so two instances still resolve to distinct capability ids the way any other id-less capability
     does, and both fallbacks reach the model. Covers stacking on one agent and the run-level layer,
     which `Agent.run(capabilities=...)` documents as merged with the agent's own capabilities.
+
+    Not a VCR test: `FunctionModel` is the tap that reports which tools reached the model, so there
+    is no provider request to record.
     """
     tool_names: list[list[str]] = []
 
@@ -6732,7 +6753,7 @@ class TestPrepareToolsHook:
             async def prepare_tools(
                 self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
             ) -> list[ToolDefinition]:
-                return [dc_replace(td, description=f'[PREFIXED] {td.description}') for td in tool_defs]
+                return [replace(td, description=f'[PREFIXED] {td.description}') for td in tool_defs]
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             descs = [t.description for t in info.function_tools]
@@ -6758,7 +6779,7 @@ class TestPrepareToolsHook:
             async def prepare_tools(
                 self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
             ) -> list[ToolDefinition]:
-                return [dc_replace(td, description=f'{td.description}{self.suffix}') for td in tool_defs]
+                return [replace(td, description=f'{td.description}{self.suffix}') for td in tool_defs]
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             descs = [t.description for t in info.function_tools]
@@ -6872,7 +6893,7 @@ class TestPrepareOutputToolsHook:
             async def prepare_output_tools(
                 self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
             ) -> list[ToolDefinition]:
-                return [dc_replace(td, description=f'{td.description or ""}{self.suffix}') for td in tool_defs]
+                return [replace(td, description=f'{td.description or ""}{self.suffix}') for td in tool_defs]
 
         descs: list[str | None] = []
 
@@ -8359,7 +8380,7 @@ class TestPrepareToolsCapability:
         """PrepareTools can modify tool definitions (e.g. set strict mode)."""
 
         async def set_strict(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-            return [dc_replace(td, strict=True) for td in tool_defs]
+            return [replace(td, strict=True) for td in tool_defs]
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             strictness = [t.strict for t in info.function_tools]
@@ -8382,7 +8403,7 @@ class TestPrepareToolsCapability:
         """`prepare_func` may filter or modify tools but cannot add or rename."""
 
         async def rename(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-            return [dc_replace(td, name='renamed') for td in tool_defs]
+            return [replace(td, name='renamed') for td in tool_defs]
 
         agent = Agent('test', capabilities=[PrepareTools(rename)])
 
@@ -9961,7 +9982,7 @@ class TestGetWrapperToolsetHook:
                 return PrefixedToolset(toolset, prefix='cap')
 
         async def agent_prepare(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-            return [dc_replace(td, description=f'[prepared] {td.description}') for td in tool_defs]
+            return [replace(td, description=f'[prepared] {td.description}') for td in tool_defs]
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             tool_names = sorted(t.name for t in info.function_tools)
@@ -10427,7 +10448,7 @@ def test_native_or_local_base_no_default_native():
 def test_native_tool_from_spec_no_args():
     """NativeTool.from_spec() with no arguments raises TypeError."""
     with pytest.raises(TypeError, match='requires either a `tool` argument'):
-        NativeToolCapDirect.from_spec()
+        NativeToolCap.from_spec()
 
 
 def test_native_or_local_no_default_local():
@@ -10476,7 +10497,7 @@ def test_native_or_local_preserves_passed_tool_instance():
     def my_search(query: str) -> str:
         return f'results for {query}'  # pragma: no cover
 
-    tool = ToolDirect(my_search)
+    tool = Tool(my_search)
     cap = NativeOrLocalTool(native=WebSearchTool(), local=tool)
     assert cap.local is tool
 
@@ -10492,7 +10513,7 @@ def test_native_or_local_id_kwarg_overrides_default():
     def _nop() -> None:
         return None  # pragma: no cover
 
-    nop = ToolDirect(_nop)
+    nop = Tool(_nop)
 
     assert NativeOrLocalTool(native=WebSearchTool(), local=nop, id='custom').id == 'custom'
     assert WebFetch(local=nop, id='custom').id == 'custom'
@@ -22370,7 +22391,7 @@ async def test_deferred_tool_handler_batch_external_tool_return_metadata():
     async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={
-                call.tool_call_id: _ToolReturn(
+                call.tool_call_id: ToolReturn(
                     return_value='computed', metadata={'source': 'external'}, content='user extra'
                 )
                 for call in requests.calls
@@ -22471,7 +22492,7 @@ async def test_deferred_tool_handler_via_handle_call_external_tool_return():
 
     async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
-            calls={call.tool_call_id: _ToolReturn(return_value='ext', metadata={'k': 'v'}) for call in requests.calls}
+            calls={call.tool_call_id: ToolReturn(return_value='ext', metadata={'k': 'v'}) for call in requests.calls}
         )
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -22498,7 +22519,7 @@ async def test_deferred_tool_handler_via_handle_call_external_tool_return():
 
     await agent.run('go')
     # Per-call path returns whatever the handler supplied verbatim — full ToolReturn wrapper preserved.
-    assert isinstance(captured_result, _ToolReturn)
+    assert isinstance(captured_result, ToolReturn)
     assert captured_result.return_value == 'ext'
     assert captured_result.metadata == {'k': 'v'}
 
@@ -22621,7 +22642,7 @@ async def test_deferred_tool_handler_approved_tool_returns_tool_return():
     def my_tool(ctx: RunContext):
         if not ctx.tool_call_approved:
             raise ApprovalRequired
-        return _ToolReturn(return_value='result', metadata={'source': 'tool'}, content='user prompt extra')
+        return ToolReturn(return_value='result', metadata={'source': 'tool'}, content='user prompt extra')
 
     result = await agent.run('Hello')
     assert result.output == 'Done.'
@@ -22859,7 +22880,7 @@ async def test_deferred_tool_handler_via_handle_call_preserves_tool_return():
     def inner_tool(ctx: RunContext):
         if not ctx.tool_call_approved:
             raise ApprovalRequired
-        return _ToolReturn(return_value='actual result', metadata={'source': 'inner'}, content='user extra')
+        return ToolReturn(return_value='actual result', metadata={'source': 'inner'}, content='user extra')
 
     async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
@@ -22889,7 +22910,7 @@ async def test_deferred_tool_handler_via_handle_call_preserves_tool_return():
 
     await agent.run('go')
     # handle_call returned the ToolReturn wrapper verbatim, not the unwrapped content
-    assert isinstance(captured_result, _ToolReturn)
+    assert isinstance(captured_result, ToolReturn)
     assert captured_result.return_value == 'actual result'
     assert captured_result.metadata == {'source': 'inner'}
     assert captured_result.content == 'user extra'

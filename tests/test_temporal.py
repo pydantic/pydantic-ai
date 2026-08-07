@@ -6724,7 +6724,7 @@ def test_durability_requires_agent_name():
 
 
 def test_durability_accepts_single_purpose_capability_without_explicit_id():
-    """A single-purpose capability's default `id` names the activities of the toolset it contributes.
+    """A single-purpose capability's default toolset `id` names the activities of the toolset it contributes.
 
     Temporal needs an `id` on every leaf toolset, and the local fallback of a `WebSearch` is a
     toolset the user never constructed, so the capability's default is what makes it usable
