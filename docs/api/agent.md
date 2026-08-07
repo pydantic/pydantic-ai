@@ -9,6 +9,7 @@
             - AgentRetries
             - AgentRealtime
             - AgentRun
+            - AgentRunEvents
             - AgentRunResult
             - EndStrategy
             - RunOutputDataT

@@ -1017,31 +1017,6 @@ async def test_input_transcription_failure_after_partial_does_not_block_later_tu
     )
 
 
-async def test_input_transcription_failure_after_the_item_closed_is_ignored() -> None:
-    # A stray late failure for an item that already finalized must not re-open it and record a second,
-    # blank user turn — the same guard `_handle_input_transcript` applies to a late transcript delta.
-    conn = FakeRealtimeConnection(
-        [
-            InputTranscript(text='hello', is_final=True, item_id='A'),
-            RealtimeInputTranscriptionErrorEvent(message='transcription failed', item_id='A'),
-            ResponseDone(),
-        ]
-    )
-    session = RealtimeSession(conn, _noop_runner)
-
-    events = await collect_events(session)
-    assert [type(event).__name__ for event in events] == [
-        'PartStartEvent',
-        'PartDeltaEvent',
-        'PartEndEvent',
-        'RealtimeInputTranscriptionErrorEvent',
-        'RealtimeTurnCompleteEvent',
-    ]
-    assert session.new_messages() == snapshot(
-        [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello', id='A')], timestamp=IsDatetime())]
-    )
-
-
 async def test_input_transcription_failure_ends_the_part_it_opened() -> None:
     """A failed transcription closes the failed turn's own part index and keeps overlapping turns active.
 
@@ -1073,6 +1048,38 @@ async def test_input_transcription_failure_ends_the_part_it_opened() -> None:
     ended = {e.part.id: e.index for e in events if isinstance(e, PartEndEvent) and isinstance(e.part, SpeechPart)}
     assert started['B'] != 0
     assert ended['B'] == started['B']
+
+
+async def test_input_transcription_failure_ignores_already_closed_items() -> None:
+    """A duplicate or late transcription-error event for a closed item must not re-open it.
+
+    Regression: `_finalize_failed_user_item` lacked `_handle_input_transcript`'s closed-item guard, so a
+    stray error for an already finalized (or already failed) item minted a fresh blank `SpeechPart` with
+    a new part index and recorded a second user turn in history.
+    """
+    conn = FakeRealtimeConnection(
+        [
+            InputTranscript(text='hello from A', is_final=True, item_id='A'),
+            RealtimeInputTranscriptionErrorEvent(message='late error for finalized item', item_id='A'),
+            InputTranscript(text='partial B', is_final=False, item_id='B'),
+            RealtimeInputTranscriptionErrorEvent(message='failed', item_id='B'),
+            RealtimeInputTranscriptionErrorEvent(message='duplicate failure', item_id='B'),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    events = await collect_events(session)
+
+    ended = [e.part.id for e in events if isinstance(e, PartEndEvent) and isinstance(e.part, SpeechPart)]
+    assert ended == ['A', 'B']
+    user_parts = [
+        part for message in session.new_messages() if isinstance(message, ModelRequest) for part in message.parts
+    ]
+    assert user_parts == [
+        SpeechPart(speaker='user', transcript='hello from A', id='A'),
+        SpeechPart(speaker='user', id='B'),
+    ]
 
 
 @pytest.mark.parametrize('item_id', [None, 'user-1'])

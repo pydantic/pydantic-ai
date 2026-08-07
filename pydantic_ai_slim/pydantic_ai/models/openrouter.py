@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
@@ -23,7 +24,7 @@ from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
-from ..settings import ModelSettings, ThinkingLevel
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
 from ._tool_choice import ResolvedToolChoice
@@ -777,6 +778,24 @@ class OpenRouterModel(OpenAIChatModel):
     @property
     def _resolved_profile(self) -> OpenRouterModelProfile:
         return cast(OpenRouterModelProfile, self.profile)
+
+    @override
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Resolve the longest explicit retention accepted by OpenRouter's downstream model."""
+        settings = merge_model_settings(self.settings, model_settings) or {}
+        if not self._resolved_profile.get('openrouter_supports_cache_ttl', False):
+            return None
+        return self._max_prompt_cache_retention(
+            settings.get('openrouter_cache_instructions')
+            if self._resolved_profile.get('openrouter_supports_cache_control', False)
+            else None,
+            settings.get('openrouter_cache_messages')
+            if self._resolved_profile.get('openrouter_supports_cache_control', False)
+            else None,
+            settings.get('openrouter_cache_tool_definitions')
+            if self._resolved_profile.get('openrouter_supports_tool_cache', False)
+            else None,
+        )
 
     def _build_cache_control(self, ttl: OpenRouterCacheTTL = '5m') -> dict[str, str]:
         """Build a `cache_control` dict for the downstream provider.

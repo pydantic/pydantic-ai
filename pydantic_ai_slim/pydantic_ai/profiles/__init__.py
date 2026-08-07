@@ -1,12 +1,14 @@
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import Callable
 from textwrap import dedent
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, cast
 
 from typing_extensions import TypedDict
 
 from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from ..exceptions import PydanticAIDeprecationWarning
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..output import StructuredOutputMode
 
@@ -170,6 +172,47 @@ class ModelProfile(TypedDict, total=False):
     tool removal (#6985) is not modeled yet and will get its own field.
     """
 
+    tool_additions: ToolAdditionMode | None
+    """Deprecated: use `tool_addition_mode` instead.
+
+    Translated (with a deprecation warning) whenever profiles are merged; an explicit
+    `tool_addition_mode` in the same profile wins.
+    """
+
+    deferred_tools_require_tool_search: bool
+    """Deprecated: use `tool_deferral_mode` instead.
+
+    `True` translates to `tool_deferral_mode='with_tool_search'` (with a deprecation warning)
+    whenever profiles are merged. `False` carried no signal on its own — deferral capability came
+    from native tool-search support — so it is dropped; an explicit `tool_deferral_mode` in the
+    same profile wins.
+    """
+
+
+def _translate_legacy_profile_keys(profile: ModelProfile) -> ModelProfile:
+    """Translate keys renamed after their v2.23 release into their current spellings, warning."""
+    if 'tool_additions' not in profile and 'deferred_tools_require_tool_search' not in profile:
+        return profile
+    translated = dict(profile)
+    if 'tool_additions' in translated:
+        warnings.warn(
+            '`ModelProfile` key `tool_additions` is deprecated, use `tool_addition_mode` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=3,
+        )
+        value = translated.pop('tool_additions')
+        translated.setdefault('tool_addition_mode', value)
+    if 'deferred_tools_require_tool_search' in translated:
+        warnings.warn(
+            '`ModelProfile` key `deferred_tools_require_tool_search` is deprecated, use '
+            "`tool_deferral_mode='with_tool_search'` instead.",
+            PydanticAIDeprecationWarning,
+            stacklevel=3,
+        )
+        if translated.pop('deferred_tools_require_tool_search'):
+            translated.setdefault('tool_deferral_mode', 'with_tool_search')
+    return cast('ModelProfile', translated)
+
 
 DEFAULT_PROFILE: ModelProfile = {
     'supports_tools': True,
@@ -207,11 +250,13 @@ def merge_profile(base: ModelProfile | None, *overrides: ModelProfile | None) ->
     """Merge profiles via dict-spread. Later arguments override earlier ones; `None` is treated as empty.
 
     This is the canonical way to layer profiles in providers and tests; replaces the old `ModelProfile.update()` method.
+    Deprecated key spellings are translated per input before spreading, so a legacy key in an
+    override still overrides the base.
     """
     result: ModelProfile = {}
     if base:
-        result = {**result, **base}
+        result = {**result, **_translate_legacy_profile_keys(base)}
     for override in overrides:
         if override:
-            result = {**result, **override}
+            result = {**result, **_translate_legacy_profile_keys(override)}
     return result

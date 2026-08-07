@@ -22,6 +22,7 @@ from pydantic_ai import (
     PartStartEvent,
     RunContext,
     RunUsage,
+    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -48,6 +49,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModelSettings
     from pydantic_ai.models.fallback import FallbackModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.models.openrouter import (
         OpenRouterModel,
         OpenRouterModelSettings,
@@ -57,6 +59,7 @@ with try_import() as imports_successful:
         _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.test import TestModel
+    from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
@@ -1176,6 +1179,48 @@ def _openrouter_completion(content: str) -> ChatCompletion:
     choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
     return ChatCompletion.model_construct(
         id='123', choices=[choice], created=1704067200, model='test', object='chat.completion', provider='test'
+    )
+
+
+async def test_openrouter_wraps_mid_conversation_system_prompt(allow_model_requests: None) -> None:
+    """OpenRouter gets the fallback while the same history stays native on OpenAI.
+
+    Mocked clients pin the rendered request bodies directly: OpenRouter accepts an inline `system`
+    message but silently transforms it, so a successful gateway response cannot prove native support.
+    """
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='Hello.')]),
+        ModelResponse(parts=[TextPart(content='Hi.')]),
+        ModelRequest(parts=[SystemPromptPart(content='Answer in one sentence.')]),
+    ]
+    openrouter_client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
+    openai_client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
+
+    openrouter_model = OpenRouterModel('openai/gpt-5', provider=OpenRouterProvider(openai_client=openrouter_client))
+    openai_model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+
+    await Agent(openrouter_model).run('Continue.', message_history=history)
+    await Agent(openai_model).run('Continue.', message_history=history)
+
+    assert openrouter_model.profile.get('supports_inline_system_prompts') is False
+    assert openai_model.profile.get('supports_inline_system_prompts') is True
+    assert get_mock_chat_completion_kwargs(openrouter_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'You are helpful.'},
+            {'role': 'user', 'content': 'Hello.'},
+            {'role': 'assistant', 'content': 'Hi.'},
+            {'role': 'user', 'content': '<system>Answer in one sentence.</system>'},
+            {'role': 'user', 'content': 'Continue.'},
+        ]
+    )
+    assert get_mock_chat_completion_kwargs(openai_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'You are helpful.'},
+            {'role': 'user', 'content': 'Hello.'},
+            {'role': 'assistant', 'content': 'Hi.'},
+            {'role': 'system', 'content': 'Answer in one sentence.'},
+            {'role': 'user', 'content': 'Continue.'},
+        ]
     )
 
 

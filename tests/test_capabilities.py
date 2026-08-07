@@ -4899,6 +4899,19 @@ def test_run_context_available_tool_names_includes_discovered_before_tool_manage
     assert not ctx.is_tool_available('unknown_tool')
 
 
+def test_run_context_is_tool_available_falls_back_while_tools_unresolved() -> None:
+    """Mid-`get_tools` the manager exists but its tool set is `None`; the name form must take
+    the same history fallback as `available_tool_names` instead of reporting `False`."""
+    ctx = _build_run_context()
+    ctx.tool_manager = ToolManager(FunctionToolset())
+    ctx.discovered_tool_names = {'discovered_tool'}
+
+    assert ctx.tool_manager.tools is None
+    assert ctx.available_tool_names == {'discovered_tool'}
+    assert ctx.is_tool_available('discovered_tool')
+    assert not ctx.is_tool_available('unknown_tool')
+
+
 async def test_run_context_available_tool_names_unions_discovered_current_tools() -> None:
     """Available tool names are always-visible current tools plus revealed corpus tools."""
     toolset = FunctionToolset()
