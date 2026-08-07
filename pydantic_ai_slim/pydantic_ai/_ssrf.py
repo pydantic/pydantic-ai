@@ -598,7 +598,7 @@ async def safe_download(
             if max_bytes is not None and not any(k.lower() == 'accept-encoding' for k in request_headers):
                 request_headers['Accept-Encoding'] = _BOUNDED_ACCEPT_ENCODING
 
-# Cookies follow the logical hostname: httpx keys its jar by the resolved-IP
+            # Cookies follow the logical hostname: httpx keys its jar by the resolved-IP
             # URL we actually request, so we keep httpx's jar empty and manage cookies
             # ourselves. A caller-supplied `Cookie` header still takes precedence.
             cookie_header = _cookie_header_for_url(cookie_jar, current_url)
