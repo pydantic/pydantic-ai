@@ -3,10 +3,13 @@
 Realtime providers talk over a persistent WebSocket rather than the request/response HTTP that
 `pytest-recording` / VCR captures, so VCR can't record their traffic. These helpers record and
 replay the actual JSON frames exchanged with the provider, letting cassette-backed tests exercise
-the *real* protocol offline. OpenAI Realtime and Azure OpenAI both connect through the OpenAI realtime
-module's `websockets` reference, which is where the transport is patched. The engine works on raw JSON
-frames rather than any one provider's schema, so a provider that dials its WebSocket elsewhere (its own
-module reference, or an SDK that owns the socket) only needs another `_connect_target` entry.
+the *real* protocol offline:
+
+- OpenAI Realtime and Azure OpenAI connect through the OpenAI realtime module's `websockets`
+  reference.
+- Gemini Live connects through the `google-genai` SDK, which itself uses `websockets` under
+  `google.genai.live.ws_connect` (patched there). The SDK calls `.send`, `.recv(decode=False)`, and
+  `.close` on the returned object, so the same raw-frame engine serves both providers.
 
 The replay path validates outbound frames as well as replaying inbound ones, so a cassette pins both
 provider behaviour *and* the exact wire messages the library sends. Recording scrubs anything
@@ -39,7 +42,7 @@ _MessageKind = Literal['message']
 _CloseKind = Literal['close']
 _Direction = Literal['sent', 'received']
 
-ProviderName = Literal['openai']
+ProviderName = Literal['openai', 'gemini']
 
 # Outbound frame fields that carry random client-generated ids, normalized to stable placeholders so
 # replay can validate frame *structure* without depending on a fresh random value each run.
@@ -181,9 +184,9 @@ def _truncate_audio(frame: dict[str, Any]) -> dict[str, Any]:
     """Shrink audio payloads in place-ish, returning a frame safe to store in a cassette.
 
     Handles the OpenAI inbound shape (`{'type': 'response.output_audio.delta', 'delta': <b64>}`), the
-    OpenAI outbound shape (`{'type': 'input_audio_buffer.append', 'audio': <b64>}`), and the nested
-    `inlineData.data` shape other providers use in both directions. Transcript deltas (also keyed
-    `delta` on OpenAI, but on non-audio event types) are left untouched.
+    OpenAI outbound shape (`{'type': 'input_audio_buffer.append', 'audio': <b64>}`), and the Gemini
+    shape (`inlineData.data`, used in both directions). Transcript deltas (also keyed `delta` on
+    OpenAI, but on non-audio event types) are left untouched.
 
     Outbound audio matters as much as inbound: a test that streams a microphone for several turns
     sends megabytes of PCM, and a cassette is a file in git that a human is meant to be able to read.
@@ -384,10 +387,13 @@ class RecordingWebSocket:
 
 def _connect_target(provider: ProviderName) -> tuple[Any, str]:
     """The module and attribute name of the `connect` callable to patch for `provider`."""
-    assert provider == 'openai'
-    from pydantic_ai.realtime import openai as rt_openai
+    if provider == 'openai':
+        from pydantic_ai.realtime import openai as rt_openai
 
-    return rt_openai.websockets, 'connect'
+        return rt_openai.websockets, 'connect'
+    from google.genai import live
+
+    return live, 'ws_connect'
 
 
 @contextmanager

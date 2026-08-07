@@ -13,6 +13,11 @@ import pytest
 from ..conftest import sanitize_filename, try_import
 from .ws_cassettes import ProviderName, RealtimeCassette, patched_ws_connect, realtime_cassette_plan
 
+with try_import() as imports_successful:
+    from pydantic_ai.providers.google import GoogleProvider
+
+# Separate from the combined flag above so OpenAI cassette tests still run in an environment
+# without `google-genai` installed.
 with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -29,15 +34,15 @@ CASSETTES_DIR = Path(__file__).parent / 'cassettes'
 def _realtime_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     """Provide placeholder API keys so realtime models can resolve their default providers offline.
 
-    The realtime models resolve their provider (and its API client) eagerly at construction, like
-    `OpenAIChatModel`. Network-free tests never hit the network, so a placeholder key is enough to let
-    `OpenAIRealtimeModel()` build its default provider.
+    `OpenAIChatModel` / `GoogleModel`. Network-free tests never hit the network, so a placeholder key
+    is enough to let `OpenAIRealtimeModel()` / `GoogleRealtimeModel()` build their default providers.
 
-    The cassette fixtures build their provider from the session-scoped `openai_api_key` fixture, which
-    is resolved before this (function-scoped) override runs and reads a real key from the environment
-    when recording, so this placeholder doesn't interfere with them.
+    The cassette fixtures build their provider from the session-scoped `openai_api_key` /
+    `gemini_api_key` fixtures, which are resolved before this (function-scoped) override runs and read
+    a real key from the environment when recording, so this placeholder doesn't interfere with them.
     """
     monkeypatch.setenv('OPENAI_API_KEY', 'mock-api-key')
+    monkeypatch.setenv('GOOGLE_API_KEY', 'mock-api-key')
     monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://mock.openai.azure.com/openai/v1')
     monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
 
@@ -84,6 +89,17 @@ def openai_ws_cassette(
         pytest.skip('openai / websockets not installed')
     with _ws_cassette(request, 'openai') as cassette:
         yield OpenAIProvider(api_key=openai_api_key), cassette
+
+
+@pytest.fixture
+def gemini_ws_cassette(
+    request: pytest.FixtureRequest, gemini_api_key: str
+) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
+    """A `GoogleProvider` whose Gemini Live WebSocket is backed by a cassette."""
+    if not imports_successful():  # pragma: no cover
+        pytest.skip('google-genai not installed')
+    with _ws_cassette(request, 'gemini') as cassette:
+        yield GoogleProvider(api_key=gemini_api_key), cassette
 
 
 @pytest.fixture(scope='session')
