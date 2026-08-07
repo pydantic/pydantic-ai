@@ -359,6 +359,47 @@ async def test_read_file_fast_path_reports_totals_when_first_read_reaches_eof():
     assert window.total_lines == 3
 
 
+async def test_read_file_fast_path_grows_chunks_for_deep_windows():
+    """A window deep inside a large file costs O(log n) range requests, not one per 64 KiB.
+
+    Ranged backends typically pay a full round trip per request, so the scan toward a deep
+    offset doubles the chunk size as it goes instead of paging the whole prefix at the
+    initial chunk size.
+    """
+    filesystem = _RangeFs()
+    backend = FakeSandbox('fast-deep', filesystem)
+    filesystem.files['/workspace/file'] = b'line\n' * 200_000  # 1_000_000 bytes
+
+    window = await Sandbox(backend).read_file('file', offset=199_999, limit=5)
+
+    assert window.lines == ('line', 'line')
+    assert window.has_more is False
+    assert window.total_lines == 200_000
+    requested_sizes = [end - start for start, end in filesystem.ranges]
+    assert requested_sizes == [64 * 1024, 128 * 1024, 256 * 1024, 512 * 1024, 1024 * 1024]
+
+
+async def test_capability_serving_existing_facade_is_passed_through_unchanged():
+    """Pins the documented `get_sandbox` contract: serving an existing `Sandbox` facade
+    passes it through unchanged. A facade conforms to `SandboxBackend` structurally, so the
+    backend-first classification treats it as warm/caller-owned, and `Sandbox.wrap` returns
+    it as-is instead of double-wrapping — `ctx.sandbox` is the very same object the
+    capability served.
+    """
+    facade = Sandbox.wrap(FakeSandbox('warm'))
+
+    @dataclass
+    class ServeFacade(AbstractCapability[Any]):
+        def get_sandbox(self, ctx: RunPreparationContext[Any]) -> SandboxBackend:
+            return facade
+
+    seen: list[Sandbox] = []
+    agent = make_identity_probe_agent(seen, capabilities=[ServeFacade()])
+    await agent.run('go')
+
+    assert seen == [facade]
+
+
 @pytest.mark.parametrize(
     ('suffix', 'has_more', 'total_lines'),
     [(b'more', True, 3), (b'', False, 2)],
@@ -373,7 +414,7 @@ async def test_read_file_fast_path_resolves_chunk_aligned_window_boundary(
 
     window = await Sandbox(backend).read_file('file', offset=1, limit=2)
 
-    assert filesystem.ranges == [(0, 64 * 1024), (64 * 1024, 2 * 64 * 1024)]
+    assert filesystem.ranges == [(0, 64 * 1024), (64 * 1024, 3 * 64 * 1024)]  # second chunk doubles
     assert window.lines == ('a', second_line.decode())
     assert window.has_more is has_more
     assert window.total_lines == total_lines

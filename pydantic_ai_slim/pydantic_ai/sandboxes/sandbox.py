@@ -37,6 +37,10 @@ from .references import SandboxConnector, SandboxRef, connect_sandbox_ref
 __all__ = ('FileWindow', 'Sandbox')
 
 _READ_CHUNK_SIZE = 64 * 1024
+# Each successive chunk doubles, up to this cap: ranged backends typically pay a full
+# round trip per request (a remote call, or `dd` over the sandbox's own shell), so a
+# window deep inside a large file must not cost one round trip per 64 KiB of prefix.
+_READ_CHUNK_SIZE_MAX = 4 * 1024 * 1024
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -298,12 +302,14 @@ class Sandbox:
         buffer = bytearray()
         line_number = 0
         start = 0
+        chunk_size = _READ_CHUNK_SIZE
 
         while True:
-            chunk = await filesystem.read_bytes_range(path, start, start + _READ_CHUNK_SIZE)
+            chunk = await filesystem.read_bytes_range(path, start, start + chunk_size)
             start += len(chunk)
             buffer.extend(chunk)
-            at_eof = len(chunk) < _READ_CHUNK_SIZE
+            at_eof = len(chunk) < chunk_size
+            chunk_size = min(chunk_size * 2, _READ_CHUNK_SIZE_MAX)
 
             position = 0
             while (newline := buffer.find(b'\n', position)) >= 0:
