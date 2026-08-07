@@ -201,10 +201,10 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
                 The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], making this the place to persist `cancelled.all_messages()`, and can optionally yield additional protocol-specific events.
         """
-        async for e in self.before_stream():
-            yield e
-
         try:
+            async for e in self.before_stream():
+                yield e
+
             async for event in stream:
                 if isinstance(event, PartStartEvent):
                     async for e in self._turn_to('response'):
