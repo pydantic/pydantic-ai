@@ -38,7 +38,7 @@ from pydantic_ai._utils import run_in_executor
 from .protocol import FileEntry, SandboxCommand
 
 if TYPE_CHECKING:
-    from .protocol import SandboxBackend, SupportsFilesystem, SupportsReadBytesRange
+    from .protocol import SandboxBackend, SupportsFilesystem
 
 __all__ = ('LocalSandbox',)
 
@@ -63,14 +63,6 @@ class _LocalFilesystem:
             target.write_bytes(data)
 
         await run_in_executor(write)
-
-    async def read_bytes_range(self, path: str, start: int, end: int) -> bytes:
-        def read() -> bytes:
-            with Path(path).open('rb') as file:
-                file.seek(start)
-                return file.read(end - start)
-
-        return await run_in_executor(read)
 
     async def stat(self, path: str) -> FileEntry:
         def stat() -> FileEntry:
@@ -305,4 +297,3 @@ if TYPE_CHECKING:
     # `@runtime_checkable` isinstance check cannot.
     _conforms: SandboxBackend = LocalSandbox()
     _filesystem_backend_conforms: SupportsFilesystem = LocalSandbox()
-    _filesystem_conforms: SupportsReadBytesRange = _LocalFilesystem()

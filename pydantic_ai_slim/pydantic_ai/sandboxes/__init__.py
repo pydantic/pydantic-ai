@@ -10,7 +10,6 @@ from .protocol import (
     SandboxProcess,
     SandboxResult,
     SupportsFilesystem,
-    SupportsReadBytesRange,
     SupportsStart,
     SupportsStream,
 )
@@ -32,7 +31,6 @@ __all__ = (
     'SandboxResult',
     'SandboxRef',
     'SupportsFilesystem',
-    'SupportsReadBytesRange',
     'SupportsStart',
     'SupportsStream',
     'UnavailableSandbox',

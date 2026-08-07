@@ -76,16 +76,6 @@ class _Fs:
         return path in self.files
 
 
-class _RangeFs(_Fs):
-    def __init__(self) -> None:
-        super().__init__()
-        self.ranges: list[tuple[int, int]] = []
-
-    async def read_bytes_range(self, path: str, start: int, end: int) -> bytes:
-        self.ranges.append((start, end))
-        return self.files[path][start:end]
-
-
 class _WaitOnlyProcess:
     pid = None
 
@@ -341,76 +331,6 @@ async def test_read_file_rejects_invalid_windows(kwargs: dict[str, int], message
         await Sandbox(FakeSandbox('invalid')).read_file('file', **kwargs)
 
 
-async def test_read_file_fast_path_stops_before_eof():
-    filesystem = _RangeFs()
-    backend = FakeSandbox('fast', filesystem)
-    filesystem.files['/workspace/file'] = b'line\n' * 40_000
-
-    window = await Sandbox(backend).read_file('file', offset=1, limit=2)
-
-    assert window.lines == ('line', 'line')
-    assert window.has_more is True
-    assert window.total_lines is None
-    assert len(filesystem.ranges) <= 2
-    assert sum(end - start for start, end in filesystem.ranges) <= 2 * 64 * 1024
-
-
-async def test_read_file_fast_path_does_not_overread_past_window():
-    filesystem = _RangeFs()
-    backend = FakeSandbox('fast-window', filesystem)
-    filesystem.files['/workspace/file'] = b'a\nb\n' + b'x' * (3 * 64 * 1024)
-
-    window = await Sandbox(backend).read_file('file', offset=1, limit=2)
-
-    assert filesystem.ranges == [(0, 64 * 1024)]
-    assert window.lines == ('a', 'b')
-    assert window.has_more is True
-
-
-async def test_read_file_fast_path_reaching_eof_reports_totals():
-    filesystem = _RangeFs()
-    backend = FakeSandbox('fast-eof', filesystem)
-    filesystem.files['/workspace/file'] = b'one\ntwo'
-
-    window = await Sandbox(backend).read_file('file', offset=2, limit=3)
-
-    assert window.lines == ('two',)
-    assert window.has_more is False
-    assert window.total_lines == 2
-
-
-async def test_read_file_fast_path_reports_totals_when_first_read_reaches_eof():
-    filesystem = _RangeFs()
-    backend = FakeSandbox('fast-eof-window', filesystem)
-    filesystem.files['/workspace/file'] = b'one\ntwo\nthree\n'
-
-    window = await Sandbox(backend).read_file('file', offset=1, limit=2)
-
-    assert window.lines == ('one', 'two')
-    assert window.has_more is True
-    assert window.total_lines == 3
-
-
-async def test_read_file_fast_path_grows_chunks_for_deep_windows():
-    """A window deep inside a large file costs O(log n) range requests, not one per 64 KiB.
-
-    Ranged backends typically pay a full round trip per request, so the scan toward a deep
-    offset doubles the chunk size as it goes instead of paging the whole prefix at the
-    initial chunk size.
-    """
-    filesystem = _RangeFs()
-    backend = FakeSandbox('fast-deep', filesystem)
-    filesystem.files['/workspace/file'] = b'line\n' * 200_000  # 1_000_000 bytes
-
-    window = await Sandbox(backend).read_file('file', offset=199_999, limit=5)
-
-    assert window.lines == ('line', 'line')
-    assert window.has_more is False
-    assert window.total_lines == 200_000
-    requested_sizes = [end - start for start, end in filesystem.ranges]
-    assert requested_sizes == [64 * 1024, 128 * 1024, 256 * 1024, 512 * 1024, 1024 * 1024]
-
-
 async def test_read_file_slices_inside_the_sandbox_when_no_range_support():
     """Without native range support, the window is produced by `sed` inside the sandbox:
     only the requested lines cross the wire, and the filesystem is never asked for the
@@ -500,46 +420,18 @@ async def test_capability_serving_existing_facade_is_passed_through_unchanged():
     assert seen == [facade]
 
 
-@pytest.mark.parametrize(
-    ('suffix', 'has_more', 'total_lines'),
-    [(b'more', True, 3), (b'', False, 2)],
-)
-async def test_read_file_fast_path_resolves_chunk_aligned_window_boundary(
-    suffix: bytes, has_more: bool, total_lines: int
-):
-    filesystem = _RangeFs()
-    backend = FakeSandbox('fast-boundary', filesystem)
-    second_line = b'x' * (64 * 1024 - 3)
-    filesystem.files['/workspace/file'] = b'a\n' + second_line + b'\n' + suffix
-
-    window = await Sandbox(backend).read_file('file', offset=1, limit=2)
-
-    assert filesystem.ranges == [(0, 64 * 1024), (64 * 1024, 3 * 64 * 1024)]  # second chunk doubles
-    assert window.lines == ('a', second_line.decode())
-    assert window.has_more is has_more
-    assert window.total_lines == total_lines
-
-
-async def test_read_file_fast_and_slow_paths_have_window_parity():
+async def test_read_file_shell_and_full_paths_have_window_parity():
     content = b'one\r\ntwo\r\nthree\nfour\r\nfive'
     shell_backend = FakeSandbox('shell')
     shell_backend.fs.files['/workspace/file'] = content
     full_backend = FakeSandbox('full', sed=False)
     full_backend.fs.files['/workspace/file'] = content
-    range_filesystem = _RangeFs()
-    range_filesystem.files['/workspace/file'] = content
-    fast_backend = FakeSandbox('fast', range_filesystem)
 
     for offset in (1, 2, 4, 8):
         for limit in (1, 2, 5):
             full = await Sandbox(full_backend).read_file('file', offset=offset, limit=limit)
-            fast = await Sandbox(fast_backend).read_file('file', offset=offset, limit=limit)
             shell = await Sandbox(shell_backend).read_file('file', offset=offset, limit=limit)
-            assert (fast.lines, fast.start_line, fast.has_more) == (full.lines, full.start_line, full.has_more)
             assert (shell.lines, shell.start_line, shell.has_more) == (full.lines, full.start_line, full.has_more)
-            # The file is smaller than the read chunk size, so the range path always reaches
-            # EOF and knows the total.
-            assert fast.total_lines == full.total_lines
             # The shell slice only knows the total when it provably reached EOF.
             assert shell.total_lines in (full.total_lines, None)
 

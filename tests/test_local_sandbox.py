@@ -19,7 +19,6 @@ from pydantic_ai.sandboxes import (
     Sandbox,
     SandboxBackend,
     SupportsFilesystem,
-    SupportsReadBytesRange,
     SupportsStart,
 )
 from pydantic_ai.sandboxes._policy import default_sandbox_backend
@@ -113,7 +112,6 @@ def test_local_sandbox_conforms_to_the_protocol(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
     assert isinstance(sandbox, SandboxBackend)
     assert isinstance(sandbox, SupportsFilesystem)
-    assert isinstance(sandbox.fs, SupportsReadBytesRange)
     assert not isinstance(sandbox, SupportsStart)
     typed: SandboxBackend = sandbox  # static conformance, checked because tests are type-checked
     assert typed.provider == 'local'
@@ -346,17 +344,6 @@ async def test_filesystem_round_trip_with_parent_creation(tmp_path: Path):
     assert not await backend.fs.exists(blob)
     with pytest.raises(FileNotFoundError):
         await backend.fs.read_bytes(blob)
-
-
-async def test_read_bytes_range(tmp_path: Path):
-    sandbox = LocalSandbox(tmp_path)
-    path = tmp_path / 'data.bin'
-    path.write_bytes(b'0123456789')
-
-    assert await sandbox.fs.read_bytes_range(str(path), 2, 6) == b'2345'
-    assert await sandbox.fs.read_bytes_range(str(path), 8, 20) == b'89'
-    assert await sandbox.fs.read_bytes_range(str(path), 10, 20) == b''
-    assert await sandbox.fs.read_bytes_range(str(path), 20, 30) == b''
 
 
 async def test_facade_windowed_read_over_local_sandbox(tmp_path: Path):

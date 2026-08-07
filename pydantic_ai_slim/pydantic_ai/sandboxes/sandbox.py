@@ -29,19 +29,11 @@ from .protocol import (
     SandboxProcess,
     SandboxResult,
     SupportsFilesystem,
-    SupportsReadBytesRange,
     SupportsStart,
 )
 from .references import SandboxConnector, SandboxRef, connect_sandbox_ref
 
 __all__ = ('FileWindow', 'Sandbox')
-
-_READ_CHUNK_SIZE = 64 * 1024
-# Each successive chunk doubles, up to this cap: ranged backends typically pay a full
-# round trip per request (a remote call, or `dd` over the sandbox's own shell), so a
-# window deep inside a large file must not cost one round trip per 64 KiB of prefix.
-_READ_CHUNK_SIZE_MAX = 4 * 1024 * 1024
-
 
 @dataclass(frozen=True, kw_only=True)
 class FileWindow:
@@ -290,8 +282,6 @@ class Sandbox:
         resolved_path = await self.resolve(path)
         filesystem = await self._filesystem()
         if limit is not None:
-            if isinstance(filesystem, SupportsReadBytesRange):
-                return await self._read_file_range(filesystem, resolved_path, offset, limit)
             window = await self._read_file_via_shell(resolved_path, offset, limit)
             if window is not None:
                 return window
@@ -326,47 +316,6 @@ class Sandbox:
             return FileWindow(lines=tuple(lines[:limit]), start_line=offset, has_more=True, total_lines=None)
         total_lines = offset - 1 + len(lines) if lines else None
         return FileWindow(lines=tuple(lines), start_line=offset, has_more=False, total_lines=total_lines)
-
-    async def _read_file_range(
-        self, filesystem: SupportsReadBytesRange, path: str, offset: int, limit: int
-    ) -> FileWindow:
-        window: list[str] = []
-        buffer = bytearray()
-        line_number = 0
-        start = 0
-        chunk_size = _READ_CHUNK_SIZE
-
-        while True:
-            chunk = await filesystem.read_bytes_range(path, start, start + chunk_size)
-            start += len(chunk)
-            buffer.extend(chunk)
-            at_eof = len(chunk) < chunk_size
-            chunk_size = min(chunk_size * 2, _READ_CHUNK_SIZE_MAX)
-
-            position = 0
-            while (newline := buffer.find(b'\n', position)) >= 0:
-                line_number += 1
-                if line_number >= offset and len(window) < limit:
-                    window.append(_decode_line(buffer[position:newline]))
-                position = newline + 1
-            del buffer[:position]
-
-            if at_eof:
-                total_lines = line_number + (1 if buffer else 0)
-                if buffer and total_lines >= offset and len(window) < limit:
-                    window.append(_decode_line(buffer))
-                return FileWindow(
-                    lines=tuple(window),
-                    start_line=offset,
-                    has_more=offset - 1 + limit < total_lines,
-                    total_lines=total_lines,
-                )
-            if len(window) == limit and (buffer or line_number >= offset + limit):
-                return FileWindow(lines=tuple(window), start_line=offset, has_more=True, total_lines=None)
-
-
-def _decode_line(data: bytes | bytearray) -> str:
-    return data.decode('utf-8', errors='replace').removesuffix('\r')
 
 
 def _window_from_data(data: bytes, offset: int, limit: int | None) -> FileWindow:

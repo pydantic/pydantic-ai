@@ -20,9 +20,8 @@ only on what is documented here. Once released, no protocol in this module may e
 new member: conformance is structural, so an implementation stops conforming the moment a
 member it lacks is added, silently breaking every existing backend. New operations must
 arrive on concrete types or as new, separate optional protocols, such as
-[`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem],
-[`SupportsStart`][pydantic_ai.sandboxes.SupportsStart], and
-[`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] — never by adding
+[`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] and
+[`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] — never by adding
 members to an existing protocol.
 
 Every public type in this module — including the plain data carriers
@@ -78,7 +77,6 @@ __all__ = (
     'SandboxProcess',
     'SandboxResult',
     'SupportsFilesystem',
-    'SupportsReadBytesRange',
     'SupportsStart',
     'SupportsStream',
 )
@@ -268,28 +266,6 @@ class SandboxFilesystem(Protocol):
 
     async def exists(self, path: str) -> bool:
         """Whether a file or directory exists at the path."""
-        ...
-
-
-@runtime_checkable
-class SupportsReadBytesRange(Protocol):
-    """Optional fast path for reading a byte range of a file.
-
-    Checked (via `isinstance`) against a backend's `fs` object by the
-    [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade: when present, windowed reads fetch only
-    the bytes they need instead of the whole file. This check is shallow: the presence of a
-    method with this name activates the fast path, so implementations must match this
-    signature and contract exactly. Pin conformance statically (for example,
-    `_conforms: SupportsReadBytesRange = MyFs()`) as `local.py` does.
-    """
-
-    async def read_bytes_range(self, path: str, start: int, end: int) -> bytes:
-        """Read bytes `[start, end)` of a file (absolute POSIX path).
-
-        Returns fewer bytes than requested when the range extends past EOF, and `b''` when
-        `start` is at or past EOF. Implementations must not raise for out-of-range reads on an
-        existing file.
-        """
         ...
 
 

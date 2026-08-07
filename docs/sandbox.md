@@ -65,13 +65,11 @@ async def read_source(ctx: RunContext[None]) -> str:
 ```
 
 Relative paths resolve against the backend's working directory. For a bounded window the facade
-picks the cheapest transfer the backend offers: a native filesystem implementing
-[`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] transfers only the chunks
-needed; otherwise the facade slices with `sed` inside the sandbox so only the requested lines
-cross the wire (backends guarantee `run` and `fs` see the same files — see the
-[protocol contracts][pydantic_ai.sandboxes]); if the environment cannot slice (no usable `sed`),
-the facade reads the full bytes and slices itself. `total_lines` may be `None` on the sliced
-paths when the window provably didn't reach EOF. For strict
+slices with `sed` inside the sandbox so only the requested lines cross the wire — backends
+guarantee `run` and `fs` see the same files (see the
+[protocol contracts][pydantic_ai.sandboxes]). If the environment cannot slice (no usable `sed`,
+a non-POSIX shell), the facade reads the full bytes and slices itself. `total_lines` may be
+`None` on the sliced path when the window provably didn't reach EOF. For strict
 text decoding and writing, use
 [`Sandbox.read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] and
 [`Sandbox.write_text()`][pydantic_ai.sandboxes.Sandbox.write_text].
@@ -196,13 +194,11 @@ the backend's own [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesyste
 | Execute a command | [`run()`][pydantic_ai.sandboxes.Sandbox.run] | — |
 | Background process | [`start()`][pydantic_ai.sandboxes.Sandbox.start] | [`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] (else `NotImplementedError`) |
 | Read/write files | `fs` / [`read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] / [`write_text()`][pydantic_ai.sandboxes.Sandbox.write_text] | [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] (else `NotImplementedError`) |
-| Windowed read | [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] | [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] on `fs` (else read-all + slice) |
+| Windowed read | [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file] | `sed` over `run()` (else read-all + slice) |
 | Working directory | [`working_dir()`][pydantic_ai.sandboxes.Sandbox.working_dir] | — |
 | Path resolution | [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] | Facade-owned normalization |
 
-Implement `SupportsStart` when the backend can return a real process handle. Implement
-`SupportsReadBytesRange` on `fs` when the backend supports partial-file transfer; otherwise the
-facade reads the whole file to satisfy [`read_file()`][pydantic_ai.sandboxes.Sandbox.read_file].
+Implement `SupportsStart` when the backend can return a real process handle.
 
 Three protocol contracts matter to callers:
 

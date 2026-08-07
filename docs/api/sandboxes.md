@@ -9,7 +9,6 @@
             - SandboxRef
             - SandboxConnector
             - SupportsFilesystem
-            - SupportsReadBytesRange
             - SupportsStart
             - SupportsStream
             - LocalSandbox
