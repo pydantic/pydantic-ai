@@ -40,3 +40,12 @@ curl -sSfL -o LICENSE "https://raw.githubusercontent.com/github/gh-aw/$SHA/LICEN
 
 Then re-add the provenance headers, update the sha above, and run `node -e "require('./parse_claude_log.cjs')"`
 to confirm the `require()` closure is still complete.
+
+Finally, confirm the "verbatim upstream" claim survives the refresh: this tree is not excluded from
+the mutating pre-commit hooks (end-of-file/whitespace fixers, texthooks, codespell), so run them over
+it and check they changed nothing.
+
+```bash
+pre-commit run --files tests/assets/ghaw_log_parser/*
+git diff --exit-code tests/assets/ghaw_log_parser/
+```

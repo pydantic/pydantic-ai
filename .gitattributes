@@ -1,1 +1,2 @@
 .github/workflows/*.lock.yml linguist-generated=true
+tests/assets/ghaw_log_parser/** linguist-vendored=true

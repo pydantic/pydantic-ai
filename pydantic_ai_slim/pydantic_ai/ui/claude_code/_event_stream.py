@@ -24,13 +24,14 @@ from ...messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
 )
 from ...output import OutputDataT
 from ...run import AgentRunResultEvent
-from ...tools import AgentDepsT
+from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
 from .types import (
     AssistantMessage,
@@ -83,6 +84,10 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
     content block rather than a delta, so nothing is emitted until a part ends. Set
     `include_partial_messages` to additionally interleave the CLI's `stream_event` records.
 
+    Unlike the web-chat protocols, protocol-native events a tool returns are not re-emitted: the
+    records are `TypedDict`s with no runtime marker to detect one by, and a line outside the closed
+    vocabulary would degrade the parse for consumers that read the stream as a log.
+
     !!! note
         The format is not a versioned public spec. This implementation mirrors fixtures captured
         from Claude Code CLI 2.1.222, and models only the fields it can fill honestly.
@@ -131,6 +136,7 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
     _stop_reason: str | None = None
     _error: Exception | None = None
     _cancellation: RunCancelled | None = None
+    _halted_on_deferred_tools: bool = False
 
     @property
     def content_type(self) -> str:
@@ -156,6 +162,7 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
         self._stop_reason = None
         self._error = None
         self._cancellation = None
+        self._halted_on_deferred_tools = False
         record: InitRecord = {
             'type': 'system',
             'subtype': 'init',
@@ -285,6 +292,14 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
         return
         yield  # Make this an async generator
 
+    async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[ClaudeCodeEvent]:
+        # Dropped deliberately, unlike the siblings, which feed live UIs that can refresh their tool
+        # list: a `stream-json` consumer is a log parser over a closed record vocabulary, and the
+        # only tool list the format has is the `init` record's, which is written before the run
+        # starts and never revised.
+        return
+        yield  # Make this an async generator
+
     def handle_tool_call_start(self, part: ToolCallPart) -> AsyncIterator[ClaudeCodeEvent]:
         return self._handle_tool_call_start(part)
 
@@ -403,6 +418,7 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
             self._cost = float(usage.cost)
         if finish_reason := event.result.response.finish_reason:
             self._stop_reason = _STOP_REASON_MAP.get(finish_reason)
+        self._halted_on_deferred_tools = isinstance(event.result.output, DeferredToolRequests)
         return
         yield  # Make this an async generator
 
@@ -477,7 +493,11 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
             # `terminal_reason` that says it was stopped rather than that it broke.
             terminal_reason = 'cancelled'
         elif error is None:
-            terminal_reason = 'completed'
+            # A run that stops on tool approvals or external calls hasn't finished and hasn't
+            # failed: it's a pause in the protocol's normal flow, so it keeps `subtype: 'success'`
+            # and `is_error: false` and says what it's waiting on through `terminal_reason`. The
+            # CLI has no counterpart record, so the name is our own vocabulary.
+            terminal_reason = 'deferred_tool_requests' if self._halted_on_deferred_tools else 'completed'
         elif isinstance(error, UsageLimitExceeded):
             subtype = 'error_max_turns'
             terminal_reason = 'max_turns'

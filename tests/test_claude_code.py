@@ -10,6 +10,7 @@ a real CLI stream. The other acceptance bar is gh-aw's own Claude log parser, ve
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from collections.abc import AsyncIterator
@@ -29,6 +30,7 @@ from pydantic_ai.messages import (
     BinaryImage,
     CompactionPart,
     FilePart,
+    FinishReason,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
@@ -41,6 +43,8 @@ from pydantic_ai.messages import (
     TextPart,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -54,11 +58,16 @@ from pydantic_ai.models.function import (
     FunctionModel,
 )
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.ui import NativeEvent
 from pydantic_ai.ui.claude_code import NDJSON_CONTENT_TYPE, ClaudeCodeEventStream
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from .conftest import IsInt, IsSameStr, IsStr
+from .conftest import IsInt, IsSameStr, IsStr, try_import
+
+with try_import() as anthropic_imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = pytest.mark.anyio
 
@@ -181,16 +190,60 @@ async def test_defaults_generate_ids_and_disclose_no_working_directory():
     stream = ClaudeCodeEventStream()
     lines = await _lines(stream, _native_events(Agent(FunctionModel(stream_function=stream_function)), 'hi'))
 
+    # No working directory is claimed (consumers read empty as absent), and no model, on either the
+    # init record or the message.
+    assert lines == snapshot(
+        [
+            {
+                'type': 'system',
+                'subtype': 'init',
+                'cwd': '',
+                'session_id': (session_id := IsSameStr()),
+                'tools': [],
+                'mcp_servers': [],
+                'permissionMode': 'default',
+                'slash_commands': [],
+                'output_style': 'default',
+                'uuid': IsStr(),
+            },
+            {
+                'type': 'assistant',
+                'message': {
+                    'id': IsStr(regex=r'msg_.+'),
+                    'type': 'message',
+                    'role': 'assistant',
+                    'content': [{'type': 'text', 'text': 'hello'}],
+                    'stop_reason': None,
+                    'stop_sequence': None,
+                },
+                'parent_tool_use_id': None,
+                'session_id': session_id,
+                'uuid': IsStr(),
+                'timestamp': _timestamp(),
+            },
+            {
+                'type': 'result',
+                'subtype': 'success',
+                'is_error': False,
+                'terminal_reason': 'completed',
+                'num_turns': 1,
+                'duration_ms': IsInt(),
+                'result': 'hello',
+                'session_id': session_id,
+                'uuid': IsStr(),
+                'usage': {
+                    'input_tokens': 50,
+                    'output_tokens': 1,
+                    'cache_creation_input_tokens': 0,
+                    'cache_read_input_tokens': 0,
+                },
+            },
+        ]
+    )
+
     init, assistant, result = lines
-    assert init['session_id'] == stream.session_id == result['session_id']
+    assert init['session_id'] == stream.session_id
     assert len({init['uuid'], assistant['uuid'], result['uuid']}) == 3
-    assert assistant['timestamp'] == _timestamp()
-    assert result['duration_ms'] >= 0
-    # No working directory was configured, so none is claimed; consumers read empty as absent.
-    assert init['cwd'] == ''
-    # Nor is a model, on the init record or on the message.
-    assert 'model' not in init
-    assert 'model' not in assistant['message']
 
     # Nor on the message the partial-messages mode announces up front.
     partial = ClaudeCodeEventStream(include_partial_messages=True)
@@ -501,7 +554,10 @@ async def test_a_denied_tool_call_is_not_an_error():
 
 
 async def test_thinking_run():
-    """Thinking parts become `thinking` blocks, carrying their signature when the model signs them."""
+    """Thinking parts become `thinking` blocks, carrying their signature when the model signs them.
+
+    Both blocks belong to the one model response, so both lines carry the same message id.
+    """
 
     async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> StreamedChunks:
         yield {0: DeltaThinkingPart(content='Signed thought')}
@@ -510,14 +566,28 @@ async def test_thinking_run():
 
     lines = await _run_lines(Agent(FunctionModel(stream_function=stream_function)), 'think')
 
-    assert [line['message']['content'] for line in lines if line['type'] == 'assistant'] == snapshot(
+    assert [line['message'] for line in lines if line['type'] == 'assistant'] == snapshot(
         [
-            [{'type': 'thinking', 'thinking': 'Signed thought', 'signature': 'sig-1'}],
-            [{'type': 'text', 'text': 'Done thinking.'}],
+            {
+                'id': (msg_id := IsSameStr()),
+                'type': 'message',
+                'role': 'assistant',
+                'content': [{'type': 'thinking', 'thinking': 'Signed thought', 'signature': 'sig-1'}],
+                'stop_reason': None,
+                'stop_sequence': None,
+                'model': 'function:stream',
+            },
+            {
+                'id': msg_id,
+                'type': 'message',
+                'role': 'assistant',
+                'content': [{'type': 'text', 'text': 'Done thinking.'}],
+                'stop_reason': None,
+                'stop_sequence': None,
+                'model': 'function:stream',
+            },
         ]
     )
-    # Both blocks belong to the one model response, so both lines carry the same message id.
-    assert len({line['message']['id'] for line in lines if line['type'] == 'assistant'}) == 1
 
 
 async def test_adjacent_thinking_parts_become_one_unsigned_block():
@@ -604,11 +674,16 @@ async def test_file_part_produces_no_record():
     understood by a consumer we also wrote, which is the opposite of speaking the format, so the
     part is dropped and this test says so out loud.
 
+    Dropping it must not leave a hole in the block indices: a client reassembling partial-messages
+    mode addresses blocks by index, so the part after the dropped one has to be the next index
+    rather than the one after it, which is why the sequence below carries a trailing text part.
+
     Fed through `transform_stream` because a model that emits a `FilePart` mid-response cannot be
     expressed as a `FunctionModel` stream function. `FilePart` gets no `PartEndEvent` — only parts
     that have deltas are ended — so the stream below is what a real response would produce.
     """
     text = TextPart('Here is the chart')
+    caption = TextPart('Prices are up.')
 
     async def events() -> AsyncIterator[NativeEvent]:
         yield PartStartEvent(index=0, part=text)
@@ -618,12 +693,27 @@ async def test_file_part_produces_no_record():
             part=FilePart(content=BinaryImage(data=b'fake-png', media_type='image/png')),
             previous_part_kind='text',
         )
+        yield PartStartEvent(index=2, part=caption, previous_part_kind='file')
+        yield PartEndEvent(index=2, part=caption)
 
-    lines = await _lines(_event_stream(), events())
+    lines = await _lines(_event_stream(include_partial_messages=True), events())
 
-    assert [line['type'] for line in lines] == snapshot(['system', 'assistant', 'result'])
     assert [line['message']['content'] for line in lines if line['type'] == 'assistant'] == snapshot(
-        [[{'type': 'text', 'text': 'Here is the chart'}]]
+        [[{'type': 'text', 'text': 'Here is the chart'}], [{'type': 'text', 'text': 'Prices are up.'}]]
+    )
+    assert [
+        (line['event']['type'], line['event']['index'])
+        for line in lines
+        if line['type'] == 'stream_event' and line['event']['type'].startswith('content_block_')
+    ] == snapshot(
+        [
+            ('content_block_start', 0),
+            ('content_block_delta', 0),
+            ('content_block_stop', 0),
+            ('content_block_start', 1),
+            ('content_block_delta', 1),
+            ('content_block_stop', 1),
+        ]
     )
 
 
@@ -706,6 +796,95 @@ async def test_result_record_reports_stop_reason_and_cost():
             'total_cost_usd': 0.0042,
         }
     )
+
+
+@pytest.mark.parametrize(
+    'finish_reason,stop_reason',
+    [
+        ('stop', 'end_turn'),
+        ('length', 'max_tokens'),
+        ('tool_call', 'tool_use'),
+        ('content_filter', 'refusal'),
+        ('error', None),
+    ],
+)
+async def test_every_finish_reason_maps_onto_anthropics_vocabulary(
+    finish_reason: FinishReason, stop_reason: str | None
+):
+    """Each Pydantic AI finish reason reports the `stop_reason` Anthropic's own streams use.
+
+    `'error'` is the one with no counterpart: the key is omitted rather than reported as `null`,
+    because an errored run says so through `is_error` and `terminal_reason` instead.
+    """
+
+    async def events() -> AsyncIterator[NativeEvent]:
+        result = AgentRunResult(output='Done.')
+        result._state.message_history = [ModelResponse(parts=[], finish_reason=finish_reason)]  # pyright: ignore[reportPrivateUsage]
+        yield AgentRunResultEvent(result=result)
+
+    lines = await _lines(_event_stream(), events())
+
+    assert lines[-1].get('stop_reason') == stop_reason
+    assert ('stop_reason' in lines[-1]) is (stop_reason is not None)
+
+
+async def test_a_run_halted_on_deferred_tools_is_not_reported_as_completed():
+    """A run that stops awaiting approvals says so, rather than reading as a finished success.
+
+    gh-aw renders the terminal `result` line as its whole Information section, so a halt reported as
+    `'completed'` claims the agent answered when it is in fact waiting on the caller. Nothing failed
+    either, so it stays `is_error: false` — the pause is named by `terminal_reason` alone.
+    """
+
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> StreamedChunks:
+        yield {0: DeltaToolCall(name='delete_everything', json_args='{}', tool_call_id='call-1')}
+
+    agent = Agent(FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_everything() -> str:
+        return 'gone'  # pragma: no cover
+
+    lines = await _run_lines(agent, 'delete it all')
+
+    assert lines[-1] == snapshot(
+        {
+            'type': 'result',
+            'subtype': 'success',
+            'is_error': False,
+            'terminal_reason': 'deferred_tool_requests',
+            'num_turns': 1,
+            'duration_ms': IsInt(),
+            'result': '',
+            'session_id': 'session-1',
+            'uuid': IsStr(),
+            'usage': {
+                'input_tokens': 50,
+                'output_tokens': 1,
+                'cache_creation_input_tokens': 0,
+                'cache_read_input_tokens': 0,
+            },
+        }
+    )
+
+
+async def test_tool_availability_delta_produces_no_record():
+    """Tools becoming available mid-run reach the consumer as nothing at all.
+
+    The siblings surface the delta so a live UI can refresh its tool list. `stream-json` has no
+    such consumer: it's read by log parsers over a closed record vocabulary, and the only tool list
+    the format has is the `init` record's, written before the run starts and never revised.
+    """
+    part = ToolCallPart('load_tools', '{}', tool_call_id='call-1')
+
+    async def events() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=part)
+        yield PartEndEvent(index=0, part=part)
+        yield ToolAvailabilityDeltaEvent(part=ToolAvailabilityDeltaPart(tools_added=['deploy'], tool_call_id='call-1'))
+
+    lines = await _lines(_event_stream(), events())
+
+    assert [line['type'] for line in lines] == snapshot(['system', 'assistant', 'result'])
 
 
 def _reassembled_tool_inputs(lines: list[Any]) -> list[tuple[Any, Any]]:
@@ -1189,6 +1368,87 @@ async def test_a_signature_carried_by_the_first_chunk_still_reaches_the_stream()
     assert _reassembled_thinking_signatures(lines) == snapshot([('sig-at-start', 'sig-at-start')])
 
 
+@pytest.mark.vcr()
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_a_real_anthropic_run_streams_thinking_and_a_tool_call(
+    allow_model_requests: None, anthropic_api_key: str
+):
+    """The reassembly invariants hold on a real provider's events, not just hand-authored ones.
+
+    Every other test in this file drives the stream from `FunctionModel` or a hand-written event
+    sequence, which pins the mapping but takes the shape of the input on trust. This one runs
+    extended thinking and a tool call against Anthropic, so the signature that reaches a
+    `signature_delta` and the arguments a client rebuilds from `input_json_delta` fragments are the
+    ones a provider actually produced.
+    """
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings: AnthropicModelSettings = {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}}
+    agent = Agent(model, model_settings=settings)
+
+    @agent.tool_plain
+    def get_temperature(city: str) -> str:
+        return '18°C'
+
+    stream = ClaudeCodeEventStream[Any, Any](
+        session_id='session-1', model='anthropic:claude-sonnet-4-5', include_partial_messages=True
+    )
+    lines = await _lines(stream, _native_events(agent, 'How warm is it in Utrecht? Use the tool, then answer.'))
+
+    signature = next(
+        block['signature']
+        for line in lines
+        if line['type'] == 'assistant'
+        for block in line['message']['content']
+        if block['type'] == 'thinking'
+    )
+    # A real provider signature — long, opaque, and reaching the client whole through exactly one
+    # `signature_delta`, which is the invariant the hand-authored tests can only assume.
+    assert signature == IsStr(min_length=100)
+    assert _reassembled_thinking_signatures(lines) == [(signature, signature)]
+    # Anthropic streams tool arguments as JSON text, so the fragments are the provider's own and
+    # their concatenation still parses back to exactly the whole block's `input`.
+    assert _reassembled_tool_inputs(lines) == snapshot([({'city': 'Utrecht'}, {'city': 'Utrecht'})])
+    assert [
+        (line['event']['type'], line['event'].get('content_block', line['event'].get('delta', {})).get('type'))
+        if line['type'] == 'stream_event'
+        else (line['type'], line.get('subtype'))
+        for line in lines
+    ] == snapshot(
+        [
+            ('system', 'init'),
+            ('message_start', None),
+            ('content_block_start', 'thinking'),
+            ('content_block_delta', 'thinking_delta'),
+            ('content_block_delta', 'thinking_delta'),
+            ('content_block_delta', 'signature_delta'),
+            ('assistant', None),
+            ('content_block_stop', None),
+            ('content_block_start', 'tool_use'),
+            ('content_block_delta', 'input_json_delta'),
+            ('content_block_delta', 'input_json_delta'),
+            ('content_block_delta', 'input_json_delta'),
+            ('assistant', None),
+            ('content_block_stop', None),
+            ('message_delta', None),
+            ('message_stop', None),
+            ('user', None),
+            ('message_start', None),
+            ('content_block_start', 'text'),
+            ('content_block_delta', 'text_delta'),
+            ('content_block_delta', 'text_delta'),
+            ('content_block_delta', 'text_delta'),
+            ('content_block_delta', 'text_delta'),
+            ('content_block_delta', 'text_delta'),
+            ('content_block_delta', 'text_delta'),
+            ('assistant', None),
+            ('content_block_stop', None),
+            ('message_delta', None),
+            ('message_stop', None),
+            ('result', 'success'),
+        ]
+    )
+
+
 async def test_error_run_still_closes_with_a_result():
     """A run that raises still terminates the stream with a `result` record reporting the failure."""
 
@@ -1449,13 +1709,12 @@ async def test_emitted_shapes_were_observed_in_real_cli_output(assets_path: Path
         if label not in UNOBSERVED_SHAPES
         for key in keys - fixture_shapes.get(label, set())
     }
-    assert unexpected - UNOBSERVED_KEYS == set()
+    assert unexpected == UNOBSERVED_KEYS
     # And the objects themselves: every kind of record, block and event we emit was seen in the CLI's
     # own output, so no consumer meets a shape the format doesn't have.
     assert set(emitted_shapes) - set(fixture_shapes) == UNOBSERVED_SHAPES
 
 
-@pytest.mark.skipif(shutil.which('node') is None, reason='node is required to run the vendored gh-aw parser')
 async def test_ghaw_parser_reads_our_stream(assets_path: Path):
     """gh-aw's own Claude log parser extracts turns, tokens and tool calls from our stream.
 
@@ -1463,6 +1722,12 @@ async def test_ghaw_parser_reads_our_stream(assets_path: Path):
     emitting it can run as gh-aw's `engine: claude` and keep the step-summary rendering and token
     metrics that third-party engines don't get.
     """
+    if shutil.which('node') is None:  # pragma: lax no cover
+        message = 'node is required to run the vendored gh-aw parser, the only compatibility oracle in the suite'
+        # Skipping it on CI would be a green run that checked nothing, so there it's a failure.
+        if os.getenv('CI'):
+            pytest.fail(message)
+        pytest.skip(message)
 
     async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> StreamedChunks:
         if len(messages) == 1:
