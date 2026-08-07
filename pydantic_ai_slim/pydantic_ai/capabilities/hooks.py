@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, overload
 import anyio
 from pydantic import ValidationError
 
+from pydantic_ai import _utils
 from pydantic_ai.exceptions import AgentRunError, ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
@@ -849,7 +850,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         return self._registry.get(key, [])
 
     @property
-    def has_wrap_node_run(self) -> bool:
+    def _has_wrap_node_run(self) -> bool:
         return bool(self._get('wrap_node_run'))
 
     @property
@@ -942,15 +943,21 @@ class Hooks(AbstractCapability[AgentDepsT]):
     async def wrap_run_event_stream(
         self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
     ) -> AsyncIterable[AgentStreamEvent]:
+        wrapped_streams = [stream]
         # First, wrap with per-event callbacks (innermost)
         event_entries = self._get('_on_event')
         if event_entries:
             stream = _event_callback_stream(ctx, stream, event_entries)
+            wrapped_streams.append(stream)
         # Then chain explicit stream wrappers (outermost)
         for entry in reversed(self._get('wrap_run_event_stream')):
             stream = entry.func(ctx, stream=stream)
-        async for event in stream:
-            yield event
+            wrapped_streams.append(stream)
+        try:
+            async for event in stream:
+                yield event
+        finally:
+            await _utils.aclose_all(reversed(wrapped_streams))
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
@@ -1300,7 +1307,10 @@ async def _event_callback_stream(
     entries: list[_HookEntry[Any]],
 ) -> AsyncIterable[AgentStreamEvent]:
     """Wrap a stream with per-event callbacks that can observe or modify events."""
-    async for event in stream:
-        for entry in entries:
-            event = await _call_entry(entry, 'on_event', ctx, event)
-        yield event
+    try:
+        async for event in stream:
+            for entry in entries:
+                event = await _call_entry(entry, 'on_event', ctx, event)
+            yield event
+    finally:
+        await _utils.aclose_if_supported(stream)

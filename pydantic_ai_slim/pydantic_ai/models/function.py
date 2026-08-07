@@ -30,6 +30,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserContent,
@@ -39,7 +40,12 @@ from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 @dataclass(init=False)
@@ -48,6 +54,12 @@ class FunctionModel(Model):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    # A test double has no wire, so its "renderer" is whatever the test simulates: declaring every
+    # mode makes the `profile=` handed to it the whole simulation (no claim still means no channel),
+    # instead of requiring a subclass to restate what the profile already says.
+    supported_tool_deferral_modes = frozenset({'standalone', 'with_tool_search'})
+    supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
 
     function: FunctionDef | None
     stream_function: StreamFunctionDef | None
@@ -135,7 +147,7 @@ class FunctionModel(Model):
             model_request_parameters,
         )
         agent_info = AgentInfo(
-            function_tools=model_request_parameters.function_tools,
+            function_tools=model_request_parameters.declared_function_tools,
             allow_text_output=model_request_parameters.allow_text_output,
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
@@ -154,7 +166,10 @@ class FunctionModel(Model):
         response.model_name = self._model_name
         # Add usage data if not already present
         if not response.usage.has_values():  # pragma: no branch
-            response.usage = _estimate_usage(chain(messages, [response]))
+            response.usage = _estimate_usage(
+                chain(messages, [response]),
+                allow_tool_availability_deltas=self.tool_addition_mode is not None,
+            )
         return response
 
     @asynccontextmanager
@@ -170,7 +185,7 @@ class FunctionModel(Model):
             model_request_parameters,
         )
         agent_info = AgentInfo(
-            function_tools=model_request_parameters.function_tools,
+            function_tools=model_request_parameters.declared_function_tools,
             allow_text_output=model_request_parameters.allow_text_output,
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
@@ -383,10 +398,16 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
+def _estimate_usage(  # noqa: C901
+    messages: Iterable[ModelMessage], *, allow_tool_availability_deltas: bool = False
+) -> usage.RequestUsage:
     """Very rough guesstimate of the token usage associated with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
+
+    `allow_tool_availability_deltas` mirrors the calling model's profile: a delta part is
+    legitimately present when the profile advertises a native tool-addition channel, and a
+    contract violation (`prepare_messages` was skipped) otherwise.
     """
     # there seem to be about 50 tokens of overhead for both Gemini and OpenAI calls, so add that here ¯\_(ツ)_/¯
     request_tokens = 50
@@ -400,6 +421,10 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                     request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
                     request_tokens += _estimate_string_tokens(part.model_response())
+                elif isinstance(part, ToolAvailabilityDeltaPart):
+                    if not allow_tool_availability_deltas:
+                        raise _unsynthesized_tool_availability_delta_error()
+                    request_tokens += _estimate_string_tokens(' '.join(part.tools_added))
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):

@@ -151,8 +151,8 @@ async def test_history_processor_run_replaces_message_history(
                         content='Question 3',
                         timestamp=IsDatetime(),
                     ),
-                    SystemPromptPart(
-                        content='Processed answer',
+                    UserPromptPart(
+                        content='<system>Processed answer</system>',
                         timestamp=IsDatetime(),
                     ),
                 ],
@@ -219,8 +219,8 @@ async def test_history_processor_streaming_replaces_message_history(
                         content='Question 3',
                         timestamp=IsDatetime(),
                     ),
-                    SystemPromptPart(
-                        content='Processed answer',
+                    UserPromptPart(
+                        content='<system>Processed answer</system>',
                         timestamp=IsDatetime(),
                     ),
                 ],

@@ -23,7 +23,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
 - [DeepSeek](openai.md#deepseek)
 - [Fireworks AI](openai.md#fireworks-ai)
-- [GitHub Models](openai.md#github-models)
+- [GitHub Models](openai.md#github-models) (retired, deprecated)
 - [Heroku](openai.md#heroku-ai)
 - [LiteLLM](openai.md#litellm)
 - [Nebius AI Studio](openai.md#nebius-ai-studio)
@@ -283,7 +283,7 @@ print(response.all_messages())
     ),
     ModelResponse(
         parts=[TextPart(content='The capital of France is Paris.')],
-        usage=RequestUsage(input_tokens=56, output_tokens=7),
+        usage=RequestUsage(cost=Decimal('0.000273'), input_tokens=56, output_tokens=7),
         model_name='claude-sonnet-4-5',
         timestamp=datetime.datetime(...),
         run_id='...',

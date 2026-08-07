@@ -1,0 +1,133 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1897'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Find the exchange-rate tool.
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"queries":["exchange rate"]}'
+            name: search_tools
+          id: search_call_1
+          type: function
+      - content: '{"discovered_tools":[{"name":"lookup_exchange_rate"}]}'
+        role: tool
+        tool_call_id: search_call_1
+      - content: Acknowledge the available exchange-rate tool without calling it.
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: Provide an always-available tool so provider tool lists remain valid.
+          name: always_ready
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+        type: function
+      - function:
+          description: Look up an exchange rate.
+          name: lookup_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              currency:
+                type: string
+            required:
+            - currency
+            type: object
+          strict: true
+        type: function
+      - function:
+          description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name
+            the requested operation. A capability id used as an ordinary domain word does not request that capability. This
+            cannot find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
+          name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: List of search queries to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                  matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '797'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '4156'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: 'Acknowledged. The available exchange-rate tool is functions.lookup_exchange_rate. It retrieves the exchange
+            rate for a specified currency and expects a parameter like { currency: "USD" }.'
+          refusal: null
+          role: assistant
+      created: 1785464006
+      id: chatcmpl-E7X2Un26XQnkHj6X1dA95b2UKdQi8
+      model: gpt-5-2025-08-07
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: null
+      usage:
+        completion_tokens: 300
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 256
+          rejected_prediction_tokens: 0
+        prompt_tokens: 329
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 629
+    status:
+      code: 200
+      message: OK
+version: 1

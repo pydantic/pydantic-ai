@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
@@ -23,7 +24,7 @@ from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
-from ..settings import ModelSettings, ThinkingLevel
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
 from ._tool_choice import ResolvedToolChoice
@@ -778,6 +779,24 @@ class OpenRouterModel(OpenAIChatModel):
     def _resolved_profile(self) -> OpenRouterModelProfile:
         return cast(OpenRouterModelProfile, self.profile)
 
+    @override
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Resolve the longest explicit retention accepted by OpenRouter's downstream model."""
+        settings = merge_model_settings(self.settings, model_settings) or {}
+        if not self._resolved_profile.get('openrouter_supports_cache_ttl', False):
+            return None
+        return self._max_prompt_cache_retention(
+            settings.get('openrouter_cache_instructions')
+            if self._resolved_profile.get('openrouter_supports_cache_control', False)
+            else None,
+            settings.get('openrouter_cache_messages')
+            if self._resolved_profile.get('openrouter_supports_cache_control', False)
+            else None,
+            settings.get('openrouter_cache_tool_definitions')
+            if self._resolved_profile.get('openrouter_supports_tool_cache', False)
+            else None,
+        )
+
     def _build_cache_control(self, ttl: OpenRouterCacheTTL = '5m') -> dict[str, str]:
         """Build a `cache_control` dict for the downstream provider.
 
@@ -1076,7 +1095,7 @@ class OpenRouterModel(OpenAIChatModel):
         has_tool_cache_point = bool(
             model_settings
             and model_settings.get('openrouter_cache_tool_definitions')
-            and model_request_parameters.tool_defs
+            and model_request_parameters.declared_tool_defs
             and self._resolved_profile.get('openrouter_supports_tool_cache', False)
         )
         self._limit_cache_points(openai_messages, has_tool_cache_point=has_tool_cache_point)
@@ -1314,12 +1333,12 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
         if reasoning_details := choice.delta.reasoning_details:
             for i, detail in enumerate(reasoning_details):
                 thinking_part = _from_reasoning_detail(detail)
-                # Use unique vendor_part_id for each reasoning detail type to prevent
-                # different detail types (e.g., reasoning.text, reasoning.encrypted)
-                # from being incorrectly merged into a single ThinkingPart.
-                # This is required for Gemini 3 Pro which returns multiple reasoning
-                # detail types that must be preserved separately for thought_signature handling.
-                vendor_id = f'reasoning_detail_{detail.type}_{i}'
+                # OpenRouter's index is stable across chunks, unlike the position in the current
+                # chunk. It distinguishes separate details while merging deltas for one detail.
+                # The type remains part of the identifier because Gemini 3 Pro can emit text and
+                # encrypted details with the same index; those must remain separate ThinkingParts
+                # for thought-signature handling.
+                vendor_id = f'reasoning_detail_{detail.type}_{detail.index if detail.index is not None else i}'
                 yield from self._parts_manager.handle_thinking_delta(
                     vendor_part_id=vendor_id,
                     id=thinking_part.id,

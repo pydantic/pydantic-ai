@@ -2,10 +2,11 @@ import json
 import re
 import sys
 import warnings
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any, Literal, cast, get_args, get_origin
+from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
 from pydantic import TypeAdapter
@@ -42,6 +43,7 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolApproved,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolDenied,
     ToolReturn,
@@ -54,11 +56,13 @@ from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
+    CompactionPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ToolReturnContent,
     is_multi_modal_content,
     narrow_message_parts,
+    post_compaction_window,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
@@ -594,6 +598,7 @@ def test_pre_usage_refactor_messages_deserializable():
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {},
+            'cost': None,
         }
     )
 
@@ -638,6 +643,7 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
             'details': {'reasoning_tokens': 3},
+            'cost': None,
             'future_tokens': 42,
             'label': 'original',
             'zero_tokens': 0,
@@ -789,6 +795,7 @@ def test_file_part_serialization_roundtrip():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': None,
                 'timestamp': IsStr(),
@@ -954,6 +961,7 @@ def test_deferred_tool_events_serialization_roundtrip():
                         'return_value': {'result': 42},
                         'content': 'Done',
                         'metadata': {'foo': 'bar'},
+                        'tools': None,
                         'kind': 'tool-return',
                     },
                     'call_3': {'message': 'Try again', 'kind': 'model-retry'},
@@ -1956,6 +1964,38 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
+def test_args_as_json_str_valid_json_verbatim():
+    """args_as_json_str should return valid object JSON verbatim, preserving key order and whitespace."""
+    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": 2}')
+    assert part.args_as_json_str() == '{"b":  1, "a": 2}'
+
+
+def test_args_as_json_str_dict_args():
+    """args_as_json_str should serialize dict args."""
+    part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
+    assert part.args_as_json_str() == '{"key":"value"}'
+
+
+def test_args_as_json_str_malformed_json_returns_invalid_json_wrapper():
+    """args_as_json_str should return the serialized INVALID_JSON wrapper for malformed JSON, like args_as_dict."""
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    assert json.loads(part.args_as_json_str()) == {INVALID_JSON_KEY: malformed}
+
+
+def test_args_as_json_str_non_dict_json_returns_invalid_json_wrapper():
+    """args_as_json_str should return the serialized INVALID_JSON wrapper for valid JSON that's not a dict."""
+    json_list = '[1, 2, 3]'
+    part = ToolCallPart(tool_name='test_tool', args=json_list)
+    assert json.loads(part.args_as_json_str()) == {INVALID_JSON_KEY: json_list}
+
+
+def test_args_as_json_str_empty_args():
+    """args_as_json_str should return '{}' when args is None/empty."""
+    part = ToolCallPart(tool_name='test_tool', args=None)
+    assert part.args_as_json_str() == '{}'
+
+
 def test_user_prompt_part_with_text_content():
     part = UserPromptPart(
         content=[
@@ -2210,3 +2250,115 @@ def test_narrow_message_parts_promotes_valid_claims_and_leaves_plain_parts():
     assert type(narrowed[0].parts[0]) is LoadCapabilityCallPart
     assert narrowed[0].parts[1] is messages[0].parts[1]
     assert type(narrowed[1].parts[0]) is LoadCapabilityReturnPart
+
+
+def test_tool_availability_delta_round_trip():
+    """Tool availability changes retain their discriminator and optional cause across persistence."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='load-1')])
+    ]
+
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
+
+
+def test_tool_availability_delta_accepts_legacy_added_field():
+    messages = ModelMessagesTypeAdapter.validate_python(
+        [{'kind': 'request', 'parts': [{'part_kind': 'tool-availability-delta', 'added': ['new_tool']}]}]
+    )
+    assert messages == [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'])])]
+
+
+def test_tool_availability_delta_otel_message_uses_system_role():
+    """Tool availability is framework control state, not user-authored content."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'])])]
+
+    assert InstrumentationSettings().messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'system',
+                'parts': [{'type': 'text', 'content': 'Tool availability changed: +new_tool'}],
+            }
+        ]
+    )
+
+
+def test_post_compaction_window_returns_history_unchanged_without_compaction():
+    """No boundary: the whole history comes back (as a new list, input untouched)."""
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('hello'),
+        ModelResponse(parts=[TextPart(content='hi')]),
+    ]
+
+    window = post_compaction_window(messages)
+
+    assert window == messages
+    assert window is not messages
+
+
+def test_post_compaction_window_slices_at_the_latest_compaction_part():
+    """Latest boundary wins, at part-level precision within its response."""
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('old context'),
+        ModelResponse(parts=[CompactionPart(content='first summary', provider_name='anthropic')]),
+        ModelRequest.user_text_prompt('middle context'),
+        ModelResponse(
+            parts=[
+                TextPart(content='before the block'),
+                CompactionPart(content='latest summary', provider_name='anthropic'),
+                TextPart(content='after the block'),
+            ]
+        ),
+        ModelRequest.user_text_prompt('tail'),
+    ]
+
+    window = post_compaction_window(messages)
+
+    assert len(window) == 2
+    boundary_response = window[0]
+    assert isinstance(boundary_response, ModelResponse)
+    assert boundary_response.parts == [
+        CompactionPart(content='latest summary', provider_name='anthropic'),
+        TextPart(content='after the block'),
+    ]
+    assert window[1] is messages[-1]
+
+
+def test_post_compaction_window_accepts_a_minimal_sequence():
+    """The runtime `Sequence` contract only requires integer `__getitem__`; the window must
+    not depend on slice support that a minimal conforming implementation may lack."""
+
+    class IntOnlySequence(Sequence[ModelMessage]):
+        def __init__(self, items: list[ModelMessage]):
+            self._items = items
+
+        # The overloads satisfy typeshed's `Sequence` interface, which promises slicing —
+        # the runtime refusal below is exactly the type-vs-runtime gap this test pins.
+        @overload
+        def __getitem__(self, index: int) -> ModelMessage: ...
+        @overload
+        def __getitem__(self, index: slice) -> Sequence[ModelMessage]: ...
+        def __getitem__(self, index: int | slice) -> ModelMessage | Sequence[ModelMessage]:
+            if isinstance(index, slice):
+                raise TypeError('slices not supported')
+            return self._items[index]
+
+        def __len__(self) -> int:
+            return len(self._items)
+
+    messages = IntOnlySequence(
+        [
+            ModelRequest.user_text_prompt('old context'),
+            ModelResponse(parts=[CompactionPart(content='summary', provider_name='anthropic')]),
+            ModelRequest.user_text_prompt('tail'),
+        ]
+    )
+
+    # The test is only meaningful if the double really refuses slices.
+    with pytest.raises(TypeError, match='slices not supported'):
+        messages[0:1]
+
+    window = post_compaction_window(messages)
+
+    assert len(window) == 2
+    assert isinstance(window[0], ModelResponse)
+    assert isinstance(window[1], ModelRequest)
