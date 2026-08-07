@@ -17,7 +17,6 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AudioUrl,
@@ -38,7 +37,6 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeModelSettings,
     ReconnectPolicy,
-    infer_realtime_model,
 )
 from pydantic_ai.realtime._base import (
     reconnect_with_backoff,
@@ -112,21 +110,6 @@ class _VoiceProvider(Provider[None]):
             'supports_interruption': True,
             'supported_native_tools': frozenset({WebSearchTool, WebFetchTool}),
         }
-
-
-def test_infer_realtime_model_reports_that_no_providers_ship_yet() -> None:
-    with pytest.raises(UserError, match='no realtime providers are available in this build'):
-        infer_realtime_model('openai:gpt-realtime')
-
-
-async def test_session_infers_the_model_from_a_string_identifier() -> None:
-    """`realtime()` stores the identifier; `session()` resolves it when it opens the connection."""
-    agent: Agent[None, str] = Agent()
-    realtime = agent.realtime('openai:gpt-realtime')
-
-    with pytest.raises(UserError, match='no realtime providers are available in this build'):
-        async with realtime.session():
-            pass  # pragma: no cover
 
 
 def test_merge_realtime_profile_layers_later_overrides_last() -> None:

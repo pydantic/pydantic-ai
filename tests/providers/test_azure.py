@@ -70,6 +70,49 @@ def test_azure_provider_with_azure_openai_client():
     assert isinstance(provider.client, AsyncAzureOpenAI)
 
 
+def test_azure_provider_api_key_required_when_absent():
+    """`AzureProvider.api_key` raises when no API key is available (e.g. a client built for Entra auth)."""
+    provider = AzureProvider(
+        api_version='2024-12-01-preview',
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_key='1234567890',
+    )
+    provider._api_key = None  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='requires API-key authentication'):
+        _ = provider.api_key
+
+
+@pytest.mark.parametrize('auth', ['api-key-provider', 'token', 'token-provider'])
+def test_azure_provider_realtime_rejects_entra_auth(auth: str, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv('AZURE_OPENAI_API_KEY', raising=False)
+
+    async def token_provider() -> str:  # pragma: no cover - the SDK stores it, nothing here calls it
+        return 'token'
+
+    if auth == 'api-key-provider':
+        client = AsyncAzureOpenAI(
+            api_version='2024-12-01-preview',
+            azure_endpoint='https://project-id.openai.azure.com/',
+            api_key=token_provider,
+        )
+    elif auth == 'token':
+        client = AsyncAzureOpenAI(
+            api_version='2024-12-01-preview',
+            azure_endpoint='https://project-id.openai.azure.com/',
+            azure_ad_token='token',
+        )
+    else:
+        client = AsyncAzureOpenAI(
+            api_version='2024-12-01-preview',
+            azure_endpoint='https://project-id.openai.azure.com/',
+            azure_ad_token_provider=token_provider,
+        )
+    provider = AzureProvider(openai_client=client)
+
+    with pytest.raises(UserError, match='requires API-key authentication'):
+        _ = provider.api_key
+
+
 def test_azure_provider_with_http_client():
     import httpx
 
@@ -227,6 +270,31 @@ def test_azure_provider_openai_v1_ga_endpoint():
     )
     assert type(provider.client) is AsyncOpenAI
     assert provider.base_url == 'https://project-id.openai.azure.com/openai/v1/'
+
+
+def test_azure_provider_for_realtime_normalizes_bare_endpoint(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv('OPENAI_API_VERSION', raising=False)
+
+    provider = AzureProvider.for_realtime(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_key='test-key-123',
+    )
+
+    assert type(provider.client) is AsyncOpenAI
+    assert provider.azure_endpoint == 'https://project-id.openai.azure.com/openai/v1'
+    assert provider.base_url == 'https://project-id.openai.azure.com/openai/v1/'
+
+
+def test_azure_provider_for_realtime_preserves_api_version_policy(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('OPENAI_API_VERSION', '2024-10-01')
+
+    provider = AzureProvider.for_realtime(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_key='test-key-123',
+    )
+
+    assert isinstance(provider.client, AsyncAzureOpenAI)
+    assert provider.azure_endpoint == 'https://project-id.openai.azure.com'
 
 
 def test_azure_provider_foundry_serverless_with_openai_model():

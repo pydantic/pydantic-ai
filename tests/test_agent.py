@@ -4633,7 +4633,7 @@ def test_agent_name_inferred_from_realtime():
 
     assert my_realtime_agent.name is None
 
-    my_realtime_agent.realtime('fake:voice')
+    my_realtime_agent.realtime('openai:gpt-realtime')
     assert my_realtime_agent.name == 'my_realtime_agent'
 
 

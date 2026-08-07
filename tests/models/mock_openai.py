@@ -32,6 +32,7 @@ class MockOpenAI:
     index: int = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.openai.com/v1'
+    api_key: str = 'mock-api-key'
 
     @cached_property
     def chat(self) -> Any:
@@ -107,6 +108,7 @@ class MockOpenAIResponses:
     retrieve_responses: Sequence[MockResponse] | None = None
     retrieve_stream: Sequence[MockResponseStreamEvent] | Sequence[Sequence[MockResponseStreamEvent]] | None = None
     base_url: str = 'https://api.openai.com/v1'
+    api_key: str = 'mock-api-key'
 
     @cached_property
     def responses(self) -> Any:
