@@ -22,6 +22,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._activity_execution import execute_activity
+from ._dependencies import TemporalDependencyResolver
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     CallToolParams,
@@ -43,6 +44,7 @@ def temporalize_dynamic_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
+    dependency_resolver: TemporalDependencyResolver[AgentDepsT, Any] | None = None,
 ) -> DurableDynamicToolset[AgentDepsT]:
     """Temporalize a dynamic toolset.
 
@@ -50,22 +52,30 @@ def temporalize_dynamic_toolset(
     toolset resolution happens inside the activities, where I/O is allowed.
     """
 
-    async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> DynamicToolsResult:
+    async def get_tools_activity(params: GetToolsParams, deps: Any) -> DynamicToolsResult:
+        if dependency_resolver:
+            deps = await dependency_resolver.from_reference(deps)
         async with heartbeating():
             ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
             return await get_dynamic_tools(toolset, ctx)
 
-    get_tools_activity.__annotations__['deps'] = deps_type
+    get_tools_activity.__annotations__['deps'] = (
+        dependency_resolver.reference_type if dependency_resolver else deps_type
+    )
     registered_get_tools = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{toolset.id}__get_tools')(
         get_tools_activity
     )
 
-    async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
+    async def call_tool_activity(params: CallToolParams, deps: Any) -> CallToolResult:
+        if dependency_resolver:
+            deps = await dependency_resolver.from_reference(deps)
         async with heartbeating():
             ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
             return await wrap_tool_call_result(call_dynamic_tool(toolset, params.name, params.tool_args, ctx))
 
-    call_tool_activity.__annotations__['deps'] = deps_type
+    call_tool_activity.__annotations__['deps'] = (
+        dependency_resolver.reference_type if dependency_resolver else deps_type
+    )
     registered_call_tool = activity.defn(name=f'{activity_name_prefix}__dynamic_toolset__{toolset.id}__call_tool')(
         call_tool_activity
     )
@@ -76,7 +86,7 @@ def temporalize_dynamic_toolset(
             activity=registered_get_tools,
             args=[
                 GetToolsParams(serialized_run_context=run_context_type.serialize_run_context(ctx)),
-                ctx.deps,
+                dependency_resolver.to_reference(ctx.deps) if dependency_resolver else ctx.deps,
             ],
             **config,
         )
@@ -105,7 +115,7 @@ def temporalize_dynamic_toolset(
                     serialized_run_context=run_context_type.serialize_run_context(ctx),
                     tool_def=tool.tool_def,
                 ),
-                ctx.deps,
+                dependency_resolver.to_reference(ctx.deps) if dependency_resolver else ctx.deps,
             ],
             **merged_config,
         )

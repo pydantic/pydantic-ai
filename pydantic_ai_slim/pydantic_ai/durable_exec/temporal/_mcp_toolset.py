@@ -20,6 +20,7 @@ from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 from ._activity_execution import execute_activity
+from ._dependencies import TemporalDependencyResolver
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import CallToolParams, GetToolsParams, heartbeating, resolve_tool_activity_config
 
@@ -36,6 +37,7 @@ def temporalize_mcp_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
+    dependency_resolver: TemporalDependencyResolver[AgentDepsT, Any] | None = None,
 ) -> DurableMCPToolset[AgentDepsT]:
     for tool_name, config in tool_activity_config.items():
         if config is False:
@@ -44,20 +46,26 @@ def temporalize_mcp_toolset(
                 'but MCP tools require the use of IO and so cannot be run outside of an activity.'
             )
 
-    async def get_tools_activity(params: GetToolsParams, deps: AgentDepsT) -> dict[str, ToolDefinition]:
+    async def get_tools_activity(params: GetToolsParams, deps: Any) -> dict[str, ToolDefinition]:
+        if dependency_resolver:
+            deps = await dependency_resolver.from_reference(deps)
         async with heartbeating():
             ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
             return {name: tool.tool_def for name, tool in (await toolset.get_tools(ctx)).items()}
 
     async def get_instructions_activity(
-        params: GetToolsParams, deps: AgentDepsT
+        params: GetToolsParams, deps: Any
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        if dependency_resolver:
+            deps = await dependency_resolver.from_reference(deps)
         async with heartbeating():
             ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
             async with toolset:
                 return await toolset.get_instructions(ctx)
 
-    async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
+    async def call_tool_activity(params: CallToolParams, deps: Any) -> CallToolResult:
+        if dependency_resolver:
+            deps = await dependency_resolver.from_reference(deps)
         async with heartbeating():
             ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
             assert isinstance(params.tool_def, ToolDefinition)
@@ -68,7 +76,7 @@ def temporalize_mcp_toolset(
             )
 
     for activity_func in (get_tools_activity, get_instructions_activity, call_tool_activity):
-        activity_func.__annotations__['deps'] = deps_type
+        activity_func.__annotations__['deps'] = dependency_resolver.reference_type if dependency_resolver else deps_type
     get_tools_activity_def = activity.defn(name=f'{activity_name_prefix}__mcp_server__{toolset.id}__get_tools')(
         get_tools_activity
     )
@@ -93,7 +101,10 @@ def temporalize_mcp_toolset(
         config: ActivityConfig = {'summary': f'get tools: {toolset.id}', **activity_config}
         return await execute_activity(
             activity=get_tools_activity_def,
-            args=[GetToolsParams(serialized_run_context=run_context_type.serialize_run_context(ctx)), ctx.deps],
+            args=[
+                GetToolsParams(serialized_run_context=run_context_type.serialize_run_context(ctx)),
+                dependency_resolver.to_reference(ctx.deps) if dependency_resolver else ctx.deps,
+            ],
             **config,
         )
 
@@ -103,7 +114,10 @@ def temporalize_mcp_toolset(
         config: ActivityConfig = {'summary': f'get instructions: {toolset.id}', **activity_config}
         return await execute_activity(
             activity=get_instructions_activity_def,
-            args=[GetToolsParams(serialized_run_context=run_context_type.serialize_run_context(ctx)), ctx.deps],
+            args=[
+                GetToolsParams(serialized_run_context=run_context_type.serialize_run_context(ctx)),
+                dependency_resolver.to_reference(ctx.deps) if dependency_resolver else ctx.deps,
+            ],
             **config,
         )
 
@@ -127,7 +141,7 @@ def temporalize_mcp_toolset(
                     serialized_run_context=run_context_type.serialize_run_context(ctx),
                     tool_def=tool.tool_def,
                 ),
-                ctx.deps,
+                dependency_resolver.to_reference(ctx.deps) if dependency_resolver else ctx.deps,
             ],
             **merged_config,
         )

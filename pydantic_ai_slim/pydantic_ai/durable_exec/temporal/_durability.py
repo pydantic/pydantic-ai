@@ -45,6 +45,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
 from ._activity_execution import execute_activity
+from ._dependencies import TemporalDependencyResolver
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
@@ -165,6 +166,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         event_stream_handler_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+        dependency_resolver: TemporalDependencyResolver[AgentDepsT, Any] | None = None,
     ):
         """Create a TemporalDurability capability.
 
@@ -204,6 +206,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 merged on top of the base config.
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
+            dependency_resolver: Typed conversion between dependencies and the small reference
+                passed to activities.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -221,6 +225,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self.run_context_type = run_context_type
         self._deps_type = deps_type
+        self.dependency_resolver = dependency_resolver
 
         # An unknown key, or a value Temporal's own types don't accept, would only fail when the
         # config is splatted into `workflow.start_activity()` inside the workflow, where the
@@ -294,6 +299,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         activity_name_prefix = f'agent__{self.name}'
         assert self._deps_type is not None  # set by `for_agent` before activities are registered
         deps_type = self._deps_type
+        dependency_resolver = self.dependency_resolver
+        activity_deps_type = dependency_resolver.reference_type if dependency_resolver else deps_type
         run_context_type = self.run_context_type
         activities: list[Callable[..., Any]] = []
 
@@ -301,12 +308,18 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             # Temporal's Pydantic payload converter deserializes `deps` by introspecting the activity's
             # annotation, and the concrete deps type is only known once the capability is bound to an agent.
             # Set it here so serialization uses the real type instead of the placeholder the closure declares.
-            fn.__annotations__['deps'] = deps_type | None
+            fn.__annotations__['deps'] = activity_deps_type | None
             return activity.defn(name=name)(fn)
+
+        async def resolve_deps(deps: Any) -> Any:
+            if dependency_resolver is None:
+                return deps
+            return await dependency_resolver.from_reference(deps)
 
         # --- Model request activities ---
 
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
+            deps = await resolve_deps(deps)
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -323,6 +336,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         activities.append(self.request_activity)
 
         async def request_stream_activity(params: _RequestParams, deps: Any) -> _StreamedActivityPayload:
+            deps = await resolve_deps(deps)
             run_context = deserialize_run_context(
                 run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
             )
@@ -351,6 +365,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             handler = self._event_stream_handler
 
             async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: Any) -> None:
+                deps = await resolve_deps(deps)
                 async with heartbeating():
                     run_context = deserialize_run_context(
                         run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
@@ -370,6 +385,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     model = infer_model(params.model_id)
                 run_context = None
             else:
+                deps = await resolve_deps(deps)
                 run_context = deserialize_run_context(
                     run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
                 )
@@ -408,6 +424,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._deps_type,
             self.run_context_type,
             self._agent,
+            self.dependency_resolver,
         )
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
 
@@ -436,7 +453,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             activity=self.event_stream_handler_activity,
             args=[
                 _EventStreamHandlerParams(event=event, serialized_run_context=serialized_run_context),
-                ctx.deps,
+                self._activity_deps(ctx.deps),
             ],
             **config,
         )
@@ -501,7 +518,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         model_id = self._model_id_for_request(ctx, request_context)
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         model_name = model_id or request_context.model.model_id
-        deps = ctx.deps
+        deps = self._activity_deps(ctx.deps)
 
         def params(request: ModelRequestContext) -> _RequestParams:
             return _RequestParams(
@@ -558,6 +575,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
         return await handler(request_context)
+
+    def _activity_deps(self, deps: AgentDepsT) -> Any:
+        if self.dependency_resolver is None:
+            return deps
+        return self.dependency_resolver.to_reference(deps)
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:

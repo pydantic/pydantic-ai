@@ -25,6 +25,7 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
+from ._dependencies import TemporalDependencyResolver
 from ._durability import TemporalDurability
 from ._logfire import LogfirePlugin
 from ._payload_converter import PydanticAIPayloadConverter
@@ -35,6 +36,7 @@ from ._workflow import PydanticAIWorkflow
 __all__ = [
     'TemporalAgent',
     'TemporalDurability',
+    'TemporalDependencyResolver',
     'PydanticAIPlugin',
     'LogfirePlugin',
     'AgentPlugin',
