@@ -127,6 +127,7 @@ if TYPE_CHECKING:
 
     from ..realtime import (
         AudioRetention,
+        KnownRealtimeModelName,
         RealtimeEvent as RealtimeEvent,
         RealtimeModel,
         RealtimeModelSettings,
@@ -3144,7 +3145,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     @asynccontextmanager
     async def _open_realtime_session(  # noqa: C901
         self,
-        model: RealtimeModel | str,
+        model: RealtimeModel | KnownRealtimeModelName | str,
         *,
         deps: AgentDepsT = None,
         model_settings: RealtimeModelSettings | None = None,

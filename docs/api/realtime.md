@@ -44,6 +44,7 @@ provider-specific, as reported by
 | [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] | Provider ABC; `connect()` opens a connection. |
 | [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] | Settings shared by realtime providers. |
 | [`TurnDetection`][pydantic_ai.realtime.TurnDetection] | Cross-provider automatic VAD sensitivity, padding, and silence configuration. |
+| [`KnownRealtimeModelName`][pydantic_ai.realtime.KnownRealtimeModelName] / [`infer_realtime_model`][pydantic_ai.realtime.infer_realtime_model] | Provider-prefixed model IDs and inference. |
 | [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection] | Provider ABC; `send()` content in, iterate events out. |
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic concurrent tool dispatch. |
 
@@ -117,3 +118,26 @@ connection yields, the turn-control verbs and inputs it accepts, and the model-p
 Most users only need the session-level API above.
 
 ::: pydantic_ai.realtime.codec
+
+## OpenAI provider
+
+The OpenAI Realtime API provider. Requires the `realtime` and `openai` optional groups
+(`pip install "pydantic-ai-slim[realtime,openai]"`).
+
+[`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] configures
+the session, including shared turn-taking via [`TurnDetection`][pydantic_ai.realtime.TurnDetection]
+(or `False` for push-to-talk). For finer control, `openai_turn_detection` accepts
+[`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] or
+[`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] and fully overrides the shared setting.
+Resilience comes from [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] on
+[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel].
+
+::: pydantic_ai.realtime.openai
+
+## Azure OpenAI provider
+
+The Azure OpenAI realtime model reuses the OpenAI Realtime codec and connection, authenticates with
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider], and so needs the `realtime` and
+`openai` optional groups (`pip install "pydantic-ai-slim[realtime,openai]"`).
+
+::: pydantic_ai.realtime.azure

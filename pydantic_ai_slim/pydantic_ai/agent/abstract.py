@@ -60,6 +60,7 @@ if TYPE_CHECKING:
     from pydantic_ai.capabilities import CombinedCapability
     from pydantic_ai.realtime import (
         AudioRetention,
+        KnownRealtimeModelName,
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeSession,
@@ -1594,7 +1595,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     def realtime(
         self,
-        model: RealtimeModel | str,
+        model: RealtimeModel | KnownRealtimeModelName | str,
         *,
         deps: AgentDepsT = None,
         model_settings: RealtimeModelSettings | None = None,
@@ -1698,7 +1699,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     @asynccontextmanager
     async def _open_realtime_session(
         self,
-        model: RealtimeModel | str,
+        model: RealtimeModel | KnownRealtimeModelName | str,
         *,
         deps: AgentDepsT = None,
         model_settings: RealtimeModelSettings | None = None,
@@ -1952,7 +1953,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         self,
         *,
         _agent: AbstractAgent[AgentDepsT, Any],
-        _model: RealtimeModel | str,
+        _model: RealtimeModel | KnownRealtimeModelName | str,
         _deps: AgentDepsT = None,
         _model_settings: RealtimeModelSettings | None = None,
         _instructions: _instructions.AgentInstructions[AgentDepsT] = None,
