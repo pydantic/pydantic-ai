@@ -3440,6 +3440,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model_request_parameters = models.resolve_request_tools(
                 model_request_parameters, model_profile.get('supported_native_tools', frozenset())
             )
+            # A `defer_loading=True` tool is hidden until tool search reveals it, which a session whose
+            # tools are fixed at connect can never do — the model would be handed a `search_tools`
+            # affordance that finds the tool and then can't have it. Rejected up front for the same
+            # reason a deferred *capability* that contributes tools is (see `_resolve_run_capabilities`
+            # above), rather than silently advertising a search that leads nowhere.
+            deferred_tool_names = [tool.name for tool in model_request_parameters.function_tools if tool.defer_loading]
+            if deferred_tool_names:
+                formatted_names = ', '.join(repr(name) for name in deferred_tool_names)
+                raise exceptions.UserError(
+                    'Realtime sessions cannot reveal tools mid-session, so tools with '
+                    f'`defer_loading=True` are not supported; remove it from: {formatted_names}.'
+                )
             # Realtime codecs read `function_tools` directly, so hidden tools are dropped from the
             # connect-time advertisement entirely — the same physical removal this path applied
             # before visibility became a resolved table.

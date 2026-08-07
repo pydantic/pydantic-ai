@@ -824,11 +824,19 @@ async def test_external_cancellation_keeps_its_type_and_settles_history() -> Non
     assert any(isinstance(part, SpeechPart) and part.transcript == 'cut off mid-' for part in response.parts)
 
 
-async def test_session_tool_cannot_reveal_tools() -> None:
-    """`ToolReturn.tools` from a session tool raises: the connection's tool list is fixed at connect.
+async def test_session_tool_reveal_is_a_no_op_like_a_standard_run() -> None:
+    """`ToolReturn.tools` naming nothing revealable is a silent no-op, exactly as in a graph run.
 
-    Silently dropping the reveal would provide less than the tool requested — the same rationale
-    as rejecting deferred tool-contributing capabilities before connecting.
+    The graph rejects only a name owned by an unloaded capability and treats every other name — a
+    typo, an already-visible tool — as a no-op (see `_reject_unloaded_capability_reveals`, and
+    `ToolAvailabilityDeltaPart`'s "silent no-op by design"). A session used to raise on *any* reveal,
+    which was both harsher than the graph and harsher than it needed to be: a session refuses
+    `defer_loading=True` tools and tool-contributing deferred capabilities when it opens, so it holds
+    nothing a reveal could have surfaced and nothing is lost by dropping the request.
+
+    That also makes the unloaded-capability branch unreachable from a session — the capabilities that
+    own hidden tools are exactly the ones a session refuses at connect — so it is covered on the graph
+    side rather than here.
     """
     agent = Agent()
 
@@ -842,5 +850,10 @@ async def test_session_tool_cannot_reveal_tools() -> None:
             ResponseDone(),
         ],
     )
-    with pytest.raises(UserError, match='cannot reveal tools mid-session'):
-        await _drain(agent, model)
+    events = await _drain(agent, model)
+
+    # Reaching here at all is the point: the reveal no longer raises out of the session.
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert result.part.content == 'done'
+    assert result.part.outcome == 'success'

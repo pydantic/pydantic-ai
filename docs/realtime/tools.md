@@ -65,12 +65,52 @@ restrictions—are canonical on the [Gemini provider page](gemini.md#native-tool
 
 ## Deferred and approval-required tools
 
-[`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] can resolve deferred
-or approval-required calls inline. If no handler resolves one, the model receives an explanation
-that the tool cannot complete during a realtime session.
+**An approval-gated tool is not executable in a realtime session unless you install a
+[`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler.** A standard
+run can end with a `DeferredToolRequests` output and resume once a human answers; a live conversation
+has nowhere to pause, so with no handler the call is refused *every time* — the model receives an
+explanation that the tool cannot complete during a realtime session, and the tool never runs.
+Installing a handler is the expected setup for approval-gated tools in a realtime session, not an
+optional extra.
+
+The handler resolves each call inline: approve it (the tool then runs and returns normally), deny it
+(recorded with `outcome='denied'`), substitute a result, or request a retry.
+
+!!! warning "The handler answers from policy, not from a person"
+    The handler must return a decision promptly — it is a programmatic policy resolver, not an approval
+    UI. It runs as a background task like the tool itself, so it never blocks the session's events, but
+    what the *conversation* does while it thinks is provider-specific in exactly the way
+    [concurrent tool execution](#concurrent-tool-execution) describes: OpenAI and Azure carry on, while
+    Gemini holds the model's turn until the result arrives. On Gemini a slow handler therefore reads as
+    assistant silence, and if the user speaks into that gap the provider cancels the pending call
+    outright (recorded as [a synthetic cancellation](#function-tools)).
+
+    Asking a human mid-call and resuming on their answer is not supported yet; a standard run, which
+    can end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output and resume
+    later, is the place for that today.
+
+    [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] on a session is
+    informational for the same reason: it is emitted when the handler *has* resolved the calls, so a
+    consumer can observe what was asked and decided. It is not a hook to respond to — unlike the same
+    event in a standard run, nothing waits for the consumer, and no event is emitted when no handler is
+    installed and the call is refused.
+
+This applies to both ways a call is deferred — raising
+[`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+[`CallDeferred`][pydantic_ai.exceptions.CallDeferred] from the tool, and declaring it up front with
+`requires_approval=True` or an [external toolset](../toolsets.md#external-toolset). An approval-gated
+tool is still advertised to the model, exactly as in a standard run; calling it opens the approval
+flow rather than running the tool.
 
 A realtime session cannot pause and return a `DeferredToolRequests` output for an out-of-band
 result. Resolve the request during the call or move that workflow to a standard agent run.
+
+A session's tools are fixed when the connection opens, so nothing can reveal a tool mid-call. Tools
+registered with `defer_loading=True` for [tool search](../tools-advanced.md#tool-search), and
+[capabilities](../capabilities/overview.md) with `defer_loading=True` that contribute tools or native
+tools, are therefore rejected with [`UserError`][pydantic_ai.exceptions.UserError] when the session
+opens — rather than advertising a search that could find the tool but never deliver it. Register
+those tools normally for a realtime session, or keep that workflow in a standard agent run.
 
 ## Enqueuing prompts from tools
 
