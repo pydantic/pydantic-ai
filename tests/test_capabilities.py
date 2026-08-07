@@ -78,6 +78,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryImage,
+    CompactionPart,
     EnqueuedMessagesEvent,
     FilePart,
     FunctionToolCallEvent,
@@ -7104,6 +7105,51 @@ class TestSkipModelRequestInteraction:
         assert output == 'model short-circuited'
 
 
+def secret_op() -> str:
+    """A capability-owned tool an owner's `prepare_tools` filters out."""
+    return 'SECRET EXECUTED'  # pragma: no cover
+
+
+def _report_secret_op_outcome(messages: list[ModelMessage]) -> ModelResponse | None:
+    """Report whether a `secret_op` call executed or was blocked, once its result is in."""
+    last = messages[-1]
+    if isinstance(last, ModelRequest):
+        for part in last.parts:
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'secret_op':
+                return make_text_response(f'RESULT: {part.content}')
+            if isinstance(part, RetryPromptPart):
+                return make_text_response(f'BLOCKED: {part.content}')
+    return None
+
+
+def _call_secret_op(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Directly call `secret_op` without it ever being offered."""
+    return _report_secret_op_outcome(messages) or ModelResponse(
+        parts=[ToolCallPart(tool_name='secret_op', args={}, tool_call_id='s1')]
+    )
+
+
+def _load_compact_then_call_secret_op(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Load `guarded`, emit a `CompactionPart` to reset that state, then direct-call its tool."""
+    if (report := _report_secret_op_outcome(messages)) is not None:
+        return report
+
+    parts = [part for message in messages for part in message.parts]
+    if not any(isinstance(p, ToolReturnPart) and p.tool_name == LOAD_CAPABILITY_TOOL_NAME for p in parts):
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'guarded'}, tool_call_id='l1')]
+        )
+    if not any(isinstance(p, CompactionPart) for p in parts):
+        # Compaction lands in its own step, alongside a harmless call so the run continues.
+        return ModelResponse(
+            parts=[
+                CompactionPart(content='Summary: guarded was loaded earlier.', provider_name='function'),
+                ToolCallPart(tool_name='ping', args={}, tool_call_id='p1'),
+            ]
+        )
+    return ModelResponse(parts=[ToolCallPart(tool_name='secret_op', args={}, tool_call_id='s1')])
+
+
 class TestPrepareToolsHook:
     async def test_filter_function_tools(self):
         """Capability can filter out function tools by name."""
@@ -7217,6 +7263,95 @@ class TestPrepareToolsHook:
         result = await agent.run('hello')
         # A runs first, then B, so suffix order is _A_B
         assert 'desc_A_B' in result.output
+
+
+class TestUnloadedCapabilityPreparesOwnTools:
+    """A deferred capability governs its own tools even while it counts as unloaded.
+
+    Capability-owned tools stay directly callable while their capability is unloaded (reveal
+    evidence with no load pair, or a load pair reset at a `CompactionPart` boundary), so an
+    owner's `prepare_tools` filter has to keep applying to them — otherwise a direct call
+    reaches a tool the owner meant to filter, harden, or gate.
+    """
+
+    @staticmethod
+    def _guarded_capability(seen: list[tuple[bool | None, list[str]]]) -> Capability[Any]:
+        class GuardedCap(Capability[Any]):
+            async def prepare_tools(
+                self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                seen.append((ctx.capability_loaded, sorted(td.name for td in tool_defs)))
+                return [td for td in tool_defs if td.name != 'secret_op']
+
+        return GuardedCap(
+            id='guarded',
+            description='Guarded tools.',
+            toolsets=[FunctionToolset([secret_op])],
+            defer_loading=True,
+        )
+
+    async def test_never_loaded_capability_filters_its_own_tool(self):
+        """A direct call to an unloaded capability's tool hits the owner's filter."""
+        seen: list[tuple[bool | None, list[str]]] = []
+        agent = Agent(FunctionModel(_call_secret_op), capabilities=[self._guarded_capability(seen)])
+
+        result = await agent.run('hello')
+
+        assert result.output == snapshot("BLOCKED: Unknown tool name: 'secret_op'. Available tools: 'load_capability'")
+        # The hook ran while unloaded, seeing only the tool the capability itself owns.
+        assert seen == [(False, ['secret_op']), (False, ['secret_op'])]
+
+    async def test_capability_filters_its_own_tool_after_compaction(self):
+        """A `CompactionPart` resets the load state, and the owner's filter still applies."""
+        seen: list[tuple[bool | None, list[str]]] = []
+        agent = Agent(FunctionModel(_load_compact_then_call_secret_op), capabilities=[self._guarded_capability(seen)])
+
+        @agent.tool_plain
+        def ping() -> str:
+            return 'pong'
+
+        result = await agent.run('hello')
+
+        assert result.output == snapshot(
+            "BLOCKED: Unknown tool name: 'secret_op'. Available tools: 'load_capability', 'ping'"
+        )
+        # Loaded once (whole function-tool list), then unloaded again past the boundary
+        # (own tool only) — and filtering held in both states.
+        assert (True, ['ping', 'secret_op']) in seen
+        assert seen[-1] == (False, ['secret_op'])
+
+    async def test_unloaded_capability_cannot_reach_other_tools(self):
+        """While unloaded, the hook sees only its own tools and cannot touch unrelated ones."""
+        seen: list[tuple[bool | None, list[str]]] = []
+
+        class GrabEverythingCap(Capability[Any]):
+            async def prepare_tools(
+                self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+            ) -> list[ToolDefinition]:
+                seen.append((ctx.capability_loaded, sorted(td.name for td in tool_defs)))
+                return []
+
+        greedy = GrabEverythingCap(
+            id='greedy',
+            description='Greedy.',
+            toolsets=[FunctionToolset([secret_op])],
+            defer_loading=True,
+        )
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return make_text_response(f'tools: {sorted(t.name for t in info.function_tools)}')
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[greedy])
+
+        @agent.tool_plain
+        def untouched() -> str:
+            return 'safe'  # pragma: no cover
+
+        result = await agent.run('hello')
+
+        # Returning [] dropped only its own tool; `untouched` and `load_capability` survive.
+        assert result.output == "tools: ['load_capability', 'untouched']"
+        assert seen == [(False, ['secret_op'])]
 
 
 class TestPrepareOutputToolsHook:
