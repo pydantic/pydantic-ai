@@ -110,12 +110,12 @@ def encode_events(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str]:
     return event_stream.encode_stream(event_stream.transform_stream(events))
 ```
 
-The [AG-UI](ag-ui.md) equivalent, [`AGUIEventStream`][pydantic_ai.ui.ag_ui.AGUIEventStream], identifies the run in the events it emits, so pass it `thread_id` and `run_id` to correlate the stream with the run it's encoding. They default to new UUIDs, and a `run_input` takes precedence over both when one is available.
+The [AG-UI](ag-ui.md) equivalent, [`AGUIEventStream`][pydantic_ai.ui.ag_ui.AGUIEventStream], identifies the run in the events it emits, so pass it `thread_id` and `run_id` to correlate the stream with the run it's encoding. They default to new UUIDs, and a `run_input` takes precedence over both when one is available. They label the emitted events only: with no `UIAdapter` to forward the thread as the agent's conversation, pass matching values to [`Agent.run_stream_events()`](../agent.md#running-agents) as well if you want the agent run and the encoded stream to share an identity.
 
 !!! warning "Pass explicit IDs when the stream can be interrupted or replayed"
     The defaults are generated per [`AGUIEventStream`][pydantic_ai.ui.ag_ui.AGUIEventStream] instance, so two instances never share a run identity. Pass IDs derived from the run itself in either of these cases:
 
-    - The stream can end in an [interrupt](ag-ui.md#tool-approval-interrupts), whose `thread_id` and `run_id` the frontend sends back to resume. If the paused and resumed segments are encoded by different instances, one logical run reaches the frontend under two identities.
+    - The stream can end in an [interrupt](ag-ui.md#tool-approval-interrupts). The frontend resumes on the same `thread_id`, and the resumed segment is a new run with its own `run_id`, so a defaulted `thread_id` splits one conversation across two threads.
     - The events are encoded inside [durable execution](../durable_execution/overview.md) workflow code rather than at the subscriber, since that code re-runs on replay and a defaulted UUID changes each time.
 
 ## Trust model for client-submitted messages

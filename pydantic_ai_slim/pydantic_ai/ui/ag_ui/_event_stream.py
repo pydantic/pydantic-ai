@@ -95,24 +95,30 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     thread_id: str = field(default_factory=lambda: str(uuid7()))
     """The AG-UI thread ID to emit on `RunStartedEvent` and `RunFinishedEvent`.
 
-    This is the protocol's own [`RunAgentInput.thread_id`][pydantic_ai.ui.ag_ui.RunAgentInput], not the
-    agent run's conversation ID.
+    This is the protocol's own [`RunAgentInput.thread_id`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput),
+    which [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] also forwards as the agent run's conversation ID.
 
     `run_input` takes precedence: when one is available this is overwritten with its `thread_id`, even if
     a value was passed explicitly. Otherwise it can be passed explicitly to correlate an encoder-only
     stream with a thread, and defaults to a new UUID.
+
+    A default is minted per instance, so pass an explicit value when the encoding is split across
+    instances — a resume after an interrupt, or durable-execution code that re-runs on replay.
     """
 
     run_id: str = field(default_factory=lambda: str(uuid7()))
     """The AG-UI run ID to emit on `RunStartedEvent` and `RunFinishedEvent`.
 
-    This is the protocol's own [`RunAgentInput.run_id`][pydantic_ai.ui.ag_ui.RunAgentInput], distinct from
-    the agent run's `run_id` on [`UIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream]; the two are
-    never fed into each other.
+    This is the protocol's own [`RunAgentInput.run_id`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput),
+    distinct from the agent run's `run_id` on [`UIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream];
+    the two are never fed into each other.
 
     `run_input` takes precedence: when one is available this is overwritten with its `run_id`, even if a
     value was passed explicitly. Otherwise it can be passed explicitly to correlate an encoder-only stream
     with a run, and defaults to a new UUID.
+
+    A default is minted per instance, so pass an explicit value when durable-execution code that re-runs
+    on replay does the encoding.
     """
 
     _use_reasoning: bool = field(default=False, init=False)
