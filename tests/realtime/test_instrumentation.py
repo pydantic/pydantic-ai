@@ -6,7 +6,7 @@ Two span sources meet here:
   [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession]; tests that only exercise those construct
   a `RealtimeSession` directly with `instrumentation=`.
 - The per-tool `execute_tool` span is owned by the `Instrumentation` capability's `wrap_tool_execute`
-  hook, which [`Agent.realtime_session`][pydantic_ai.agent.Agent.realtime_session] injects into the
+  hook, which [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] injects into the
   tool runner's `ToolManager` (mirroring a classic run). Tests that assert on tool spans go through
   `Agent.realtime_session` so the capability produces them.
 """
@@ -58,6 +58,8 @@ from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    RealtimeOutputSpeechEndEvent,
+    RealtimeOutputSpeechStartEvent,
     RealtimeSession as _RealtimeSession,
 )
 from pydantic_ai.realtime.codec import (
@@ -211,6 +213,63 @@ async def test_owner_error_marks_active_chat_and_session_spans() -> None:
     assert spans['chat gpt-realtime'].status.is_ok is False
     assert spans['invoke_agent agent'].status.is_ok is False
     assert all(span.events for span in spans.values())
+
+
+async def test_playback_boundary_opens_a_speak_span_outlasting_the_response() -> None:
+    """A `speak` span measures audibility, which a WebRTC sideband's turn spans can't.
+
+    The provider generates audio far ahead of playing it, so `model turn complete` lands while the listener
+    still has seconds of speech to hear. Without this span the trace claims the model stopped talking
+    long before it did.
+    """
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection(
+            [
+                RealtimeOutputSpeechStartEvent(),
+                # A repeat, which some providers send: one utterance is one span, not two.
+                RealtimeOutputSpeechStartEvent(),
+                ResponseDone(),
+                RealtimeOutputSpeechEndEvent(),
+            ]
+        ),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        events = [event async for event in session]
+
+    # The events reach the caller as well, so a UI can drive a 'speaking' indicator from them.
+    assert [type(event).__name__ for event in events] == [
+        'RealtimeOutputSpeechStartEvent',
+        'RealtimeOutputSpeechStartEvent',
+        'RealtimeTurnCompleteEvent',
+        'RealtimeOutputSpeechEndEvent',
+    ]
+    assert len([span for span in exporter.get_finished_spans() if span.name == 'speak gpt-realtime']) == 1
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    speak = spans['speak gpt-realtime']
+    assert speak.end_time is not None and speak.start_time is not None
+    # It brackets the turn rather than nesting inside it: playback outlives the response.
+    assert speak.end_time >= spans['model turn complete'].end_time  # type: ignore[operator]
+
+
+async def test_no_speak_span_without_playback_reporting() -> None:
+    """An ordinary session never reports playback, so its trace is unchanged."""
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([OutputTranscript(text='hi', is_final=True), ResponseDone()]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        _ = [event async for event in session]
+
+    assert not [span for span in exporter.get_finished_spans() if span.name.startswith('speak')]
 
 
 def _weather_agent(*, name: str | None = None, capabilities: list[Instrumentation] | None = None) -> Agent[None, str]:

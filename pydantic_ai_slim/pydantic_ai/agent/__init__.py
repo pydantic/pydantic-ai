@@ -117,6 +117,8 @@ from .abstract import (
     EventStreamHandler,
     EventStreamProcessor,
     RunOutputDataT,
+    _RealtimeSessionLifecycle,  # pyright: ignore[reportPrivateUsage]
+    _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
 )
 from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
@@ -132,6 +134,7 @@ if TYPE_CHECKING:
         RealtimeEvent as RealtimeEvent,
         RealtimeModel,
         RealtimeModelSettings,
+        RealtimeProviderSession,
         RealtimeSession,
     )
     from ..ui._web import ModelsParam
@@ -1558,7 +1561,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         initial_ctx.metadata = state.metadata
 
         # Resolve the capability layers and extract their per-run contributions. Shared with
-        # `realtime_session` via `_resolve_run_capabilities` so both wire capabilities up identically;
+        # `_open_realtime_session` via `_resolve_run_capabilities` so both wire capabilities up identically;
         # this call site keeps the graph-only surroundings: the `InstrumentedModel` unwrap and
         # instrumentation-settings resolution above, the deferred loader (`inject_deferred_loader=True`),
         # the output toolset below, and the layered `get_model_settings` closure. Keep those in sync
@@ -1587,7 +1590,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
         )
 
-        # Build model settings resolver using per-run capability. Shared with `realtime_session` via
+        # Build model settings resolver using per-run capability. Shared with `_open_realtime_session` via
         # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
         # base for a graph run). Resolved per model-request step here; once at connect in a session.
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
@@ -2730,7 +2733,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _base_run_capability(self) -> tuple[CombinedCapability[AgentDepsT], bool]:
         """The base capability layer for a run, plus whether it came from `override(root_capability=...)`.
 
-        `iter` and `realtime_session` both resolve the base layer through this so the override is honored
+        `iter` and `_open_realtime_session` both resolve the base layer through this so the override is honored
         identically — KEEP the two call sites in sync (a realtime session that ignored the override would
         silently drop a `with agent.override(root_capability=...):` block).
         """
@@ -2743,7 +2746,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Bind per-run capabilities to this agent via `for_agent` before capability resolution.
 
         `_resolve_run_capabilities` only ever calls `for_run`, so binding the per-run layer via
-        `for_agent` is the caller's responsibility. `iter` and `realtime_session` both MUST call this —
+        `for_agent` is the caller's responsibility. `iter` and `_open_realtime_session` both MUST call this —
         skipping it uses a capability that overrides `for_agent` (e.g. the durability capabilities)
         unbound, a silent divergence. KEEP the two call sites in sync.
         """
@@ -2862,7 +2865,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Resolve the per-run capability layers and extract their contributions.
 
         Shared by [`iter`][pydantic_ai.agent.AbstractAgent.iter] / [`run`][pydantic_ai.agent.AbstractAgent.run]
-        and [`realtime_session`][pydantic_ai.agent.Agent.realtime_session] so both wire capabilities up
+        and [`_open_realtime_session`][pydantic_ai.agent.Agent.realtime] so both wire capabilities up
         identically: the outermost `Instrumentation` injection, per-layer `for_run` resolution (never
         composing first — see below), optional deferred-loader injection, and the native-tool /
         instruction / model-settings / toolset contributions with `override(native_tools=...)` folded
@@ -3148,7 +3151,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return schema
 
     @asynccontextmanager
-    async def _open_realtime_session(  # noqa: C901
+    async def _resolve_realtime_session(  # noqa: C901
         self,
         model: RealtimeModel | KnownRealtimeModelName | str,
         *,
@@ -3163,18 +3166,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         conversation_id: str | None = None,
         run_id: str | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
-        audio_retention: AudioRetention = 'transcript_only',
-        retain_images_every_n: int = 1,
-        retain_images_max: int | None = 100,
-    ) -> AsyncGenerator[RealtimeSession]:
-        """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
+        run_lifecycle: bool = False,
+    ) -> AsyncGenerator[_RealtimeSessionResolution[AgentDepsT]]:
+        """Resolve the agent configuration shared by realtime sessions and WebRTC signaling.
 
-        Opens the realtime session and drives the agent's tools. Users go through
-        [`agent.realtime(model).session()`][pydantic_ai.agent.AbstractAgent.realtime]; see
-        [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
+        With `run_lifecycle`, the run-lifecycle hooks are dispatched around the resolved configuration
+        as well, so that they wrap the toolset — and the session the caller opens inside them — exactly
+        as `iter` does. Only [`_open_realtime_session`][pydantic_ai.agent.Agent._open_realtime_session]
+        asks for that: signaling only reads back the instructions and tools a session would advertise,
+        and is not itself a run.
         """
-        from ..realtime import RealtimeModel, RealtimeSession, infer_realtime_model
-        from ..realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput
+        from ..realtime import RealtimeModel, infer_realtime_model
 
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
@@ -3338,61 +3340,52 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
         toolset = await toolset.for_run(run_context)
 
-        session: RealtimeSession | None = None
-        short_result: AgentRunResult[Any] | None = None
+        # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never
+        # will — so the session and the result standing in for it are handed back through this holder.
+        lifecycle_state = _RealtimeSessionLifecycle() if run_lifecycle else None
 
         def _build_session_result() -> AgentRunResult[Any]:
-            assert session is not None
-            return session._build_run_result(result_state)  # pyright: ignore[reportPrivateUsage]
+            assert lifecycle_state is not None and lifecycle_state.session is not None
+            return lifecycle_state.session._build_run_result(result_state)  # pyright: ignore[reportPrivateUsage]
 
         async def _finalize_session_result(result: AgentRunResult[Any]) -> None:
-            nonlocal short_result
-            if session is None:
-                short_result = result
+            assert lifecycle_state is not None
+            if lifecycle_state.session is None:
+                lifecycle_state.short_result = result
             else:
-                session._result = result  # pyright: ignore[reportPrivateUsage]
+                lifecycle_state.session._result = result  # pyright: ignore[reportPrivateUsage]
 
         async with AsyncExitStack() as session_stack:
-            lifecycle = await session_stack.enter_async_context(
-                _run_lifecycle_hooks(
-                    run_capability,
-                    run_context,
-                    build_result=_build_session_result,
-                    finalize=_finalize_session_result,
+            if lifecycle_state is not None:
+                lifecycle = await session_stack.enter_async_context(
+                    _run_lifecycle_hooks(
+                        run_capability,
+                        run_context,
+                        build_result=_build_session_result,
+                        finalize=_finalize_session_result,
+                    )
                 )
-            )
-            if lifecycle.short_circuited:
-                # The session below is yielded closed, so `_ensure_not_closed` rejects every public
-                # entry point before the connection is touched; these raises are defense-in-depth
-                # for the abstract methods the base class requires.
-                class _SkippedRealtimeConnection(RealtimeConnection):
-                    async def send(self, content: RealtimeInput) -> None:
-                        raise exceptions.UserError(  # pragma: no cover
-                            'This realtime session was short-circuited before connecting.'
-                        )
-
-                    def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
-                        raise exceptions.UserError(  # pragma: no cover
-                            'This realtime session was short-circuited before connecting.'
-                        )
-
-                session = RealtimeSession(
-                    _SkippedRealtimeConnection(),
-                    ToolManager(FunctionToolset()),
-                    model_name=model.model_name,
-                    usage=run_context.usage,
-                    usage_limits=usage_limits,
-                    message_history=message_history,
-                    profile=model_profile,
-                    conversation_id=conversation_id,
-                    run_id=run_id,
-                    metadata=run_context.metadata,
-                )
-                assert short_result is not None
-                session._result = short_result  # pyright: ignore[reportPrivateUsage]
-                session._closed = True  # pyright: ignore[reportPrivateUsage]
-                yield session
-                return
+                if lifecycle.short_circuited:
+                    # Nothing below this is resolved: the toolset is never entered and the caller
+                    # yields a closed session in place of connecting. The empty `ToolManager` is the
+                    # one that session is built on.
+                    yield _RealtimeSessionResolution(
+                        model=model,
+                        run_context=run_context,
+                        tool_manager=ToolManager(FunctionToolset()),
+                        tool_defs=[],
+                        model_request_parameters=models.ModelRequestParameters(),
+                        model_settings=effective_model_settings,
+                        instructions=None,
+                        request_messages=[],
+                        model_profile=model_profile,
+                        instrumentation_settings=session_instrumentation_settings,
+                        conversation_id=conversation_id,
+                        run_id=run_id,
+                        lifecycle=lifecycle_state,
+                        short_circuited=True,
+                    )
+                    return
             await session_stack.enter_async_context(toolset)
             tool_manager = await ToolManager[AgentDepsT](
                 toolset, root_capability=run_capability, default_max_retries=max_tool_retries
@@ -3479,61 +3472,184 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 else None
             )
 
-            if message_history and not model_profile.get('supports_session_seeding', False):
+            yield _RealtimeSessionResolution(
+                model=model,
+                run_context=run_context,
+                tool_manager=tool_manager,
+                # The tools a session actually advertises, so signaling bakes the same list into the
+                # provider session that a sideband attaching later would push over the control channel.
+                tool_defs=model_request_parameters.function_tools,
+                model_request_parameters=model_request_parameters,
+                model_settings=effective_model_settings,
+                instructions=resolved_instructions or None,
+                request_messages=request_messages,
+                model_profile=model_profile,
+                instrumentation_settings=session_instrumentation_settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                wrap_event_stream=wrap_event_stream,
+                lifecycle=lifecycle_state,
+            )
+
+    @asynccontextmanager
+    async def _open_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
+        provider_session: RealtimeProviderSession | None = None,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
+
+        Opens the realtime session and drives the agent's tools. Users go through
+        [`agent.realtime(model).session()`][pydantic_ai.agent.AbstractAgent.realtime]; see
+        [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
+        """
+        from ..realtime import RealtimeSession
+        from ..realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput
+
+        # A WebRTC sideband session doesn't own the audio transport: the browser streams audio to the
+        # provider directly, so the session disables its audio methods and retains no audio bytes.
+        owns_media = provider_session is None
+        if provider_session is not None and audio_retention != 'transcript_only':
+            # Reject an audio-retention request that can never be satisfied (no audio bytes flow here).
+            raise exceptions.UserError(
+                "A WebRTC sideband session can't retain audio: the browser exchanges audio with the "
+                'provider directly, so no audio bytes reach this connection. Leave `audio_retention` at '
+                "'transcript_only' (transcripts still build the conversation history)."
+            )
+
+        async with self._resolve_realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            message_history=message_history,
+            run_lifecycle=True,
+        ) as resolved:
+            lifecycle = resolved.lifecycle
+            assert lifecycle is not None
+            if resolved.short_circuited:
+                # The session below is yielded closed, so `_ensure_not_closed` rejects every public
+                # entry point before the connection is touched; these raises are defense-in-depth
+                # for the abstract methods the base class requires.
+                class _SkippedRealtimeConnection(RealtimeConnection):
+                    async def send(self, content: RealtimeInput) -> None:
+                        raise exceptions.UserError(  # pragma: no cover
+                            'This realtime session was short-circuited before connecting.'
+                        )
+
+                    def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+                        raise exceptions.UserError(  # pragma: no cover
+                            'This realtime session was short-circuited before connecting.'
+                        )
+
+                session = RealtimeSession(
+                    _SkippedRealtimeConnection(),
+                    resolved.tool_manager,
+                    model_name=resolved.model.model_name,
+                    usage=resolved.run_context.usage,
+                    usage_limits=usage_limits,
+                    message_history=message_history,
+                    profile=resolved.model_profile,
+                    conversation_id=resolved.conversation_id,
+                    run_id=resolved.run_id,
+                    metadata=resolved.run_context.metadata,
+                )
+                assert lifecycle.short_result is not None
+                session._result = lifecycle.short_result  # pyright: ignore[reportPrivateUsage]
+                session._closed = True  # pyright: ignore[reportPrivateUsage]
+                yield session
+                return
+
+            if message_history and not resolved.model_profile.get('supports_session_seeding', False):
                 raise exceptions.UserError(
-                    f'The {model.model_name!r} realtime model does not support seeding a session with '
+                    f'The {resolved.model.model_name!r} realtime model does not support seeding a session with '
                     '`message_history`.'
                 )
 
-            output_modality = (effective_model_settings or {}).get('output_modality', 'audio')
+            output_modality = (resolved.model_settings or {}).get('output_modality', 'audio')
             # Unlike a setting the provider merely ignores, this one changes what the caller gets back:
             # a model that can't do it either fails the handshake (Gemini) or answers with speech anyway
             # (xAI), so it is rejected here rather than after a connection is open.
-            if output_modality == 'text' and not model_profile.get('supports_text_output', True):
+            if output_modality == 'text' and not resolved.model_profile.get('supports_text_output', True):
                 raise exceptions.UserError(
-                    f"The {model.model_name!r} realtime model does not support `output_modality='text'`; "
+                    f"The {resolved.model.model_name!r} realtime model does not support `output_modality='text'`; "
                     'it only generates audio. Read the spoken answer from the transcript on the '
                     '`SpeechPart` instead.'
                 )
 
-            async with model.connect(
-                messages=request_messages,
-                model_settings=effective_model_settings,
-                model_request_parameters=model_request_parameters,
-            ) as connection:
+            if provider_session is not None:
+                connection_manager = resolved.model.connect_webrtc(
+                    provider_session,
+                    messages=resolved.request_messages,
+                    model_settings=resolved.model_settings,
+                    model_request_parameters=resolved.model_request_parameters,
+                )
+            else:
+                connection_manager = resolved.model.connect(
+                    messages=resolved.request_messages,
+                    model_settings=resolved.model_settings,
+                    model_request_parameters=resolved.model_request_parameters,
+                )
+            async with connection_manager as connection:
                 session = RealtimeSession(
                     connection,
-                    tool_manager,
-                    instrumentation=session_instrumentation_settings,
-                    model_name=model.model_name,
-                    provider_name=model.system,
-                    provider_url=model.base_url,
+                    resolved.tool_manager,
+                    instrumentation=resolved.instrumentation_settings,
+                    model_name=resolved.model.model_name,
+                    provider_name=resolved.model.system,
+                    provider_url=resolved.model.base_url,
                     # Fall back to 'agent' like the classic run span (see `capabilities/instrumentation.py`)
                     # so the session span always carries an `agent_name`; backends that group runs by it
                     # (e.g. Logfire's Runs view) would otherwise skip an unnamed agent's realtime session.
                     agent_name=self.name or 'agent',
-                    usage=run_context.usage,
+                    usage=resolved.run_context.usage,
                     usage_limits=usage_limits,
                     audio_retention=audio_retention,
                     retain_images_every_n=retain_images_every_n,
                     retain_images_max=retain_images_max,
                     message_history=message_history,
-                    profile=model_profile,
-                    conversation_id=conversation_id,
-                    run_id=run_id,
-                    instructions=resolved_instructions or None,
-                    metadata=run_context.metadata,
+                    profile=resolved.model_profile,
+                    owns_media=owns_media,
+                    conversation_id=resolved.conversation_id,
+                    run_id=resolved.run_id,
+                    instructions=resolved.instructions,
+                    metadata=resolved.run_context.metadata,
                     agent_description=(
-                        self.render_description(deps) if session_instrumentation_settings is not None else None
+                        self.render_description(resolved.run_context.deps)
+                        if resolved.instrumentation_settings is not None
+                        else None
                     ),
                     output_modality=output_modality,
                     # Surfaced on the session span so the session's configured native tools and realtime
                     # settings are inspectable, respecting `include_model_request_parameters`.
-                    model_request_parameters=model_request_parameters,
-                    model_settings=effective_model_settings,
-                    wrap_event_stream=wrap_event_stream,
+                    model_request_parameters=resolved.model_request_parameters,
+                    model_settings=resolved.model_settings,
+                    wrap_event_stream=resolved.wrap_event_stream,
                 )
-                run_context.realtime_session = session
+                lifecycle.session = session
+                resolved.run_context.realtime_session = session
                 async with session:
                     yield session
 
@@ -3787,7 +3903,7 @@ def _validate_native_tool_ids(native_tools: Sequence[AgentNativeTool[Any]], *, s
 
 @dataclasses.dataclass
 class _ResolvedRunCapabilities(Generic[AgentDepsT]):
-    """The per-run capability state shared by `run`/`iter` and `realtime_session`.
+    """The per-run capability state shared by `run`/`iter` and `_open_realtime_session`.
 
     Produced by [`Agent._resolve_run_capabilities`][]: the resolved capability tree plus the
     contributions extracted from it (instructions, native tools, model settings, toolsets), so both a
@@ -3818,7 +3934,7 @@ def _layer_model_settings(
     Each layer is a static `ModelSettings`, a callable resolved against the run context, or `None`.
     Stamping the merged-so-far onto `run_context.model_settings` before a callable layer runs lets it
     observe the previous layers — the agent -> capability -> run order both `iter` (per model-request
-    step) and `realtime_session` (once, at connect) rely on. `base` is the model's own settings for a
+    step) and `_open_realtime_session` (once, at connect) rely on. `base` is the model's own settings for a
     graph run; a realtime model has none, so it defaults to `None`.
     """
     merged = base

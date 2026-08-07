@@ -54,9 +54,12 @@ from pydantic_ai.realtime import (
     RealtimeInputTranscriptionErrorEvent,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    RealtimeOutputSpeechEndEvent,
+    RealtimeOutputSpeechStartEvent,
     RealtimeSession,
     RealtimeSessionReconnectEvent,
     TurnDetection,
+    WebRTCSession,
 )
 from pydantic_ai.realtime._base import ImageInput, RealtimeSessionErrorEvent, TextInput, merge_realtime_profile
 from pydantic_ai.realtime._openai_protocol import (
@@ -747,6 +750,77 @@ async def test_connect_handshake_and_session_config(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.anyio
+async def test_connect_webrtc_sideband_handshake(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The sideband attaches by `call_id` and applies its session config without a `session.created` wait.
+
+    A control connection joins an *existing* WebRTC call, so (unlike the WebSocket path) the server does
+    not emit `session.created` first: the connection sends `session.update` immediately and waits for
+    `session.updated`, which also reports the served model. A unit test because a cassette's request
+    matcher ignores the handshake ordering this pins.
+    """
+    updated = json.dumps({'type': 'session.updated', 'session': {'model': 'gpt-realtime-2.1'}})
+    transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'})
+    ws = FakeWebSocket([updated, transcript])
+    fake_connect = FakeConnect(ws)
+    monkeypatch.setattr(rt_openai.websockets, 'connect', fake_connect)
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
+    call = WebRTCSession(provider_name='openai', session_id='rtc_test1')
+    async with model.connect_webrtc(
+        call,
+        messages=[ModelRequest(parts=[], instructions='Be nice')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as conn:
+        events = await collect_codec_events(conn, sideband=True)
+
+    # Attaches to the call by id (no `?model=`), with the same bearer auth as the WebSocket path.
+    assert fake_connect.url == 'wss://api.openai.com/v1/realtime?call_id=rtc_test1'
+    assert fake_connect.headers == {'Authorization': 'Bearer k'}
+    # The very first frame is `session.update` — the call already exists, so there is no handshake wait.
+    first = json.loads(ws.sent[0])
+    assert first['type'] == 'session.update'
+    assert first['session']['instructions'] == 'Be nice'
+    # The served model is captured from `session.updated` (not `session.created`).
+    assert conn.model_name == 'gpt-realtime-2.1'
+    assert events == [OutputTranscript(text='hi', is_final=True)]
+
+
+@pytest.mark.anyio
+async def test_connect_webrtc_sideband_seeds_history_without_served_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sideband whose `session.updated` omits the model seeds prior turns and reports no served model.
+
+    When the control frame doesn't echo a `model`, the served model stays unknown (the FALSE side of the
+    model capture), while the prior conversation is still seeded on the wire after the handshake.
+    """
+    updated = json.dumps({'type': 'session.updated', 'session': {}})
+    ws = FakeWebSocket([updated])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
+    call = WebRTCSession(provider_name='openai', session_id='rtc_seed')
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='My favorite color is teal.')]),
+        ModelResponse(parts=[TextPart(content='Got it, teal.')]),
+    ]
+    async with model.connect_webrtc(
+        call,
+        messages=history,
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as conn:
+        _ = [e async for e in conn]
+
+    # No `model` in `session.updated` → the served model is unknown.
+    assert conn.model_name is None
+    # The prior turns are seeded as `conversation.item.create` frames after the initial `session.update`.
+    seeded = [json.loads(frame) for frame in ws.sent[1:]]
+    assert [item['item']['role'] for item in seeded] == ['user', 'assistant']
+    assert seeded[0]['item']['content'] == [{'type': 'input_text', 'text': 'My favorite color is teal.'}]
+    assert seeded[1]['item']['content'] == [{'type': 'output_text', 'text': 'Got it, teal.'}]
+
+
+@pytest.mark.anyio
 async def test_connect_injects_trace_context_into_handshake(monkeypatch: pytest.MonkeyPatch) -> None:
     """An active span propagates `traceparent` into the handshake headers, for gateway/OTel-proxy correlation.
 
@@ -1076,6 +1150,41 @@ async def test_connect_surfaces_http_upgrade_error(monkeypatch: pytest.MonkeyPat
     assert exc_info.value.status_code == 404
     assert exc_info.value.model_name == 'gpt-realtime'
     assert exc_info.value.body == 'unknown model'
+
+
+@pytest.mark.anyio
+async def test_connect_webrtc_surfaces_http_upgrade_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Attaching a sideband to a call that no longer exists fails like dialing a session does.
+
+    Regression: `connect_webrtc` dialed outside `map_connect_errors`, so an expired/unknown `call_id`
+    (or bad auth, or a rate-limited upgrade) escaped as a raw `websockets.InvalidStatus` instead of the
+    `ModelHTTPError` the realtime error contract documents.
+    """
+    from websockets.datastructures import Headers
+    from websockets.exceptions import InvalidStatus
+    from websockets.http11 import Response
+
+    class _RejectingConnect:
+        def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> Any:
+            return self
+
+        async def __aenter__(self) -> Any:
+            raise InvalidStatus(Response(404, 'Not Found', Headers(), body=b'unknown call'))
+
+        async def __aexit__(self, *exc: object) -> bool:  # pragma: no cover
+            return False
+
+    monkeypatch.setattr(rt_openai.websockets, 'connect', _RejectingConnect())
+    model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
+    call = WebRTCSession(provider_name='openai', session_id='rtc_expired')
+    with pytest.raises(ModelHTTPError) as exc_info:
+        async with model.connect_webrtc(
+            call, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+        ):
+            pass  # pragma: no cover
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.model_name == 'gpt-realtime'
+    assert exc_info.value.body == 'unknown call'
 
 
 @pytest.mark.anyio
@@ -2444,6 +2553,28 @@ async def test_clean_close_is_reported_as_a_fatal_error() -> None:
 
 
 @pytest.mark.anyio
+async def test_clean_close_of_a_sideband_is_the_end_of_the_call() -> None:
+    """On a sideband the browser owns the call, so its hanging up is how a call is meant to end.
+
+    The opposite of an owned-media session, where the same close means the server cut the conversation
+    off: reporting the browser's hangup as a non-recoverable error — or re-dialing into a call whose
+    media path is gone — would make every normal end-of-call look like a failure.
+    """
+    conn = OpenAIRealtimeConnection(
+        _ExpiredWebSocket([]),  # type: ignore[arg-type]
+        dial=_unreachable_dial,
+        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+        observes_output_audio=False,
+    )
+    # Nothing at all: no error event, and the reconnect policy is not consulted.
+    assert [event async for event in conn] == []
+
+
+async def _unreachable_dial() -> Any:  # pragma: no cover - a sideband's clean close must not re-dial
+    raise AssertionError('a clean sideband close must not re-dial')
+
+
+@pytest.mark.anyio
 async def test_clean_close_reconnects_when_a_policy_is_configured() -> None:
     """Hitting the session cap is exactly what a reconnect policy is for, so it re-dials and resumes."""
     transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'still here'})
@@ -2564,6 +2695,52 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
 
 
 @pytest.mark.anyio
+async def test_connect_webrtc_sideband_reconnect_closes_previous_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A sideband reconnect through `connect_webrtc()`'s own dial must close the dropped control socket
+    # before opening the next, so sockets don't accumulate across drops. The sideband handshake waits
+    # only for `session.updated` (no `session.created`), so each socket serves just that frame.
+    updated = json.dumps({'type': 'session.updated', 'session': {'model': 'gpt-realtime'}})
+    transcript = json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'})
+    dropped = _DropAfterHandshake([updated])
+    good = FakeWebSocket([updated, transcript])
+    connect = _RecordingConnect([dropped, good])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+
+    model = OpenAIRealtimeModel('gpt-realtime', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0))
+    call = WebRTCSession(provider_name='openai', session_id='rtc_reconnect')
+    async with model.connect_webrtc(
+        call, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    ) as conn:
+        events = await collect_codec_events(conn, sideband=True)
+
+    assert events == [RealtimeSessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
+    assert connect.closed == [dropped, good]
+
+
+async def test_connect_webrtc_reconnect_updates_server_reported_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sideband re-dial's `session.updated` refreshes the served model, like the WebSocket path.
+
+    Regression: `connect_webrtc` passed only the `model_name` snapshot taken at construction, so after a
+    reconnect the connection kept reporting the model the *first* socket served.
+    """
+    dropped = _DropAfterHandshake([json.dumps({'type': 'session.updated', 'session': {'model': 'initial-model'}})])
+    good = FakeWebSocket(
+        [
+            json.dumps({'type': 'session.updated', 'session': {'model': 'replacement-model'}}),
+            json.dumps({'type': 'response.audio_transcript.done', 'transcript': 'hi'}),
+        ]
+    )
+    monkeypatch.setattr(rt_openai.websockets, 'connect', _RecordingConnect([dropped, good]))
+    model = OpenAIRealtimeModel('requested-model', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1))
+    call = WebRTCSession(provider_name='openai', session_id='rtc_remodel')
+
+    async with model.connect_webrtc(
+        call, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    ) as conn:
+        await collect_codec_events(conn, sideband=True)
+        assert conn.model_name == 'replacement-model'
+
+
 async def test_reconnect_updates_server_reported_model(monkeypatch: pytest.MonkeyPatch) -> None:
     initial_created = json.dumps({'type': 'session.created', 'session': {'model': 'initial-model'}})
     reconnected_created = json.dumps({'type': 'session.created', 'session': {'model': 'replacement-model'}})
@@ -2611,6 +2788,45 @@ async def test_reconnect_refreshes_async_api_key(monkeypatch: pytest.MonkeyPatch
     assert connect.headers[:2] == [
         {'Authorization': 'Bearer sk-initial'},
         {'Authorization': 'Bearer sk-refreshed'},
+    ]
+
+
+async def test_connect_webrtc_sideband_reconnect_refreshes_auth_and_trace_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sideband re-dial resolves credentials afresh, like the WebSocket path.
+
+    Regression: `connect_webrtc` resolved `_auth_headers()` (and injected trace context) once, before
+    `dial` was defined, so every reconnect replayed the first handshake's bearer. An Azure Entra token
+    expiring mid-call could then never be recovered from.
+    """
+    key_calls = 0
+
+    async def provide_key() -> str:
+        nonlocal key_calls
+        key_calls += 1
+        return 'sk-initial' if key_calls == 1 else 'sk-refreshed'
+
+    updated = json.dumps({'type': 'session.updated', 'session': {'model': 'gpt-realtime'}})
+    dropped = _DropAfterHandshake([updated])
+    good = FakeWebSocket([updated])
+    connect = _RecordingConnect([dropped, good])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(openai_client=AsyncOpenAI(api_key=provide_key)),
+        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+    )
+    call = WebRTCSession(provider_name='openai', session_id='rtc_refresh')
+
+    async with model.connect_webrtc(
+        call, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    ) as conn:
+        await collect_codec_events(conn, sideband=True)
+
+    assert [headers['Authorization'] for headers in connect.headers[:2]] == [
+        'Bearer sk-initial',
+        'Bearer sk-refreshed',
     ]
 
 
@@ -2854,6 +3070,212 @@ async def test_truncate_sideband_connection_does_not_clamp() -> None:
     _ = [e async for e in conn]
     await conn.send(TruncateOutput(audio_end_ms=1200))
     assert json.loads(ws.sent[0])['audio_end_ms'] == 1200
+
+
+def _playback(event_type: str, response_id: str = 'resp_1') -> str:
+    """A WebRTC playback-boundary frame, which only a sideband connection ever receives."""
+    return json.dumps({'type': event_type, 'response_id': response_id})
+
+
+def _content_part_added(item_id: str, part_type: str = 'audio', content_index: int = 0) -> str:
+    return json.dumps(
+        {
+            'type': 'response.content_part.added',
+            'item_id': item_id,
+            'content_index': content_index,
+            'part': {'type': part_type, 'transcript': ''},
+        }
+    )
+
+
+@pytest.mark.anyio
+async def test_sideband_truncate_targets_the_item_from_the_content_part() -> None:
+    """A sideband has no audio deltas to learn the speaking item from, so it reads the content part.
+
+    Without it `interrupt(played_ms=…)` is silently dropped and history records the whole turn as
+    heard — the model then "remembers" saying words the user interrupted.
+    """
+    ws = FakeWebSocket([_content_part_added('item_sideband', content_index=2)])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=3000))
+    assert json.loads(ws.sent[0]) == {
+        'type': 'conversation.item.truncate',
+        'item_id': 'item_sideband',
+        'content_index': 2,
+        'audio_end_ms': 3000,
+    }
+
+
+@pytest.mark.anyio
+async def test_sideband_ignores_a_non_audio_content_part() -> None:
+    """A text part carries no audio to truncate, so it must not become the truncation target."""
+    ws = FakeWebSocket([_content_part_added('item_text', part_type='text')])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=3000))
+    assert ws.sent == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    'frame,expected_index',
+    [
+        pytest.param({'item_id': 'item_a', 'part': {'type': 'audio'}}, 0, id='content_index-omitted'),
+        pytest.param({'item_id': 'item_a', 'content_index': None, 'part': {'type': 'audio'}}, 0, id='null'),
+    ],
+)
+async def test_sideband_content_part_without_an_index_targets_the_first_part(
+    frame: dict[str, Any], expected_index: int
+) -> None:
+    """The audio is the response's first content part unless the provider says otherwise."""
+    ws = FakeWebSocket([json.dumps({'type': 'response.content_part.added', **frame})])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=500))
+    assert json.loads(ws.sent[0])['content_index'] == expected_index
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    'frame',
+    [
+        pytest.param({'item_id': 'item_a'}, id='no-part'),
+        pytest.param({'part': {'type': 'audio'}}, id='no-item-id'),
+    ],
+)
+async def test_sideband_content_part_without_a_target_is_ignored(frame: dict[str, Any]) -> None:
+    """A frame that doesn't name an audio part on an item can't be a truncation target."""
+    ws = FakeWebSocket([json.dumps({'type': 'response.content_part.added', **frame})])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=500))
+    assert ws.sent == []
+
+
+@pytest.mark.anyio
+async def test_websocket_connection_ignores_content_parts_for_truncation() -> None:
+    """A WebSocket session learns the speaking item from audio deltas, which are authoritative."""
+    ws = FakeWebSocket([_content_part_added('item_from_part'), _audio_delta('item_from_delta', audio_bytes=480)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=3000))
+    assert json.loads(ws.sent[0])['item_id'] == 'item_from_delta'
+
+
+@pytest.mark.anyio
+async def test_sideband_cancel_clears_the_audio_the_browser_is_still_playing() -> None:
+    """A sideband barge-in drops the provider's outbound audio buffer, not just the generation.
+
+    Over WebRTC the provider streams audio to the browser ahead of playback, so `response.cancel`
+    alone leaves the user hearing the response they interrupted.
+    """
+    ws = FakeWebSocket([_playback('output_audio_buffer.started')])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(CancelResponse())
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['output_audio_buffer.clear']
+
+
+@pytest.mark.anyio
+async def test_sideband_cancel_clears_audio_after_the_response_finished() -> None:
+    """Playback outlasts generation, so the buffer is dropped even once the response is over."""
+    done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
+    ws = FakeWebSocket([_playback('output_audio_buffer.started'), done])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    assert not conn._response_active, 'the response is over; only playback is still running'  # pyright: ignore[reportPrivateUsage]
+    await conn.send(CancelResponse())
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['output_audio_buffer.clear']
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('ended_by', ['output_audio_buffer.stopped', 'output_audio_buffer.cleared'])
+async def test_sideband_cancel_does_not_clear_when_playback_already_ended(ended_by: str) -> None:
+    """Nothing is playing, so there is no buffer to drop and no frame to send."""
+    ws = FakeWebSocket([_playback('output_audio_buffer.started'), _playback(ended_by)])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(CancelResponse())
+    assert ws.sent == []
+
+
+@pytest.mark.anyio
+async def test_playback_boundary_survives_the_straggler_filter() -> None:
+    """A playback boundary outlives the response it belongs to, so the filter must not drop it.
+
+    A cancelled response's buffered audio can start playing after the cancel, and that
+    `output_audio_buffer.started` carries the cancelled `response_id`. Whether the browser is being
+    spoken to is connection state, not that response's content: dropping it would both mislead a
+    'speaking' indicator and leave the audio unstoppable.
+    """
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    await conn._decode_frame(json.dumps({'type': 'response.created', 'response': {'id': 'resp_1'}}))  # pyright: ignore[reportPrivateUsage]
+    await conn.send(CancelResponse())
+    ws.sent.clear()
+
+    assert await conn._decode_frame(_playback('output_audio_buffer.started')) == [  # pyright: ignore[reportPrivateUsage]
+        RealtimeOutputSpeechStartEvent()
+    ]
+    await conn.send(CancelResponse())
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['output_audio_buffer.clear']
+
+
+@pytest.mark.anyio
+async def test_sideband_reports_the_playback_boundary_once_per_utterance() -> None:
+    """The pair brackets audibility, and a redundant `stopped`/`cleared` doesn't repeat the stop."""
+    ws = FakeWebSocket(
+        [
+            _playback('output_audio_buffer.started'),
+            _playback('output_audio_buffer.stopped'),
+            _playback('output_audio_buffer.cleared'),
+        ]
+    )
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    assert await collect_codec_events(conn, sideband=True) == [
+        RealtimeOutputSpeechStartEvent(),
+        RealtimeOutputSpeechEndEvent(),
+    ]
+
+
+@pytest.mark.anyio
+async def test_interrupt_still_reports_that_speech_ended() -> None:
+    """A barge-in ends the utterance, so the end event must still fire — or the indicator sticks on.
+
+    The clear we send is acknowledged with `output_audio_buffer.cleared`. Treating our own request as
+    the end of playback would swallow that frame's event, leaving a caller believing the model is
+    still talking after it interrupted it.
+    """
+    ws = FakeWebSocket([_playback('output_audio_buffer.started')])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    assert await collect_codec_events(conn, sideband=True) == [RealtimeOutputSpeechStartEvent()]
+
+    await conn.send(CancelResponse())
+    # A second interrupt doesn't re-send the clear while the first is still unacknowledged.
+    await conn.send(CancelResponse())
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['output_audio_buffer.clear']
+
+    assert await conn._decode_frame(_playback('output_audio_buffer.cleared')) == [RealtimeOutputSpeechEndEvent()]  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_websocket_session_reports_no_playback_boundary() -> None:
+    """An ordinary session owns the audio and knows when it plays it, so the provider's buffer is noise."""
+    ws = FakeWebSocket([_playback('output_audio_buffer.started'), _playback('output_audio_buffer.stopped')])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    assert await collect_codec_events(conn) == []
+
+
+@pytest.mark.anyio
+async def test_websocket_cancel_never_clears_the_output_buffer() -> None:
+    """`output_audio_buffer.clear` is WebRTC-only; the provider rejects it on a WebSocket session."""
+    created = json.dumps({'type': 'response.created', 'response': {'id': 'resp_1'}})
+    ws = FakeWebSocket([created, _playback('output_audio_buffer.started')])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(CancelResponse())
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['response.cancel']
 
 
 @pytest.mark.anyio
@@ -3162,6 +3584,27 @@ async def test_agent_realtime_session_rejects_native_tools() -> None:
 
 
 # --- provider resolution & capabilities -------------------------------------------------------
+
+
+def test_webrtc_signaling_urls_keep_the_path_before_the_base_url_query() -> None:
+    """A base URL carrying its own query must not swallow the signaling path.
+
+    Regression: the trailing-slash join produced `https://gateway.example/v1?tenant=x/realtime/calls`,
+    i.e. a request to `/v1` with `realtime/calls` buried in the query — a 404 on any gateway or staging
+    deployment that routes on a query parameter. Mirrors `realtime_websocket_url`'s rule.
+    """
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=OpenAIProvider(api_key='k', base_url='https://gateway.example/v1?tenant=x')
+    )
+    assert model._webrtc_calls_url().startswith('https://gateway.example/v1/realtime/calls?')  # pyright: ignore[reportPrivateUsage]
+    assert model._webrtc_client_secrets_url().startswith(  # pyright: ignore[reportPrivateUsage]
+        'https://gateway.example/v1/realtime/client_secrets?'
+    )
+
+    # The ordinary base URL is unaffected and carries no query.
+    plain = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
+    assert plain._webrtc_calls_url() == 'https://api.openai.com/v1/realtime/calls'  # pyright: ignore[reportPrivateUsage]
+    assert plain._webrtc_client_secrets_url() == 'https://api.openai.com/v1/realtime/client_secrets'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_realtime_websocket_url_derivation() -> None:

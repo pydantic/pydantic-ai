@@ -104,15 +104,14 @@ if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection
 
 
-def realtime_websocket_url(base_url: str, *, model: str | None = None) -> str:
+def realtime_websocket_url(base_url: str, *, model: str | None = None, call_id: str | None = None) -> str:
     """Derive the realtime WebSocket URL from a provider's HTTP base URL.
 
     Swaps the HTTP scheme for the WebSocket one and appends the `realtime` path, so the default
     OpenAI base URL `https://api.openai.com/v1/` yields `wss://api.openai.com/v1/realtime`. The
-    path lands *before* any query string the base URL carries — which is preserved, with `model`
-    merged into it — rather than being appended after it into the wrong endpoint. A fragment is
-    likewise split off first, so it can't swallow the path and the `model` parameter (which the
-    handshake would then never send) into the client-side part of the URL.
+    path lands *before* any query string the base URL carries, rather than being appended after it
+    into the wrong endpoint. A fragment is likewise split off first, so it can't swallow the path
+    into the client-side part of the URL. `model`/`call_id` are merged in by `with_realtime_query`.
     """
     url, _, fragment = base_url.partition('#')
     url, _, query = url.partition('?')
@@ -122,9 +121,29 @@ def realtime_websocket_url(base_url: str, *, model: str | None = None) -> str:
     elif url.startswith('http://'):
         url = 'ws://' + url[len('http://') :]
     url = f'{url}/realtime'
-    if model is not None:
-        model_param = f'model={quote(model, safe="")}'
-        query = f'{query}&{model_param}' if query else model_param
+    url = f'{url}?{query}' if query else url
+    url = f'{url}#{fragment}' if fragment else url
+    return with_realtime_query(url, model=model, call_id=call_id)
+
+
+def with_realtime_query(websocket_url: str, *, model: str | None = None, call_id: str | None = None) -> str:
+    """Merge the session-addressing query parameters into a realtime WebSocket URL.
+
+    Takes the URL as already derived — a provider whose realtime path doesn't follow from its HTTP
+    base URL (Azure OpenAI derives it from the resource endpoint) builds that part itself — and
+    preserves any query and fragment it already carries. `model` opens a new session; `call_id`
+    attaches a control-plane (sideband) connection to a WebRTC call that already exists, which
+    carries its own model.
+
+    The fragment is split off first so the parameters land in the query rather than in the
+    client-side part of the URL, which the handshake would never send.
+    """
+    url, _, fragment = websocket_url.partition('#')
+    url, _, query = url.partition('?')
+    for name, value in (('model', model), ('call_id', call_id)):
+        if value is not None:
+            param = f'{name}={quote(value, safe="")}'
+            query = f'{query}&{param}' if query else param
     url = f'{url}?{query}' if query else url
     return f'{url}#{fragment}' if fragment else url
 

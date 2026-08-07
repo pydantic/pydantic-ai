@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pydantic AI — Realtime WebRTC voice agent</title>
+    <style>
+      body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 2rem auto; max-width: 46rem; padding: 0 1rem; color: #111827; }
+      h1 { font-size: 1.4rem; }
+      button { padding: .55rem 1.1rem; margin-right: .5rem; border-radius: .5rem; border: 1px solid #d1d5db; cursor: pointer; }
+      button[disabled] { opacity: .5; cursor: default; }
+      #status { margin: 1rem 0; font-weight: 600; }
+      #log { white-space: pre-wrap; background: #0f172a; color: #e2e8f0; padding: 1rem; border-radius: .6rem; min-height: 12rem; font-size: .85rem; }
+      .hint { color: #6b7280; }
+    </style>
+  </head>
+  <body>
+    <h1>Realtime WebRTC voice agent</h1>
+    <p>
+      The browser exchanges audio with the provider directly over WebRTC. The Python backend negotiates
+      the call, attaches a Pydantic AI sideband session, and runs the tools server-side.
+    </p>
+    <p class="hint">Try: "What time is it in Tokyo?" or "What's your refund policy?"</p>
+    <button id="start">Start call</button>
+    <button id="stop" disabled>Stop call</button>
+    <div id="status">Idle</div>
+    <audio id="audio" autoplay></audio>
+    <div id="log"></div>
+
+    <script>
+      const startBtn = document.getElementById('start');
+      const stopBtn = document.getElementById('stop');
+      const statusEl = document.getElementById('status');
+      const logEl = document.getElementById('log');
+      const audioEl = document.getElementById('audio');
+
+      let pc = null;
+      let stream = null;
+      let callId = null;
+
+      function log(line) {
+        logEl.textContent += line + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      function describe(event) {
+        if (event.type === 'conversation.item.input_audio_transcription.completed' && event.transcript)
+          return 'You: ' + event.transcript;
+        if (event.type === 'response.output_audio_transcript.done' && event.transcript)
+          return 'Assistant: ' + event.transcript;
+        if (event.type === 'response.function_call_arguments.done')
+          return 'Model tool call: ' + event.name + ' ' + event.arguments;
+        return null;
+      }
+
+      async function start() {
+        startBtn.disabled = true;
+        statusEl.textContent = 'Requesting microphone…';
+        logEl.textContent = '';
+
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        pc = new RTCPeerConnection();
+        pc.ontrack = (e) => { audioEl.srcObject = e.streams[0]; };
+        for (const track of stream.getTracks()) pc.addTrack(track, stream);
+
+        // The data channel carries the provider's (filtered) event stream for display only.
+        const dc = pc.createDataChannel('oai-events');
+        dc.onmessage = (m) => {
+          try { const line = describe(JSON.parse(m.data)); if (line) log(line); } catch {}
+        };
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        statusEl.textContent = 'Negotiating…';
+        const res = await fetch('/offer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/sdp' },
+          body: offer.sdp,
+        });
+        if (!res.ok) throw new Error(await res.text());
+
+        const { sdp, call_id } = await res.json();
+        callId = call_id;
+        await pc.setRemoteDescription({ type: 'answer', sdp });
+
+        statusEl.textContent = 'Live — start talking';
+        stopBtn.disabled = false;
+      }
+
+      async function stop() {
+        stopBtn.disabled = true;
+        if (callId) { await fetch('/hangup/' + callId, { method: 'POST' }); callId = null; }
+        if (pc) { pc.close(); pc = null; }
+        if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+        audioEl.srcObject = null;
+        statusEl.textContent = 'Idle';
+        startBtn.disabled = false;
+      }
+
+      startBtn.onclick = () => start().catch((e) => { statusEl.textContent = 'Failed: ' + e; stop(); });
+      stopBtn.onclick = stop;
+      window.addEventListener('beforeunload', () => { if (callId) navigator.sendBeacon('/hangup/' + callId); });
+    </script>
+  </body>
+</html>

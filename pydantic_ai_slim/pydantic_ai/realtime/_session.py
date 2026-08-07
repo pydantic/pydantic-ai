@@ -95,6 +95,8 @@ from ._base import (
     RealtimeInputTranscriptionErrorEvent,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    RealtimeOutputSpeechEndEvent,
+    RealtimeOutputSpeechStartEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionInput,
@@ -175,6 +177,8 @@ _TranslatableEvent: TypeAlias = (
     | RealtimeInputSpeechStartEvent
     | RealtimeResponseInterruptedEvent
     | RealtimeInputSpeechEndEvent
+    | RealtimeOutputSpeechStartEvent
+    | RealtimeOutputSpeechEndEvent
     | RealtimeInputTranscriptionErrorEvent
     | RealtimeSessionReconnectEvent
     | PartStartEvent
@@ -445,6 +449,7 @@ class RealtimeSession:
         retain_images_max: int | None = 100,
         message_history: Sequence[ModelMessage] | None = None,
         profile: RealtimeModelProfile | None = None,
+        owns_media: bool = True,
         conversation_id: str | None = None,
         run_id: str | None = None,
         instructions: str | None = None,
@@ -461,6 +466,11 @@ class RealtimeSession:
         self._tool_manager_lock = Lock()
         self._instrumentation = instrumentation
         self._profile = profile if profile is not None else _FULL_PROFILE
+        # Whether this session owns the audio transport. `False` for a WebRTC sideband session: the
+        # browser exchanges audio with the provider directly, and this connection is only the control
+        # plane, so the audio methods are unavailable and no audio bytes flow over it (transcripts still
+        # build history). Set by the connect path when a `provider_session` is attached.
+        self._owns_media = owns_media
         self._model_name = model_name
         self._provider_name = provider_name
         self._provider_url = provider_url
@@ -527,6 +537,9 @@ class RealtimeSession:
         self._native_tool_parts: list[ModelResponsePart] = []
         # The `chat {model}` span for the response currently being assembled (see `_ensure_chat_span`).
         self._chat_span: Span | None = None
+        # The `speak {model}` span covering how long the model is actually audible (see
+        # `_start_playback_span`). Only a sideband reports playback, so it stays `None` elsewhere.
+        self._playback_span: Span | None = None
         # When the provider's VAD reported the user's current speech segment starting, in OTel's
         # nanosecond clock, so the `user speech` span can be backdated to it (see
         # `_record_user_speech_span`). `None` while nobody is speaking.
@@ -837,6 +850,9 @@ class RealtimeSession:
         # Any open `chat` span was closed by the settlement above (an open span counts as a response
         # in flight), with the error — if any — already recorded on it before settlement.
         error = self._closing_error or self._pump_error
+        # Closing mid-utterance is normal (the caller stopped listening), so the `speak` span is closed
+        # rather than left open; it isn't an error even when the session ended on one.
+        self._end_playback_span()
         # A session closed mid-sentence never learns how long that sentence was, so the pending onset
         # is dropped rather than turned into a span ending at teardown.
         self._user_speech_started_at = None
@@ -915,12 +931,15 @@ class RealtimeSession:
         """Stream model audio chunks ready for playback.
 
         The iterator contains only live model audio, in playback order. It never repeats retained
-        audio from finalized speech parts.
+        audio from finalized speech parts. On a WebRTC sideband the browser owns the audio path, so
+        this raises [`UserError`][pydantic_ai.exceptions.UserError]; consume the browser's remote media
+        track instead.
 
         Each iterator has a 32-chunk buffer. If its consumer falls behind, the oldest chunk is
         dropped so audio playback cannot stall tool execution, turn tracking, or the main event
         stream. Closing the session discards buffered chunks and ends the iterator cleanly.
         """
+        self._require_media_ownership('stream_audio')
         self._ensure_streamable()
         # The extra slot is reserved for the completion sentinel, so ending a full tap does not
         # discard one of its 32 data items or block the pump during teardown.
@@ -1144,6 +1163,7 @@ class RealtimeSession:
         `audio_input_sample_rate` first (24 kHz on the OpenAI-protocol providers, 16 kHz on Gemini):
         raw bytes carry no rate, so the wrong one is heard as a chipmunk rather than reported.
         """
+        self._require_media_ownership('send_audio')
         user_turn_was_active = self._user_turn_active
         if not user_turn_was_active:
             # Audio starting is the earliest sign of a user turn, and the only one on a provider that
@@ -1167,6 +1187,7 @@ class RealtimeSession:
 
     async def commit_audio(self) -> None:
         """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""
+        self._require_media_ownership('commit_audio')
         self._require_capability(
             self._profile.get('supports_manual_turn_control', False), 'commit_audio', 'manual turn-taking'
         )
@@ -1177,6 +1198,7 @@ class RealtimeSession:
 
     async def clear_audio(self) -> None:
         """Discard buffered, uncommitted input audio."""
+        self._require_media_ownership('clear_audio')
         self._require_capability(
             self._profile.get('supports_manual_turn_control', False), 'clear_audio', 'manual turn-taking'
         )
@@ -1267,6 +1289,15 @@ class RealtimeSession:
         """Raise a clear `UserError` before sending when the model doesn't support `method`."""
         if not supported:
             raise UserError(f'This realtime model does not support {feature}, so `session.{method}()` is unavailable.')
+
+    def _require_media_ownership(self, method: str) -> None:
+        """Raise a clear `UserError` when an audio-transport method is used on a session that doesn't own media."""
+        if not self._owns_media:
+            raise UserError(
+                f'This realtime session does not own the audio transport, so `session.{method}()` is unavailable. '
+                'The browser exchanges audio with the provider directly over WebRTC; this sideband session only '
+                'runs the control plane (instructions, tools, transcripts, history).'
+            )
 
     # --- history assembly -------------------------------------------------------------------------
 
@@ -1603,6 +1634,35 @@ class RealtimeSession:
             attributes=attributes,
             kind=SpanKind.CLIENT,
         )
+
+    def _start_playback_span(self) -> None:
+        """Open a `speak {model}` span covering how long the model is actually audible.
+
+        Distinct from the `chat`/`turn complete` spans, which measure *generation*: the provider produces
+        audio far faster than it plays, so a response can be complete while the listener still has many
+        seconds of speech to hear. That gap is what makes a barge-in feel broken, so it's worth its own
+        span. Only opened where the provider reports playback (a WebRTC sideband), so an ordinary
+        session's trace is unchanged.
+        """
+        settings = self._instrumentation
+        if settings is None or self._playback_span is not None:
+            return
+        context = self._session_span_context
+        assert context is not None
+        self._playback_span = settings.tracer.start_span(
+            f'speak {self._model_name}' if self._model_name else 'speak',
+            context=context,
+            attributes={
+                'pydantic_ai.realtime': True,
+                'logfire.msg': f'speak {self._model_name}' if self._model_name else 'speak',
+            },
+        )
+
+    def _end_playback_span(self) -> None:
+        """Close the `speak` span when the model stops being audible."""
+        if (span := self._playback_span) is not None:
+            self._playback_span = None
+            span.end()
 
     def _end_chat_span(self, input_messages: list[ModelMessage], response: ModelResponse | None) -> None:
         """Close the current `chat` span, attaching the response's messages, usage, and state."""
@@ -2125,10 +2185,23 @@ class RealtimeSession:
         return events
 
     def _handle_control_event(
-        self, event: RealtimeInputSpeechStartEvent | RealtimeSessionReconnectEvent
+        self,
+        event: (
+            RealtimeInputSpeechStartEvent
+            | RealtimeSessionReconnectEvent
+            | RealtimeOutputSpeechStartEvent
+            | RealtimeOutputSpeechEndEvent
+        ),
     ) -> list[RealtimeEvent]:
         if isinstance(event, RealtimeSessionReconnectEvent):
             return self._handle_reconnected(event)
+        # The playback boundary brackets the `speak` span and is otherwise passed straight through.
+        if isinstance(event, RealtimeOutputSpeechStartEvent):
+            self._start_playback_span()
+            return [event]
+        if isinstance(event, RealtimeOutputSpeechEndEvent):
+            self._end_playback_span()
+            return [event]
         # A reported speech start is a turn boundary even mid-stream, so it re-anchors: with a continuously
         # open microphone the previous turn may not have finalized yet, leaving `_user_turn_active` set.
         self._open_user_turn_anchor()
@@ -2191,7 +2264,12 @@ class RealtimeSession:
         # any new non-pump `RealtimeEvent` variant that isn't handled here.
         if isinstance(
             event,
-            (RealtimeInputSpeechStartEvent, RealtimeSessionReconnectEvent),
+            (
+                RealtimeInputSpeechStartEvent,
+                RealtimeSessionReconnectEvent,
+                RealtimeOutputSpeechStartEvent,
+                RealtimeOutputSpeechEndEvent,
+            ),
         ):
             return self._handle_control_event(event)
         if isinstance(event, RealtimeSessionErrorEvent):

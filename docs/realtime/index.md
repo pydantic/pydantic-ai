@@ -13,6 +13,7 @@ playback; Pydantic AI runs the provider-agnostic agent loop on your backend.
 | Path | Best for | Where Pydantic AI fits |
 | --- | --- | --- |
 | **Native speech-to-speech with Pydantic AI** | Low-latency voice agents with server-side tools and shared history | Runs the complete realtime agent described here |
+| **Browser WebRTC + server sideband** | Browser voice agents that want browser-direct media *and* server-side tools and history | Negotiates the call and runs the agent over its control plane while the browser owns the audio; see [Browser / WebRTC](lifecycle.md#browser-webrtc) |
 | **Browser talks directly to the provider** | Provider-native, UI-only experiences using an ephemeral token | Use the provider SDK for the media session; Pydantic AI can power separate backend workflows |
 | **Batch STT → text agent → TTS** | Text-model choice, structured output, or independent speech components | Compose a standard [agent](../agent.md) with chosen STT and TTS services |
 
@@ -84,6 +85,12 @@ device ↔ media bridge ↔ RealtimeSession ↔ provider
                          └── message history
                          (your backend)
 ```
+
+The media reaches the session one of two ways: it flows **through** the backend (your app streams
+microphone bytes in and plays audio events back — the diagram above), or it flows **around** it,
+browser ↔ provider directly over WebRTC, while the backend attaches a control-plane
+[sideband](lifecycle.md#browser-webrtc) to the same call. Either way the tools, history, and secrets
+stay server-side.
 
 Keep provider keys on the server. Browser, WebRTC, and telephony stacks are transports that connect
 the user to this backend session; see [Connection lifecycle](lifecycle.md#connecting-a-frontend).
@@ -171,7 +178,8 @@ output or deeper reasoning.
 
 ## Limitations
 
-- Sessions run server-side over WebSocket; browser-direct WebRTC and SIP are not built in.
+- Sessions run server-side; SIP is not built in. Browser-direct WebRTC is supported on OpenAI and
+  Azure OpenAI as a [server sideband](lifecycle.md#browser-webrtc), not on Gemini Live or xAI.
 - Provider resumption handles cannot be persisted and resumed in another process.
 - Dynamic instructions are resolved once when the session connects.
 - History processors do not transform `message_history` before realtime seeding; preprocess it

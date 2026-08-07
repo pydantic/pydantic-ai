@@ -47,9 +47,30 @@ async def test_url_and_auth_headers() -> None:
     model = AzureRealtimeModel('gpt realtime', provider=provider)
 
     assert model._realtime_url() == (  # pyright: ignore[reportPrivateUsage]
-        'wss://resource.openai.azure.com/openai/v1/realtime?model=gpt+realtime'
+        'wss://resource.openai.azure.com/openai/v1/realtime?model=gpt%20realtime'
     )
     assert await model._auth_headers() == {'api-key': 'azure-key'}  # pyright: ignore[reportPrivateUsage]
+
+
+def test_sideband_url_uses_the_ga_realtime_path() -> None:
+    """The sideband control URL follows the resource endpoint, like the session URL.
+
+    Regression: deriving it from the provider's `base_url` instead of the shared
+    `_realtime_ws_base()` seam dropped Azure's `/openai/v1` whenever the endpoint wasn't already in
+    the GA form, and the sideband dialed a path the resource doesn't serve.
+    """
+    provider = AzureProvider(
+        azure_endpoint='https://resource.openai.azure.com', api_version='2024-10-01', api_key='azure-key'
+    )
+    model = AzureRealtimeModel('gpt-realtime', provider=provider)
+
+    # The provider's own `base_url` is the SDK's `/openai/` form, which is exactly what made deriving
+    # the sideband URL from it wrong.
+    assert provider.base_url == 'https://resource.openai.azure.com/openai/'
+
+    assert model._sideband_url('rtc_123') == (  # pyright: ignore[reportPrivateUsage]
+        'wss://resource.openai.azure.com/openai/v1/realtime?call_id=rtc_123'
+    )
 
 
 @pytest.mark.anyio

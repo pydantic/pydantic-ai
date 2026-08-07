@@ -102,6 +102,7 @@ from [`pydantic_ai.messages`][pydantic_ai.messages] plus realtime control events
 | [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent] | The provider detected the end of user speech, when supported. |
 | [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] | The provider reported an interrupted model response. |
 | [`RealtimeInputTranscriptionErrorEvent`][pydantic_ai.realtime.RealtimeInputTranscriptionErrorEvent] | One user turn could not be transcribed; the session remains usable. |
+| [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] / [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent] | The model became, or stopped being, audible. Only on a [WebRTC sideband](lifecycle.md#browser-webrtc), where the provider holds the audio — see [Knowing when the model is speaking](lifecycle.md#knowing-when-the-model-is-speaking). |
 | [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] | The model finished replying and no tool remains active. |
 | [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] | The connection was automatically re-established. |
 | [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent] | A recoverable provider error occurred; the session remains usable. |
@@ -135,7 +136,9 @@ setting. Provider-specific defaults and deployment constraints live on the provi
 With transcription disabled, history contains an audio-only user
 [`SpeechPart`][pydantic_ai.messages.SpeechPart] when input audio retention is enabled, or a
 content-less turn otherwise. See [History and handoff](history.md#audio-retention) before relying on
-such a turn for replay or a text-agent handoff.
+such a turn for replay or a text-agent handoff. On a [WebRTC sideband](lifecycle.md#browser-webrtc),
+which receives no audio to retain, a turn without transcription is always recorded as a content-less
+part, so transcription is the only way to capture what users say there.
 
 ## Images
 
