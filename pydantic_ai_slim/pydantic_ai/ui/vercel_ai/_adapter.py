@@ -103,7 +103,7 @@ if TYPE_CHECKING:
     from ...usage import RunUsage, UsageLimits
     from .. import UIEventStream
     from .._adapter import DispatchDepsT, DispatchOutputDataT
-    from .._event_stream import OnCancelFunc, OnCompleteFunc
+    from .._event_stream import OnCancelFunc, OnCompleteFunc, OnErrorFunc
 
 __all__ = ['VercelAIAdapter']
 
@@ -222,6 +222,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
         on_cancel: OnCancelFunc[BaseChunk] | None = None,
+        on_error: OnErrorFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
@@ -256,6 +257,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             capabilities=capabilities,
             on_complete=on_complete,
             on_cancel=on_cancel,
+            on_error=on_error,
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,

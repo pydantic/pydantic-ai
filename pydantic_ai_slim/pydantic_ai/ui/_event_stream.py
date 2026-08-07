@@ -80,6 +80,8 @@ OnCompleteFunc: TypeAlias = _CallbackFunc[AgentRunResult[Any], EventT]
 
 OnCancelFunc: TypeAlias = _CallbackFunc[RunCancelled, EventT]
 """Callback function type that receives the `RunCancelled` of the cancelled run. Can be sync, async, or an async generator of protocol-specific events."""
+OnErrorFunc: TypeAlias = _CallbackFunc[Exception, EventT]
+"""Callback function type that receives the exception of a failed run. Can be sync, async, or an async generator of protocol-specific events."""
 
 
 @dataclass
@@ -173,6 +175,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         stream: AsyncIterator[NativeEvent],
         on_complete: OnCompleteFunc[EventT] | None = None,
         on_cancel: OnCancelFunc[EventT] | None = None,
+        on_error: OnErrorFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
         """Transform a stream of Pydantic AI events into protocol-specific events.
 
@@ -193,6 +196,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
             on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
                 The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], making this the place to persist `cancelled.all_messages()`, and can optionally yield additional protocol-specific events.
+            on_error: Optional callback function called when the agent run ends in error.
+                The callback receives the exception and can optionally yield additional protocol-specific events.
         """
         async for e in self.before_stream():
             yield e
@@ -305,6 +310,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 async for e in self.on_cancelled(cancelled):
                     yield e
             else:
+                if on_error is not None:
+                    async for e in self._dispatch_callback(on_error, exc):
+                        yield e
                 async for e in self.on_error(exc):
                     yield e
         finally:
