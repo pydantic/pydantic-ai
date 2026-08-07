@@ -7,6 +7,7 @@ from typing import Any
 
 from typing_extensions import Self
 
+from .._instructions import normalize_toolset_instructions, validate_instruction_id_segment
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
 from ..exceptions import UserError
@@ -33,9 +34,38 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     _exit_stack: AsyncExitStack | None = field(init=False, default=None)
 
+    def __post_init__(self) -> None:
+        # Only the direct members are checked, rather than walking the tree with `apply()`: a nested
+        # `CombinedToolset` validates its own members when it is constructed, and a wrapper reports
+        # the id of what it wraps, so every id that can key a `toolset:<id>` instruction block is
+        # still seen exactly once. Walking would also mean calling a method on every child on every
+        # construction, which the run loop does per step.
+        seen: dict[str, AbstractToolset[AgentDepsT]] = {}
+        for toolset in self.toolsets:
+            if (toolset_id := toolset.id) is None:
+                continue
+            # `<...>` marks an id the framework assigns rather than the user (`<agent>` for an
+            # agent's own function toolset, `<output>` for its output toolset). One of those can
+            # legitimately appear twice in one agent: `durable_exec` reads `agent.toolsets` (which
+            # includes the function toolset), wraps each member, and feeds the result back through
+            # `override(toolsets=..., tools=[])`, while `_build_toolset_list` always prepends a
+            # function toolset for the overridden `tools`. Both stand for the same logical toolset,
+            # so neither `toolset:<id>` addressing nor `ToolDefinition.toolset_id` is made ambiguous
+            # by the pair. Uniqueness is a rule about ids a user chose, which is also all an
+            # override can address.
+            if toolset_id.startswith('<') and toolset_id.endswith('>'):
+                continue
+            validate_instruction_id_segment(toolset_id, kind='Toolset id')
+            if (existing := seen.get(toolset_id)) is not None and existing is not toolset:
+                raise UserError(
+                    f'Two toolsets have the same `id` {toolset_id!r}. '
+                    'Toolset `id`s must be unique among all toolsets registered with the same agent.'
+                )
+            seen[toolset_id] = toolset
+
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover
+        return None
 
     @property
     def label(self) -> str:
@@ -106,13 +136,11 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     ) -> AbstractToolset[AgentDepsT]:
         return replace(self, toolsets=[toolset.visit_and_replace(visitor) for toolset in self.toolsets])
 
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[str | InstructionPart] | None:
+    async def get_instructions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         results = await gather(*(ts.get_instructions(ctx) for ts in self.toolsets))
-        parts: list[str | InstructionPart] = []
-        for r in results:
-            if r is not None:
-                if isinstance(r, (str, InstructionPart)):
-                    parts.append(r)
-                else:
-                    parts.extend(r)
+        parts: list[InstructionPart] = []
+        for toolset, result in zip(self.toolsets, results):
+            parts.extend(normalize_toolset_instructions(result, toolset.id))
         return parts or None

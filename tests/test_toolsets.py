@@ -714,6 +714,10 @@ async def test_context_manager_failed_initialization():
 
     server1 = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
     server2 = AsyncMock()
+    # `CombinedToolset` reads each member's `id` when it is constructed, and an auto-created
+    # `AsyncMock` attribute would answer that with a coroutine. This server stands in for one that
+    # fails to initialize, so an unnamed toolset is the honest stand-in.
+    server2.id = None
     server2.__aenter__.side_effect = InitializationError
 
     toolset = CombinedToolset([server1, server2])
@@ -1661,11 +1665,12 @@ async def test_wrapper_toolsets_delegate_instructions():
     """Test that wrapper toolsets properly delegate instructions calls."""
     base_instructions = 'Follow the base toolset instructions carefully.'
     base_toolset = MockToolsetWithInstructions(instructions=base_instructions)
+    expected = [InstructionPart(content=base_instructions, dynamic=True)]
     ctx = build_run_context(None)
 
     # Test PrefixedToolset delegation
     prefixed_toolset = base_toolset.prefixed('test')
-    assert await prefixed_toolset.get_instructions(ctx) == base_instructions
+    assert await prefixed_toolset.get_instructions(ctx) == expected
 
     # Test FilteredToolset delegation
     def allow_all_filter(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
@@ -1673,16 +1678,16 @@ async def test_wrapper_toolsets_delegate_instructions():
 
     assert allow_all_filter(ctx, ToolDefinition(name='test', description='', parameters_json_schema={})) is True
     filtered_toolset = base_toolset.filtered(allow_all_filter)
-    assert await filtered_toolset.get_instructions(ctx) == base_instructions
+    assert await filtered_toolset.get_instructions(ctx) == expected
 
     # Test RenamedToolset delegation
     rename_map = {'old_name': 'new_name'}
     renamed_toolset = base_toolset.renamed(rename_map)
-    assert await renamed_toolset.get_instructions(ctx) == base_instructions
+    assert await renamed_toolset.get_instructions(ctx) == expected
 
     # Test ApprovalRequiredToolset delegation
     approval_toolset = base_toolset.approval_required()
-    assert await approval_toolset.get_instructions(ctx) == base_instructions
+    assert await approval_toolset.get_instructions(ctx) == expected
 
     # Test PreparedToolset delegation
     async def prepare_func(ctx: RunContext[Any], tools: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -1690,7 +1695,16 @@ async def test_wrapper_toolsets_delegate_instructions():
 
     assert await prepare_func(ctx, []) == []
     prepared_toolset = base_toolset.prepared(prepare_func)
-    assert await prepared_toolset.get_instructions(ctx) == base_instructions
+    assert await prepared_toolset.get_instructions(ctx) == expected
+
+    # A wrapper has no id of its own, so it stamps the wrapped toolset's onto what it passes along.
+    identified_toolset = MockToolsetWithInstructions(instructions=base_instructions, id='base')
+    assert await identified_toolset.prefixed('test').get_instructions(ctx) == [
+        InstructionPart(content=base_instructions, dynamic=True, id='toolset:base')
+    ]
+
+    # Nothing to delegate: no parts rather than an empty list.
+    assert await MockToolsetWithInstructions().prefixed('test').get_instructions(ctx) is None
 
 
 async def test_renamed_toolset_name_collision():
@@ -1735,9 +1749,13 @@ async def test_combined_toolset_instructions():
     combined = CombinedToolset([toolset1, toolset2, toolset3])
     ctx = build_run_context(None)
 
-    # CombinedToolset aggregates non-None instructions from all contained toolsets as a list
+    # CombinedToolset aggregates non-None instructions from all contained toolsets as parts,
+    # each identified by the toolset that contributed it.
     instructions = await combined.get_instructions(ctx)
-    assert instructions == ['Instructions from toolset 1.', 'Instructions from toolset 2.']
+    assert instructions == [
+        InstructionPart(content=instructions1, dynamic=True, id='toolset:toolset1'),
+        InstructionPart(content=instructions2, dynamic=True, id='toolset:toolset2'),
+    ]
 
 
 async def test_combined_toolset_instructions_all_none():
@@ -1759,6 +1777,15 @@ async def test_combined_toolset_instructions_empty():
 
     instructions = await combined.get_instructions(ctx)
     assert instructions is None
+
+
+def test_toolset_ids_must_be_unique_when_combined():
+    """Distinct toolsets cannot share the stable identity used for instructions and dispatch."""
+    with pytest.raises(UserError, match="Two toolsets have the same `id` 'same'"):
+        Agent(toolsets=[FunctionToolset(id='same'), FunctionToolset(id='same')])
+
+    shared = FunctionToolset(id='shared')
+    Agent(toolsets=[shared, shared])
 
 
 def test_agent_toolset_decorator_id():
@@ -2251,7 +2278,7 @@ class StatefulToolset(AbstractToolset):
 
     @property
     def id(self) -> str | None:
-        return self._id  # pragma: no cover
+        return self._id
 
     async def for_run(self, ctx: RunContext) -> AbstractToolset:
         return StatefulToolset(call_count=0, id=self._id)
@@ -2532,7 +2559,7 @@ async def test_concurrent_runs_dont_share_state():
 
         @property
         def id(self) -> str | None:
-            return 'counting'  # pragma: no cover
+            return 'counting'
 
         async def for_run(self, ctx: RunContext) -> AbstractToolset:
             return CountingToolset()
