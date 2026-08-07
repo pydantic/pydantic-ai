@@ -78,7 +78,7 @@ def test_azure_provider_api_key_required_when_absent():
         api_key='1234567890',
     )
     provider._api_key = None  # pyright: ignore[reportPrivateUsage]
-    with pytest.raises(UserError, match='requires API-key authentication'):
+    with pytest.raises(UserError, match='has no API key'):
         _ = provider.api_key
 
 
@@ -109,7 +109,7 @@ def test_azure_provider_realtime_rejects_entra_auth(auth: str, monkeypatch: pyte
         )
     provider = AzureProvider(openai_client=client)
 
-    with pytest.raises(UserError, match='requires API-key authentication'):
+    with pytest.raises(UserError, match='has no API key'):
         _ = provider.api_key
 
 

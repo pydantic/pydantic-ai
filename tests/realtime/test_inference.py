@@ -8,7 +8,8 @@ import pytest
 from pydantic_ai import Agent, realtime as realtime_module
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import DeferredToolRequestsEvent, DeferredToolResultsEvent
-from pydantic_ai.realtime import AzureRealtimeModel, codec as realtime_codec, infer_realtime_model
+from pydantic_ai.realtime import codec as realtime_codec, infer_realtime_model
+from pydantic_ai.realtime.azure import AzureRealtimeModel
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 from ..conftest import TestEnv

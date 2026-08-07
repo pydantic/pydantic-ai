@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import KW_ONLY, InitVar, dataclass
+from typing import ClassVar
 from urllib.parse import urlencode, urlparse, urlunparse
 
 from openai import AsyncOpenAI
@@ -10,9 +11,21 @@ from openai import AsyncOpenAI
 from ..exceptions import UserError
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
-from .openai import OpenAIRealtimeModel
+from .openai import OpenAIRealtimeConnection, OpenAIRealtimeModel
 
-__all__ = ('AzureRealtimeModel',)
+__all__ = ('AzureRealtimeModel', 'AzureRealtimeConnection')
+
+
+class AzureRealtimeConnection(OpenAIRealtimeConnection):
+    """A live WebSocket connection to Azure OpenAI's realtime API.
+
+    Reuses [`OpenAIRealtimeConnection`][pydantic_ai.realtime.openai.OpenAIRealtimeConnection] for the
+    shared GA wire protocol, naming Azure as the vendor so a connection that drops or rejects content
+    doesn't send someone debugging an Azure session to OpenAI's status page.
+    """
+
+    _provider_name = 'azure'
+    _provider_label = 'Azure OpenAI Realtime'
 
 
 @dataclass
@@ -23,6 +36,8 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
     resource endpoint and API key. The WebSocket transport does not use its OpenAI SDK client or
     `api_version`; it connects to the GA `/openai/v1/realtime` endpoint with an `api-key` header.
     """
+
+    _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = AzureRealtimeConnection
 
     _: KW_ONLY
     provider: InitVar[Provider[AsyncOpenAI] | str] = 'azure'

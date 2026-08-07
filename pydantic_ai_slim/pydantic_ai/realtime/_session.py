@@ -524,6 +524,9 @@ class RealtimeSession:
         self._next_part_index = 0
         self._active_user_index = 0
         self._user_indexes_by_id: dict[str, int] = {}
+        # Connection-supplied native-tool part index -> the session index it was remapped to, so a
+        # `PartEndEvent` closes the part its `PartStartEvent` opened. See `_remap_native_part_index`.
+        self._native_part_indexes: dict[int, int] = {}
 
         # In-flight user request being assembled from input-transcript events.
         self._active_user: SpeechPart | None = None
@@ -1279,6 +1282,26 @@ class RealtimeSession:
         index = self._next_part_index
         self._next_part_index += 1
         return index
+
+    def _handle_native_part_event(self, event: PartStartEvent | PartEndEvent) -> list[RealtimeEvent]:
+        """Forward a connection's native-tool part event under a session-unique index.
+
+        Providers emit native tool activity (grounding, code execution) as ordinary part events,
+        numbered from a counter of their own that knows nothing of the indexes the session has already
+        handed out to the speech, text, and tool-call parts of the same turn. Since a repeated index
+        *replaces* the part at it, forwarding those numbers verbatim would let a grounding part
+        overwrite the model's answer for any consumer keyed on the index. Claim a session-unique index
+        when the part starts and reuse it for the matching end. A started part is also buffered for the
+        assistant response, which the session builds alongside the stream.
+        """
+        if isinstance(event, PartStartEvent):
+            self._ensure_chat_span()
+            self._native_tool_parts.append(event.part)
+            index = self._native_part_indexes[event.index] = self._take_part_index()
+        else:
+            # An end without a recorded start can't have collided with anything, so it passes through.
+            index = self._native_part_indexes.pop(event.index, event.index)
+        return [replace(event, index=index)]
 
     def _handle_assistant_transcript(
         self, text: str, *, output_text: bool = False, item_id: str | None = None
@@ -2118,13 +2141,9 @@ class RealtimeSession:
             return [*self._finalize_untranscribed_user(), event]
         if isinstance(event, ResponseDone):
             return self._handle_turn_complete(event)
-        if isinstance(event, PartStartEvent):
-            # Providers emit native tool activity as ordinary part events. Buffer the started part for
-            # the assistant response while streaming the same event to the caller.
-            self._ensure_chat_span()
-            self._native_tool_parts.append(event.part)
-            return [event]
-        if isinstance(event, (PartEndEvent, RealtimeResponseInterruptedEvent)):
+        if isinstance(event, (PartStartEvent, PartEndEvent)):
+            return self._handle_native_part_event(event)
+        if isinstance(event, RealtimeResponseInterruptedEvent):
             return [event]
         if isinstance(event, RealtimeInputTranscriptionErrorEvent):
             return [*self._finalize_failed_user_item(event.item_id), event]
