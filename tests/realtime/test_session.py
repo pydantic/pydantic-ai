@@ -25,6 +25,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelAPIError,
+    RunCancelled,
     ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -4711,8 +4712,12 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         call_part: ToolCallPart,
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
+        *,
+        run_step: int,
+        reserved_budget: bool,
     ) -> tuple[ToolReturnPart, None]:
         del call, validation_done, execution_prerequisites
+        del run_step, reserved_budget
         session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
@@ -4725,6 +4730,10 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         validation_done,
         (),
         completion,
+        run_step=0,
+        reserved_budget=True,
+        order_index=0,
+        ordered_events=False,
     )
 
     assert TextInput('after tool') in conn.sent
@@ -4754,8 +4763,12 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
         call_part: ToolCallPart,
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
+        *,
+        run_step: int,
+        reserved_budget: bool,
     ) -> tuple[ToolReturnPart, None]:
         del call, validation_done, execution_prerequisites
+        del run_step, reserved_budget
         session._tool_calls_awaiting_usage.clear()  # pyright: ignore[reportPrivateUsage]
         return ToolReturnPart(tool_name=call_part.tool_name, content='done', tool_call_id=call_part.tool_call_id), None
 
@@ -4769,6 +4782,10 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
             asyncio.Event(),
             (),
             asyncio.Event(),
+            run_step=0,
+            reserved_budget=True,
+            order_index=0,
+            ordered_events=False,
         )
     )
     task.add_done_callback(session._tool_task_done)  # pyright: ignore[reportPrivateUsage]
@@ -5149,6 +5166,195 @@ async def test_realtime_session_executes_an_approval_gated_tool_once_approved() 
     assert isinstance(result.part, ToolReturnPart)
     assert result.part.content == 'transferred'
     assert result.part.outcome == 'success'
+
+
+async def test_deferred_call_does_not_consume_the_tool_call_limit() -> None:
+    # A `requires_approval=True` call with no handler is refused and never reaches the tool body, so it
+    # never increments `usage.tool_calls`. The graph leaves such calls out of its pre-check projection
+    # entirely (`function_indices` is built from `('function', 'unknown')`), so charging the budget for
+    # one here would trip the limit over a call that costs nothing.
+    agent, executed = _approval_agent()
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='transfer_funds', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    # A budget of zero: any charge at all would raise `UsageLimitExceeded`.
+    async with agent.realtime(model, usage_limits=UsageLimits(tool_calls_limit=0)).session() as session:
+        events = [e async for e in session]
+
+    assert executed == []
+    assert session.usage.tool_calls == 0
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert 'requires approval' in str(result.part.content)
+
+
+async def test_executed_call_still_consumes_the_tool_call_limit() -> None:
+    # The other side of the same branch: an ordinary tool is charged exactly as before, so skipping the
+    # reservation for deferred calls didn't quietly stop enforcing the limit.
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def ordinary() -> str:  # pragma: no cover — the limit trips before the body runs
+        return 'ran'
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='ordinary', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    with pytest.raises(UsageLimitExceeded):
+        async with agent.realtime(model, usage_limits=UsageLimits(tool_calls_limit=0)).session() as session:
+            _ = [e async for e in session]
+
+
+async def test_tools_from_one_response_share_a_run_step() -> None:
+    # Pins the graph's invariant: every call from one response runs at the step in effect when that
+    # response produced it, the way a graph batch shares the step advanced before its request.
+    #
+    # This passes against the previous code too — reading `self._tool_run_step` inside `_execute_tool`
+    # happened to be safe, because `on_validate` sets `validation_done` *before* awaiting the barrier
+    # and the pump blocks on it, pinning every manager sync ahead of the next upstream event. The
+    # capture makes the invariant the code's own rather than a consequence of that interleaving, and
+    # this test is what would catch it if either side of that subtle arrangement moved.
+    seen_steps: list[int] = []
+    agent: Agent[None, str] = Agent(deps_type=type(None))
+
+    @agent.tool(sequential=True)
+    def barrier(ctx: RunContext[None]) -> str:
+        seen_steps.append(ctx.run_step)
+        return 'first'
+
+    @agent.tool
+    def follower(ctx: RunContext[None]) -> str:
+        seen_steps.append(ctx.run_step)
+        return 'second'
+
+    # The OpenAI shape: both calls belong to one response whose usage — and so whose finalization,
+    # which advances the step — arrives after them. The follower is held behind the barrier until
+    # after that advance, which is exactly when reading the step late would diverge.
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='tc1', tool_name='barrier', args='{}', response_usage_follows=True),
+            ToolCall(tool_call_id='tc2', tool_name='follower', args='{}', response_usage_follows=True),
+            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=5)),
+            ResponseDone(),
+        ]
+    )
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session() as session:
+        _ = [e async for e in session]
+
+    assert len(seen_steps) == 2
+    assert seen_steps[0] == seen_steps[1]
+
+
+def _ordered_events_agent() -> Agent[None, str]:
+    """Two tools where the *second* call finishes first, so completion order != call order."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    async def slow() -> str:
+        await asyncio.sleep(0.05)
+        return 'slow'
+
+    @agent.tool_plain
+    async def quick() -> str:
+        return 'quick'
+
+    return agent
+
+
+async def test_parallel_ordered_events_emits_results_in_call_order() -> None:
+    # `parallel_ordered_events` promises parallel execution with events in call order. The session used
+    # to read the mode only to spot `'sequential'`, so this fell through to plain parallel and results
+    # streamed in completion order — the setting silently did nothing.
+    agent = _ordered_events_agent()
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='tc1', tool_name='slow', args='{}'),
+            ToolCall(tool_call_id='tc2', tool_name='quick', args='{}'),
+            ResponseDone(),
+        ]
+    )
+    model = FakeRealtimeModel(conn)
+    with ToolManager.parallel_execution_mode('parallel_ordered_events'):
+        async with agent.realtime(model).session() as session:
+            events = [e async for e in session]
+
+    results = [e.part.tool_name for e in events if isinstance(e, FunctionToolResultEvent)]
+    assert results == ['slow', 'quick']
+    # Execution stays concurrent — the provider still gets each result as it lands, so the fast tool's
+    # `ToolResult` goes out first even though its event is held back.
+    sent = [s.tool_call_id for s in conn.sent if isinstance(s, ToolResult)]
+    assert sent == ['tc2', 'tc1']
+
+
+async def test_parallel_default_still_emits_results_in_completion_order() -> None:
+    # The other side of the branch: the default mode is unchanged, so the ordering buffer only engages
+    # where it was asked for.
+    agent = _ordered_events_agent()
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='tc1', tool_name='slow', args='{}'),
+            ToolCall(tool_call_id='tc2', tool_name='quick', args='{}'),
+            ResponseDone(),
+        ]
+    )
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session() as session:
+        events = [e async for e in session]
+
+    results = [e.part.tool_name for e in events if isinstance(e, FunctionToolResultEvent)]
+    assert results == ['quick', 'slow']
+
+
+async def test_parallel_ordered_events_are_not_stranded_by_a_failing_sibling() -> None:
+    # The buffer is released from the tool task's done-callback, which runs even when the tool raised,
+    # so a sibling that produces no events can't leave the batch waiting forever.
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    async def boom() -> str:
+        raise RuntimeError('tool exploded')
+
+    @agent.tool_plain
+    async def fine() -> str:
+        await asyncio.sleep(0.05)
+        return 'fine'
+
+    conn = FakeRealtimeConnection(
+        [
+            ToolCall(tool_call_id='tc1', tool_name='boom', args='{}'),
+            ToolCall(tool_call_id='tc2', tool_name='fine', args='{}'),
+            ResponseDone(),
+        ]
+    )
+    model = FakeRealtimeModel(conn)
+    with ToolManager.parallel_execution_mode('parallel_ordered_events'):
+        with pytest.raises(RuntimeError, match='tool exploded'):
+            async with agent.realtime(model).session() as session:
+                _ = [e async for e in session]
+
+
+async def test_nested_run_cancellation_is_isolated_into_a_failed_tool_return() -> None:
+    # A sub-agent run awaited inside a tool that cancels *itself* must not take the session with it.
+    # The graph isolates exactly this into a failed tool return (#7199); the session's own cancellation
+    # arrives as `CancelledError`, so a `RunCancelled` seen in a tool body is always a nested run's.
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def delegate() -> str:
+        raise RunCancelled('the sub-agent run was cancelled')
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='delegate', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session() as session:
+        events = [e async for e in session]
+
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert result.part.outcome == 'failed'
+    assert 'sub-agent run was cancelled' in str(result.part.content)
+    # The session drained normally rather than re-raising, and the failed return is in history for the
+    # model to react to — the conversation survives the sub-agent's decision.
+    assert result.part in session.all_messages()[-1].parts
 
 
 async def test_realtime_session_explains_a_declaratively_external_tool() -> None:

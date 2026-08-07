@@ -77,11 +77,17 @@ The handler resolves each call inline: approve it (the tool then runs and return
 (recorded with `outcome='denied'`), substitute a result, or request a retry.
 
 !!! warning "The handler answers from policy, not from a person"
-    The handler is called synchronously while the model waits, and must return a decision immediately —
-    it is a programmatic policy resolver, not an approval UI. Asking a human mid-call and resuming on
-    their answer is not supported yet; a standard run, which can end with a
-    [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output and resume later, is the
-    place for that today.
+    The handler must return a decision promptly — it is a programmatic policy resolver, not an approval
+    UI. It runs as a background task like the tool itself, so it never blocks the session's events, but
+    what the *conversation* does while it thinks is provider-specific in exactly the way
+    [concurrent tool execution](#concurrent-tool-execution) describes: OpenAI and Azure carry on, while
+    Gemini holds the model's turn until the result arrives. On Gemini a slow handler therefore reads as
+    assistant silence, and if the user speaks into that gap the provider cancels the pending call
+    outright (recorded as [a synthetic cancellation](#function-tools)).
+
+    Asking a human mid-call and resuming on their answer is not supported yet; a standard run, which
+    can end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output and resume
+    later, is the place for that today.
 
     [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] on a session is
     informational for the same reason: it is emitted when the handler *has* resolved the calls, so a
