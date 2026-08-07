@@ -65,16 +65,23 @@ restrictions—are canonical on the [Gemini provider page](gemini.md#native-tool
 
 ## Deferred and approval-required tools
 
-[`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] can resolve deferred
-or approval-required calls inline. If no handler resolves one, the model receives an explanation
-that the tool cannot complete during a realtime session — the tool itself is never executed.
+**An approval-gated tool is not executable in a realtime session unless you install a
+[`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler.** A standard
+run can end with a `DeferredToolRequests` output and resume once a human answers; a live conversation
+has nowhere to pause, so with no handler the call is refused *every time* — the model receives an
+explanation that the tool cannot complete during a realtime session, and the tool never runs.
+Installing a handler is the expected setup for approval-gated tools in a realtime session, not an
+optional extra.
 
-This covers both ways a call is deferred: raising
+The handler resolves each call inline: approve it (the tool then runs and returns normally), deny it
+(recorded with `outcome='denied'`), substitute a result, or request a retry.
+
+This applies to both ways a call is deferred — raising
 [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
 [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] from the tool, and declaring it up front with
-`requires_approval=True` or an [external toolset](../toolsets.md#external-toolset). An
-approval-gated tool is still advertised to the model, exactly as in a standard run; calling it opens
-the approval flow rather than running the tool.
+`requires_approval=True` or an [external toolset](../toolsets.md#external-toolset). An approval-gated
+tool is still advertised to the model, exactly as in a standard run; calling it opens the approval
+flow rather than running the tool.
 
 A realtime session cannot pause and return a `DeferredToolRequests` output for an out-of-band
 result. Resolve the request during the call or move that workflow to a standard agent run.

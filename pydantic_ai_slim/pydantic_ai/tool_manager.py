@@ -1031,23 +1031,18 @@ class ToolManager(Generic[AgentDepsT]):
         # Invalid arguments still take the execution path, which raises the validation error as a retry —
         # matching the graph, which only collects a deferred call once its arguments validate. A deferral
         # already raised during validation carries the caller's metadata, so it stays with the path below.
-        if (
-            not approved
-            and validated.args_valid
-            and validated.deferral is None
-            and (deferred_tool := validated.tool) is not None
-            and deferred_tool.tool_def.defer
-        ):
-            declared_deferral: CallDeferred | ApprovalRequired = (
-                CallDeferred() if deferred_tool.tool_def.kind == 'external' else ApprovalRequired()
-            )
-            return await self._resolve_single_deferred(
-                call,
-                declared_deferral,
-                wrap_validation_errors=wrap_validation_errors,
-                on_inline_deferred=on_inline_deferred,
-            )
         try:
+            if (
+                not approved
+                and validated.args_valid
+                and validated.deferral is None
+                and (deferred_tool := validated.tool) is not None
+                and deferred_tool.tool_def.defer
+            ):
+                # Convert the *declarative* deferral into the raised one, right where every caller
+                # passes, so the single resolution path below handles both forms identically and a
+                # future caller inherits the gate for free.
+                raise CallDeferred() if deferred_tool.tool_def.kind == 'external' else ApprovalRequired()
             return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         except (CallDeferred, ApprovalRequired) as exc:
             return await self._resolve_single_deferred(
