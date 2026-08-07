@@ -132,7 +132,10 @@ class TestModel(Model):
         )
         self.last_model_request_parameters = model_request_parameters
         model_response = self._request(messages, model_settings, model_request_parameters)
-        model_response.usage = _estimate_usage([*messages, model_response])
+        model_response.usage = _estimate_usage(
+            [*messages, model_response],
+            allow_tool_availability_deltas=self.tool_addition_mode is not None,
+        )
         model_response.provider_name = self._system
         return model_response
 
@@ -157,6 +160,7 @@ class TestModel(Model):
             _structured_response=model_response,
             _messages=messages,
             _provider_name=self._system,
+            _allow_tool_availability_deltas=self.tool_addition_mode is not None,
         )
 
     @property
@@ -187,10 +191,19 @@ class TestModel(Model):
         return _JsonSchemaTestData(tool_def.parameters_json_schema, self.seed).generate()
 
     def _get_tool_calls(self, model_request_parameters: ModelRequestParameters) -> list[tuple[str, ToolDefinition]]:
+        # `declared_function_tools` alone would exclude `'via_history'` tools — revealed deferred
+        # tools on a `tool_addition_mode='with_definitions'` profile, whose definitions travel via
+        # history rather than the `tools` collection. They are callable, so the simulation must
+        # include them; only `'withheld'` tools are invisible to the model.
+        callable_function_tools = [
+            tool
+            for tool in model_request_parameters.function_tools
+            if model_request_parameters.visibility_of(tool.name) != 'withheld'
+        ]
         if self.call_tools == 'all':
-            return [(r.name, r) for r in model_request_parameters.declared_function_tools]
+            return [(r.name, r) for r in callable_function_tools]
         else:
-            function_tools_lookup = {t.name: t for t in model_request_parameters.declared_function_tools}
+            function_tools_lookup = {t.name: t for t in callable_function_tools}
             all_function_tools_lookup = {t.name: t for t in model_request_parameters.function_tools}
             tools_to_call: list[ToolDefinition] = []
             for name in self.call_tools:
@@ -341,10 +354,11 @@ class TestStreamedResponse(StreamedResponse):
     _messages: InitVar[Iterable[ModelMessage]]
     _provider_name: str
     _provider_url: str | None = None
+    _allow_tool_availability_deltas: bool = False
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
-        self._usage = _estimate_usage(_messages)
+        self._usage = _estimate_usage(_messages, allow_tool_availability_deltas=self._allow_tool_availability_deltas)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         for i, part in enumerate(self._structured_response.parts):

@@ -1804,6 +1804,8 @@ class ModelRequest:
     def __post_init__(self) -> None:
         for part in self.parts:
             if isinstance(part, SpeechPart) and part.speaker != 'user':
+                # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
+                # message history, where a `ValueError` becomes a `ValidationError` with location info.
                 raise ValueError(
                     f"`SpeechPart` in `ModelRequest.parts` must have `speaker='user'`, got {part.speaker!r}"
                 )
@@ -2523,13 +2525,17 @@ class ModelResponse:
       The agent graph will automatically send a continuation request.
       Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
       or return background/async responses (e.g. OpenAI background mode).
-    - `'interrupted'` — Streaming was explicitly cancelled before the model finished generating.
-      Set when a streaming response is cancelled via `StreamedResponse.cancel()`.
+    - `'interrupted'` — Generation was explicitly stopped before the model finished.
+      Set when a streaming response is cancelled via `StreamedResponse.cancel()`, and when a realtime
+      turn is cut off by a barge-in or `RealtimeSession.interrupt()` — in which case the cut-off point
+      is recorded on the last [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms].
     """
 
     def __post_init__(self) -> None:
         for part in self.parts:
             if isinstance(part, SpeechPart) and part.speaker != 'assistant':
+                # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
+                # message history, where a `ValueError` becomes a `ValidationError` with location info.
                 raise ValueError(
                     f"`SpeechPart` in `ModelResponse.parts` must have `speaker='assistant'`, got {part.speaker!r}"
                 )
@@ -2677,6 +2683,46 @@ ModelMessagesTypeAdapter = pydantic.TypeAdapter(
     list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
+
+
+def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """The messages from the latest [`CompactionPart`][pydantic_ai.messages.CompactionPart] onward.
+
+    After compaction, the summary replaces everything before it, so this window is what the model
+    effectively works from — at part-level precision: within the response that carries the
+    compaction part, parts before it are excluded and parts after it are kept. With no compaction
+    part in the history, the whole history is returned (as a new list).
+
+    This is the boundary rule Pydantic AI itself uses when deriving model-visible state from
+    history (discovered tools, loaded capabilities). Capability and toolset authors should apply
+    the same rule to their own derived state — anything the model needs to have *seen*
+    (announcements, disclosures, catalogs) should be recomputed from this window rather than
+    remembered in instance attributes, so it self-heals when compaction replaces the history that
+    carried it.
+
+    Deliberately provider-agnostic, unlike the wire-level trim, which is provider-specific
+    because it must be exact for the one request it renders. This window feeds run-level state
+    (`RunContext.discovered_tool_names`, loaded capabilities) that must stay valid across
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] failover and mid-run model
+    switches — at parse time there is no "current" provider to resolve against, so the boundary
+    has to be the conservative intersection: a compaction part another provider would skip on the
+    wire still counts. The asymmetry makes that safe: treating too little as visible only permits
+    a redundant, idempotent re-disclosure; treating too much as visible hides state the model can
+    no longer see.
+    """
+    for message_index in range(len(messages) - 1, -1, -1):
+        message = messages[message_index]
+        if isinstance(message, ModelResponse):
+            for part_index in range(len(message.parts) - 1, -1, -1):
+                if isinstance(message.parts[part_index], CompactionPart):
+                    # Indexed iteration rather than `messages[message_index + 1:]`: the runtime
+                    # `Sequence` contract only requires integer `__getitem__`, so a minimal
+                    # conforming implementation may reject slices. (`message.parts` is a list.)
+                    return [
+                        replace(message, parts=list(message.parts[part_index:])),
+                        *(messages[i] for i in range(message_index + 1, len(messages))),
+                    ]
+    return list(messages)
 
 
 def _narrow_response_part(part: ModelResponsePart) -> ModelResponsePart:
