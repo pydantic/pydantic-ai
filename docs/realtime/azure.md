@@ -146,16 +146,15 @@ provider = AzureProvider(
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.realtime.azure import AzureRealtimeModelSettings
+from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings
 
 agent = Agent(instructions='You are a helpful voice assistant.')
+# Set on the model rather than per session, so `model.profile` reflects Voice Live (see the note below).
+model = AzureRealtimeModel('gpt-realtime', settings=AzureRealtimeModelSettings(azure_voice_live=True))
 
 
 async def main():
-    async with agent.realtime(
-        'azure:gpt-realtime',
-        model_settings=AzureRealtimeModelSettings(azure_voice_live=True),
-    ).session() as session:
+    async with agent.realtime(model).session() as session:
         await session.send('Say hello.')
         async for event in session:
             ...
@@ -167,11 +166,16 @@ Voice-Live-only knobs use the `azure_voice_live_*` prefix (e.g.
 !!! note "Browser WebRTC is WebSocket-only for Voice Live"
     The [browser WebRTC](#browser-webrtc-and-microsoft-entra-id) flow above is for the GA Azure OpenAI
     realtime path. Voice Live negotiates WebRTC over its own WebSocket control channel instead, which
-    isn't implemented yet, so a model configured for Voice Live reports
-    [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] as `False`, and
-    `answer_webrtc_offer` / `create_client_secret` raise `UserError` with `azure_voice_live=True`.
-    Use a WebSocket session with Voice Live for now
+    isn't implemented yet, so `answer_webrtc_offer` / `create_client_secret` raise `UserError` whenever
+    `azure_voice_live=True` is in effect. Use a WebSocket session with Voice Live for now
     ([issue #6702](https://github.com/pydantic/pydantic-ai/issues/6702)).
+
+    [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] reports `False` only
+    when Voice Live is set on the **model**, as above.
+    [`profile`][pydantic_ai.realtime.RealtimeModel.profile] is a property of the model and cannot see
+    `model_settings` passed per session, so branching on the flag requires enabling Voice Live at model
+    construction; otherwise check `azure_voice_live` on your own settings. Either way the signaling
+    methods still refuse at the point of use, so the flag is an early check rather than the safety net.
 
 ## Feature support and limitations
 

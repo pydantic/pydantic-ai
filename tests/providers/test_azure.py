@@ -303,6 +303,54 @@ def test_azure_provider_reads_voice_live_env_prefix(monkeypatch: pytest.MonkeyPa
     assert provider.voice_live_api_version == '2026-04-10'
 
 
+def test_azure_provider_voice_live_only_construction(monkeypatch: pytest.MonkeyPatch):
+    """A Voice-Live-only provider constructs from its own arguments or environment alone.
+
+    Regression: the required endpoint/key checks only consulted the Azure OpenAI sources and the
+    `AZURE_VOICELIVE_*` environment, so `AzureProvider(voice_live_endpoint=..., voice_live_api_key=...)`
+    raised — the documented explicit form was unusable on its own. The api-version check likewise
+    re-read the environment instead of the already-resolved Voice Live version, which has a default, so
+    a Voice-Live-only environment raised for a version it did not need to be given.
+    """
+    for name in (
+        'AZURE_OPENAI_ENDPOINT',
+        'AZURE_OPENAI_API_KEY',
+        'OPENAI_API_VERSION',
+        'AZURE_VOICELIVE_ENDPOINT',
+        'AZURE_VOICELIVE_API_KEY',
+        'AZURE_VOICELIVE_API_VERSION',
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    # Explicit arguments only, nothing in the environment.
+    provider = AzureProvider(voice_live_endpoint='https://vl.services.ai.azure.com', voice_live_api_key='vl-key')
+    assert provider.voice_live_endpoint == 'https://vl.services.ai.azure.com'
+    assert provider.voice_live_api_key == 'vl-key'
+    assert provider.voice_live_api_version == '2026-04-10'
+
+    # Environment only, and without `AZURE_VOICELIVE_API_VERSION` — the default applies.
+    monkeypatch.setenv('AZURE_VOICELIVE_ENDPOINT', 'https://vl.services.ai.azure.com')
+    monkeypatch.setenv('AZURE_VOICELIVE_API_KEY', 'vl-key')
+    provider = AzureProvider()
+    assert provider.voice_live_api_version == '2026-04-10'
+
+
+def test_azure_provider_voice_live_key_is_not_borrowed_by_the_data_plane(monkeypatch: pytest.MonkeyPatch):
+    """An Azure OpenAI resource is never authenticated with the Voice Live key.
+
+    Regression: with an Azure OpenAI endpoint configured but its key missing, `AZURE_VOICELIVE_API_KEY`
+    was installed into the `AsyncAzureOpenAI` client, so ordinary chat requests went to the Azure OpenAI
+    resource holding another resource's credential instead of reporting the incomplete configuration.
+    """
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://ga.openai.azure.com')
+    monkeypatch.delenv('AZURE_OPENAI_API_KEY', raising=False)
+    monkeypatch.setenv('OPENAI_API_VERSION', '2024-10-01')
+    monkeypatch.setenv('AZURE_VOICELIVE_API_KEY', 'vl-key')
+
+    with pytest.raises(UserError, match='AZURE_OPENAI_API_KEY'):
+        AzureProvider()
+
+
 def test_azure_provider_voice_live_api_version_is_not_borrowed_by_the_data_plane(
     monkeypatch: pytest.MonkeyPatch,
 ):
