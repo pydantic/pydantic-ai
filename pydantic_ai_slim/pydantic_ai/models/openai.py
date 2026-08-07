@@ -2076,11 +2076,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Same ordering rule as `_build_responses_request_params`: the introduced-tools derivation
         # and the mapping must both see the trimmed history, and re-compacting only compacts the
         # current effective window rather than content an earlier compaction already replaced.
-        messages = _trim_messages_before_compaction(messages, self.system, requires_encrypted_content=True)
+        # `standing_prompt_retained=False` (here and in the mapping below): blob-of-blob retention
+        # decayed in probing, so the window sent for re-compaction plants the standing prompt
+        # explicitly rather than relying on the previous compaction item to carry it forward.
+        messages = _trim_messages_before_compaction(
+            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=False
+        )
         instructions, openai_messages = await self._map_messages(
             messages,
             model_settings,
             model_request_parameters,
+            standing_prompt_retained=False,
         )
         if instructions_override is not None:
             instructions = instructions_override
@@ -2517,7 +2523,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `_resolve_server_side_state`, which recovers conversation/response IDs from responses the
         # trim would drop; `_map_messages` applies the same idempotent trim to whatever slice that
         # resolution hands it.
-        trimmed_messages = _trim_messages_before_compaction(messages, self.system, requires_encrypted_content=True)
+        trimmed_messages = _trim_messages_before_compaction(
+            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=True
+        )
         # Call-time import mirroring `models/__init__.py`'s `_tool_search` import: the toolsets
         # package imports `messages` while adapters load, so a module-level import would cycle.
         from ..toolsets._tool_search import parse_discovered_tools
@@ -3155,6 +3163,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         messages: list[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        standing_prompt_retained: bool = True,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -3166,7 +3176,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Raw CoT is sent back to improve model performance in multi-turn conversations.
 
         """
-        messages = _trim_messages_before_compaction(messages, self.system, requires_encrypted_content=True)
+        # `standing_prompt_retained=True` on ordinary requests: the compaction item retains the
+        # window's leading `system` items (single hop, live-verified), so re-sending them would
+        # duplicate the standing prompt. The re-compaction path passes `False`: retention decayed
+        # across a second compaction in probing, so each freshly built window plants it explicitly.
+        messages = _trim_messages_before_compaction(
+            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=standing_prompt_retained
+        )
         profile = self.profile
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)

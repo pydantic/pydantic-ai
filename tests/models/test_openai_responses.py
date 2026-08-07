@@ -13303,11 +13303,13 @@ async def test_openai_responses_trims_before_latest_compaction(allow_model_reque
         messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
     )
 
-    # The standing system prompt survives the trim; everything else before the latest
-    # compaction item is dropped, since the Responses API would process and bill it.
+    # Everything before the latest compaction item is dropped, since the Responses API would
+    # process and bill it — including the standing system prompt: the compaction item retains the
+    # window's leading `system` items (live-verified), so re-sending it would duplicate it. The
+    # re-compaction path re-plants it instead (see
+    # `test_openai_responses_compact_replants_standing_prompt`).
     assert mapped == snapshot(
         [
-            {'role': 'system', 'content': 'Standing system prompt.'},
             {'id': None, 'encrypted_content': 'latest-encrypted', 'type': 'compaction'},
             {'role': 'assistant', 'content': 'keep after boundary'},
             {'role': 'user', 'content': 'keep tail'},
@@ -13316,6 +13318,49 @@ async def test_openai_responses_trims_before_latest_compaction(allow_model_reque
 
     await model.count_tokens(messages, None, ModelRequestParameters())
     assert cast(MockOpenAIResponses, mock_client).count_kwargs[0]['input'] == mapped
+
+
+async def test_openai_responses_compact_replants_standing_prompt(allow_model_requests: None):
+    """Re-compaction plants the standing prompt explicitly instead of relying on the previous
+    compaction item to carry it forward — blob-of-blob retention decayed in live probing. The
+    ordinary-request mapping of the same history omits it (see
+    `test_openai_responses_trims_before_latest_compaction`)."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='drop first request')]
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content='summary',
+                    provider_name='openai',
+                    provider_details={'encrypted_content': 'encrypted'},
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    compact_kwargs: dict[str, Any] = {}
+
+    async def fake_compact(**kwargs: Any) -> Any:
+        compact_kwargs.update(kwargs)
+        return 'unused-sentinel'
+
+    model.client.responses.compact = fake_compact
+    await model._responses_compact(  # pyright: ignore[reportPrivateUsage]
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    assert compact_kwargs['input'] == snapshot(
+        [
+            {'role': 'system', 'content': 'Standing system prompt.'},
+            {'id': None, 'encrypted_content': 'encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
 
 
 async def test_openai_responses_pre_compaction_introduced_tool_keeps_its_tools_declaration(
@@ -13398,7 +13443,11 @@ async def test_openai_responses_pre_compaction_revealed_deferred_tool_is_redecla
 
 
 async def test_openai_responses_standing_prompt_survives_response_first_history(allow_model_requests: None):
-    """A history that opens with a `ModelResponse` still keeps the first request's standing prompt."""
+    """A history that opens with a `ModelResponse` still finds the first request's standing prompt.
+
+    Pinned on the planting path (`standing_prompt_retained=False`, as re-compaction maps this
+    history): ordinary requests omit the standing prompt, relying on the compaction item's
+    retention."""
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
     messages: list[ModelMessage] = [
         ModelResponse(parts=[TextPart(content='resumed mid-conversation')], provider_name='openai'),
@@ -13415,7 +13464,7 @@ async def test_openai_responses_standing_prompt_survives_response_first_history(
     ]
 
     _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters(), standing_prompt_retained=False
     )
 
     assert mapped == snapshot(
