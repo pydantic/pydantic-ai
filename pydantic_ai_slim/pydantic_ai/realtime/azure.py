@@ -92,7 +92,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
     def _webrtc_calls_url(self) -> str:
         # `webrtcfilter=on` restricts the events forwarded to the browser data channel to a safe subset,
         # keeping the session instructions and tool traffic on the server's control connection only.
-        return f'{self._webrtc_http_base()}realtime/calls?webrtcfilter=on'
+        return self._webrtc_url('realtime/calls', webrtcfilter='on')
 
     async def answer_webrtc_offer(
         self,

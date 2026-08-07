@@ -18,6 +18,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import KW_ONLY, InitVar, dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, cast
+from urllib.parse import quote
 
 from typing_extensions import TypeAliasType
 
@@ -955,17 +956,36 @@ class OpenAIRealtimeModel(RealtimeModel):
         return with_realtime_query(self._realtime_ws_base(), call_id=call_id)
 
     def _webrtc_http_base(self) -> str:
-        """The HTTP base URL for realtime signaling, always ending in `/` (e.g. `https://api.openai.com/v1/`)."""
-        base_url = self._provider.base_url
-        return base_url if base_url.endswith('/') else f'{base_url}/'
+        """The HTTP base URL for realtime signaling, always ending in `/` (e.g. `https://api.openai.com/v1/`).
+
+        May carry a query string, which the base URL owns (a gateway tenant, a routing key).
+        `_webrtc_url` keeps it after the endpoint path rather than letting the path fall into it.
+        """
+        base_url, separator, query = self._provider.base_url.partition('?')
+        base_url = base_url if base_url.endswith('/') else f'{base_url}/'
+        return f'{base_url}{separator}{query}'
+
+    def _webrtc_url(self, path: str, **params: str) -> str:
+        """A realtime signaling URL: the HTTP base, then `path`, then the merged query.
+
+        The path lands *before* any query the base URL carries — appending it after would bury the
+        endpoint inside the query and send the request to the base URL itself. Same rule as
+        `realtime_websocket_url` applies to the WebSocket handshake.
+        """
+        base_url, _, query = self._webrtc_http_base().partition('?')
+        base_url = base_url if base_url.endswith('/') else f'{base_url}/'
+        for name, value in params.items():
+            param = f'{name}={quote(value, safe="")}'
+            query = f'{query}&{param}' if query else param
+        return f'{base_url}{path}?{query}' if query else f'{base_url}{path}'
 
     def _webrtc_calls_url(self) -> str:
         """The `/realtime/calls` signaling endpoint the browser's SDP offer is relayed to."""
-        return f'{self._webrtc_http_base()}realtime/calls'
+        return self._webrtc_url('realtime/calls')
 
     def _webrtc_client_secrets_url(self) -> str:
         """The `/realtime/client_secrets` endpoint that mints ephemeral browser tokens."""
-        return f'{self._webrtc_http_base()}realtime/client_secrets'
+        return self._webrtc_url('realtime/client_secrets')
 
     @property
     def _http_client(self) -> httpx.AsyncClient:
@@ -1054,9 +1074,6 @@ class OpenAIRealtimeModel(RealtimeModel):
                 'same model/provider.'
             )
         url = self._sideband_url(session.session_id)
-        headers = await self._auth_headers()
-        # Propagate trace context over the handshake (see `connect` for the rationale).
-        inject_trace_context(headers)
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages, model_request_parameters) or ''
@@ -1074,6 +1091,10 @@ class OpenAIRealtimeModel(RealtimeModel):
             if cm is not None:
                 previous, cm = cm, None
                 await previous.__aexit__(None, None, None)
+            # Resolved per dial, like `connect`: a reconnect must carry freshly resolved credentials (an
+            # Entra token expires mid-call) and this handshake's own trace context, not the first dial's.
+            headers = await self._auth_headers()
+            inject_trace_context(headers)
             opening = websockets.connect(url, additional_headers=headers)
             ws = await opening.__aenter__()
             cm = opening

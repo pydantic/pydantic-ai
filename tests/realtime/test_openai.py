@@ -2752,6 +2752,45 @@ async def test_reconnect_refreshes_async_api_key(monkeypatch: pytest.MonkeyPatch
     ]
 
 
+async def test_connect_webrtc_sideband_reconnect_refreshes_auth_and_trace_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sideband re-dial resolves credentials afresh, like the WebSocket path.
+
+    Regression: `connect_webrtc` resolved `_auth_headers()` (and injected trace context) once, before
+    `dial` was defined, so every reconnect replayed the first handshake's bearer. An Azure Entra token
+    expiring mid-call could then never be recovered from.
+    """
+    key_calls = 0
+
+    async def provide_key() -> str:
+        nonlocal key_calls
+        key_calls += 1
+        return 'sk-initial' if key_calls == 1 else 'sk-refreshed'
+
+    updated = json.dumps({'type': 'session.updated', 'session': {'model': 'gpt-realtime'}})
+    dropped = _DropAfterHandshake([updated])
+    good = FakeWebSocket([updated])
+    connect = _RecordingConnect([dropped, good])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(openai_client=AsyncOpenAI(api_key=provide_key)),
+        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+    )
+    call = WebRTCSession(provider_name='openai', session_id='rtc_refresh')
+
+    async with model.connect_webrtc(
+        call, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    ) as conn:
+        await collect_codec_events(conn, sideband=True)
+
+    assert [headers['Authorization'] for headers in connect.headers[:2]] == [
+        'Bearer sk-initial',
+        'Bearer sk-refreshed',
+    ]
+
+
 @pytest.mark.anyio
 async def test_reconnect_gives_up_after_max_attempts() -> None:
     async def dial() -> Any:
@@ -3334,6 +3373,27 @@ async def test_agent_realtime_session_rejects_native_tools() -> None:
 
 
 # --- provider resolution & capabilities -------------------------------------------------------
+
+
+def test_webrtc_signaling_urls_keep_the_path_before_the_base_url_query() -> None:
+    """A base URL carrying its own query must not swallow the signaling path.
+
+    Regression: the trailing-slash join produced `https://gateway.example/v1?tenant=x/realtime/calls`,
+    i.e. a request to `/v1` with `realtime/calls` buried in the query — a 404 on any gateway or staging
+    deployment that routes on a query parameter. Mirrors `realtime_websocket_url`'s rule.
+    """
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', provider=OpenAIProvider(api_key='k', base_url='https://gateway.example/v1?tenant=x')
+    )
+    assert model._webrtc_calls_url().startswith('https://gateway.example/v1/realtime/calls?')  # pyright: ignore[reportPrivateUsage]
+    assert model._webrtc_client_secrets_url().startswith(  # pyright: ignore[reportPrivateUsage]
+        'https://gateway.example/v1/realtime/client_secrets?'
+    )
+
+    # The ordinary base URL is unaffected and carries no query.
+    plain = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='k'))
+    assert plain._webrtc_calls_url() == 'https://api.openai.com/v1/realtime/calls'  # pyright: ignore[reportPrivateUsage]
+    assert plain._webrtc_client_secrets_url() == 'https://api.openai.com/v1/realtime/client_secrets'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_realtime_websocket_url_derivation() -> None:
