@@ -403,6 +403,7 @@ def _insert_cache_point_before_trailing_documents(
     cache_point: ContentBlockUnionTypeDef,
     *,
     raise_if_cannot_insert: bool = False,
+    replace_existing: bool = False,
 ) -> bool:
     """Insert a cache point before trailing document/video content.
 
@@ -415,6 +416,8 @@ def _insert_cache_point_before_trailing_documents(
         cache_point: The cache point block to insert.
         raise_if_cannot_insert: If True, raises UserError when cache point cannot be inserted
             (e.g., when the message contains only documents/videos). If False, silently skips.
+        replace_existing: If True, an existing cache point at the insertion position is
+            replaced (the latest marker wins). If False, it is kept and the new one skipped.
 
     Returns:
         True if a cache point was inserted, False otherwise.
@@ -432,9 +435,11 @@ def _insert_cache_point_before_trailing_documents(
             break
 
     if trailing_start is not None and trailing_start > 0:
-        # Skip if there's already a cache point at the insertion position
         prev_block = content[trailing_start - 1]
         if isinstance(prev_block, dict) and 'cachePoint' in prev_block:
+            if replace_existing:
+                content[trailing_start - 1] = cache_point
+                return True
             return False
         content.insert(trailing_start, cache_point)
         return True
@@ -1485,7 +1490,7 @@ class BedrockConverseModel(Model[BaseClient]):
         if isinstance(last_block, dict) and 'cachePoint' in last_block:
             content[-1] = cache_point
         else:
-            _insert_cache_point_before_trailing_documents(content, cache_point)
+            _insert_cache_point_before_trailing_documents(content, cache_point, replace_existing=True)
 
     @staticmethod
     async def _map_file_to_content_block(

@@ -4242,6 +4242,43 @@ async def test_bedrock_leading_cache_point_lands_before_trailing_documents(
     )
 
 
+async def test_bedrock_leading_cache_point_replaces_existing_marker_before_trailing_documents(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    """An existing marker sitting before trailing documents is also replaced: the latest one wins."""
+    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content=[
+                        'Read this',
+                        CachePoint(),
+                        BinaryContent(data=b'Document content', media_type='text/plain'),
+                    ]
+                ),
+                UserPromptPart(content=[CachePoint(ttl='1h'), 'A reminder']),
+            ]
+        ),
+    ]
+    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), BedrockModelSettings()
+    )
+    assert bedrock_messages == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'Read this'},
+                    {'cachePoint': {'type': 'default', 'ttl': '1h'}},
+                    {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Document content'}}},
+                    {'text': 'A reminder'},
+                ],
+            }
+        ]
+    )
+
+
 async def test_bedrock_leading_cache_point_with_video_only_preceding_content_is_skipped(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
