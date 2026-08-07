@@ -289,11 +289,43 @@ class Sandbox:
 
         resolved_path = await self.resolve(path)
         filesystem = await self._filesystem()
-        if limit is not None and isinstance(filesystem, SupportsReadBytesRange):
-            return await self._read_file_range(filesystem, resolved_path, offset, limit)
+        if limit is not None:
+            if isinstance(filesystem, SupportsReadBytesRange):
+                return await self._read_file_range(filesystem, resolved_path, offset, limit)
+            window = await self._read_file_via_shell(resolved_path, offset, limit)
+            if window is not None:
+                return window
 
         data = await filesystem.read_bytes(resolved_path)
         return _window_from_data(data, offset, limit)
+
+    async def _read_file_via_shell(self, path: str, offset: int, limit: int) -> FileWindow | None:
+        """Produce a line window by slicing inside the sandbox, so only the window crosses the wire.
+
+        Backends honor the one-environment contract (`run` and `fs` see the same files), so
+        `sed` output *is* the file window, at the same decode-replace lossiness as the
+        filesystem path. Returns `None` whenever the environment cannot slice — `run()`
+        failing or unsupported, no `sed`, a non-POSIX shell, or a missing file (non-zero
+        exit) — and the caller falls back to a filesystem read, which stays the
+        authoritative source of errors. `total_lines` is only reported when the slice
+        provably reached EOF with a non-empty window; an empty result cannot distinguish a
+        short file from an offset past EOF, so it stays `None`.
+        """
+        try:
+            # argv, never shell=True: the path is an argument, not shell-interpreted text.
+            result = await self.run(['sed', '-n', f'{offset},{offset + limit}p', path])
+        except Exception:
+            return None
+        if result.exit_code != 0:
+            return None
+
+        lines = list(_split_lines(result.stdout))
+        if lines and lines[-1] == '':
+            lines.pop()
+        if len(lines) > limit:  # we asked for one extra line to learn whether more exist
+            return FileWindow(lines=tuple(lines[:limit]), start_line=offset, has_more=True, total_lines=None)
+        total_lines = offset - 1 + len(lines) if lines else None
+        return FileWindow(lines=tuple(lines), start_line=offset, has_more=False, total_lines=total_lines)
 
     async def _read_file_range(
         self, filesystem: SupportsReadBytesRange, path: str, offset: int, limit: int

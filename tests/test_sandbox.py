@@ -51,8 +51,10 @@ class _Entry:
 class _Fs:
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {}
+        self.reads: list[str] = []
 
     async def read_bytes(self, path: str) -> bytes:
+        self.reads.append(path)
         return self.files[path]
 
     async def write_bytes(self, path: str, data: bytes) -> None:
@@ -109,14 +111,24 @@ async def test_stream_support_is_separate_from_process_protocol():
         streaming.stream()
 
 
+_SED_WINDOW_EXPR = re.compile(r'^(\d+),(\d+)p$')
+
+
 class FakeSandbox:
-    """A minimal in-memory implementation of the `SandboxBackend` protocol."""
+    """A minimal in-memory implementation of the `SandboxBackend` protocol.
+
+    Honors the protocol's one-environment contract: the `sed` line-window form the
+    `Sandbox` facade emits is served from the same files `fs` exposes. `sed=False`
+    models an environment without a usable `sed` (exit 127), forcing the facade's
+    full-read fallback. Other commands echo `ran:<command>` for forwarding tests.
+    """
 
     provider = 'fake'
 
-    def __init__(self, name: str, fs: _Fs | None = None) -> None:
+    def __init__(self, name: str, fs: _Fs | None = None, *, sed: bool = True) -> None:
         self.name = name
         self._fs = fs or _Fs()
+        self._sed = sed
 
     @property
     def sandbox_id(self) -> str:
@@ -136,6 +148,26 @@ class FakeSandbox:
         timeout: float | None = None,
         output_limit: int | None = None,
     ) -> FakeSandboxResult:
+        if not isinstance(command, str) and list(command[:2]) == ['sed', '-n']:
+            if not self._sed:
+                return FakeSandboxResult(exit_code=127, stdout='', stderr='sed: not found')
+            expr, path = command[2], command[3]
+            window = _SED_WINDOW_EXPR.match(expr)
+            assert window is not None, f'FakeSandbox only emulates the line-window sed form, got {expr!r}'
+            if path not in self._fs.files:
+                return FakeSandboxResult(exit_code=2, stdout='', stderr=f'sed: {path}: No such file or directory')
+            # `sed` splits on `\n` only (`\r` stays line content), prints selected lines,
+            # and preserves the absence of a trailing newline on the file's final line.
+            text = self._fs.files[path].decode('utf-8', errors='replace')
+            lines = text.split('\n')
+            if lines[-1] == '':
+                lines.pop()
+            start, end = int(window[1]) - 1, int(window[2])
+            selected = lines[start:end]
+            stdout = '\n'.join(selected)
+            if selected and (start + len(selected) < len(lines) or text.endswith('\n')):
+                stdout += '\n'
+            return FakeSandboxResult(exit_code=0, stdout=stdout, stderr='')
         return FakeSandboxResult(exit_code=0, stdout=f'ran:{command}', stderr='')
 
     async def start(
@@ -292,7 +324,7 @@ async def test_read_file_slow_path(
     limit: int | None,
     expected: tuple[tuple[str, ...], bool, int],
 ):
-    backend = FakeSandbox('slow')
+    backend = FakeSandbox('slow', sed=False)  # no usable `sed`: pins the full-read fallback
     backend.fs.files['/workspace/file'] = content
     window = await Sandbox(backend).read_file('file', offset=offset, limit=limit)
     lines, has_more, total_lines = expected
@@ -379,6 +411,74 @@ async def test_read_file_fast_path_grows_chunks_for_deep_windows():
     assert requested_sizes == [64 * 1024, 128 * 1024, 256 * 1024, 512 * 1024, 1024 * 1024]
 
 
+async def test_read_file_slices_inside_the_sandbox_when_no_range_support():
+    """Without native range support, the window is produced by `sed` inside the sandbox:
+    only the requested lines cross the wire, and the filesystem is never asked for the
+    whole file.
+    """
+    backend = FakeSandbox('sliced')
+    backend.fs.files['/workspace/file'] = b'line\n' * 200_000
+
+    window = await Sandbox(backend).read_file('file', offset=99_999, limit=2)
+
+    assert window.lines == ('line', 'line')
+    assert window.start_line == 99_999
+    assert window.has_more is True
+    assert window.total_lines is None
+    assert backend.fs.reads == []
+
+
+async def test_read_file_shell_slice_reports_totals_at_eof():
+    backend = FakeSandbox('sliced-eof')
+    backend.fs.files['/workspace/file'] = b'one\ntwo\nthree\n'
+
+    window = await Sandbox(backend).read_file('file', offset=2, limit=5)
+
+    assert window.lines == ('two', 'three')
+    assert window.has_more is False
+    assert window.total_lines == 3
+    assert backend.fs.reads == []
+
+
+async def test_read_file_shell_slice_empty_window_has_unknown_total():
+    """`sed` prints nothing both for an offset past EOF and for a short file, so an empty
+    shell window cannot claim a total.
+    """
+    backend = FakeSandbox('sliced-past-eof')
+    backend.fs.files['/workspace/file'] = b'one\n'
+
+    window = await Sandbox(backend).read_file('file', offset=10, limit=2)
+
+    assert window.lines == ()
+    assert window.start_line == 10
+    assert window.has_more is False
+    assert window.total_lines is None
+
+
+async def test_read_file_falls_back_to_full_read_without_sed():
+    """A failed slice attempt (no `sed` in the environment) falls back to the
+    authoritative filesystem read.
+    """
+    backend = FakeSandbox('no-sed', sed=False)
+    backend.fs.files['/workspace/file'] = b'one\ntwo\n'
+
+    window = await Sandbox(backend).read_file('file', offset=1, limit=1)
+
+    assert window.lines == ('one',)
+    assert window.has_more is True
+    assert window.total_lines == 2
+    assert backend.fs.reads == ['/workspace/file']
+
+
+async def test_read_file_on_unavailable_sandbox_surfaces_reason():
+    """The slice attempt swallows `run()`'s failure so the filesystem read surfaces the
+    authoritative policy reason instead.
+    """
+    sandbox = Sandbox(UnavailableSandbox('sandbox disabled by policy'))
+    with pytest.raises(UserError, match='sandbox disabled by policy'):
+        await sandbox.read_file('/file', limit=3)
+
+
 async def test_capability_serving_existing_facade_is_passed_through_unchanged():
     """Pins the documented `get_sandbox` contract: serving an existing `Sandbox` facade
     passes it through unchanged. A facade conforms to `SandboxBackend` structurally, so the
@@ -422,20 +522,26 @@ async def test_read_file_fast_path_resolves_chunk_aligned_window_boundary(
 
 async def test_read_file_fast_and_slow_paths_have_window_parity():
     content = b'one\r\ntwo\r\nthree\nfour\r\nfive'
-    slow_backend = FakeSandbox('slow')
-    slow_backend.fs.files['/workspace/file'] = content
+    shell_backend = FakeSandbox('shell')
+    shell_backend.fs.files['/workspace/file'] = content
+    full_backend = FakeSandbox('full', sed=False)
+    full_backend.fs.files['/workspace/file'] = content
     range_filesystem = _RangeFs()
     range_filesystem.files['/workspace/file'] = content
     fast_backend = FakeSandbox('fast', range_filesystem)
 
     for offset in (1, 2, 4, 8):
         for limit in (1, 2, 5):
-            slow = await Sandbox(slow_backend).read_file('file', offset=offset, limit=limit)
+            full = await Sandbox(full_backend).read_file('file', offset=offset, limit=limit)
             fast = await Sandbox(fast_backend).read_file('file', offset=offset, limit=limit)
-            assert (fast.lines, fast.start_line, fast.has_more) == (slow.lines, slow.start_line, slow.has_more)
+            shell = await Sandbox(shell_backend).read_file('file', offset=offset, limit=limit)
+            assert (fast.lines, fast.start_line, fast.has_more) == (full.lines, full.start_line, full.has_more)
+            assert (shell.lines, shell.start_line, shell.has_more) == (full.lines, full.start_line, full.has_more)
             # The file is smaller than the read chunk size, so the range path always reaches
             # EOF and knows the total.
-            assert fast.total_lines == slow.total_lines
+            assert fast.total_lines == full.total_lines
+            # The shell slice only knows the total when it provably reached EOF.
+            assert shell.total_lines in (full.total_lines, None)
 
 
 async def test_bare_run_context_sandbox_is_unavailable():

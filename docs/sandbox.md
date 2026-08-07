@@ -64,9 +64,14 @@ async def read_source(ctx: RunContext[None]) -> str:
     return window.text  # the same lines joined with "\n"
 ```
 
-Relative paths resolve against the backend's working directory. A native filesystem implementing
+Relative paths resolve against the backend's working directory. For a bounded window the facade
+picks the cheapest transfer the backend offers: a native filesystem implementing
 [`SupportsReadBytesRange`][pydantic_ai.sandboxes.SupportsReadBytesRange] transfers only the chunks
-needed for a bounded window; otherwise the facade reads the full bytes and slices. For strict
+needed; otherwise the facade slices with `sed` inside the sandbox so only the requested lines
+cross the wire (backends guarantee `run` and `fs` see the same files — see the
+[protocol contracts][pydantic_ai.sandboxes]); if the environment cannot slice (no usable `sed`),
+the facade reads the full bytes and slices itself. `total_lines` may be `None` on the sliced
+paths when the window provably didn't reach EOF. For strict
 text decoding and writing, use
 [`Sandbox.read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] and
 [`Sandbox.write_text()`][pydantic_ai.sandboxes.Sandbox.write_text].

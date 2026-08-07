@@ -49,6 +49,11 @@ Contracts every implementation must honor:
 - **Results are honest.** `exit_code` is the real process exit code; a non-zero exit is a
   normal result, not an exception. Infrastructure failures raise; they are never disguised as
   fake exit codes or empty output.
+- **One environment.** `run` executes against the same filesystem that `fs` exposes: a file
+  written through either is visible to the other. A backend whose command execution and file
+  access observe different state does not conform. Consumers (including the
+  [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade) rely on this to serve file operations
+  through whichever of the two paths is cheaper.
 - **Command/shell mismatches raise `TypeError`.** A `str` command without `shell=True`, or an
   argv sequence with it, must be rejected with a `TypeError` — never shell-interpreted or
   joined by guesswork. Since `str` is itself a `Sequence[str]`, the type checker cannot catch
