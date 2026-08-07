@@ -1021,7 +1021,8 @@ class OpenAIRealtimeModel(RealtimeModel):
         """
         return realtime_websocket_url(self._provider.base_url)
 
-    def _realtime_url(self) -> str:
+    def _realtime_url(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> str:
+        del model_settings  # only the Azure Voice Live override varies the URL on settings
         return with_realtime_query(self._realtime_ws_base(), model=self.model)
 
     def _sideband_url(self, call_id: str) -> str:
@@ -1211,7 +1212,10 @@ class OpenAIRealtimeModel(RealtimeModel):
             if cm is not None:  # pragma: no branch
                 await cm.__aexit__(None, None, None)
 
-    async def _auth_headers(self) -> dict[str, str]:
+    async def _auth_headers(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> dict[str, str]:
+        # `model_settings` lets a provider vary auth by session (e.g. Azure Voice Live uses a different
+        # resource key); OpenAI's auth doesn't depend on it.
+        del model_settings
         # The raw WebSocket handshake bypasses the SDK's request path, which is where `AsyncOpenAI`
         # resolves anything but a static key, so both dynamic forms are resolved the same way here.
         client = self._provider.client
@@ -1226,6 +1230,16 @@ class OpenAIRealtimeModel(RealtimeModel):
         api_key = await client._refresh_api_key()  # pyright: ignore[reportPrivateUsage]
         return {'Authorization': f'Bearer {api_key}'}
 
+    def _connection_class(self, model_settings: OpenAIRealtimeModelSettings) -> type[OpenAIRealtimeConnection]:
+        """The connection class for a session, given its settings.
+
+        Defers to [`_connection_type`][] — the declarative seam a protocol clone sets to correct the
+        vendor its errors name — and exists on top of it for a provider whose connection varies by
+        *session* rather than by model, as Azure's does for Voice Live.
+        """
+        del model_settings
+        return self._connection_type
+
     @asynccontextmanager
     async def connect(
         self,
@@ -1234,8 +1248,8 @@ class OpenAIRealtimeModel(RealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
-        url = self._realtime_url()
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        url = self._realtime_url(settings)
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages, model_request_parameters) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
@@ -1263,7 +1277,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             if cm is not None:
                 previous, cm = cm, None
                 await previous.__aexit__(None, None, None)
-            headers = await self._auth_headers()
+            headers = await self._auth_headers(settings)
             # The raw WebSocket bypasses the provider's `httpx` client, so every fresh handshake must
             # carry the current trace context as well as freshly resolved authentication.
             inject_trace_context(headers)
@@ -1293,7 +1307,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 # instead (from inside `dial`), which supersedes this history.
                 for item in seed:
                     await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
-            connection = self._connection_type(
+            connection = self._connection_class(settings)(
                 ws,
                 dial=dial,
                 reconnect=self.reconnect,
