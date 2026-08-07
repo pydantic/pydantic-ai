@@ -76,6 +76,19 @@ optional extra.
 The handler resolves each call inline: approve it (the tool then runs and returns normally), deny it
 (recorded with `outcome='denied'`), substitute a result, or request a retry.
 
+!!! warning "The handler answers from policy, not from a person"
+    The handler is called synchronously while the model waits, and must return a decision immediately —
+    it is a programmatic policy resolver, not an approval UI. Asking a human mid-call and resuming on
+    their answer is not supported yet; a standard run, which can end with a
+    [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output and resume later, is the
+    place for that today.
+
+    [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] on a session is
+    informational for the same reason: it is emitted when the handler *has* resolved the calls, so a
+    consumer can observe what was asked and decided. It is not a hook to respond to — unlike the same
+    event in a standard run, nothing waits for the consumer, and no event is emitted when no handler is
+    installed and the call is refused.
+
 This applies to both ways a call is deferred — raising
 [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
 [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] from the tool, and declaring it up front with
