@@ -9,7 +9,9 @@ from uuid import uuid4
 
 from pydantic_ai import _utils
 
+from ..exceptions import RunCancelled
 from ..messages import (
+    INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentStreamEvent,
     CompactionPart,
     DeferredToolRequestsEvent,
@@ -26,12 +28,20 @@ from ..messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
+    RealtimeInputTranscriptionErrorEvent,
+    RealtimeResponseInterruptedEvent,
+    RealtimeSessionErrorEvent,
+    RealtimeSessionReconnectEvent,
+    RealtimeTurnCompleteEvent,
     SpeechPart,
     SpeechPartDelta,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
     ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
@@ -60,18 +70,25 @@ class _PendingToolCall(NamedTuple):
 EventT = TypeVar('EventT')
 """Type variable for protocol-specific event types."""
 
+_CallbackArgT = TypeVar('_CallbackArgT')
+
 RunInputT = TypeVar('RunInputT')
 """Type variable for protocol-specific run input types."""
 
 NativeEvent: TypeAlias = AgentStreamEvent | AgentRunResultEvent[Any]
 """Type alias for the native event type, which is either an `AgentStreamEvent` or an `AgentRunResultEvent`."""
 
-OnCompleteFunc: TypeAlias = (
-    Callable[[AgentRunResult[Any]], None]
-    | Callable[[AgentRunResult[Any]], Awaitable[None]]
-    | Callable[[AgentRunResult[Any]], AsyncIterator[EventT]]
+_CallbackFunc: TypeAlias = (
+    Callable[[_CallbackArgT], None]
+    | Callable[[_CallbackArgT], Awaitable[None]]
+    | Callable[[_CallbackArgT], AsyncIterator[EventT]]
 )
+
+OnCompleteFunc: TypeAlias = _CallbackFunc[AgentRunResult[Any], EventT]
 """Callback function type that receives the `AgentRunResult` of the completed run. Can be sync, async, or an async generator of protocol-specific events."""
+
+OnCancelFunc: TypeAlias = _CallbackFunc[RunCancelled, EventT]
+"""Callback function type that receives the `RunCancelled` of the cancelled run. Can be sync, async, or an async generator of protocol-specific events."""
 
 
 @dataclass
@@ -92,6 +109,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     _turn: Literal['request', 'response'] | None = None
 
     _result: AgentRunResult[OutputDataT] | None = None
+    _cancelled: RunCancelled | None = None
     _final_result_event: FinalResultEvent | None = None
     _pending_tool_calls: dict[str, _PendingToolCall] = field(default_factory=dict[str, '_PendingToolCall'])
     """Tool calls dispatched but not yet completed, indexed by `tool_call_id`."""
@@ -118,6 +136,11 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     def response_headers(self) -> Mapping[str, str] | None:
         """Response headers to return to the frontend."""
         return None
+
+    @property
+    def cancelled(self) -> RunCancelled | None:
+        """The cancellation carrying the run's resumable state, once the stream has ended with a first-party cancellation."""
+        return self._cancelled
 
     @property
     def content_type(self) -> str:
@@ -155,13 +178,17 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         )
 
     async def transform_stream(  # noqa: C901
-        self, stream: AsyncIterator[NativeEvent], on_complete: OnCompleteFunc[EventT] | None = None
+        self,
+        stream: AsyncIterator[NativeEvent],
+        on_complete: OnCompleteFunc[EventT] | None = None,
+        on_cancel: OnCancelFunc[EventT] | None = None,
     ) -> AsyncIterator[EventT]:
         """Transform a stream of Pydantic AI events into protocol-specific events.
 
         This method dispatches to specific hooks and `handle_*` methods that subclasses can override:
         - [`before_stream()`][pydantic_ai.ui.UIEventStream.before_stream]
         - [`after_stream()`][pydantic_ai.ui.UIEventStream.after_stream]
+        - [`on_cancelled()`][pydantic_ai.ui.UIEventStream.on_cancelled]
         - [`on_error()`][pydantic_ai.ui.UIEventStream.on_error]
         - [`before_request()`][pydantic_ai.ui.UIEventStream.before_request]
         - [`after_request()`][pydantic_ai.ui.UIEventStream.after_request]
@@ -173,6 +200,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             stream: The stream of Pydantic AI events to transform.
             on_complete: Optional callback function called when the agent run completes successfully.
                 The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can optionally yield additional protocol-specific events.
+            on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
+                The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], making this the place to persist `cancelled.all_messages()`, and can optionally yield additional protocol-specific events.
         """
         async for e in self.before_stream():
             yield e
@@ -206,13 +235,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                         yield e
 
                     if on_complete is not None:
-                        if inspect.isasyncgenfunction(on_complete):
-                            async for e in on_complete(result):
-                                yield e
-                        elif _utils.is_async_callable(on_complete):
-                            await on_complete(result)
-                        else:
-                            await _utils.run_in_executor(on_complete, result)
+                        async for e in self._dispatch_callback(on_complete, result):
+                            yield e
                 elif isinstance(event, FinalResultEvent):
                     self._final_result_event = event
 
@@ -253,14 +277,26 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 self._pending_tool_calls[tool_call_id] = _PendingToolCall('output', tool_name)
 
             # Pending tool calls
+            # A cancelled run's pending calls were interrupted, not failed: `'interrupted'` keeps
+            # the closeout honest on reload (a `'failed'` closeout would tell the model the tool
+            # errored) and matches how cancellation records tool calls in message history.
+            #
+            # Classify on the exception itself, not `from_cancellation()`: external cancellation is a
+            # `CancelledError` (a `BaseException`) that never reaches this `except Exception` block, so
+            # the only cancellation seen here is a first-party `RunCancelled`. Chain-walking would
+            # misread an ordinary error raised while handling a nested `RunCancelled` (Python sets
+            # `__context__` implicitly) as a cancellation, hiding the failure from the client.
+            cancelled = exc if isinstance(exc, RunCancelled) else None
             for tool_call_id, (kind, tool_name) in self._pending_tool_calls.items():
                 async for e in self._turn_to('request'):
                     yield e
                 error_part = ToolReturnPart(
                     tool_call_id=tool_call_id,
                     tool_name=tool_name,
-                    content='Tool execution was interrupted by an error.',
-                    outcome='failed',
+                    content=INTERRUPTED_TOOL_RETURN_CONTENT
+                    if cancelled is not None
+                    else 'Tool execution was interrupted by an error.',
+                    outcome='interrupted' if cancelled is not None else 'failed',
                 )
                 if kind == 'output':
                     async for e in self.handle_output_tool_result(OutputToolResultEvent(error_part)):
@@ -270,14 +306,35 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                         yield e
             self._pending_tool_calls.clear()
 
-            async for e in self.on_error(exc):
-                yield e
+            if cancelled is not None:
+                self._cancelled = cancelled
+                if on_cancel is not None:
+                    async for e in self._dispatch_callback(on_cancel, cancelled):
+                        yield e
+                async for e in self.on_cancelled(cancelled):
+                    yield e
+            else:
+                async for e in self.on_error(exc):
+                    yield e
         finally:
-            async for e in self._turn_to(None):
-                yield e
+            await _utils.aclose_if_supported(stream)
 
-            async for e in self.after_stream():
-                yield e
+        async for e in self._turn_to(None):
+            yield e
+
+        async for e in self.after_stream():
+            yield e
+
+    async def _dispatch_callback(
+        self, callback: _CallbackFunc[_CallbackArgT, EventT], arg: _CallbackArgT
+    ) -> AsyncIterator[EventT]:
+        if inspect.isasyncgenfunction(callback):
+            async for event in callback(arg):
+                yield event
+        elif _utils.is_async_callable(callback):
+            await callback(arg)
+        else:
+            await _utils.run_in_executor(callback, arg)
 
     async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
         """Fire hooks when turning from request to response or vice versa."""
@@ -312,6 +369,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] -> `handle_enqueued_messages`
         - [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] -> `handle_function_tool_call`
         - [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] -> `handle_function_tool_result`
+        - [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] -> `handle_tool_availability_delta`
         - [`OutputToolCallEvent`][pydantic_ai.messages.OutputToolCallEvent] -> `handle_output_tool_call`
         - [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] -> `handle_output_tool_result`
         - [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] -> `handle_deferred_tool_requests`
@@ -343,6 +401,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case FunctionToolResultEvent():
                 async for e in self.handle_function_tool_result(event):
                     yield e
+            case ToolAvailabilityDeltaEvent():
+                async for e in self.handle_tool_availability_delta(event):
+                    yield e
             case OutputToolCallEvent():
                 async for e in self.handle_output_tool_call(event):
                     yield e
@@ -358,6 +419,17 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case AgentRunResultEvent():
                 async for e in self.handle_run_result(event):
                     yield e
+            case (
+                RealtimeTurnCompleteEvent()
+                | RealtimeInputSpeechStartEvent()
+                | RealtimeInputSpeechEndEvent()
+                | RealtimeResponseInterruptedEvent()
+                | RealtimeInputTranscriptionErrorEvent()
+                | RealtimeSessionReconnectEvent()
+                | RealtimeSessionErrorEvent()
+            ):  # pragma: no cover
+                # Realtime session events don't flow through UI event streams.
+                pass
             case _:
                 pass
 
@@ -502,6 +574,11 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         """
         return  # pragma: no cover
         yield  # Make this an async generator
+
+    async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[EventT]:
+        """Handle a first-party cancellation raised during streaming."""
+        async for event in self.on_error(cancelled):
+            yield event
 
     async def before_request(self) -> AsyncIterator[EventT]:
         """Yield events before a model request is processed.
@@ -655,7 +732,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         Args:
             part: The file part.
         """
-        return  # pragma: no cover
+        return
         yield  # Make this an async generator
 
     async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[EventT]:
@@ -702,6 +779,18 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
         Args:
             event: The function tool result event.
+        """
+        return  # pragma: no cover
+        yield  # Make this an async generator
+
+    async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[EventT]:
+        """Handle a `ToolAvailabilityDeltaEvent`.
+
+        By default no protocol events are emitted. Override this to surface newly available tools
+        to the frontend.
+
+        Args:
+            event: The tool availability delta event.
         """
         return  # pragma: no cover
         yield  # Make this an async generator

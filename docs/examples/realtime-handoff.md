@@ -22,7 +22,7 @@ microphone — a real app would stream microphone audio with
 [voice assistant example](./realtime-voice.md)).
 
 The handoff only runs after every scripted caller turn receives a
-[`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent]. If the realtime connection ends
+[`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent]. If the realtime connection ends
 early, the example raises an error rather than creating a ticket from a partial call.
 
 ## Running the Example

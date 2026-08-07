@@ -7,6 +7,7 @@
             - AbstractAgent
             - WrapperAgent
             - AgentRetries
+            - AgentRealtime
             - AgentRun
             - AgentRunResult
             - EndStrategy
@@ -21,3 +22,5 @@
             - ModelRequestNode
             - CallToolsNode
             - PydanticAIDeprecationWarning
+
+::: pydantic_ai.CancellationToken

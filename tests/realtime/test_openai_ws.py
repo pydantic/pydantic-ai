@@ -39,8 +39,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import OutputSpeechEndEvent, RealtimeModelProfile, ResponseCompleteEvent, TurnCompleteEvent
-from pydantic_ai.realtime._base import SessionErrorEvent
+from pydantic_ai.realtime import RealtimeModelProfile, RealtimeOutputSpeechEndEvent, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime._base import RealtimeSessionErrorEvent
 from pydantic_ai.usage import RunUsage
 
 from ..conftest import IsDatetime, IsStr, try_import
@@ -181,7 +181,7 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot(
@@ -211,11 +211,14 @@ async def test_text_in_audio_out_turn(openai_ws_cassette: tuple[Provider[Any], R
 
     messages = session.all_messages()
     assert collapse_event_types(events) == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'ResponseCompleteEvent']
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'RealtimeTurnCompleteEvent']
     )
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())], timestamp=IsDatetime()
+        parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
+        run_id=IsStr(),
     )
     response = messages[1]
     assert isinstance(response, ModelResponse)
@@ -260,14 +263,14 @@ async def test_audio_in_server_vad_turn(
         with anyio.fail_after(45):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     # Pin the canonical spoken-turn event order: speech start -> stop -> user turn -> assistant reply.
     assert collapse_event_types(events) == snapshot(
         [
-            'InputSpeechStartEvent',
-            'InputSpeechEndEvent',
+            'RealtimeInputSpeechStartEvent',
+            'RealtimeInputSpeechEndEvent',
             'PartStartEvent',
             'PartDeltaEvent',
             'PartStartEvent',
@@ -275,7 +278,7 @@ async def test_audio_in_server_vad_turn(
             'PartEndEvent',
             'PartDeltaEvent',
             'PartEndEvent',
-            'ResponseCompleteEvent',
+            'RealtimeTurnCompleteEvent',
         ]
     )
 
@@ -352,7 +355,7 @@ async def test_input_audio_retention_segments_three_server_vad_turns(
         turn_completed = anyio.Event()
 
         async def consume() -> None:
-            async for event in session:
+            async for event in session:  # pragma: no branch - always returns on the third turn
                 if (
                     isinstance(event, PartEndEvent)
                     and isinstance(event.part, SpeechPart)
@@ -360,7 +363,7 @@ async def test_input_audio_retention_segments_three_server_vad_turns(
                     and event.part.audio is not None
                 ):
                     retained_pcm.append(len(event.part.audio.data) - _WAV_HEADER_BYTES)
-                elif isinstance(event, TurnCompleteEvent):
+                elif isinstance(event, RealtimeTurnCompleteEvent):
                     turn_completed.set()
                     if len(retained_pcm) == 3:
                         return
@@ -384,7 +387,7 @@ async def test_input_audio_retention_segments_three_server_vad_turns(
 async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
     """A tool call is executed by the session and its result folded back into a classic-shaped history.
 
-    Consumed the way the docs tell you to — stopping on `TurnCompleteEvent` — against a real recording,
+    Consumed the way the docs tell you to — stopping on `RealtimeTurnCompleteEvent` — against a real recording,
     where the protocol suppresses the function-call-only `response.done` and the *only* terminal frame is
     the answer's. That makes this the case a turn boundary derived from the suppressed response's
     bookkeeping would silently swallow, leaving the loop hanging until the socket closed.
@@ -406,11 +409,11 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     # One turn boundary, after the tool round is over — not one per response.
-    assert [type(event).__name__ for event in events].count('TurnCompleteEvent') == 1
+    assert [type(event).__name__ for event in events].count('RealtimeTurnCompleteEvent') == 1
     assert sent_frames_containing(cassette, 'Look up the weather for a city.') == snapshot(
         [
             {
@@ -463,7 +466,10 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
         ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
     )
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())], timestamp=IsDatetime()
+        parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
+        run_id=IsStr(),
     )
     tool_response = messages[1]
     assert isinstance(tool_response, ModelResponse)
@@ -514,12 +520,12 @@ async def test_message_history_seeding(openai_ws_cassette: tuple[Provider[Any], 
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     # A server-side rejection of the seeded items (e.g. a bad content-type shape) surfaces as a
-    # `SessionErrorEvent`; assert none occurred so a broken seed payload fails the test loudly.
-    assert [event for event in events if isinstance(event, SessionErrorEvent)] == []
+    # `RealtimeSessionErrorEvent`; assert none occurred so a broken seed payload fails the test loudly.
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
 
     # The seeded user/assistant turns were sent as `conversation.item.create` frames on the wire.
     assert sent_frames_containing(cassette, 'My name is Alice') == snapshot(
@@ -580,6 +586,7 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_audio=True,
         supports_thinking=False,  # GA `gpt-realtime` is not a reasoning model
         supports_async_tool_calls=True,  # the realtime models keep talking through a tool call
+        supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
         supported_native_tools=frozenset(),
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
@@ -622,19 +629,22 @@ async def test_webrtc_sideband_text_turn(
 
         await session.send('Say hello.')
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch - the loop always breaks on TurnCompleteEvent
+            async for event in session:  # pragma: no branch - the loop always breaks on RealtimeTurnCompleteEvent
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     # The first control frame applies the session config (no `session.created` handshake wait).
     assert cassette.interactions[0].data['type'] == 'session.update'  # type: ignore[union-attr]
 
-    assert [event for event in events if isinstance(event, SessionErrorEvent)] == []
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
     messages = session.all_messages()
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())], timestamp=IsDatetime()
+        parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
+        run_id=IsStr(),
     )
     reply = messages[1]
     assert isinstance(reply, ModelResponse)
@@ -680,8 +690,8 @@ async def test_webrtc_sideband_audio_turn(
     the session when the model is *audible* is the provider's `output_audio_buffer.*` frames. This is
     the one recording that contains them (a canned offer that never completes ICE yields none, which is
     how a barge-in bug on this path went unnoticed), pinning that they arrive at all, that they bracket
-    the turn as `OutputSpeechStartEvent` / `OutputSpeechEndEvent`, and that speech outlasts generation:
-    the end event lands *after* `TurnCompleteEvent`, which is exactly the gap the `speak` span measures
+    the turn as `RealtimeOutputSpeechStartEvent` / `RealtimeOutputSpeechEndEvent`, and that speech outlasts generation:
+    the end event lands *after* `RealtimeTurnCompleteEvent`, which is exactly the gap the `speak` span measures
     and the reason it can't be derived from the turn spans.
     """
     provider, _ = openai_ws_sideband_cassette
@@ -700,19 +710,18 @@ async def test_webrtc_sideband_audio_turn(
             with anyio.fail_after(60):
                 async for event in session:  # pragma: no branch - the loop always breaks on the end event
                     events.append(event)
-                    if isinstance(event, OutputSpeechEndEvent):
+                    if isinstance(event, RealtimeOutputSpeechEndEvent):
                         break
 
-    assert [event for event in events if isinstance(event, SessionErrorEvent)] == []
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
     assert collapse_event_types(events) == snapshot(
         [
             'PartStartEvent',
             'PartDeltaEvent',
-            'OutputSpeechStartEvent',
+            'RealtimeOutputSpeechStartEvent',
             'PartEndEvent',
-            'ResponseCompleteEvent',
-            'TurnCompleteEvent',
-            'OutputSpeechEndEvent',
+            'RealtimeTurnCompleteEvent',
+            'RealtimeOutputSpeechEndEvent',
         ]
     )
 
@@ -721,7 +730,10 @@ async def test_webrtc_sideband_audio_turn(
     messages = session.all_messages()
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())], timestamp=IsDatetime()
+        parts=[UserPromptPart(content='Say hello.', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
+        run_id=IsStr(),
     )
     reply = messages[1]
     assert isinstance(reply, ModelResponse)
@@ -741,7 +753,7 @@ async def test_webrtc_sideband_audio_turn(
                 'children': [
                     {'name': 'chat gpt-realtime', 'msg': 'response gpt-realtime', 'children': []},
                     {'name': 'speak gpt-realtime', 'msg': 'speak gpt-realtime', 'children': []},
-                    {'name': 'turn complete', 'msg': 'turn complete', 'children': []},
+                    {'name': 'model turn complete', 'msg': 'model turn complete', 'children': []},
                 ],
             }
         ]

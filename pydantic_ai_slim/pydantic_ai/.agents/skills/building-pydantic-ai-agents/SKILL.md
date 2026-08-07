@@ -220,9 +220,9 @@ Gemini Live, or xAI Grok Voice), use
 the tool loop for you. Stream input with `send_audio`/`send`, and iterate the
 session to consume the **same part/event vocabulary as a streamed run** — `PartStartEvent` /
 `PartDeltaEvent` / `PartEndEvent` carrying `SpeechPart`s and `ToolCallPart`s, plus
-`FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`InputSpeechStartEvent`,
-`ResponseCompleteEvent`, ...). Stop on `TurnCompleteEvent` (the exchange is over), not
-`ResponseCompleteEvent` (one response of possibly several).
+`FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`RealtimeInputSpeechStartEvent`,
+`RealtimeInputSpeechEndEvent`, `RealtimeResponseInterruptedEvent`, ...). Stop on `RealtimeTurnCompleteEvent`: the exchange is
+over, the model has said everything it is going to say, and it is the user's turn again.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -258,7 +258,9 @@ Key facts for building realtime agents:
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
   are what carry over; OpenAI and Azure can also replay retained transcript-less *user* audio, Gemini
-  and xAI cannot, and assistant audio is never replayed.
+  and xAI cannot, and assistant audio is never replayed. Streamed images all reach the provider, but
+  history keeps a sampled (`retain_images_every_n`) and bounded (`retain_images_max`, default `100`,
+  oldest evicted first) record.
 - **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
   agent behind a tool, or hand off history afterwards.
 - **Check the model profile before calling profile-gated methods**: `model.profile` (a

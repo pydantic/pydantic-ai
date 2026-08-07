@@ -31,7 +31,7 @@ import logfire
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.realtime import PartEndEvent, SpeechPart, TurnCompleteEvent
+from pydantic_ai.realtime import PartEndEvent, RealtimeTurnCompleteEvent, SpeechPart
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
@@ -88,7 +88,7 @@ async def main() -> None:
                     part=SpeechPart(speaker='assistant', transcript=transcript)
                 ) if transcript:
                     print(f'agent: {transcript}')
-                case TurnCompleteEvent():
+                case RealtimeTurnCompleteEvent():
                     next_turn = next(remaining_turns, None)
                     if next_turn is None:
                         call_complete = True

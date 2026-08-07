@@ -14,11 +14,14 @@ the config in a `.env` at the repo root, then:
 
 Open http://localhost:8000 on the same machine. Do not expose this development example directly to
 the internet: it has basic origin, model, connection, and message-size limits, but no authentication.
+Behind a reverse proxy that rewrites `Host` without forwarding `X-Forwarded-Host` (some dev tunnels),
+set `CAMERA_ALLOWED_ORIGINS` to the browser-facing origin(s), comma-separated.
 
 `CAMERA_REALTIME_MODEL` (default `google:gemini-3.1-flash-live-preview`) and
 `CAMERA_REALTIME_VOICE` (default: the provider's own default voice) set the fallback defaults. Model
 IDs must be one of `ALLOWED_MODELS` below; set `CAMERA_REALTIME_MODEL` to add a configured deployment
-to that list. The UI's model, voice, and output modality settings work across providers.
+to that list. The UI maps its voice setting to each provider's own setting; model and output modality
+settings work across providers.
 Language, turn coverage, start/end VAD sensitivity, proactive audio, and affective dialog are
 Gemini-only; OpenAI/Azure map either sensitivity control to cross-provider turn detection instead.
 
@@ -45,7 +48,7 @@ drawing tool on a model that supports both (e.g. Gemini 3.1) and simply drops on
 and ask the assistant to clean it up: it calls the `redraw_diagram` tool with a detailed text
 description of what it drew (the realtime model already has the live camera in context, so it
 describes the diagram rather than re-sending a photo — which keeps the tool fast and captures the
-moment the user meant). A separate drawing agent (Claude Sonnet 5 through the gateway by default) turns
+moment the user meant). A separate drawing agent (Claude Haiku 4.5 through the gateway by default) turns
 that description into a clean, self-contained HTML diagram; the browser renders it in an overlay and
 can export it to PNG client-side. Set `CAMERA_DRAW=false` to disable, or `CAMERA_DRAW_MODEL` to any
 `provider:model`. Proactive audio lets a Gemini native-audio model decide when to speak and stay
@@ -74,21 +77,22 @@ from fastapi.responses import HTMLResponse
 from pydantic_ai import Agent, BinaryContent, RunContext
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelAPIError, UserError
-from pydantic_ai.messages import NativeToolReturnPart
+from pydantic_ai.messages import NativeToolReturnPart, TextPartDelta
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 from pydantic_ai.realtime import (
-    InputSpeechStartEvent,
     PartDeltaEvent,
     PartEndEvent,
     RealtimeError,
     RealtimeEvent,
+    RealtimeInputSpeechStartEvent,
     RealtimeModel,
     RealtimeModelSettings,
+    RealtimeResponseInterruptedEvent,
     RealtimeSession,
+    RealtimeTurnCompleteEvent,
     ReconnectPolicy,
     SpeechPartDelta,
-    TurnCompleteEvent,
     TurnDetection,
     infer_realtime_model,
 )
@@ -146,11 +150,13 @@ PROACTIVE = _truthy(os.environ.get('CAMERA_PROACTIVE'))
 AFFECTIVE = _truthy(os.environ.get('CAMERA_AFFECTIVE'))
 # Sketch-to-diagram: a `redraw_diagram` tool passes the realtime model's text description of the
 # sketch to a separate drawing agent that renders it as clean HTML. On by default; the drawing model
-# defaults to Claude Sonnet 5 through the Pydantic AI Gateway (`PYDANTIC_AI_GATEWAY_API_KEY`), which is
-# strong at self-contained HTML. `CAMERA_DRAW_MODEL` takes any `provider:model` string to use another
-# model (e.g. `google:gemini-3.5-flash` to reuse the live session's `GOOGLE_API_KEY`).
+# defaults to Claude Haiku 4.5 through the Pydantic AI Gateway (`PYDANTIC_AI_GATEWAY_API_KEY`):
+# the user is waiting on a live call, and Haiku turns a description into a lean page in seconds
+# where larger models spend most of the wait thinking. `CAMERA_DRAW_MODEL` takes any
+# `provider:model` string to use another model (e.g. `google:gemini-3.5-flash` to reuse the live
+# session's `GOOGLE_API_KEY`).
 DRAW = _truthy(os.environ.get('CAMERA_DRAW', 'true'))
-DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'gateway/anthropic:claude-sonnet-5')
+DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'gateway/anthropic:claude-haiku-4-5')
 # Web search (the `WebSearch` capability) — on by default. It's only enabled for a session when the
 # selected model supports web search natively, checked per connection through the model's profile (see
 # `_web_search_supported`), so it and the drawing tool can be active together on a model that supports
@@ -180,17 +186,41 @@ def _is_message_data(value: object) -> TypeGuard[dict[str, object]]:
 
 
 def _same_origin(socket: WebSocket) -> bool:
-    """Accept browser WebSockets only from the local host serving this development example."""
+    """Accept browser WebSockets only from the origin serving this development example.
+
+    Cross-site WebSocket hijacking protection: a page on another site can open a WebSocket straight
+    to this server, so the browser-reported `Origin` must match the host the request was addressed
+    to. Three ways in:
+
+    - a loopback origin matching `Host` — direct local use. Loopback-only on this branch because a
+      DNS-rebinding page (an attacker domain resolving to `127.0.0.1`) carries its own non-loopback
+      origin, which matches `Host` too and must not pass.
+    - an origin matching `X-Forwarded-Host` — a reverse proxy (Codespaces, Coder, a dev tunnel) that
+      rewrote `Host`. Trustworthy because a browser cannot send that header: the WebSocket API
+      forwards no custom headers, so its presence proves a real proxy hop.
+    - an origin listed in `CAMERA_ALLOWED_ORIGINS` (comma-separated `scheme://host[:port]` values) —
+      proxies that forward neither.
+    """
     origin = socket.headers.get('origin')
-    host = socket.headers.get('host')
-    if not origin or not host:
+    if not origin:
         return False
+    allowed = {
+        value.strip()
+        for value in os.environ.get('CAMERA_ALLOWED_ORIGINS', '').split(',')
+        if value.strip()
+    }
+    if origin in allowed:
+        return True
     parsed = urlsplit(origin)
-    return (
-        parsed.scheme in ('http', 'https')
-        and parsed.hostname in ('localhost', '127.0.0.1', '::1')
-        and parsed.netloc == host
-    )
+    if parsed.scheme not in ('http', 'https'):
+        return False
+    if parsed.netloc == socket.headers.get('x-forwarded-host'):
+        return True
+    return parsed.hostname in (
+        'localhost',
+        '127.0.0.1',
+        '::1',
+    ) and parsed.netloc == socket.headers.get('host')
 
 
 def _instructions(*, web_search: bool) -> str:
@@ -214,7 +244,7 @@ def _instructions(*, web_search: bool) -> str:
             'the moment you see a drawing. First make sure you understand what they actually want: if '
             "they haven't said, ask one short question — keep it faithful but tidier, turn it into a "
             'flowchart, restructure it, add or label something? Once their intent is clear, FIRST tell '
-            "them out loud that you're about to redraw it and that it takes a few moments (around 30 "
+            "them out loud that you're about to redraw it and that it takes a few moments (around ten"
             "seconds) — don't leave them waiting in silence — THEN call the tool. The drawing tool "
             'cannot see the camera, so pass it a thorough text description as `instructions`: every box '
             'and its label, every arrow and what it connects, groupings, and the overall layout, plus '
@@ -248,6 +278,12 @@ DRAW_INSTRUCTIONS = (
     'a light background. '
     'Design it to fit comfortably on a phone screen in portrait: prefer a vertical flow over very '
     'wide horizontal layouts, let content wrap, and use relative widths so nothing is cut off. '
+    # The user is waiting on a live call while this generates, so latency is part of the spec:
+    # output tokens dominate the wall-clock time, and a compact page halves it.
+    'Keep the page LEAN so it generates fast: one short `<style>` block with a few shared classes, '
+    'simple semantic markup (plain divs, or one inline SVG for connector-heavy layouts), and no '
+    'decorative gradients, shadows, animations, or per-element styling. Do not restate the '
+    'description in comments or prose. '
     'Respond with a SINGLE complete HTML document and nothing else: inline all CSS in a `<style>` '
     'tag, use no external resources (no images, web fonts, or scripts), and no markdown fences.'
 )
@@ -257,8 +293,17 @@ _FENCE_RE = re.compile(r'^```[a-zA-Z]*\n(.*)\n```$', re.DOTALL)
 
 @lru_cache(maxsize=1)
 def _draw_agent() -> Agent[None, str]:
-    """Build the drawing agent that redraws sketches, lazily so it only needs credentials when used."""
-    return Agent(DRAW_MODEL, name='diagram_drawer', instructions=DRAW_INSTRUCTIONS)
+    """Build the drawing agent that redraws sketches, lazily so it only needs credentials when used.
+
+    A full HTML page for a busy diagram can outgrow a provider's default `max_tokens` (Anthropic's
+    default is low enough to cut off mid-page), so the limit is raised explicitly.
+    """
+    return Agent(
+        DRAW_MODEL,
+        name='diagram_drawer',
+        instructions=DRAW_INSTRUCTIONS,
+        model_settings={'max_tokens': 16_384},
+    )
 
 
 def _extract_html(text: str) -> str:
@@ -354,7 +399,12 @@ async def index() -> HTMLResponse:
 def _build_model(params: Mapping[str, str]) -> RealtimeModel:
     """Build the selected realtime model with provider-appropriate UI settings."""
     model_id = params.get('model') or MODEL
-    if model_id not in ALLOWED_MODELS:
+    # A `gateway/` routing prefix doesn't change which model runs, so an allowed model stays
+    # allowed when routed through the Pydantic AI Gateway.
+    if (
+        model_id not in ALLOWED_MODELS
+        and model_id.removeprefix('gateway/') not in ALLOWED_MODELS
+    ):
         raise ValueError(
             f'Realtime model {model_id!r} is not available in this example'
         )
@@ -371,10 +421,7 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
     if not _is_output_modality(modality):
         raise ValueError(f'Output modality {modality!r} must be "audio" or "text"')
     common_settings = RealtimeModelSettings(output_modality=modality)
-    # Only set a voice when one is given; an empty voice lets each provider use its own default, so the
-    # same settings work across Gemini and OpenAI without swapping voice names.
-    if voice := (params.get('voice') or VOICE):
-        common_settings['voice'] = voice
+    voice = params.get('voice') or VOICE
     if isinstance(model, GoogleRealtimeModel):
         settings = GoogleRealtimeModelSettings(
             **common_settings,
@@ -386,6 +433,8 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
             else AFFECTIVE,
             google_enable_session_resumption=True,
         )
+        if voice:
+            settings['google_voice'] = voice
         if language_code := params.get('language'):
             settings['google_language_code'] = language_code
         coverage = params.get('turn_coverage') or TURN_COVERAGE
@@ -400,6 +449,8 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
         model.reconnect = ReconnectPolicy(max_attempts=5)
     elif isinstance(model, OpenAIRealtimeModel):
         settings = OpenAIRealtimeModelSettings(**common_settings)
+        if voice:
+            settings['openai_voice'] = voice
         if sensitivity := start or end:
             if sensitivity in ('high', 'low'):
                 settings['turn_detection'] = TurnDetection(sensitivity=sensitivity)
@@ -438,9 +489,11 @@ def _json_message(event: RealtimeEvent) -> dict[str, object] | None:
     covers the remaining one-shot events (barge-in, grounding sources, end of turn).
     """
     match event:
-        case InputSpeechStartEvent():
-            # The user started talking over the model — a barge-in; the browser flushes buffered audio.
-            # (The realtime session records the barge-in in its telemetry.)
+        case RealtimeInputSpeechStartEvent() | RealtimeResponseInterruptedEvent():
+            # A barge-in: the user started talking over the model, or the provider reported the
+            # response interrupted — Gemini signals only the latter, without an `RealtimeInputSpeechStartEvent`.
+            # The browser flushes buffered audio either way. (The realtime session records the
+            # barge-in in its telemetry.)
             return {'type': 'speech_started'}
         case PartEndEvent(part=NativeToolReturnPart(content=content)):
             # Google Search grounding finished; surface its cited sources as chips.
@@ -449,7 +502,7 @@ def _json_message(event: RealtimeEvent) -> dict[str, object] | None:
                 'queries': [],
                 'sources': _grounding_sources(content),
             }
-        case TurnCompleteEvent():
+        case RealtimeTurnCompleteEvent():
             return {'type': 'turn_complete'}
         case _:
             return None
@@ -552,6 +605,18 @@ async def _run_session(
                                     'delta': delta,
                                 }
                             )
+                        case PartDeltaEvent(
+                            delta=TextPartDelta(content_delta=delta)
+                        ) if delta:
+                            # With `output_modality='text'` the assistant's reply arrives as text
+                            # part deltas rather than speech; stream it into the same bubble.
+                            await emit(
+                                {
+                                    'type': 'transcript',
+                                    'speaker': 'assistant',
+                                    'delta': delta,
+                                }
+                            )
                         case _:
                             if (message := _json_message(event)) is not None:
                                 await emit(message)
@@ -590,6 +655,14 @@ async def _run_session(
 @app.websocket('/ws')
 async def ws(socket: WebSocket) -> None:
     if not _same_origin(socket):
+        logfire.warn(
+            'Rejected WebSocket: origin {origin!r} does not match host {host!r} or forwarded host '
+            '{forwarded_host!r}. Behind a proxy that rewrites Host, set CAMERA_ALLOWED_ORIGINS to '
+            "the browser-facing origin (e.g. 'https://myapp.example.com').",
+            origin=socket.headers.get('origin'),
+            host=socket.headers.get('host'),
+            forwarded_host=socket.headers.get('x-forwarded-host'),
+        )
         await socket.close(code=1008, reason='WebSocket origin does not match Host')
         return
     try:

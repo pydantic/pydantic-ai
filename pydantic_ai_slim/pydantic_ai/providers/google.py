@@ -68,6 +68,9 @@ class BaseGoogleProvider(Provider[Client], ABC):
             # lands. This gates the opt-in `google_async_tool_calls` setting; it is not enabled by
             # merely being supported.
             'supports_async_tool_calls': 'native-audio' in model_name,
+            # Gemini Live takes a tool's return schema natively, as the function declaration's
+            # `response` schema (matching the classic `GoogleModel`'s `response_json_schema`).
+            'supports_tool_return_schema': True,
         }
 
     def _build_http_options(

@@ -43,6 +43,9 @@ from pydantic_ai.ui.vercel_ai.response_types import (
 
 __all__ = []
 
+TOOL_AVAILABILITY_DELTA_DATA_TYPE = 'data-tool-availability-delta'
+"""Data chunk type for tool availability changes."""
+
 PROVIDER_METADATA_KEY = 'pydantic_ai'
 
 

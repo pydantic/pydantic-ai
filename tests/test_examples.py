@@ -48,8 +48,15 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.realtime import RealtimeModel, ResponseCompleteEvent
-from pydantic_ai.realtime.codec import OutputTranscript, RealtimeCodecEvent, RealtimeConnection, RealtimeInput
+from pydantic_ai.realtime import RealtimeModel
+from pydantic_ai.realtime.codec import (
+    AudioDelta,
+    OutputTranscript,
+    RealtimeCodecEvent,
+    RealtimeConnection,
+    RealtimeInput,
+    ResponseDone,
+)
 
 from .conftest import TestEnv, try_import
 
@@ -141,8 +148,9 @@ class MockRealtimeConnection(RealtimeConnection):
         pass
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        yield AudioDelta(data=b'\x00\x00')
         yield OutputTranscript(text='Hello from the realtime assistant.', is_final=True)
-        yield ResponseCompleteEvent()
+        yield ResponseDone()
 
 
 @asynccontextmanager
@@ -842,6 +850,14 @@ async def model_logic(  # noqa: C901
         elif m.content == 'What is the secret code?':
             return ModelResponse(parts=[TextPart('1234')])
         elif m.content == 'Summarize the conversation.':
+            history_text = ' '.join(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+            )
+            if 'book a train' in history_text:
+                return ModelResponse(parts=[TextPart('- Book a train tomorrow.')])
             return ModelResponse(parts=[TextPart('- The assistant greeted the user.')])
         elif m.content == 'Tell me a two-sentence story about an axolotl with an illustration.':
             return ModelResponse(

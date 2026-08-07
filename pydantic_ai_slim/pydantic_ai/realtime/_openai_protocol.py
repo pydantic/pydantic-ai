@@ -24,6 +24,7 @@ from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
+from urllib.parse import quote
 
 import websockets
 from openai.types.realtime import (
@@ -69,6 +70,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserContent,
@@ -81,16 +83,16 @@ from ._base import (
     AudioDelta,
     ConversationCreated,
     ConversationItemCreated,
-    InputSpeechEndEvent,
-    InputSpeechStartEvent,
     InputTranscript,
-    InputTranscriptionErrorEvent,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeError,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
+    RealtimeInputTranscriptionErrorEvent,
     RealtimeModelProfile,
-    ResponseCompleteEvent,
-    SessionErrorEvent,
+    RealtimeSessionErrorEvent,
+    ResponseDone,
     ToolCall,
     TurnDetection,
     seed_pcm_audio,
@@ -102,18 +104,29 @@ if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection
 
 
-def realtime_websocket_url(base_url: str) -> str:
+def realtime_websocket_url(base_url: str, *, model: str | None = None, call_id: str | None = None) -> str:
     """Derive the realtime WebSocket URL from a provider's HTTP base URL.
 
     Swaps the HTTP scheme for the WebSocket one and appends the `realtime` path, so the default
-    OpenAI base URL `https://api.openai.com/v1/` yields `wss://api.openai.com/v1/realtime`.
+    OpenAI base URL `https://api.openai.com/v1/` yields `wss://api.openai.com/v1/realtime`. The
+    path lands *before* any query string the base URL carries — which is preserved, with `model`
+    or `call_id` merged into it — rather than being appended after it into the wrong endpoint.
+
+    `model` opens a new session; `call_id` attaches a control-plane (sideband) connection to a WebRTC
+    call that already exists, which carries its own model.
     """
-    url = base_url.rstrip('/')
+    url, _, query = base_url.partition('?')
+    url = url.rstrip('/')
     if url.startswith('https://'):
         url = 'wss://' + url[len('https://') :]
     elif url.startswith('http://'):
         url = 'ws://' + url[len('http://') :]
-    return f'{url}/realtime'
+    url = f'{url}/realtime'
+    for name, value in (('model', model), ('call_id', call_id)):
+        if value is not None:
+            param = f'{name}={quote(value, safe="")}'
+            query = f'{query}&{param}' if query else param
+    return f'{url}?{query}' if query else url
 
 
 AUTO_TRANSCRIPTION_MODEL = 'auto'
@@ -275,7 +288,9 @@ async def _seed_request_items(
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for part in parts:
-        if isinstance(part, SystemPromptPart):
+        if isinstance(part, (SystemPromptPart, ToolAvailabilityDeltaPart)):
+            # System prompts are seeded through session instructions, and tool-availability news
+            # from a prior standard run is stale here: the session advertises its own tools.
             continue
         elif isinstance(part, UserPromptPart):
             if content := _user_content_items(
@@ -561,10 +576,10 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
     A response whose only output is function calls is an intermediate step: the session executes the
     tools and the model emits a further `response.done` with the actual answer. Surfacing a
-    `ResponseCompleteEvent` here would prematurely signal the end of the turn.
+    `ResponseDone` here would prematurely signal the end of the turn.
     """
     if not validate_response_data(data):
-        return SessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)
+        return RealtimeSessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)
     event = ResponseDoneEvent.construct(**data)
     response = event.response
     output = response.output
@@ -572,7 +587,7 @@ def _map_response_done(data: dict[str, Any]) -> RealtimeCodecEvent | None:
         return None
     status = response.status
     response_id = response.id
-    return ResponseCompleteEvent(
+    return ResponseDone(
         interrupted=status == 'cancelled',
         provider_response_id=response_id if isinstance(response_id, str) else None,
         finish_reason=response_finish_reason(response),
@@ -629,13 +644,13 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
     if event_type == 'input_audio_buffer.speech_started':
         started_item_id = data.get('item_id')
-        return InputSpeechStartEvent(item_id=started_item_id if isinstance(started_item_id, str) else None)
+        return RealtimeInputSpeechStartEvent(item_id=started_item_id if isinstance(started_item_id, str) else None)
 
     if event_type == 'input_audio_buffer.speech_stopped':
         # The stopped frame names the input item this speech segment produced, letting the session attach
         # retained input audio to the right user turn even when overlapping turns finalize out of order.
         stopped_item_id = data.get('item_id')
-        return InputSpeechEndEvent(item_id=stopped_item_id if isinstance(stopped_item_id, str) else None)
+        return RealtimeInputSpeechEndEvent(item_id=stopped_item_id if isinstance(stopped_item_id, str) else None)
 
     if event_type == 'response.done':
         return _map_response_done(data)
@@ -643,10 +658,10 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     if event_type == 'error':
         error_data = data.get('error')
         if not is_str_dict(error_data):
-            return SessionErrorEvent(message=str(error_data), recoverable=True)
+            return RealtimeSessionErrorEvent(message=str(error_data), recoverable=True)
         event = RealtimeErrorEvent.construct(**data)
         error = event.error
-        return SessionErrorEvent(
+        return RealtimeSessionErrorEvent(
             message=_error_message(error),
             type=error.type or None if isinstance(error, RealtimeErrorPayload) else None,
             code=error.code or None if isinstance(error, RealtimeErrorPayload) else None,
@@ -658,7 +673,7 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
 
 def _map_input_transcription_event(
     data: dict[str, Any], event_type: str
-) -> InputTranscript | InputTranscriptionErrorEvent | None:
+) -> InputTranscript | RealtimeInputTranscriptionErrorEvent | None:
     """Map input transcription progress and failure events."""
     if event_type == 'conversation.item.input_audio_transcription.delta':
         event = ConversationItemInputAudioTranscriptionDeltaEvent.construct(**data)
@@ -679,7 +694,7 @@ def _map_input_transcription_event(
     code = event.error.code or None
     if code == _MISSING_TRANSCRIPTION_DEPLOYMENT_CODE:
         message = f'{message} {_MISSING_TRANSCRIPTION_DEPLOYMENT_HELP}'.strip()
-    return InputTranscriptionErrorEvent(
+    return RealtimeInputTranscriptionErrorEvent(
         message=message,
         type=event.error.type or None,
         code=code,

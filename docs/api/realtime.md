@@ -34,7 +34,7 @@ intercepting each [`ToolCall`][pydantic_ai.realtime.codec.ToolCall], running it,
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] then a
 [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent]. Every tool runs in the
 background, so a slow one never blocks the session; whether the *model* keeps speaking meanwhile is
-provider-specific (see [Concurrent tools](../realtime/index.md#concurrent-tools)).
+provider-specific (see [Concurrent tool execution](../realtime/tools.md#concurrent-tool-execution)).
 
 ## Overview
 
@@ -50,7 +50,7 @@ provider-specific (see [Concurrent tools](../realtime/index.md#concurrent-tools)
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic concurrent tool dispatch. |
 
 **Browser / WebRTC** — for browser voice agents, the media flows browser ↔ provider directly while the
-backend runs a control-plane sideband (OpenAI and Azure OpenAI; see [Browser / WebRTC](../realtime/index.md#browser-webrtc)):
+backend runs a control-plane sideband (OpenAI and Azure OpenAI; see [Browser / WebRTC](../realtime/lifecycle.md#browser-webrtc)):
 
 | Object | Role |
 | --- | --- |
@@ -93,13 +93,13 @@ vocabulary yielded by a connection:
 [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript],
 [`ToolCall`][pydantic_ai.realtime.codec.ToolCall],
 [`ToolCallCancelled`][pydantic_ai.realtime.codec.ToolCallCancelled],
-[`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent],
-[`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent],
-[`InputSpeechEndEvent`][pydantic_ai.realtime.InputSpeechEndEvent],
-[`ResponseInterruptedEvent`][pydantic_ai.realtime.ResponseInterruptedEvent],
-[`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent],
-[`SessionUsageEvent`][pydantic_ai.realtime.SessionUsageEvent],
-and [`SessionErrorEvent`][pydantic_ai.realtime.SessionErrorEvent].
+[`ResponseDone`][pydantic_ai.realtime.codec.ResponseDone],
+[`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent],
+[`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent],
+[`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent],
+[`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent],
+[`SessionUsageEvent`][pydantic_ai.realtime.codec.SessionUsageEvent],
+and [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent].
 
 **Session events** — [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent], yielded by a
 session. The session translates codec events into the shared vocabulary from
@@ -110,10 +110,12 @@ session. The session translates codec events into the shared vocabulary from
 [`SpeechPart`][pydantic_ai.messages.SpeechPart]s and
 [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s), tool execution as
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
-[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], and the rest as the
-control-plane events above (`ResponseCompleteEvent`, `InputSpeechStartEvent`, `InputSpeechEndEvent`,
-`ResponseInterruptedEvent`, and `SessionReconnectEvent`), plus
-[`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent], which the
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], inline deferred handling as
+[`DeferredToolRequestsEvent`][pydantic_ai.realtime.DeferredToolRequestsEvent] /
+[`DeferredToolResultsEvent`][pydantic_ai.realtime.DeferredToolResultsEvent], and the rest as the
+control-plane events above (`RealtimeInputSpeechStartEvent`, `RealtimeInputSpeechEndEvent`,
+`RealtimeResponseInterruptedEvent`, `RealtimeSessionReconnectEvent`, and `RealtimeSessionErrorEvent`), plus
+[`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent], which the
 session synthesizes rather than reading off the wire. Usage updates are accumulated on the session and are not yielded.
 
 ::: pydantic_ai.realtime
@@ -154,7 +156,8 @@ produces one response modality per session, and natively accepts live video fram
 configuration through [`GoogleRealtimeModelSettings`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings] —
 shared turn-taking via [`TurnDetection`][pydantic_ai.realtime.TurnDetection], with finer Gemini-specific
 control via [`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD] in `google_vad` plus
-`google_activity_handling`/`google_turn_coverage`, voice via [`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker],
+`google_activity_handling`/`google_turn_coverage`, voice via `google_voice` or
+[`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker],
 and long-session [`ContextCompression`][pydantic_ai.realtime.google.ContextCompression] — with
 resilience via session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] on the model.
 
@@ -162,8 +165,9 @@ resilience via session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.Rec
 
 ## xAI Grok Voice provider
 
-The xAI Grok Voice realtime API provider. Requires the `realtime` and `xai` optional groups
-(`pip install "pydantic-ai-slim[realtime,xai]"`).
+The xAI Grok Voice realtime API provider. Requires the `realtime`, `xai`, and `openai` optional
+groups (`pip install "pydantic-ai-slim[realtime,xai,openai]"`) — `openai` because the model reuses
+the OpenAI Realtime codec, whose event types come from the OpenAI SDK.
 
 xAI's realtime API is a clone of the OpenAI Realtime protocol, so
 [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] reuses the OpenAI codec (event

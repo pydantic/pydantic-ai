@@ -7,7 +7,7 @@ import dataclasses
 import io
 import wave
 from collections import deque
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import replace
 from threading import Lock as ThreadLock
 from time import time_ns
@@ -21,6 +21,9 @@ from opentelemetry.context import Context
 from opentelemetry.trace import Span, SpanKind, StatusCode, set_span_in_context
 from typing_extensions import assert_never
 
+from pydantic_graph._utils import get_traceparent
+
+from .. import _agent_graph
 from .._enqueue import PendingMessage, PendingMessagePriority
 from .._instrumentation import (
     InstrumentationNames,
@@ -35,7 +38,7 @@ from .._instrumentation import (
     serialize_any,
 )
 from .._tool_execution import build_tool_return_part
-from .._utils import cancel_and_drain, fill_run_metadata
+from .._utils import aclose_all, cancel_and_drain, fill_run_metadata
 from ..exceptions import ApprovalRequired, CallDeferred, ToolFailedError, ToolRetryError, UserError
 from ..messages import (
     BinaryContent,
@@ -63,6 +66,7 @@ from ..messages import (
     UserPromptPart,
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS
+from ..run import AgentRunResult
 from ..tool_manager import ToolManager
 from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._base import (
@@ -76,25 +80,26 @@ from ._base import (
     ConversationItemCreated,
     CreateResponse,
     ImageInput,
-    InputSpeechEndEvent,
-    InputSpeechStartEvent,
     InputTranscript,
-    InputTranscriptionErrorEvent,
-    OutputSpeechEndEvent,
-    OutputSpeechStartEvent,
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeError,
     RealtimeEvent,
     RealtimeInput,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
+    RealtimeInputTranscriptionErrorEvent,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    RealtimeOutputSpeechEndEvent,
+    RealtimeOutputSpeechStartEvent,
+    RealtimeResponseInterruptedEvent,
+    RealtimeSessionErrorEvent,
     RealtimeSessionInput,
-    ResponseCompleteEvent,
-    ResponseInterruptedEvent,
-    SessionErrorEvent,
-    SessionReconnectEvent,
+    RealtimeSessionReconnectEvent,
+    RealtimeTurnCompleteEvent,
+    ResponseDone,
     SessionUsageEvent,
     TextInput,
     ToolCall,
@@ -102,11 +107,11 @@ from ._base import (
     ToolResult,
     TranscriptUpdate,
     TruncateOutput,
-    TurnCompleteEvent,
     seed_pcm_audio,
 )
 
 if TYPE_CHECKING:
+    from ..messages import AgentStreamEvent
     from ..models import ModelRequestParameters
     from ..models.instrumented import InstrumentationSettings
     from ..tools import DeferredToolRequests, DeferredToolResults
@@ -164,24 +169,24 @@ _TranslatableEvent: TypeAlias = (
     AudioDelta
     | OutputTranscript
     | InputTranscript
-    | ResponseCompleteEvent
-    | InputSpeechStartEvent
-    | ResponseInterruptedEvent
-    | InputSpeechEndEvent
-    | OutputSpeechStartEvent
-    | OutputSpeechEndEvent
-    | InputTranscriptionErrorEvent
-    | SessionReconnectEvent
+    | ResponseDone
+    | RealtimeInputSpeechStartEvent
+    | RealtimeResponseInterruptedEvent
+    | RealtimeInputSpeechEndEvent
+    | RealtimeOutputSpeechStartEvent
+    | RealtimeOutputSpeechEndEvent
+    | RealtimeInputTranscriptionErrorEvent
+    | RealtimeSessionReconnectEvent
     | PartStartEvent
     | PartEndEvent
-    | SessionErrorEvent
+    | RealtimeSessionErrorEvent
 )
 _SettledToolResult: TypeAlias = tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]
 
 
 def _as_event(item: object) -> RealtimeEvent:
     """Unwrap a queue item: re-raise a tool's exception, otherwise return the event."""
-    if isinstance(item, Exception):
+    if isinstance(item, BaseException):
         raise item
     return cast('RealtimeEvent', item)
 
@@ -267,6 +272,27 @@ def _tool_result_call_id(message: ModelMessage) -> str | None:
 def _is_tool_result_request(message: ModelMessage) -> bool:
     """Whether a history request carries an inserted tool result and optional follow-up user content."""
     return _tool_result_call_id(message) is not None
+
+
+def _build_session_tool_return(
+    tool_result: Any, call_part: ToolCallPart, tool_manager: ToolManager[Any]
+) -> tuple[ToolReturnPart | RetryPromptPart, str | Sequence[UserContent] | None]:
+    """Translate a settled session tool result into its history part, rejecting mid-session reveals."""
+    tool_def = tool_manager.get_tool_def(call_part.tool_name)
+    result_part, user_content, tools_added = build_tool_return_part(
+        tool_result,
+        call=call_part,
+        tool_kind=tool_def.tool_kind if tool_def else None,
+    )
+    if tools_added:
+        # The connection's tools are fixed when it opens, so a reveal can never reach the
+        # provider; failing loudly beats silently providing less than the tool requested.
+        raise UserError(
+            f'Realtime sessions cannot reveal tools mid-session, so `ToolReturn.tools` from '
+            f'tool {call_part.tool_name!r} cannot be honored: the connection advertises a fixed '
+            'tool list from the moment it opens.'
+        )
+    return result_part, user_content
 
 
 def _is_user_speech_request(message: ModelMessage) -> bool:
@@ -361,7 +387,9 @@ class RealtimeSession:
 
     Images and video frames streamed with [`send`][pydantic_ai.realtime.RealtimeSession.send] are
     stored as ordinary user image turns by default. Set `retain_images_every_n` above `1` to sample
-    high-rate frame streams and reduce history memory use.
+    high-rate frame streams, and `retain_images_max` (default `100`) to bound how many stay in
+    history — the oldest retained image is evicted first, so a long-running stream can't grow memory
+    without limit.
 
     When constructing a session directly, use it as an async context manager. The context owns the
     receive pump, background tool tasks, and instrumentation spans; iteration only reads its event
@@ -383,16 +411,19 @@ class RealtimeSession:
         usage_limits: UsageLimits | None = None,
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
         message_history: Sequence[ModelMessage] | None = None,
         profile: RealtimeModelProfile | None = None,
         owns_media: bool = True,
         conversation_id: str | None = None,
+        run_id: str | None = None,
         instructions: str | None = None,
         metadata: dict[str, Any] | None = None,
         agent_description: str | None = None,
         output_modality: Literal['audio', 'text'] = 'audio',
         model_request_parameters: ModelRequestParameters | None = None,
         model_settings: RealtimeModelSettings | None = None,
+        wrap_event_stream: Callable[[AsyncIterable[AgentStreamEvent]], AsyncIterable[AgentStreamEvent]] | None = None,
     ) -> None:
         self._connection = connection
         self._tool_manager = tool_manager
@@ -410,12 +441,14 @@ class RealtimeSession:
         self._provider_url = provider_url
         self._agent_name = agent_name
         self._conversation_id = conversation_id
+        self._run_id = run_id
         # The request parameters and settings the session was opened with. Unlike a classic run — where
         # each model request can vary — a realtime session sends these once at connect, so they belong on
         # the session span (set once), not repeated on every per-turn `chat` span. Carrying
         # `model_request_parameters` is what makes the session's configured native tools inspectable.
         self._model_request_parameters = model_request_parameters
         self._model_settings = model_settings
+        self._wrap_event_stream = wrap_event_stream
         self._instructions = instructions
         self._metadata = metadata
         self._agent_description = agent_description
@@ -429,6 +462,12 @@ class RealtimeSession:
         if retain_images_every_n < 1:
             raise UserError('`retain_images_every_n` must be at least 1.')
         self._retain_images_every_n = retain_images_every_n
+        if retain_images_max is not None and retain_images_max < 0:
+            raise UserError('`retain_images_max` must be at least 0, or `None` for no limit.')
+        self._retain_images_max = retain_images_max
+        # Retained image requests in arrival order, so the cap can evict the oldest. Identity-based:
+        # `_record_sent_request` stores these same objects in the pending list or the history.
+        self._retained_image_requests: list[ModelRequest] = []
         self._sent_image_count = 0
         # Whether the connection transcribes the user's audio. When it doesn't, no `InputTranscript`
         # arrives to finalize a user turn, so its retained audio or content-less placeholder is finalized
@@ -550,10 +589,21 @@ class RealtimeSession:
         # In-flight tool tasks keyed by tool call id, so a `ToolCallCancelled` can cancel the specific
         # calls the model abandoned (e.g. on barge-in) without touching the others.
         self._pending_tool_calls: dict[str, tuple[asyncio.Task[None], ToolCallPart]] = {}
+        # Tool execution is gated inside each task so the receive pump remains free to deliver audio,
+        # transcripts, and cancellations. A barrier snapshots every unfinished predecessor; an ordinary
+        # call only waits for the latest barrier. Completion events are released from `_run_tool`'s
+        # `finally`, including cancellation and failure paths.
+        self._tool_completion_events: set[asyncio.Event] = set()
+        self._last_tool_barrier: asyncio.Event | None = None
         # OpenAI-protocol tool results can complete before the response's later `response.done` usage
         # finalizes the calling response. Hold their history requests until the call is present.
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
         self._tool_calls_awaiting_usage: set[str] = set()
+        # `ToolManager` adds a call to `usage.tool_calls` only once it *succeeds*, so calls still
+        # running aren't visible there. Reserved when a `ToolCall` passes `_check_tool_call_limit`,
+        # released the moment `handle_call` settles (the same event-loop segment that records a
+        # success), so a burst of parallel calls can't each clear a limit only one of them fits under.
+        self._tool_calls_in_flight = 0
         self._asap_drain_deferred = False
         self._asap_drain_ready = False
         self._pump_task: asyncio.Task[None] | None = None
@@ -574,6 +624,8 @@ class RealtimeSession:
         self._session_span: Span | None = None
         self._session_span_context: Context | None = None
         self._session_span_attributes: dict[str, Any] | None = None
+        self._traceparent_value: str | None = None
+        self._result: AgentRunResult[str] | None = None
 
     async def __aenter__(self) -> RealtimeSession:
         if self._entered or self._closed:
@@ -627,6 +679,8 @@ class RealtimeSession:
                 # Match the classic agent-run span's key (see `capabilities/instrumentation.py`) so a
                 # realtime session can be correlated with other runs sharing the conversation id.
                 attributes['gen_ai.conversation.id'] = self._conversation_id
+            if self._run_id:
+                attributes['gen_ai.agent.call.id'] = self._run_id
             # `model_request_parameters` / `model_settings` are sent once at connect (not per turn), so this
             # session span is their honest scope. They're also duplicated onto each per-turn span so
             # Logfire's per-step rendering (native tools, tool definitions) fires there too; see
@@ -674,7 +728,7 @@ class RealtimeSession:
             kind=SpanKind.INTERNAL,
         ).end()
 
-    def _record_lifecycle_event(self, name: str, **attributes: Any) -> None:
+    def _record_lifecycle_event(self, name: str, *, message: str | None = None, **attributes: Any) -> None:
         """Record a realtime lifecycle moment (barge-in, turn boundary) as a zero-duration child span.
 
         Turn boundaries and barge-ins have no request/response of their own, so they surface as
@@ -682,13 +736,21 @@ class RealtimeSession:
         (rather than `logfire.info` calls, which each app would otherwise have to add itself). A span
         rather than a span event because backends surface spans immediately and predictably. Names are
         lowercase to match the surrounding spans; attributes whose value is `None` are dropped so the
-        span stays clean. No-op when instrumentation is disabled.
+        span stays clean. Every span carries `pydantic_ai.realtime` so backends can recognize the
+        whole session tree, lifecycle moments included. No-op when instrumentation is disabled.
+
+        `message` sets `logfire.msg` to vary the displayed text without splitting the span name into
+        more than one grouping key — e.g. an interrupted turn boundary reads "model turn complete
+        (interrupted)" while still counting as a `model turn complete` span.
         """
         settings = self._instrumentation
         context = self._session_span_context
         if settings is None or context is None:
             return
-        attrs = {key: value for key, value in attributes.items() if value is not None}
+        attrs: dict[str, Any] = {'pydantic_ai.realtime': True}
+        if message is not None:
+            attrs['logfire.msg'] = message
+        attrs.update({key: value for key, value in attributes.items() if value is not None})
         settings.tracer.start_span(name, context=context, attributes=attrs, kind=SpanKind.INTERNAL).end()
 
     async def __aexit__(
@@ -715,24 +777,38 @@ class RealtimeSession:
             return
         self._closed = True
         self._finish_taps(discard_pending=True)
+        if self._pump_task is not None:
+            # Cancelled before state is settled below so the pump can't mutate it mid-settlement;
+            # the task is awaited together with the rest afterwards.
+            self._pump_task.cancel()
+        if (early_error := self._closing_error or self._pump_error) is not None and self._chat_span is not None:
+            # The reply this span covers is being torn down by a failure; record it now, before the
+            # settlement below finalizes the interrupted response and ends the span cleanly.
+            self._record_span_error(self._chat_span, early_error)
+        self._flush_pending_users()
+        if (
+            self._pending_response_usage != RequestUsage()
+            and self._active_assistant is None
+            and not self._response_parts
+        ):
+            # Usage carried forward from an output-less turn boundary that no later response claimed.
+            # Better an empty response holding it than silently dropping billed tokens — and, with no
+            # reply in flight, nothing here was interrupted, so it isn't settled as such below.
+            self._finalize_response(response_occurred=True)
+        # Settle whatever the closing session still holds open, exactly as a reconnect settles state
+        # the provider lost: open user turns land in history, a reply cut off mid-generation is
+        # recorded as interrupted, and every still-running tool call gets a cancelled return. The
+        # returned events are discarded — the stream is closing and has no consumer left.
+        self._finalize_lost_state()
         tasks = [*self._background_tasks]
         if self._pump_task is not None:
             tasks.append(self._pump_task)
         if tasks:
             await cancel_and_drain(*tasks, msg='Realtime session exited')
 
-        self._flush_pending_users()
-        if self._pending_response_usage != RequestUsage():
-            # Usage carried forward from an output-less turn boundary that no later response claimed.
-            # Better an empty response holding it than silently dropping billed tokens.
-            self._finalize_response(response_occurred=True)
-
+        # Any open `chat` span was closed by the settlement above (an open span counts as a response
+        # in flight), with the error — if any — already recorded on it before settlement.
         error = self._closing_error or self._pump_error
-        if self._chat_span is not None:
-            if error is not None:
-                self._record_span_error(self._chat_span, error)
-            self._chat_span.end()
-            self._chat_span = None
         # Closing mid-utterance is normal (the caller stopped listening), so the `speak` span is closed
         # rather than left open; it isn't an error even when the session ended on one.
         self._end_playback_span()
@@ -747,6 +823,7 @@ class RealtimeSession:
             if error is not None:
                 self._record_span_error(span, error)
             self._finalize_span(settings, span)
+            self._traceparent_value = get_traceparent(span) or None
             span.end()
         self._session_span = None
         self._session_span_context = None
@@ -759,13 +836,41 @@ class RealtimeSession:
         # hangup — or from an exceeded `usage_limits`, silently spending past a cost cap it asked for.
         # Not raised when the caller did consume the stream (it either saw the error or chose to stop
         # listening), nor over an exception already on its way out of the `async with` body.
-        if self._closing_error is None and self._pump_error is not None and not self._stream_consumed:
-            raise self._pump_error
+        if self._closing_error is None and not self._stream_consumed:
+            if self._pump_error is not None:
+                raise self._pump_error
+            # A failed tool (or background drain) surfaces through the queue rather than
+            # `_pump_error`; with no consumer it would otherwise vanish here.
+            while not self._queue.empty():
+                item = self._queue.get_nowait()
+                if isinstance(item, BaseException) and not isinstance(item, asyncio.CancelledError):
+                    raise item
 
     @property
     def closed(self) -> bool:
         """Whether the session has been closed."""
         return self._closed
+
+    @property
+    def result(self) -> AgentRunResult[str] | None:
+        """The final result once the session context has exited, otherwise `None`."""
+        return self._result
+
+    def _build_run_result(self, state: _agent_graph.GraphAgentState) -> AgentRunResult[str]:
+        """Settle the session into the same result shape `Agent.run(output_type=str)` returns.
+
+        The output is the model's final text — a session has no other kind of output — and
+        `new_message_index` is the seeded/recorded boundary, so `result.new_messages()` and
+        `new_messages()` agree. `_output_tool_name` stays `None`: plain text never came from a tool.
+        """
+        state.message_history = self.all_messages()
+        return AgentRunResult(
+            self._final_result_text() or '',
+            None,
+            state,
+            len(self._seeded),
+            self._traceparent_value,
+        )
 
     @property
     def profile(self) -> RealtimeModelProfile:
@@ -862,7 +967,7 @@ class RealtimeSession:
         Returns a copy, so the result doesn't change as the session continues. Feed it into
         [`Agent.run(message_history=...)`][pydantic_ai.agent.AbstractAgent.run] to hand the
         conversation off to a standard agent run. Images streamed with `send()` are recorded according
-        to `retain_images_every_n`.
+        to `retain_images_every_n`, bounded by `retain_images_max`.
         """
         return [*self._seeded, *self._history]
 
@@ -873,7 +978,7 @@ class RealtimeSession:
     def _new_request(self, parts: list[ModelRequestPart]) -> ModelRequest:
         """Create a request carrying the framework-managed session metadata."""
         request = ModelRequest(parts=parts)
-        fill_run_metadata(request, run_id=None, conversation_id=self._conversation_id)
+        fill_run_metadata(request, run_id=self._run_id, conversation_id=self._conversation_id)
         return request
 
     async def send(
@@ -886,8 +991,9 @@ class RealtimeSession:
         [`BinaryContent`][pydantic_ai.messages.BinaryContent], or a sequence of these inputs, dispatched
         in order. Text and retained images are recorded in session history; audio is recorded later
         through its transcript and/or `audio_retention`. `retain_images_every_n=1` records every image,
-        while larger values keep the first image and then one of every `N`. Sending an image is gated on
-        the model profile's image-input support and raises `UserError` when it is unsupported.
+        while larger values keep the first image and then one of every `N`; `retain_images_max` bounds
+        how many stay recorded, evicting the oldest first. Sending an image is gated on the model
+        profile's image-input support and raises `UserError` when it is unsupported.
 
         `send()` accepts session content only. Turn-control verbs (`CommitAudio`, `ClearAudio`,
         `CreateResponse`, `CancelResponse`, `TruncateOutput`) are driven through the dedicated methods
@@ -963,19 +1069,28 @@ class RealtimeSession:
             )
 
     async def _send_image(self, content: BinaryContent) -> None:
-        """Forward an image and retain it according to the session's sampling policy."""
+        """Forward an image and retain it according to the session's sampling and cap policies."""
         self._require_capability(self._profile.get('supports_image_input', False), 'send', 'image input')
         request: ModelRequest | None = None
-        if self._sent_image_count % self._retain_images_every_n == 0:
+        if self._retain_images_max != 0 and self._sent_image_count % self._retain_images_every_n == 0:
             request = self._new_request([UserPromptPart(content=[content])])
             self._record_sent_request(request)
         try:
             await self._send_frame(ImageInput(data=content.data, media_type=content.media_type))
         except BaseException:
+            # `None` when this image wasn't the one retained by the sampling policy: nothing recorded,
+            # so nothing to take back.
             if request is not None:
                 self._remove_sent_request(request)
             raise
         self._sent_image_count += 1
+        if request is not None:
+            self._retained_image_requests.append(request)
+            # `retain_images_every_n` only slows history growth; the cap bounds it, so a long-running
+            # frame stream can't grow the host's memory without limit. Providers hold their own
+            # (server-side) image context; this only trims the local record.
+            while self._retain_images_max is not None and len(self._retained_image_requests) > self._retain_images_max:
+                self._remove_sent_request(self._retained_image_requests.pop(0))
 
     def _record_sent_request(self, request: ModelRequest) -> None:
         """Record a sent request without interleaving it with an in-flight assistant response."""
@@ -993,7 +1108,7 @@ class RealtimeSession:
             self._history.append(request)
 
     def _remove_sent_request(self, request: ModelRequest) -> None:
-        """Remove a reserved request when its network send fails."""
+        """Remove a recorded request: a failed network send takes it back, the image cap evicts it."""
         for messages in (self._pending_sent_requests, self._history):
             for index, message in enumerate(messages):
                 if message is request:
@@ -1322,7 +1437,7 @@ class RealtimeSession:
                 conversation_id=self._conversation_id,
                 state='interrupted' if interrupted else 'complete',
             )
-            fill_run_metadata(response, run_id=None, conversation_id=self._conversation_id)
+            fill_run_metadata(response, run_id=self._run_id, conversation_id=self._conversation_id)
             self._history.append(response)
             self.usage.requests += 1
             self._tool_run_step += 1
@@ -1354,7 +1469,7 @@ class RealtimeSession:
         and are duplicated onto each per-turn span, matching where the classic path puts them (the `chat`
         span) so Logfire's per-step rendering of native tools and `gen_ai.tool.definitions` still fires.
         `model_request_parameters` (and the serialized realtime `model_settings`, whose vocabulary —
-        `voice`, `output_modality`, `thinking`, `turn_detection`, ... — has no OTel-spec `gen_ai.request.*`
+        provider voice settings, `output_modality`, `thinking`, `turn_detection`, ... — has no OTel-spec `gen_ai.request.*`
         equivalent) are gated on `include_model_request_parameters`; tool definitions and `max_tokens`,
         which have spec homes, are set ungated like the classic path.
 
@@ -1422,7 +1537,7 @@ class RealtimeSession:
         specific to voice output. The span keeps the semconv `chat` operation and `chat {model}` name, but
         renders (via `logfire.msg`) as `response {model}`: nothing was "chatted" — no request was sent —
         and this span covers exactly one `ModelResponse`, which is *not* the same as a conversational
-        turn (a turn that calls tools produces several). The turn boundary is the `turn complete` span.
+        turn (a turn that calls tools produces several). The turn boundary is the `model turn complete` span.
         """
         self._begin_response()
         settings = self._instrumentation
@@ -1520,9 +1635,9 @@ class RealtimeSession:
                 ),
             )
 
-    def _handle_turn_complete(self, event: ResponseCompleteEvent) -> list[RealtimeEvent]:
+    def _handle_turn_complete(self, event: ResponseDone) -> list[RealtimeEvent]:
         # Turn boundary for a user turn that wasn't finalized earlier, so history reads user-then-assistant.
-        # Gemini emits neither `InputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
+        # Gemini emits neither `RealtimeInputSpeechEndEvent` nor a final (`is_final`) input transcript — it streams
         # only partial transcripts — so its user turn is finalized here: `_finalize_user` for a
         # transcript-driven turn, `_finalize_untranscribed_user` otherwise. Both are no-ops
         # when the turn was already finalized (e.g. OpenAI's `is_final` transcript or `commit_audio`).
@@ -1534,7 +1649,7 @@ class RealtimeSession:
             # buffer and must not become the prefix of the next user turn. The completed response is a
             # safe point to discard it unless the user has already started speaking again (barge-in).
             # Only for a provider that draws speech boundaries at all: Gemini never emits
-            # `InputSpeechEndEvent`, so its buffer holds the *next* utterance, not a spent tail.
+            # `RealtimeInputSpeechEndEvent`, so its buffer holds the *next* utterance, not a spent tail.
             self._input_audio.clear()
         events.extend(self._finalize_assistant_part())
         already_finalized = bool(
@@ -1550,7 +1665,7 @@ class RealtimeSession:
         # Whether the model will speak again: it always responds to a tool's result, so a response that
         # called one, that left one still running, or whose content was already recorded (making this the
         # trailing terminal of a tool-call response, with the answer still to come) is never the last of
-        # the exchange. `TurnCompleteEvent` waits for the one that is.
+        # the exchange. `RealtimeTurnCompleteEvent` waits for the one that is.
         #
         # Not the `_response_finalized_before_terminal` flag itself: the OpenAI protocol *suppresses* a
         # function-call-only `response.done`, so the flag would still be set when the answer's terminal
@@ -1582,13 +1697,19 @@ class RealtimeSession:
             ),
         )
         self._pending_interrupted_at_ms = None
-        events.append(event)
         if not more_expected:
-            events.append(TurnCompleteEvent())
+            events.append(RealtimeTurnCompleteEvent())
             # Only the exchange boundary is marked: each response is already a `chat` span, so a marker
             # per response would say nothing the trace doesn't show, while the turn boundary — where the
             # model is actually done — has no span of its own.
-            self._record_lifecycle_event('turn complete', interrupted=event.interrupted or None)
+            # An interrupted boundary says so in its display text: on providers that auto-respond per
+            # VAD segment (OpenAI server VAD), a talking user cancels response after response, and a
+            # bare "model turn complete" per cancellation reads as turns that never happened.
+            self._record_lifecycle_event(
+                'model turn complete',
+                message='model turn complete (interrupted)' if event.interrupted else None,
+                interrupted=event.interrupted or None,
+            )
         return events
 
     def _handle_tool_call_part(self, call_part: ToolCallPart, *, response_usage_follows: bool) -> list[RealtimeEvent]:
@@ -1941,11 +2062,21 @@ class RealtimeSession:
         """Return `False` for an xAI item that belongs to the resumption replay burst."""
         return not self._is_replayed_item(item_id, tool_call_id)
 
-    def _handle_reconnected(self, event: SessionReconnectEvent) -> list[RealtimeEvent]:
+    def _handle_reconnected(self, event: RealtimeSessionReconnectEvent) -> list[RealtimeEvent]:
         """Close state the provider lost before starting the reconnected turn."""
         if event.state_restored:
             return [event]
+        return [*self._finalize_lost_state(), event]
 
+    def _finalize_lost_state(self) -> list[RealtimeEvent]:
+        """Settle everything still open into history: user turns, an in-flight response, running tools.
+
+        Shared by the reconnect path (the provider lost this state) and `close()` (the session is
+        ending with it still open). The partial reply is recorded as interrupted and every running
+        tool call gets a cancelled return, so `all_messages()` stays a valid history for an
+        `Agent.run(message_history=...)` handoff instead of dropping the tail of the conversation or
+        ending on a dangling `ToolCallPart`.
+        """
         events = self._finalize_user()
         for item_id in list(self._user_item_order):
             if item_id in self._active_users_by_id:
@@ -1976,19 +2107,24 @@ class RealtimeSession:
                 outcome='interrupted',
             )
             events.extend(self._complete_tool_call(call_part, cancelled_part))
-        return [*events, event]
+        return events
 
     def _handle_control_event(
         self,
-        event: InputSpeechStartEvent | SessionReconnectEvent | OutputSpeechStartEvent | OutputSpeechEndEvent,
+        event: (
+            RealtimeInputSpeechStartEvent
+            | RealtimeSessionReconnectEvent
+            | RealtimeOutputSpeechStartEvent
+            | RealtimeOutputSpeechEndEvent
+        ),
     ) -> list[RealtimeEvent]:
-        if isinstance(event, SessionReconnectEvent):
+        if isinstance(event, RealtimeSessionReconnectEvent):
             return self._handle_reconnected(event)
         # The playback boundary brackets the `speak` span and is otherwise passed straight through.
-        if isinstance(event, OutputSpeechStartEvent):
+        if isinstance(event, RealtimeOutputSpeechStartEvent):
             self._start_playback_span()
             return [event]
-        if isinstance(event, OutputSpeechEndEvent):
+        if isinstance(event, RealtimeOutputSpeechEndEvent):
             self._end_playback_span()
             return [event]
         # A reported speech start is a turn boundary even mid-stream, so it re-anchors: with a continuously
@@ -2022,7 +2158,7 @@ class RealtimeSession:
             if not self._accept_item(event.item_id):
                 return []
             self._set_actual_output_type('text' if event.output_text else 'speech')
-            # `is_final` doesn't end the part — the turn ends on `ResponseCompleteEvent`; a final transcript just
+            # `is_final` doesn't end the part — the turn ends on `ResponseDone`; a final transcript just
             # carries the full text, which `_accumulate_transcript` reconciles against the deltas. Plain
             # text output (`output_text`) becomes a `TextPart`, an audio transcript a `SpeechPart`.
             return self._handle_assistant_transcript(event.text, output_text=event.output_text, item_id=event.item_id)
@@ -2032,7 +2168,7 @@ class RealtimeSession:
             return self._handle_input_transcript(
                 event.text, event.is_final, item_id=event.item_id, cumulative=event.cumulative
             )
-        if isinstance(event, InputSpeechEndEvent):
+        if isinstance(event, RealtimeInputSpeechEndEvent):
             # The user's speech segment ended (server VAD). With transcription enabled and input audio
             # retained, cut the rolling buffer into this item's own segment so a later out-of-order
             # transcript still attaches its own audio; with transcription off there's no lagging transcript,
@@ -2041,7 +2177,7 @@ class RealtimeSession:
             self._segment_input_audio(event.item_id)
             self._record_user_speech_span()
             return [*self._finalize_untranscribed_user(), event]
-        if isinstance(event, ResponseCompleteEvent):
+        if isinstance(event, ResponseDone):
             return self._handle_turn_complete(event)
         if isinstance(event, PartStartEvent):
             # Providers emit native tool activity as ordinary part events. Buffer the started part for
@@ -2049,23 +2185,23 @@ class RealtimeSession:
             self._ensure_chat_span()
             self._native_tool_parts.append(event.part)
             return [event]
-        if isinstance(event, (PartEndEvent, ResponseInterruptedEvent)):
+        if isinstance(event, (PartEndEvent, RealtimeResponseInterruptedEvent)):
             return [event]
-        if isinstance(event, InputTranscriptionErrorEvent):
+        if isinstance(event, RealtimeInputTranscriptionErrorEvent):
             return [*self._finalize_failed_user_item(event.item_id), event]
         # The remaining control-plane events pass through unchanged. `assert_never` makes pyright flag
         # any new non-pump `RealtimeEvent` variant that isn't handled here.
         if isinstance(
             event,
             (
-                InputSpeechStartEvent,
-                SessionReconnectEvent,
-                OutputSpeechStartEvent,
-                OutputSpeechEndEvent,
+                RealtimeInputSpeechStartEvent,
+                RealtimeSessionReconnectEvent,
+                RealtimeOutputSpeechStartEvent,
+                RealtimeOutputSpeechEndEvent,
             ),
         ):
             return self._handle_control_event(event)
-        if isinstance(event, SessionErrorEvent):
+        if isinstance(event, RealtimeSessionErrorEvent):
             if event.recoverable:
                 # A recoverable error is mid-stream: the session keeps running, so surface the event to
                 # the consumer (rather than swallowing it) for observability. Only a non-recoverable
@@ -2143,6 +2279,7 @@ class RealtimeSession:
         call: ToolCall,
         call_part: ToolCallPart,
         validation_done: asyncio.Event,
+        execution_prerequisites: tuple[asyncio.Event, ...],
     ) -> _SettledToolResult:
         # No `execute_tool` span is created here: the `execute_tool` span is owned by the
         # `Instrumentation` capability's `wrap_tool_execute` hook, which `Agent.realtime`
@@ -2151,27 +2288,11 @@ class RealtimeSession:
         # span's OTel context, so the capability's tool span nests under the session span as a sibling
         # of the `chat` spans. The session-level `realtime` span and per-response `chat` spans below
         # stay hand-managed for now — they move onto exchange-level capability hooks when those land.
-        async with self._tool_manager_lock:
-            ctx = self._tool_manager.ctx
-            if ctx is not None:  # pragma: no branch
-                # `RunContext.messages` is a live view of the conversation in a classic run, because the
-                # graph builds each tool's context from the history so far. A session's context is built
-                # once at connect, so without this a tool would always see the seed (usually nothing) no
-                # matter how long the call has been going. Update in place, so contexts already handed
-                # out — `replace()` below keeps the same list object — see the update too.
-                ctx.messages[:] = self.all_messages()
-                if ctx.run_step < self._tool_run_step:
-                    self._tool_manager = await self._tool_manager.for_run_step(
-                        replace(ctx, run_step=self._tool_run_step)
-                    )
-            # Pin the step-synchronized manager for this call: a concurrent tool task can swap
-            # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
-            # so re-reading the attribute there could run against a different run-step's manager.
-            tool_manager = self._tool_manager
-
         async def on_validate(args_valid: bool) -> None:
             await self._queue.put(FunctionToolCallEvent(part=call_part, args_valid=args_valid))
             validation_done.set()
+            for prerequisite in execution_prerequisites:
+                await prerequisite.wait()
 
         async def on_inline_deferred(
             requests: DeferredToolRequests,
@@ -2181,6 +2302,25 @@ class RealtimeSession:
             await self._queue.put(DeferredToolResultsEvent(results))
 
         try:
+            async with self._tool_manager_lock:
+                ctx = self._tool_manager.ctx
+                if ctx is not None:  # pragma: no branch
+                    # `RunContext.messages` is a live view of the conversation in a classic run, because
+                    # the graph builds each tool's context from the history so far. A session's context is
+                    # built once at connect, so without this a tool would always see the seed (usually
+                    # nothing) no matter how long the call has been going. Update in place, so contexts
+                    # already handed out — `replace()` below keeps the same list object — see the update
+                    # too.
+                    ctx.messages[:] = self.all_messages()
+                    if ctx.run_step < self._tool_run_step:
+                        self._tool_manager = await self._tool_manager.for_run_step(
+                            replace(ctx, run_step=self._tool_run_step)
+                        )
+                # Pin the step-synchronized manager for this call: a concurrent tool task can swap
+                # `self._tool_manager` (its own `for_run_step` advance) between here and the calls below,
+                # so re-reading the attribute there could run against a different run-step's manager.
+                tool_manager = self._tool_manager
+
             tool_result = await tool_manager.handle_call(
                 call_part,
                 on_validate=on_validate,
@@ -2213,12 +2353,13 @@ class RealtimeSession:
             )
             user_content = None
         else:
-            tool_def = tool_manager.get_tool_def(call.tool_name)
-            result_part, user_content = build_tool_return_part(
-                tool_result,
-                call=call_part,
-                tool_kind=tool_def.tool_kind if tool_def else None,
-            )
+            result_part, user_content = _build_session_tool_return(tool_result, call_part, tool_manager)
+        finally:
+            # The call has settled: on success `handle_call` has already recorded it on
+            # `usage.tool_calls` in this same event-loop segment (so no limit check can observe the
+            # reservation and the recorded call at once), and on failure or cancellation there is
+            # nothing to count.
+            self._tool_calls_in_flight -= 1
 
         if isinstance(result_part, RetryPromptPart):
             output = result_part.model_response()
@@ -2294,7 +2435,7 @@ class RealtimeSession:
         # how a regular `run`/`iter` surfaces a usage limit rather than wrapping it in another error.
         if self._usage_limits is None:
             return
-        projected = dataclasses.replace(self.usage, tool_calls=self.usage.tool_calls + 1)
+        projected = dataclasses.replace(self.usage, tool_calls=self.usage.tool_calls + self._tool_calls_in_flight + 1)
         self._usage_limits.check_before_tool_call(projected)
 
     def _check_usage_limits(self) -> None:
@@ -2361,11 +2502,20 @@ class RealtimeSession:
             self._asap_drain_ready = False
             await self._drain_pending_messages('asap')
 
-    async def _run_tool(self, call: ToolCall, call_part: ToolCallPart, validation_done: asyncio.Event) -> None:
+    async def _run_tool(
+        self,
+        call: ToolCall,
+        call_part: ToolCallPart,
+        validation_done: asyncio.Event,
+        execution_prerequisites: tuple[asyncio.Event, ...],
+        completion: asyncio.Event,
+    ) -> None:
         """Run a tool and feed its completion (or failure) back through the queue."""
         try:
-            result_part, content = await self._execute_tool(call, call_part, validation_done)
-        except Exception as e:
+            result_part, content = await self._execute_tool(call, call_part, validation_done, execution_prerequisites)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as e:
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
             # never arrives.
@@ -2373,6 +2523,8 @@ class RealtimeSession:
             return
         finally:
             validation_done.set()
+            completion.set()
+            self._tool_completion_events.discard(completion)
             # Settled (completed, failed, or cancelled): no longer cancellable by `ToolCallCancelled`.
             self._pending_tool_calls.pop(call_part.tool_call_id, None)
         for event in self._complete_tool_call(call_part, result_part, content):
@@ -2405,6 +2557,7 @@ class RealtimeSession:
             if not self._accept_item(event.item_id, event.tool_call_id):
                 return False
             self._check_tool_call_limit()
+            self._tool_calls_in_flight += 1
             call_part = ToolCallPart(
                 tool_name=event.tool_name,
                 args=event.args,
@@ -2417,8 +2570,21 @@ class RealtimeSession:
                 response_usage_follows=event.response_usage_follows,
             ):
                 await self._queue.put(out)
+            mode = self._tool_manager.get_parallel_execution_mode()
+            is_barrier = mode == 'sequential' or self._tool_manager.is_sequential(call_part)
+            completion = asyncio.Event()
+            if is_barrier:
+                execution_prerequisites = tuple(self._tool_completion_events)
+                self._last_tool_barrier = completion
+            elif self._last_tool_barrier is not None:
+                execution_prerequisites = (self._last_tool_barrier,)
+            else:
+                execution_prerequisites = ()
+            self._tool_completion_events.add(completion)
             validation_done = asyncio.Event()
-            task = asyncio.create_task(self._run_tool(event, call_part, validation_done))
+            task = asyncio.create_task(
+                self._run_tool(event, call_part, validation_done, execution_prerequisites, completion)
+            )
             self._background_tasks.add(task)
             self._pending_tool_calls[call_part.tool_call_id] = (task, call_part)
             task.add_done_callback(self._tool_task_done)
@@ -2448,7 +2614,7 @@ class RealtimeSession:
         for out in self._translate_event(event):
             self._publish_taps(out)
             await self._queue.put(out)
-        if isinstance(event, ResponseCompleteEvent):
+        if isinstance(event, ResponseDone):
             await self._drain_pending_messages('asap')
             await self._drain_pending_messages('when_idle')
         return False
@@ -2526,7 +2692,8 @@ class RealtimeSession:
         self._iterator_active = True
         self._stream_consumed = True
         self._start_pump()
-        try:
+
+        async def queue_events() -> AsyncIterator[RealtimeEvent]:
             while True:
                 item = await self._queue.get()
                 if item is self._queue_changed:
@@ -2535,10 +2702,24 @@ class RealtimeSession:
                     if self._pump_error is not None:
                         self._stream_exhausted = True
                         raise self._pump_error
-                    if self._pump_finished and not self._background_tasks:
+                    if self._pump_finished and not self._background_tasks and self._queue.empty():
                         self._stream_exhausted = True
                         return
                     continue
                 yield _as_event(item)  # re-raises if a tool failed
+
+        source = queue_events()
+        stream: AsyncIterable[RealtimeEvent] = source
+        if self._wrap_event_stream is not None:
+            # The wrapper vocabulary is the `AgentStreamEvent` superset, but a wrapper applied to a
+            # realtime stream must yield the `RealtimeEvent` subset exposed by the session.
+            stream = cast('AsyncIterable[RealtimeEvent]', self._wrap_event_stream(source))
+        stream_iterator = aiter(stream)
+        try:
+            async for event in stream_iterator:
+                yield event
         finally:
-            self._iterator_active = False
+            try:
+                await aclose_all((stream_iterator, stream, source))
+            finally:
+                self._iterator_active = False
