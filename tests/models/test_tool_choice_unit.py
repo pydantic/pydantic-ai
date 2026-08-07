@@ -18,7 +18,7 @@ from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._tool_choice import resolve_tool_choice
 from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
-from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
+from pydantic_ai.settings import ModelSettings, ThinkingLevel, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
@@ -571,7 +571,7 @@ def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_t
         ),
     ],
 )
-def test_support_tool_forcing_thinking_detection(settings: Any, params_thinking: Any, expected: bool):
+def test_support_tool_forcing_thinking_detection(settings: Any, params_thinking: ThinkingLevel | None, expected: bool):
     """Thinking detection checks anthropic_thinking, unified thinking field, and `params.thinking`.
 
     `anthropic_thinking` wins over both unified sources, matching `_translate_thinking`: with an

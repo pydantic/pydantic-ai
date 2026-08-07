@@ -3664,7 +3664,7 @@ def _effective_thinking_type(
     anthropic_thinking: BetaThinkingConfigParam | None,
     unified_thinking: ThinkingLevel | None,
     *,
-    supports_adaptive_thinking: bool = False,
+    supports_adaptive_thinking: bool,
 ) -> Literal['enabled', 'adaptive'] | None:
     """Resolve the effective Anthropic thinking type for the output-tool and tool-forcing guards.
 

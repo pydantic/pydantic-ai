@@ -237,8 +237,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
 
     # Claude Fable 5, Claude Mythos 5, and Claude Mythos Preview reject a forced `tool_choice`
-    # (`any`/`tool`) outright, unlike other Anthropic models which only reject forcing while thinking
-    # is enabled. The forcing-tool-use docs name Mythos Preview explicitly; Mythos 5 is its successor
+    # (`any`/`tool`) outright, unlike other Anthropic models which only reject forcing with extended
+    # thinking. The forcing-tool-use docs name Mythos Preview explicitly; Mythos 5 is its successor
     # and the safety-classifier-free twin of Fable 5, both of which reject forcing.
     supports_forced_tool_choice = not model_name.startswith(
         ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview')

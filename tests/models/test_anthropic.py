@@ -12207,7 +12207,7 @@ async def test_anthropic_count_tokens_keeps_memory_tool(allow_model_requests: No
 
 @pytest.mark.vcr()
 async def test_anthropic_count_tokens_with_adaptive_thinking_and_output_tools(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Any
+    allow_model_requests: None, anthropic_api_key: str
 ):
     """`/v1/messages/count_tokens` accepts the forced `tool_choice` that adaptive thinking now keeps.
 
@@ -12215,8 +12215,19 @@ async def test_anthropic_count_tokens_with_adaptive_thinking_and_output_tools(
     adaptive thinking + Tool Output reaches this endpoint with `tool_choice={'type': 'any'}` too. The
     endpoint rejects that pair under extended thinking, which would turn a token pre-check into a hard
     run failure; the recording pins that it does not reject it under adaptive thinking.
+
+    The pair is read off an httpx event hook rather than the cassette, so a regression that stops
+    sending it fails here instead of replaying a recording that still holds the old payload.
     """
-    m = AnthropicModel('claude-opus-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    sent_bodies: dict[str, dict[str, Any]] = {}
+
+    async def capture_request(request: httpx.Request) -> None:
+        sent_bodies[request.url.path] = json.loads(request.read())
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
+    m = AnthropicModel(
+        'claude-opus-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client)
+    )
 
     class CityLocation(BaseModel):
         city: str
@@ -12232,7 +12243,7 @@ async def test_anthropic_count_tokens_with_adaptive_thinking_and_output_tools(
     )
 
     assert result.output == snapshot(CityLocation(city='Paris', country='France'))
-    count_tokens_body = json.loads(vcr.requests[0].body)
+    count_tokens_body = sent_bodies['/v1/messages/count_tokens']
     assert (count_tokens_body['thinking'], count_tokens_body['tool_choice']) == snapshot(
         ({'type': 'adaptive'}, {'type': 'any'})
     )
