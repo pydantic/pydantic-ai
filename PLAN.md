@@ -157,6 +157,26 @@ reading item 0, and the compaction example removed from Constraints (corrected h
   `is_error: true`); `stop_reason` reconstruction from `finish_reason`; multimodal tool returns ->
   `tool_result` content arrays; `parent_tool_use_id: null` (no subagent counterpart in the seam).
 
+### #5223 lessons — API-shape constraints (resolved 2026-08-06 — full report in `local-notes/pr5223-stall-report.md`, uncommitted)
+
+#5223 is still open/draft; it stalled because its load-bearing API question was never adjudicated
+(the substantive review lived off-GitHub) and the diff grew to 40 files. Binding lessons here:
+
+1. **No `Agent.to_claude_code()`, no `deps_factory`.** `Agent.to_ag_ui()` is a stated maintainer
+   regret; the blessed shape is "construct the adapter/event-stream, call it in a couple of
+   lines". We ship `ClaudeCodeEventStream` (+ docs showing the couple-of-lines usage); any
+   one-liner convenience belongs harness-side, and would be a factory function, never an `Agent`
+   method.
+2. **The diff stays inside `pydantic_ai/ui/claude_code/` + its tests + docs.** Zero changes to
+   `messages.py`, the shared `UIEventStream`/`UIAdapter`, or model modules. Wanting a new part
+   type or a base-class change is the signal to open a sibling PR, not to widen this one.
+3. **Design questions go to Douwe on the PR and stay open** — don't self-answer them a day later.
+   PR stays draft per the framing agreed with Douwe, but small, with docs in the same PR.
+4. **Cite both #5223 and #5949 in the PR body.** Kludex's #5949 (OpenResponses) deliberately
+   rejects the UI-adapter seam for a *wire/server* protocol; ours uses it because Douwe
+   explicitly routed this CLI-output seam through `pydantic_ai.ui`. Naming that distinction
+   preempts the "why is this a UI adapter?" round.
+
 ### gh-aw parser requirements (resolved 2026-08-06 — full report in `local-notes/ghaw-parser-requirements.md`, uncommitted)
 
 Pinned oracle: `github/gh-aw` @ `fafef5837db7134eb1931954423f5c9d6e0bec3a`, entry point
