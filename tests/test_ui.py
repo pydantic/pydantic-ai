@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import warnings
-from collections.abc import AsyncIterator, MutableMapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
@@ -1109,6 +1109,24 @@ async def test_run_stream_on_complete_async_iterator_non_asyncgenfunction(
     events = [event async for event in adapter.run_stream(on_complete=on_complete)]
 
     assert '<custom>' in events
+
+
+async def test_run_stream_on_complete_plain_def_returns_awaitable():
+    """A plain `def` on_complete that returns an awaitable must have it awaited, not discarded."""
+    agent = Agent(model=TestModel())
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    called: list[bool] = []
+
+    async def _record(run_result: AgentRunResult[Any]) -> None:
+        called.append(True)
+
+    def on_complete(run_result: AgentRunResult[Any]) -> Awaitable[None]:
+        return _record(run_result)
+
+    adapter = DummyUIAdapter(agent, request)
+    _ = [event async for event in adapter.run_stream(on_complete=on_complete)]
+
+    assert called == [True]
 
 
 async def test_run_stream_metadata_forwarded():
