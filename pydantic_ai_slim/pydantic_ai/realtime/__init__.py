@@ -1,11 +1,12 @@
 """Realtime multimodal session support for bidirectional streaming models.
 
-This package adds support for native speech-to-speech models, which use a persistent bidirectional
-connection rather than the request-response pattern of the standard
-[`Model`][pydantic_ai.models.Model] interface.
+This package adds support for native speech-to-speech models (OpenAI Realtime and Azure OpenAI)
+which use a persistent bidirectional connection rather than the request-response pattern of the
+standard [`Model`][pydantic_ai.models.Model] interface.
 
-The provider-agnostic ABCs and event types live here; concrete providers live in submodules. The
-high-level entry point is [`Agent.realtime`][pydantic_ai.agent.Agent.realtime], followed by
+The provider-agnostic ABCs and event types live here; concrete providers live in submodules
+(e.g. `pydantic_ai.realtime.openai`). The high-level entry point is
+[`Agent.realtime`][pydantic_ai.agent.Agent.realtime], followed by
 [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
 
 A session translates the low-level codec events (the connection-facing `RealtimeCodecEvent` vocabulary)
@@ -13,6 +14,10 @@ into the shared message/part event vocabulary from [`pydantic_ai.messages`][pyda
 ([`PartStartEvent`][pydantic_ai.messages.PartStartEvent], [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent],
 ...), re-exported here for convenience, plus the realtime control-plane events defined below.
 """
+
+from typing import Literal
+
+from typing_extensions import TypeAliasType
 
 from ..exceptions import UserError
 from ..messages import (
@@ -52,16 +57,47 @@ from ._base import (
 )
 from ._session import RealtimeSession
 
+KnownRealtimeModelName = TypeAliasType(
+    'KnownRealtimeModelName',
+    Literal[
+        'openai:gpt-realtime',
+        'openai:gpt-realtime-2.1',
+        'openai:gpt-realtime-2.1-mini',
+        'azure:gpt-realtime',
+    ],
+)
+"""Known realtime model identifiers, surfaced for autocomplete."""
 
-def infer_realtime_model(model: str) -> RealtimeModel:
+
+def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
     """Infer a realtime model from a `provider:model` identifier.
 
-    No realtime providers ship in this build yet, so every identifier is rejected; pass a
-    [`RealtimeModel`][pydantic_ai.realtime.RealtimeModel] instance instead.
+    The provider is one of `openai` or `azure` (e.g. `openai:gpt-realtime`), or a
+    [Pydantic AI Gateway](../gateway.md) route (`gateway/openai:gpt-realtime`), which connects through
+    the gateway's built-in provider — the provider string is passed to the realtime model as its
+    `provider`, so authentication and the base URL come from
+    [`gateway_provider`][pydantic_ai.providers.gateway.gateway_provider].
     """
+    provider, separator, model_name = model.partition(':')
+    if not separator or not model_name:
+        raise UserError(
+            f'Realtime model identifiers use the `provider:model` format (e.g. `openai:gpt-realtime`); got {model!r}.'
+        )
+    # `gateway/openai` routes the OpenAI realtime protocol through the Pydantic AI Gateway: the
+    # provider string is passed straight to `OpenAIRealtimeModel`, whose handshake reads the gateway
+    # base URL and bearer key from `gateway_provider` and already carries the same trace context the
+    # gateway's HTTP request hook would add.
+    if provider in ('openai', 'gateway/openai'):
+        from .openai import OpenAIRealtimeModel
+
+        return OpenAIRealtimeModel(model_name, provider=provider)
+    if provider == 'azure':
+        from .azure import AzureRealtimeModel
+
+        return AzureRealtimeModel(model_name)
     raise UserError(
-        f'Cannot infer a realtime model from {model!r}: no realtime providers are available in this build. '
-        'Pass a `RealtimeModel` instance instead.'
+        f'Unknown realtime model provider {provider!r}. Supported providers are `openai` and `azure`, '
+        'or `gateway/openai` to route OpenAI realtime through the Pydantic AI Gateway.'
     )
 
 
@@ -86,6 +122,7 @@ __all__ = (
     'RealtimeInputSpeechEndEvent',
     'RealtimeInputTranscriptionErrorEvent',
     'KnownRealtimeTranscriptionModelName',
+    'KnownRealtimeModelName',
     'RealtimeEvent',
     'RealtimeError',
     'RealtimeModel',

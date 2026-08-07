@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.realtime import (
         AudioRetention,
+        KnownRealtimeModelName,
         RealtimeModel,
         RealtimeModelSettings,
         RealtimeSession,
@@ -1081,7 +1082,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     @asynccontextmanager
     async def _open_realtime_session(
         self,
-        model: RealtimeModel | str,
+        model: RealtimeModel | KnownRealtimeModelName | str,
         *,
         deps: AgentDepsT = None,
         model_settings: RealtimeModelSettings | None = None,

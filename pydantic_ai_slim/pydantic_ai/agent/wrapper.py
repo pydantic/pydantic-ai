@@ -30,7 +30,7 @@ from .abstract import AbstractAgent, AgentMetadata, AgentModelSettings, AgentRet
 
 if TYPE_CHECKING:
     from ..capabilities import CombinedCapability
-    from ..realtime import AudioRetention, RealtimeModel, RealtimeModelSettings, RealtimeSession
+    from ..realtime import AudioRetention, KnownRealtimeModelName, RealtimeModel, RealtimeModelSettings, RealtimeSession
     from .spec import AgentSpec
 
 
@@ -304,7 +304,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
     @asynccontextmanager
     async def _open_realtime_session(
         self,
-        model: RealtimeModel | str,
+        model: RealtimeModel | KnownRealtimeModelName | str,
         *,
         deps: AgentDepsT = None,
         model_settings: RealtimeModelSettings | None = None,
