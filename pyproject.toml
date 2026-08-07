@@ -110,6 +110,21 @@ members = [
 required-version = ">=0.9.25"
 default-groups = ["dev", "lint", "docs"]
 exclude-newer = "7 days"
+conflicts = [
+    # The `mcp-tasks` extra lives in the FastMCP 4 / MCP SDK v2 universe, while this workspace
+    # deliberately locks FastMCP 3 through the dev group's `fastmcp` and the `[mcp]` extra's
+    # `fastmcp-slim` (the FastMCP 4 CI job layers `--with` overrides onto the frozen lock).
+    # Lock-side forks only: pip resolves `[mcp,mcp-tasks]` together fine, the extra's
+    # pre-release floor opts the shared `fastmcp-slim` range into the FastMCP 4 betas.
+    [
+        { package = "pydantic-ai-slim", extra = "mcp-tasks" },
+        { group = "dev" },
+    ],
+    [
+        { package = "pydantic-ai-slim", extra = "mcp-tasks" },
+        { package = "pydantic-ai-slim", extra = "mcp" },
+    ],
+]
 constraint-dependencies = [
     "ray>=2.55.0",
     "authlib>=1.6.7",
@@ -142,15 +157,6 @@ constraint-dependencies = [
     "torch>=2.13.0",
     "transformers>=5.5.0",
 ]
-
-[[tool.uv.dependency-metadata]]
-# `fastmcp-tasks` (the `mcp-tasks` extra) lives in the FastMCP 4 / MCP SDK v2 universe, which can
-# never co-resolve with this workspace's FastMCP 3 lock: `pydantic-ai-examples` pins `mcp<2` in
-# its base dependencies, and workspace members' base dependencies can't be conflict-gated. Blank
-# metadata keeps the extra resolvable lock-side; installs from PyPI see the real metadata. The
-# FastMCP 4 CI job layers `--with` overrides onto the frozen lock rather than using this extra.
-name = "fastmcp-tasks"
-requires-dist = []
 
 [tool.uv.exclude-newer-package]
 # Test-only, and the wire types it carries are the reference the MCP SDK v1/v2 compat readers are

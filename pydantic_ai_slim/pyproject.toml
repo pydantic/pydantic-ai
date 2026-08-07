@@ -119,9 +119,10 @@ mcp = ["fastmcp-slim[client]>=3.3.0,<5"]
 # Explicit task execution (`use_task=True`) on FastMCP 4, where tasks live in the separate
 # `fastmcp-tasks` extension. Kept out of `[mcp]` mirroring fastmcp's own opt-in `tasks` extra:
 # it pulls the full FastMCP server stack, and ordinary calls drive task-only tools to
-# completion without it. `<5` matches the `[mcp]` cap; the pre-release floor is what admits
-# the FastMCP 4 betas, which only fire this code path anyway.
-mcp-tasks = ["fastmcp-tasks>=4.0.0b1,<5"]
+# completion without it. `<5` matches the `[mcp]` cap. The direct `fastmcp-slim` floor spells
+# out that this extra implies FastMCP 4 and opts resolvers into the pre-release, which
+# `fastmcp-tasks`'s transitive pin alone does not.
+mcp-tasks = ["fastmcp-tasks>=4.0.0b1,<5", "fastmcp-slim[client]>=4.0.0b1,<5"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # UI
