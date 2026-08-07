@@ -647,7 +647,7 @@ Capabilities can filter or modify which tool definitions the model sees on each 
 Both hooks operate at the toolset level — the result flows into both the model's request parameters and `ToolManager.tools`, so filtering also blocks tool execution.
 
 !!! note "On a deferred capability"
-    `prepare_tools` runs on every step, not only once the capability is [loaded](on-demand.md). Until then it receives *only* the tools the capability itself owns, since those stay directly callable while it counts as unloaded and it must still be able to filter or harden them. It cannot reach unrelated tools in that state. Check `ctx.capability_loaded` to tell the two apart.
+    `prepare_tools` runs only once the capability is [loaded](on-demand.md), and then receives every function tool, just as it would for an always-available capability. Before that there is nothing for it to govern: an unloaded capability's tools are neither advertised to the model nor callable.
 
 ```python {title="prepare_tools_example.py"}
 from dataclasses import dataclass
