@@ -498,9 +498,12 @@ class ToolManager(Generic[AgentDepsT]):
         availability delta everything else uses — so discovery stays the single answer to "has the
         model seen this?".
         """
-        if not tool_def.defer_loading:
-            return None
         assert self.ctx is not None
+        if self.ctx.is_tool_available(tool_def):
+            return None
+        # `is_tool_available` makes the decision, so introspection and execution cannot disagree;
+        # the rest only picks which way to point the model. An unavailable capability is named
+        # because loading it is the action to take — searching would not help until it is active.
         if (capability_id := tool_def.capability_id) is not None and (
             capability_id not in self.ctx.available_capability_ids
         ):
@@ -509,12 +512,10 @@ class ToolManager(Generic[AgentDepsT]):
                 f'{capability_id!r}. Call `load_capability` for it first, then call the tool on a '
                 "later turn, once the capability's instructions are in view."
             )
-        if tool_def.name not in self.ctx.discovered_tool_names:
-            return (
-                f'Tool {tool_def.name!r} is not available yet: search for it first, then call it once '
-                'the search result has shown you its schema.'
-            )
-        return None
+        return (
+            f'Tool {tool_def.name!r} is not available yet: search for it first, then call it once '
+            'the search result has shown you its schema.'
+        )
 
     def _make_validation_success(
         self,

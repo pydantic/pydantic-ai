@@ -2388,11 +2388,14 @@ def _revealable_tool_names(
 ) -> set[str]:
     """Drop reveals whose owning capability is not available yet.
 
-    A reveal only says a tool's schema may go to the model; it cannot stand in for loading the
-    capability that owns it, whose instructions and hooks come as a bundle. Without this, any
-    `ToolAvailabilityDeltaPart` in history — including one a user's own tool or a client authored —
-    would advertise a capability's tool while `ToolManager` still refuses to run it, which is the
-    worst of both worlds: visible and uncallable.
+    The ordering a run holds to is load, then reveal, then call: a capability's instructions and
+    hooks come as a bundle, and its tools should not reach the model ahead of the runbook for using
+    them. A reveal says a schema *may* be shown; it cannot stand in for the load.
+
+    Not a trust boundary — whoever can author a `ToolAvailabilityDeltaPart` can author the
+    `load_capability` exchange too, and history integrity is the deployment's job. This is about the
+    model not being handed a tool it was never properly given, and about not advertising one
+    `ToolManager` would then refuse to run: visible and uncallable is the worst of both worlds.
 
     Only *deferred* capabilities gate their tools this way. An always-on capability's search-gated
     tool is revealed by discovery alone, which is why this needs `deferred_capability_ids` read from
@@ -2411,10 +2414,11 @@ def _with_outgoing_reveal_state(
     """Make per-request reveal state match the history that will be sent to the model.
 
     Gated on the same availability rule as the run-level state: a reveal naming a tool whose
-    deferred capability this history does not show as loaded is dropped, so a fabricated or
-    replayed delta cannot advertise a tool `ToolManager` would then refuse to run. An always-on
-    capability's search-gated tools are unaffected — they carry no load marker by design, and
-    `deferred_capability_ids` is read from the capability instances, so they are not in it.
+    deferred capability this history does not show as loaded is dropped, so the model is never
+    offered a tool it has not been properly given — and never one `ToolManager` would refuse to
+    run. An always-on capability's search-gated tools are unaffected: they carry no load marker by
+    design, and `deferred_capability_ids` is read from the capability instances, so they are not
+    in it.
     """
     return replace(
         parameters,

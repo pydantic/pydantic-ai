@@ -301,12 +301,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # definition can be observed before tool search stamps `with_native='tool-search'` on it.
         if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading:
             return True
-        if tool_def.name in self.discovered_tool_names:
-            # Deliberately not gated on capability state: a fabricated history part could equally
-            # fabricate the full `load_capability` exchange, so a gate here adds no trust boundary.
-            # History integrity is the deployment's job (authenticated endpoints, server-side history).
-            return True
-        return False
+        if tool_def.name not in self.discovered_tool_names:
+            return False
+        # A run holds to load, then reveal, then call. `discovered_tool_names` is raw history
+        # evidence and only answers the middle step, so it can name a tool whose capability was
+        # never loaded — and calling one then skips the instructions written to be read first.
+        # Checking the owner here keeps this predicate in step with what `ToolManager` will run,
+        # so "available" means one thing everywhere it is asked.
+        capability_id = tool_def.capability_id
+        return capability_id is None or capability_id in self.available_capability_ids
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:
