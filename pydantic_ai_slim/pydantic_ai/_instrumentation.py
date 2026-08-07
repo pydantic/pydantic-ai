@@ -196,6 +196,7 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
                 'content': _redact_binary_content(value.content, active),
                 'metadata': _redact_binary_content(value.metadata, active),
                 'kind': value.kind,
+                'tools': value.tools,
             }
         if isinstance(value, DeferredToolRequests):
             # Carries the metadata a deferring tool attached, so the run's own output has to drop

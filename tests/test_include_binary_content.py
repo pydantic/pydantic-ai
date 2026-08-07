@@ -255,6 +255,7 @@ CASES = [
                 'content': ['here it is', REDACTED_IMAGE],
                 'metadata': {'img': REDACTED_IMAGE},
                 'kind': 'tool-return',
+                'tools': None,
             }
         ),
     ),
@@ -547,7 +548,7 @@ def test_redacted_shapes_keep_every_field_but_the_data() -> None:
     dumped = ModelMessagesTypeAdapter.dump_python([ModelRequest(parts=[UserPromptPart(content=[IMAGE])])], mode='json')
     assert set(dumped[0]['parts'][0]['content'][0]) == set(REDACTED_IMAGE) | {'data'}
 
-    assert {f.name for f in fields(ToolReturn)} == {'return_value', 'content', 'metadata', 'kind'}
+    assert {f.name for f in fields(ToolReturn)} == {'return_value', 'content', 'metadata', 'kind', 'tools'}
     assert {f.name for f in fields(DeferredToolRequests)} == {'calls', 'approvals', 'metadata'}
 
 
