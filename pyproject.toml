@@ -143,6 +143,15 @@ constraint-dependencies = [
     "transformers>=5.5.0",
 ]
 
+[[tool.uv.dependency-metadata]]
+# `fastmcp-tasks` (the `mcp-tasks` extra) lives in the FastMCP 4 / MCP SDK v2 universe, which can
+# never co-resolve with this workspace's FastMCP 3 lock: `pydantic-ai-examples` pins `mcp<2` in
+# its base dependencies, and workspace members' base dependencies can't be conflict-gated. Blank
+# metadata keeps the extra resolvable lock-side; installs from PyPI see the real metadata. The
+# FastMCP 4 CI job layers `--with` overrides onto the frozen lock rather than using this extra.
+name = "fastmcp-tasks"
+requires-dist = []
+
 [tool.uv.exclude-newer-package]
 # Test-only, and the wire types it carries are the reference the MCP SDK v1/v2 compat readers are
 # checked against — released 2026-07-28, days inside the rolling window. Drop this line once the

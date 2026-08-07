@@ -64,6 +64,9 @@ constraints = [
     { name = "xgrammar", specifier = ">=0.1.32" },
 ]
 
+[[manifest.dependency-metadata]]
+name = "fastmcp-tasks"
+
 [[package]]
 name = "ag-ui-protocol"
 version = "0.1.19"
@@ -1906,6 +1909,15 @@ server = [
     { name = "uvicorn" },
     { name = "watchfiles" },
     { name = "websockets" },
+]
+
+[[package]]
+name = "fastmcp-tasks"
+version = "4.0.0b1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/dc/69/0a5613519eddd08fe674635ecd88ddae3f435f643141b725bb32834d7945/fastmcp_tasks-4.0.0b1.tar.gz", hash = "sha256:44f3a70a4241f82ff81c9fce477969aeb8cc06430985d7c37cb393eba791360e", size = 50552, upload-time = "2026-07-28T21:18:08.329Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c5/d3/48a891e14819d7b94304a0f360ceef5731e6d69477a28ded54fc43c3e286/fastmcp_tasks-4.0.0b1-py3-none-any.whl", hash = "sha256:221f1cca93213baeeea79a02fe70a69fea7c1902ed42e3f7a0f7f01d0c704869", size = 61363, upload-time = "2026-07-28T21:18:07.396Z" },
 ]
 
 [[package]]
@@ -5659,6 +5671,9 @@ logfire = [
 mcp = [
     { name = "fastmcp-slim", extra = ["client"] },
 ]
+mcp-tasks = [
+    { name = "fastmcp-tasks" },
+]
 mistral = [
     { name = "mistralai" },
 ]
@@ -5723,6 +5738,7 @@ requires-dist = [
     { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<5" },
+    { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0b1,<5" },
     { name = "genai-prices", specifier = ">=0.1.0" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.70.0" },
     { name = "griffelib", specifier = ">=2.0" },
@@ -5762,7 +5778,7 @@ requires-dist = [
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.14.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "zai"]
 
 [[package]]
 name = "pydantic-core"

@@ -83,7 +83,7 @@ from . import _mcp, _utils, exceptions, messages, models
 from ._mcp_compat import is_mcp_sdk_v2, mcp_field, mcp_optional_field, mcp_validated_field
 from .settings import ModelSettings
 
-_MCP_SDK_V2 = is_mcp_sdk_v2(mcp_types)
+_MCP_SDK_V2 = is_mcp_sdk_v2()
 _JSON_SCHEMA_ADAPTER = TypeAdapter[dict[str, Any]](dict[str, Any])
 _STOP_SEQUENCES_ADAPTER = TypeAdapter[list[str]](list[str])
 
@@ -129,8 +129,8 @@ async def _call_tool_as_task(
             )
         if call_tool_task is None:
             raise ImportError(
-                'FastMCP 4 task execution requires the `fastmcp-tasks` package; '
-                'install it with `pip install fastmcp-tasks`'
+                'FastMCP 4 task execution requires the `fastmcp-tasks` package, '
+                'you can use the `mcp-tasks` optional group — `pip install "pydantic-ai-slim[mcp-tasks]"`'
             )
         tool_task = await call_tool_task(
             client,

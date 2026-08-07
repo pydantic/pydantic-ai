@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib.metadata import version as _package_version
 from types import ModuleType
 from typing import TypeVar
 
@@ -26,14 +27,15 @@ def import_mcp_types(feature: str) -> ModuleType:
     return types
 
 
-def is_mcp_sdk_v2(mcp_types: ModuleType) -> bool:
-    """Whether the imported MCP wire types are the SDK v2 generation.
+def is_mcp_sdk_v2() -> bool:
+    """Whether the installed MCP SDK is the v2 generation.
 
-    Detected from the v2 field rename rather than the module name: SDK v2.0.0 restored `mcp.types`
-    as an exact re-export of the standalone package, so both spellings resolve to the same v2
-    classes and the module name says nothing about the generation.
+    Read from the installed `mcp` distribution version: SDK v2.0.0 restored `mcp.types` as an
+    exact re-export of the standalone package, so the module name says nothing about the
+    generation, and shape differences like the camelCase → snake_case field rename are symptoms
+    of the generation rather than a contract to detect it by.
     """
-    return 'input_schema' in mcp_types.Tool.model_fields
+    return int(_package_version('mcp').split('.')[0]) >= 2
 
 
 def mcp_field_value(value: BaseModel, v1_name: str, v2_name: str) -> object:

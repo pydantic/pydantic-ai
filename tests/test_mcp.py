@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest.mock import AsyncMock
 
@@ -105,7 +105,7 @@ pytestmark = [
     pytest.mark.anyio,
 ]
 
-MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2(mcp_types)
+MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2()
 
 
 def make_mcp_error(code: int, message: str) -> McpError:
@@ -145,25 +145,26 @@ def make_legacy_client(server: FastMCP[None]) -> Client[Any]:
     return cast(Any, Client)(server, **({'mode': 'legacy'} if MCP_SDK_V2 else {}))
 
 
-def test_is_mcp_sdk_v2_reads_the_field_rename_not_the_module_name():
-    """SDK v2.0.0 restored `mcp.types` as an exact re-export of the standalone package, so a v2
-    install serves the v2 classes under the v1 module name. Detecting on the name would report v2
-    as v1 and silently take the v1 code paths, so the generation is read off the field rename.
+@pytest.mark.parametrize(
+    'installed,expected',
+    [('1.26.0', False), ('2.0.0a1', True), ('2.0.0', True), ('10.0.0', True)],
+)
+def test_is_mcp_sdk_v2_reads_the_installed_distribution_version(
+    installed: str, expected: bool, monkeypatch: pytest.MonkeyPatch
+):
+    """The generation is read off the installed `mcp` distribution version. SDK v2.0.0 restored
+    `mcp.types` as an exact re-export of the standalone package, so a v2 install serves the v2
+    classes under the v1 module name and neither the module nor its class shapes are a public
+    contract to detect the generation by.
     """
+    import pydantic_ai._mcp_compat as _mcp_compat
 
-    class V2Tool(BaseModel):
-        input_schema: dict[str, Any] = {}
+    def fake_package_version(distribution_name: str) -> str:
+        assert distribution_name == 'mcp'
+        return installed
 
-    class V1Tool(BaseModel):
-        inputSchema: dict[str, Any] = {}
-
-    v2_types = ModuleType('mcp.types')
-    setattr(v2_types, 'Tool', V2Tool)
-    v1_types = ModuleType('mcp.types')
-    setattr(v1_types, 'Tool', V1Tool)
-
-    assert is_mcp_sdk_v2(v2_types) is True
-    assert is_mcp_sdk_v2(v1_types) is False
+    monkeypatch.setattr(_mcp_compat, '_package_version', fake_package_version)
+    assert _mcp_compat.is_mcp_sdk_v2() is expected
 
 
 MCP_FIELD_RENAMES = [
@@ -2087,12 +2088,13 @@ class TestMCPToolsetBackgroundTasks:
     async def test_task_call_without_fastmcp_tasks_installed_is_rejected(
         self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """MCP SDK v2 moved tasks out of fastmcp core into the separate `fastmcp-tasks` package."""
+        """MCP SDK v2 moved tasks out of fastmcp core into the separate `fastmcp-tasks` package;
+        the error names the `mcp-tasks` extra that installs it."""
         monkeypatch.setattr(mcp_module, '_load_call_tool_task', lambda: None)
 
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
-            with pytest.raises(ImportError, match=r'requires the `fastmcp-tasks` package'):
+            with pytest.raises(ImportError, match=r'`mcp-tasks` optional group'):
                 await toolset.direct_call_tool('echo', {'message': 'hi'}, use_task=True)
 
     async def test_sdk_v2_disables_client_task_routing(
