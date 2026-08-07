@@ -824,6 +824,26 @@ async def test_external_cancellation_keeps_its_type_and_settles_history() -> Non
     assert any(isinstance(part, SpeechPart) and part.transcript == 'cut off mid-' for part in response.parts)
 
 
+async def test_agent_realtime_session_rejects_a_deferred_tool() -> None:
+    # A `defer_loading=True` tool is hidden until tool search reveals it, which a session whose tools
+    # are fixed at connect can never do. Advertising it silently would hand the model a `search_tools`
+    # affordance that finds the tool and then can't have it — a dead end — so the session refuses to
+    # open, exactly as it does for a deferred *capability* that contributes tools. The guard fires
+    # before any dial, so no provider is involved.
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain(defer_loading=True)
+    def withheld_tool() -> str:  # pragma: no cover — the session raises before any tool can run
+        return 'withheld'
+
+    with pytest.raises(
+        UserError,
+        match=r'cannot reveal tools mid-session.*`defer_loading=True`.*"?\'withheld_tool\'"?',
+    ):
+        async with agent.realtime(_RecordingModel()).session():
+            pass  # pragma: no cover
+
+
 async def test_session_tool_reveal_is_a_no_op_like_a_standard_run() -> None:
     """`ToolReturn.tools` naming nothing revealable is a silent no-op, exactly as in a graph run.
 
