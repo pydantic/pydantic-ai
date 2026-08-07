@@ -4728,14 +4728,11 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
 
 @pytest.mark.vcr()
 @pytest.mark.parametrize(
-    'model_settings',
-    [
-        pytest.param(AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}), id='provider_specific'),
-        pytest.param(ModelSettings(thinking='high'), id='unified'),
-    ],
+    'provider_specific_thinking',
+    [pytest.param(True, id='provider_specific'), pytest.param(False, id='unified')],
 )
 async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(
-    allow_model_requests: None, anthropic_api_key: str, model_settings: ModelSettings
+    allow_model_requests: None, anthropic_api_key: str, provider_specific_thinking: bool
 ):
     """Adaptive thinking is compatible with Tool Output, so the request keeps `output_mode='tool'`.
 
@@ -4754,6 +4751,11 @@ async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/7195.
     """
+    model_settings: ModelSettings = (
+        AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'})
+        if provider_specific_thinking
+        else ModelSettings(thinking='high')
+    )
     sent_bodies: list[dict[str, Any]] = []
 
     async def capture_request(request: httpx.Request) -> None:

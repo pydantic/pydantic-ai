@@ -37,6 +37,7 @@ from .conftest import try_import
 
 with try_import() as anthropic_imports:
     from anthropic import omit as anthropic_omit
+    from anthropic.types.beta import BetaThinkingConfigParam
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -628,6 +629,18 @@ class TestGroqThinkingTranslation:
         assert result == 'raw'
 
 
+def _thinking_settings(anthropic_thinking: BetaThinkingConfigParam | None) -> ModelSettings:
+    """Provider-specific thinking when a config is given, unified `thinking='high'` otherwise.
+
+    The settings are built here rather than in the `parametrize` decorators because
+    `AnthropicModelSettings` is imported behind `try_import`, and a decorator argument is evaluated
+    at collection time — before the class's skip mark can spare a shard that lacks the SDK.
+    """
+    if anthropic_thinking:
+        return AnthropicModelSettings(anthropic_thinking=anthropic_thinking)
+    return ModelSettings(thinking='high')
+
+
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 class TestAnthropicThinkingOutputToolsConflict:
     """Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended
@@ -650,35 +663,35 @@ class TestAnthropicThinkingOutputToolsConflict:
         )
 
     @pytest.mark.parametrize(
-        'model_name,settings,expected_output_mode',
+        'model_name,anthropic_thinking,expected_output_mode',
         [
             pytest.param(
                 'claude-opus-4-6',
-                ModelSettings(thinking='high'),
+                None,
                 'tool',
                 id='unified_thinking_on_adaptive_profile_keeps_tool_output',
             ),
             pytest.param(
                 'claude-sonnet-4-5',
-                ModelSettings(thinking='high'),
+                None,
                 'native',
                 id='unified_thinking_on_non_adaptive_profile_switches_to_native',
             ),
             pytest.param(
                 'claude-fable-5',
-                ModelSettings(thinking='high'),
+                None,
                 'native',
                 id='adaptive_profile_that_cannot_force_switches_to_native',
             ),
             pytest.param(
                 'claude-opus-4-6',
-                AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'}),
+                {'type': 'adaptive'},
                 'tool',
                 id='explicit_adaptive_keeps_tool_output',
             ),
             pytest.param(
                 'claude-opus-4-6',
-                AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
+                {'type': 'enabled', 'budget_tokens': 1024},
                 'native',
                 id='explicit_extended_thinking_switches_to_native',
             ),
@@ -689,21 +702,21 @@ class TestAnthropicThinkingOutputToolsConflict:
         anthropic_api_key: str,
         output_tool_params: ModelRequestParameters,
         model_name: str,
-        settings: ModelSettings,
+        anthropic_thinking: BetaThinkingConfigParam | None,
         expected_output_mode: str,
     ):
         model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
 
-        _, resolved_params = model.prepare_request(settings, output_tool_params)
+        _, resolved_params = model.prepare_request(_thinking_settings(anthropic_thinking), output_tool_params)
 
         assert resolved_params.output_mode == expected_output_mode
 
     @pytest.mark.parametrize(
-        'model_name,settings,expected_message',
+        'model_name,anthropic_thinking,expected_message',
         [
             pytest.param(
                 'claude-fable-5',
-                ModelSettings(thinking='high'),
+                None,
                 "'claude-fable-5' does not support output tools when a thinking setting is configured, "
                 'because it rejects the forced tool choice they require. '
                 'Use `output_type=NativeOutput(...)` instead.',
@@ -711,7 +724,7 @@ class TestAnthropicThinkingOutputToolsConflict:
             ),
             pytest.param(
                 'claude-opus-4-6',
-                AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
+                {'type': 'enabled', 'budget_tokens': 1024},
                 'Anthropic does not support extended thinking and output tools at the same time. '
                 'Use `output_type=NativeOutput(...)` instead. Alternatively, '
                 "`anthropic_thinking={'type': 'adaptive'}` supports output tools.",
@@ -724,9 +737,10 @@ class TestAnthropicThinkingOutputToolsConflict:
         anthropic_api_key: str,
         output_tool_params: ModelRequestParameters,
         model_name: str,
-        settings: ModelSettings,
+        anthropic_thinking: BetaThinkingConfigParam | None,
         expected_message: str,
     ):
+        settings = _thinking_settings(anthropic_thinking)
         model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
         params = replace(output_tool_params, output_mode='tool', allow_text_output=False)
 
