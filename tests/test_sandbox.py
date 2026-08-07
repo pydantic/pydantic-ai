@@ -99,11 +99,14 @@ class _StreamingProcess(_WaitOnlyProcess):
         raise AssertionError('conformance-only test double')
 
 
-def test_stream_support_is_separate_from_process_protocol():
+async def test_stream_support_is_separate_from_process_protocol():
     wait_only: SandboxProcess = _WaitOnlyProcess()
     streaming: SupportsStream = _StreamingProcess()
     assert not isinstance(wait_only, SupportsStream)
     assert isinstance(streaming, SupportsStream)
+    assert (await wait_only.wait()).exit_code == 0
+    with pytest.raises(AssertionError, match='conformance-only'):
+        streaming.stream()
 
 
 class FakeSandbox:
