@@ -491,18 +491,24 @@ class ToolManager(Generic[AgentDepsT]):
         available yet* rather than "unknown tool" so the model searches or loads again instead of
         concluding the tool does not exist — and the resulting search/load exchange restores the
         history that justifies the call, which is what keeps a compacted history coherent.
+
+        Both requirements apply to a capability-owned tool: an available capability is what makes
+        its tools *eligible* to be shown, not proof that any of them were. An always-on capability
+        can own search-gated tools, and loading a deferred one reveals its tools through the same
+        availability delta everything else uses — so discovery stays the single answer to "has the
+        model seen this?".
         """
         if not tool_def.defer_loading:
             return None
         assert self.ctx is not None
-        if (capability_id := tool_def.capability_id) is not None:
-            if capability_id not in self.ctx.available_capability_ids:
-                return (
-                    f'Tool {tool_def.name!r} is not available yet: it belongs to capability '
-                    f'{capability_id!r}. Call `load_capability` for it first, then call the tool on a '
-                    "later turn, once the capability's instructions are in view."
-                )
-            return None
+        if (capability_id := tool_def.capability_id) is not None and (
+            capability_id not in self.ctx.available_capability_ids
+        ):
+            return (
+                f'Tool {tool_def.name!r} is not available yet: it belongs to capability '
+                f'{capability_id!r}. Call `load_capability` for it first, then call the tool on a '
+                "later turn, once the capability's instructions are in view."
+            )
         if tool_def.name not in self.ctx.discovered_tool_names:
             return (
                 f'Tool {tool_def.name!r} is not available yet: search for it first, then call it once '

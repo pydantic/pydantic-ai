@@ -7312,6 +7312,25 @@ class TestUnavailableCapabilityToolsAreNotCallable:
 
         assert 'is not available yet' in result.output
 
+    async def test_available_capability_does_not_excuse_an_undiscovered_tool(self):
+        """An always-on capability's search-gated tool still has to be searched for.
+
+        The capability being available makes its tools eligible to be shown, not evidence that any
+        of them were — so availability must not short-circuit the discovery requirement.
+        """
+        toolset = FunctionToolset[Any]()
+        toolset.add_function(secret_op, name='secret_op', defer_loading=True)
+        eager = Capability[Any](id='eager', description='Always on.', toolsets=[toolset], defer_loading=False)
+
+        agent = Agent(FunctionModel(_call_secret_op), capabilities=[eager])
+
+        result = await agent.run('hello')
+
+        assert result.output == snapshot(
+            "BLOCKED: Tool 'secret_op' is not available yet: search for it first, then call it once "
+            'the search result has shown you its schema.'
+        )
+
     async def test_unavailable_capability_tool_is_not_advertised(self):
         """The tool is withheld as well as uncallable — never visible-but-unusable."""
         advertised: list[list[str]] = []
