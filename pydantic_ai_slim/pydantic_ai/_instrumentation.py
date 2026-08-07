@@ -195,6 +195,8 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
                 'return_value': _redact_binary_content(value.return_value, active),
                 'content': _redact_binary_content(value.content, active),
                 'metadata': _redact_binary_content(value.metadata, active),
+                # Tool names, so never binary.
+                'tools': value.tools,
                 'kind': value.kind,
             }
         if isinstance(value, DeferredToolRequests):
