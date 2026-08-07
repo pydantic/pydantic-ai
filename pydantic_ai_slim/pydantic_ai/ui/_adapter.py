@@ -27,6 +27,7 @@ from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
+    CompactionPart,
     ForceDownloadMode,
     ModelMessage,
     ToolAvailabilityDeltaPart,
@@ -100,6 +101,43 @@ def resolve_allow_uploaded_files(
         stacklevel=stacklevel,
     )
     return preserve_file_data
+
+
+_COMPACTION_PART_ADAPTER = TypeAdapter(CompactionPart)
+
+
+def compaction_payload(part: CompactionPart) -> dict[str, Any]:
+    """Serialize a compaction part as a UI payload, omitting fields whose value is `None`.
+
+    The payload is faithful — `provider_details` travels verbatim, provenance stamp included.
+    Trust is enforced on the load side: client-submitted messages pass through
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages], which strips the stamp.
+    """
+    return {
+        key: value
+        for key, value in {
+            'content': part.content,
+            'id': part.id,
+            'provider_name': part.provider_name,
+            'provider_details': part.provider_details,
+        }.items()
+        if value is not None
+    }
+
+
+def compaction_part_from_payload(payload: Mapping[str, Any]) -> CompactionPart:
+    """Build a [`CompactionPart`][pydantic_ai.messages.CompactionPart] from a UI payload.
+
+    Like `tool_availability_delta_from_payload`, validation here is shape hygiene at the UI
+    boundary, not a security gate: malformed data
+    renders an inert empty part — no provider adapter honors a compaction part without a
+    `provider_name` matching its own — rather than raising out of `load_messages` and taking the
+    whole request with it.
+    """
+    try:
+        return _COMPACTION_PART_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return CompactionPart()
 
 
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:

@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -10466,6 +10467,113 @@ def test_tool_availability_delta_ui_round_trip():
     messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='load-1')])]
 
     assert VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages)) == messages
+
+
+def test_compaction_ui_round_trip_and_sanitization():
+    """Compaction data stays faithful on the wire while client provenance is sanitized on ingest."""
+    compaction = CompactionPart(
+        content='Summary of the conversation.',
+        id='cmp-1',
+        provider_name='openai',
+        provider_details={
+            'encrypted_content': 'blob',
+            'pydantic_ai_standing_prompt_planted': True,
+        },
+    )
+    messages = [ModelResponse(parts=[compaction], timestamp=datetime(2026, 8, 7, tzinfo=timezone.utc))]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assert [message.model_dump(exclude_none=True) for message in ui_messages] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': {'pydantic_ai': {'timestamp': '2026-08-07T00:00:00Z'}},
+                'parts': [
+                    {
+                        'type': 'data-compaction',
+                        'data': {
+                            'content': 'Summary of the conversation.',
+                            'id': 'cmp-1',
+                            'provider_name': 'openai',
+                            'provider_details': {
+                                'encrypted_content': 'blob',
+                                'pydantic_ai_standing_prompt_planted': True,
+                            },
+                        },
+                    }
+                ],
+            }
+        ]
+    )
+    assert VercelAIAdapter.load_messages(ui_messages) == messages
+
+    adapter = VercelAIAdapter(
+        Agent(TestModel()),
+        SubmitMessage(id='chat-1', messages=ui_messages),
+    )
+    sanitized = adapter.sanitize_messages(adapter.messages)
+    assert message_part(sanitized, CompactionPart) == CompactionPart(
+        content='Summary of the conversation.',
+        id='cmp-1',
+        provider_name='openai',
+        provider_details={'encrypted_content': 'blob'},
+    )
+
+
+@pytest.mark.parametrize(
+    'data',
+    [
+        {'content': 42},
+        {'provider_details': 'not-a-dict'},
+        {'content': 'Summary.', 'provider_name': ['openai']},
+    ],
+)
+def test_compaction_malformed_payload_renders_inert_part(data: dict[str, Any]):
+    """A client can put anything in the data part, and `load_messages` still has to return messages.
+
+    Malformed compaction payloads render an inert empty part — no provider adapter honors a
+    compaction part without a `provider_name` matching its own — rather than failing the request.
+    """
+    ui_messages = [
+        UIMessage(
+            id='malformed',
+            role='assistant',
+            parts=[DataUIPart(id='d1', type='data-compaction', data=data)],
+        )
+    ]
+
+    assert message_part(VercelAIAdapter.load_messages(ui_messages), CompactionPart) == CompactionPart()
+
+
+async def test_compaction_stream_matches_dumped_data_part() -> None:
+    """A streamed compaction uses the same discriminator and faithful payload as dumped history."""
+    compaction = CompactionPart(
+        content='Summary of the conversation.',
+        id='cmp-1',
+        provider_name='openai',
+        provider_details={'encrypted_content': 'blob'},
+    )
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=compaction)
+        yield PartEndEvent(index=0, part=compaction)
+
+    request = SubmitMessage(
+        id='chat-1',
+        messages=[UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Continue')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        if '[DONE]' not in event
+    ]
+    chunk = next(event for event in events if event['type'] == 'data-compaction')
+
+    [dumped] = VercelAIAdapter.dump_messages([ModelResponse(parts=[compaction])])
+    [data_part] = [part for part in dumped.parts if isinstance(part, DataUIPart)]
+    assert chunk == {'type': data_part.type, 'data': data_part.data}
 
 
 async def test_tool_availability_delta_stream_matches_dumped_data_part() -> None:

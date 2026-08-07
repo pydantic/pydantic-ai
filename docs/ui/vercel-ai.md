@@ -158,6 +158,10 @@ When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` 
 
 Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
 
+## Compaction
+
+[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through Vercel AI data parts (`data-compaction`), so [compacted](../capabilities/compaction.md) conversations remain usable when a frontend such as `useChat` owns the message history. Client-supplied compaction items are honored — the conversation stays compacted — but never trusted to have retained the server's standing system prompt, which is re-inserted on ingest. See [History custody](../capabilities/compaction.md#history-custody) for the trade-offs of client-side custody and the recommended server-side pattern.
+
 ## Tool Approval
 
 !!! note

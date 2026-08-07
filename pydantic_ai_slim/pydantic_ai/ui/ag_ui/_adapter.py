@@ -56,7 +56,7 @@ from ...tools import (
     DeferredToolResults,
 )
 from ...toolsets import AbstractToolset
-from .._adapter import tool_availability_delta_from_payload
+from .._adapter import compaction_part_from_payload, compaction_payload, tool_availability_delta_from_payload
 
 try:
     from ag_ui.core import (
@@ -87,6 +87,7 @@ try:
     )
     from ._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
+        COMPACTION_ACTIVITY_TYPE,
         DEFAULT_AG_UI_VERSION,
         ENCRYPTED_VALUE_VERSION,
         FILE_ACTIVITY_TYPE,
@@ -573,6 +574,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 case ActivityMessage() as activity_msg:
                     if activity_msg.activity_type == TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE:
                         builder.add(tool_availability_delta_from_payload(activity_msg.content))
+                    elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
+                        builder.add(compaction_part_from_payload(activity_msg.content))
                     elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')
@@ -873,8 +876,15 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             content=file_content,
                         )
                     )
-            elif isinstance(part, CompactionPart):  # pragma: no cover
-                pass  # Compaction parts are not rendered in AG-UI
+            elif isinstance(part, CompactionPart):
+                flush()
+                result.append(
+                    ActivityMessage(
+                        id=_new_message_id(),
+                        activity_type=COMPACTION_ACTIVITY_TYPE,
+                        content=compaction_payload(part),
+                    )
+                )
             else:
                 assert_never(part)
 
