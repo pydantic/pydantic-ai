@@ -365,17 +365,19 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         Each `ResumeEntry` is mapped to an approval keyed by the original `tool_call_id`.
         The payload is validated against the same Pydantic model whose JSON schema is
         advertised on `Interrupt.response_schema`, and the mapping is **deny-by-default**:
-        approval requires a payload that validates with `approved=True`. Any other shape
-        is treated as a denial so a malformed or hostile client cannot accidentally
-        execute a tool that requires human approval.
+        approval requires a payload that validates with `approved=True`, so a malformed
+        client response cannot accidentally execute a tool that requires human approval.
+        (Approval guards against the *model* acting without human sign-off; it is not an
+        authorization boundary against the client — see
+        [Trust model for client-submitted messages](../../ui/overview.md#trust-model-for-client-submitted-messages).)
 
-        - `status == 'cancelled'` → `ToolDenied('Cancelled by user.')`
-        - `payload.approved is True` with a valid `payload.editedArgs` dict → `ToolApproved(override_args=...)`
-        - `payload.approved is True` without edits → `ToolApproved()`
-        - Anything else (`False`, missing, `null`, non-bool `approved`, non-dict payload,
-          a non-dict `editedArgs`, or a non-string `reason`) → `ToolDenied(payload.reason)`
-          if `reason` is a non-empty string on a payload that validated, else `ToolDenied()`
-          (which carries the default `"The tool call was denied."` message).
+        The full mapping, including which payloads raise instead of denying, is documented under
+        [Tool approval (interrupts)](../../ui/ag-ui.md#tool-approval-interrupts).
+
+        Raises `UserError` for a payload that fails validation, and for a `ResumeEntry.interrupt_id`
+        that carries no recognizable prefix. Both are resolved inside the run stream (see
+        [`run_stream_native`][pydantic_ai.ui.UIAdapter.run_stream_native]), so they reach the client
+        as a `RunErrorEvent` rather than escaping the streaming response.
 
         Returns `None` when `resume` is missing or empty, or when the installed
         ag-ui-protocol predates the interrupt lifecycle.
