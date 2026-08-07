@@ -49,7 +49,7 @@ from .._agent_graph import (
     build_run_context,
     capture_run_messages,
 )
-from .._cancel import CancellationToken
+from .._cancel import CancellationToken, RunCancellation, take_run_binding
 from .._deferred_capabilities import parse_loaded_capabilities
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
@@ -113,6 +113,7 @@ from .abstract import (
     AgentModelSettings,
     AgentRealtime,
     AgentRetries,
+    AgentRunEvents,
     EventStreamHandler,
     EventStreamProcessor,
     RunOutputDataT,
@@ -141,6 +142,7 @@ __all__ = (
     'AgentRealtime',
     'AgentRetries',
     'AgentRun',
+    'AgentRunEvents',
     'AgentRunResult',
     'NativeToolFunc',
     'CallToolsNode',
@@ -1297,6 +1299,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
+        # Consume the pending `AgentRunEvents` binding before ANY user-supplied code (capability /
+        # toolset `for_run()` hooks below) runs in this context: a hook that starts a nested agent
+        # run would otherwise consume it and attach the outer handle to the wrong run.
+        binding = take_run_binding()
+
         # A bare `int` overrides both budgets; a partial `retries={'tools': ...}` / `{'output': ...}`
         # dict overrides only the named budget for this run (riding `ToolManager.default_max_retries`).
         retry_overrides = _normalize_agent_retry_overrides(retries)
@@ -1727,6 +1734,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
+            cancellation=binding.cancellation if binding is not None else RunCancellation(),
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
@@ -1744,15 +1752,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
             def _run_cancelled(message: str) -> exceptions.RunCancelled:
-                return exceptions.RunCancelled(
-                    message,
-                    messages=state.message_history,
-                    new_message_index=graph_deps.new_message_index,
-                    usage=state.usage,
-                    metadata=state.metadata,
-                    run_id=state.run_id,
-                    conversation_id=state.conversation_id,
-                )
+                return _agent_graph.run_cancelled_snapshot(message, state, graph_deps)
 
             try:
                 yield
@@ -1814,6 +1814,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             )
             agent_run = AgentRun(graph_run)
+            if binding is not None:
+                # Hand the live `AgentRun` to the `AgentRunEvents` handle that started this run, so
+                # its `cancel()`/run-state accessors reach the run. The controller was already bound
+                # to this task above, before `wrap_run`/`before_run`.
+                binding.agent_run = agent_run
             self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
             # Build RunContext for run lifecycle hooks
