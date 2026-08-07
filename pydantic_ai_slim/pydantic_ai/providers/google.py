@@ -54,6 +54,11 @@ class BaseGoogleProvider(Provider[Client], ABC):
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         return {
             'supports_image_input': True,
+            # Verified live on both currently served Live models: a session asking for `TEXT` is closed
+            # with `1007 The requested combination of response modalities (TEXT) is not supported by the
+            # model`, matching Google's note that native-audio models only support the `AUDIO` modality.
+            # Output transcription (enabled by default) is how a Live session gets text.
+            'supports_text_output': False,
             'supports_session_seeding': True,
             'supports_seeding_images': True,
             'supports_seeding_audio': False,

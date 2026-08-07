@@ -121,8 +121,23 @@ and quirks:
 For portable branching, inspect [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile]
 or [`RealtimeSession.profile`][pydantic_ai.realtime.RealtimeSession.profile]. The
 [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] reports audio sample rates and
-support for image input, manual turn control, interruption, output truncation, session seeding,
-audio/image seeding, asynchronous tool calls, native tools, and thinking.
+support for image input, manual turn control, interruption, output truncation, text output, session
+seeding, audio/image seeding, asynchronous tool calls, native tools, and thinking.
+
+Each flag is resolved from the model's defaults and the provider's, then the model's `profile=`
+argument — the same three layers a standard [`Model`][pydantic_ai.models.Model] resolves. Pass
+`profile=` when the model name doesn't identify the model and the inferred facts are wrong, most
+often with an Azure deployment named something other than its model:
+
+```python {test="skip"}
+from pydantic_ai.realtime.azure import AzureRealtimeModel
+
+# The deployment serves a reasoning model, but nothing in its name says so.
+model = AzureRealtimeModel('voice-prod', profile={'supports_thinking': True})
+```
+
+A partial dict is merged over the resolved profile; pass a callable
+`(resolved) -> RealtimeModelProfile` instead to replace it wholesale.
 
 ## Shared settings
 
@@ -134,7 +149,10 @@ model or pass settings for one session; per-session values override model defaul
 
 The agent's regular `model_settings` and capability `get_model_settings()` contributions do not
 configure realtime sessions. Unsupported shared settings are ignored, matching request-response
-models. Voices and detailed controls are provider-specific: use `openai_voice`, `google_voice`, or
+models — with one deliberate exception: `output_modality='text'` on a model whose profile reports
+`supports_text_output=False` (Gemini Live and xAI) raises a `UserError` before connecting, because
+silently answering with speech would be worse than not starting. Voices and detailed controls are
+provider-specific: use `openai_voice`, `google_voice`, or
 `xai_voice` on the corresponding provider settings. See the provider pages for defaults and
 limitations.
 

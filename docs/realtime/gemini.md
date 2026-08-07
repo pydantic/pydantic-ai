@@ -96,7 +96,7 @@ grounding or local function-tool fallbacks unless using a model that supports th
 | Feature | Support | Notes |
 | --- | --- | --- |
 | Audio format | Full feature support | Mono PCM16, 16 kHz input and 24 kHz output |
-| Text output | Limited parameter support | One response modality per session |
+| Text output | Unsupported | Every Live model rejects a `TEXT` response modality; `output_modality='text'` raises. Read the answer from the transcript on the `SpeechPart` |
 | Image/live video input | Full feature support | `google_turn_coverage='all_video'` keeps streamed frames in context |
 | Manual turns | Unsupported | Automatic VAD is required |
 | Explicit interruption/truncation | Unsupported | Gemini interrupts server-side and emits `RealtimeResponseInterruptedEvent` |

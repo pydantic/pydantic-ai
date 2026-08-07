@@ -83,7 +83,8 @@ stream. The handle stays in memory and cannot resume in another process.
 
 ## Provider-specific quirks
 
-- `output_modality='text'` is ignored because the API always produces audio.
+- Grok Voice always speaks: its profile reports `supports_text_output=False`, so `output_modality='text'`
+  raises a `UserError` before connecting. Read the answer from the transcript on the `SpeechPart`.
 - xAI supports cancellation but not output truncation. Flush local playback and call `interrupt()`
   without `played_ms`.
 - The protocol resembles OpenAI Realtime, but feature support comes from the xAI model profile;
