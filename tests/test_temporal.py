@@ -4458,6 +4458,11 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     assert reconstructed.usage == ctx.usage
     assert reconstructed.discovered_tool_names == {'searched_tool'}
     assert reconstructed.available_tool_names == {'searched_tool'}
+    # No capability snapshot in this subclass's field set, so the property falls back to the base
+    # one, which reads the registry — and that is guarded, so it raises rather than quietly
+    # reporting no capabilities are active.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed.available_capability_ids
     assert reconstructed.__dict__['custom'] == 'from-subclass'
     for name in ('prompt', 'conversation_id', 'instrumentation_version'):
         with pytest.raises(UserError, match=f'{name!r} is not available on {LegacyFieldsRunContext.__name__!r}'):
