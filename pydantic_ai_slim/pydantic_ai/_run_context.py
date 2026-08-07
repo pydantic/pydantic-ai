@@ -201,13 +201,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
 
     discovered_tool_names: set[str] = field(default_factory=set[str])
-    """Names of deferred function tools revealed by durable message history.
+    """Names of deferred function tools named by durable message history.
 
-    Includes names revealed by tool-search returns and `ToolAvailabilityDeltaPart`s, including
-    deltas from any tool's `ToolReturn.tools` and `load_capability`. Read by
-    `is_tool_available` and the reveal builders. Populated during run preparation from message
-    history. Use `available_tool_names` for the full set of currently-callable tools
-    (always-visible plus these).
+    Raw evidence, not a verdict: it collects every name tool-search returns and
+    `ToolAvailabilityDeltaPart`s mention — including deltas from any tool's `ToolReturn.tools` and
+    from `load_capability` — without checking that the tool still exists or that its owner is
+    loaded. Read by `is_tool_available` and the reveal builders, which apply those checks.
+    Populated during run preparation from message history. Use `available_tool_names` for the full
+    set of currently-callable tools (always-visible plus these).
     Managed by the framework: safe to read, but don't mutate it directly.
     """
 

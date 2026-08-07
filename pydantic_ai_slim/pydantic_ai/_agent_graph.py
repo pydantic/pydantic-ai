@@ -406,9 +406,11 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     # Invariant: these two sets are shared by reference into every `RunContext` this run (their
     # identity survives `replace(ctx, ...)`, which shallow-copies) and are only ever mutated in
-    # place — never reassigned. The per-step refresh and the `load_capability` tool body rely on
-    # that shared identity. Reassigning either (here, or by passing it to a `replace(ctx, ...=...)`)
-    # would silently break in-step capability loads / tool reveals.
+    # place — never reassigned. The per-step refresh relies on that shared identity for both, and
+    # `discovered_tool_names` additionally on the in-step reveals written by tool execution.
+    # `loaded_capability_ids` is refreshed from history only: a capability loaded during a step
+    # lands from the next one, so nothing writes it mid-step. Reassigning either (here, or by
+    # passing it to a `replace(ctx, ...=...)`) would silently break in-step tool reveals.
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
 
@@ -819,7 +821,7 @@ async def _prepare_request_parameters(
         native_tools=native_tools,
         deferred_capability_ids=deferred_capability_ids,
         # Preserve discovered names that aren't in the current definitions.
-        revealed_tool_names=_revealable_tool_names(
+        revealed_tool_names=_revealed_tool_names(
             run_context.discovered_tool_names,
             function_tools,
             deferred_capability_ids=deferred_capability_ids,
@@ -2379,7 +2381,7 @@ def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAg
     ctx.deps.discovered_tool_names.update(discovered_tool_names)
 
 
-def _revealable_tool_names(
+def _revealed_tool_names(
     discovered: Iterable[str],
     function_tools: Iterable[ToolDefinition],
     *,
@@ -2406,8 +2408,12 @@ def _revealable_tool_names(
     owner_by_name = {
         tool_def.name: tool_def.capability_id for tool_def in function_tools if tool_def.capability_id is not None
     }
-    unavailable = deferred_capability_ids - loaded_capability_ids
-    return {name for name in discovered if owner_by_name.get(name) not in unavailable}
+    # The complement of `RunContext.available_capability_ids` over the run's capabilities: available
+    # is "not deferred, or loaded", so unavailable is "deferred and not loaded". Spelled from the
+    # two history-derived sets because this also runs against a bare message list, with no
+    # `RunContext` to ask — but it must keep answering exactly what `is_tool_available` answers.
+    unavailable_capability_ids = deferred_capability_ids - loaded_capability_ids
+    return {name for name in discovered if owner_by_name.get(name) not in unavailable_capability_ids}
 
 
 def _with_outgoing_reveal_state(
@@ -2424,7 +2430,7 @@ def _with_outgoing_reveal_state(
     """
     return replace(
         parameters,
-        revealed_tool_names=_revealable_tool_names(
+        revealed_tool_names=_revealed_tool_names(
             parse_discovered_tools(messages),
             parameters.function_tools,
             deferred_capability_ids=parameters.deferred_capability_ids,
