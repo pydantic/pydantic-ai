@@ -127,10 +127,24 @@ with [`azure_voice_live=True`][pydantic_ai.realtime.azure.AzureRealtimeModelSett
 and the model targets the Voice Live endpoint and beta session protocol; GA stays the default.
 
 Voice Live is a distinct Azure resource with its own credentials, so set `AZURE_VOICELIVE_ENDPOINT`,
-`AZURE_VOICELIVE_API_KEY`, and `AZURE_VOICELIVE_API_VERSION` — [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider]
-reads these as a fallback to the `AZURE_OPENAI_*` variables — or pass them to `AzureProvider` explicitly.
+`AZURE_VOICELIVE_API_KEY`, and `AZURE_VOICELIVE_API_VERSION`, or pass `voice_live_endpoint`,
+`voice_live_api_key`, and `voice_live_api_version` to
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider]. Each value resolves explicit argument
+first, then its own `AZURE_VOICELIVE_*` variable, then the Azure OpenAI endpoint/key — so a Voice Live
+user who only has one resource doesn't need to configure both, and one who has both never gets a
+mixture of the two.
 
-```python {test="skip"}
+```python
+from pydantic_ai.providers.azure import AzureProvider
+
+provider = AzureProvider(
+    voice_live_endpoint='https://my-voice-live.services.ai.azure.com',
+    voice_live_api_key='...',
+    voice_live_api_version='2026-04-10',
+)
+```
+
+```python
 from pydantic_ai import Agent
 from pydantic_ai.realtime.azure import AzureRealtimeModelSettings
 

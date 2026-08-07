@@ -320,6 +320,49 @@ def test_azure_provider_voice_live_credentials_are_coherent(monkeypatch: pytest.
     assert provider.voice_live_api_version == '2026-06-01-preview'
 
 
+def test_azure_provider_voice_live_explicit_arguments_beat_env(monkeypatch: pytest.MonkeyPatch):
+    # Explicit Voice Live arguments win over the `AZURE_VOICELIVE_*` environment, matching the
+    # precedence every other `AzureProvider` field uses. Regression: the environment used to win, so a
+    # stale variable silently redirected a session configured in code to a different resource.
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://ga.openai.azure.com')
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'ga-key')
+    monkeypatch.setenv('OPENAI_API_VERSION', '2024-10-01')
+    monkeypatch.setenv('AZURE_VOICELIVE_ENDPOINT', 'https://stale.services.ai.azure.com')
+    monkeypatch.setenv('AZURE_VOICELIVE_API_KEY', 'stale-key')
+    monkeypatch.setenv('AZURE_VOICELIVE_API_VERSION', '2020-01-01')
+
+    provider = AzureProvider(
+        voice_live_endpoint='https://chosen.services.ai.azure.com/',
+        voice_live_api_key='chosen-key',
+        voice_live_api_version='2026-06-01-preview',
+    )
+    assert provider.voice_live_endpoint == 'https://chosen.services.ai.azure.com'
+    assert provider.voice_live_api_key == 'chosen-key'
+    assert provider.voice_live_api_version == '2026-06-01-preview'
+    # The Azure OpenAI (GA) set is untouched by the Voice Live arguments.
+    assert (provider.azure_endpoint, provider.api_key) == ('https://ga.openai.azure.com', 'ga-key')
+
+
+def test_azure_provider_voice_live_explicit_arguments_without_env(monkeypatch: pytest.MonkeyPatch):
+    # The other direction: with no `AZURE_VOICELIVE_*` set, the explicit arguments are what configure
+    # Voice Live — the capability the docs promise and the only way to set its api-version in code.
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://ga.openai.azure.com')
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'ga-key')
+    monkeypatch.setenv('OPENAI_API_VERSION', '2024-10-01')
+    monkeypatch.delenv('AZURE_VOICELIVE_ENDPOINT', raising=False)
+    monkeypatch.delenv('AZURE_VOICELIVE_API_KEY', raising=False)
+    monkeypatch.delenv('AZURE_VOICELIVE_API_VERSION', raising=False)
+
+    provider = AzureProvider(
+        voice_live_endpoint='https://chosen.services.ai.azure.com',
+        voice_live_api_key='chosen-key',
+        voice_live_api_version='2026-06-01-preview',
+    )
+    assert provider.voice_live_endpoint == 'https://chosen.services.ai.azure.com'
+    assert provider.voice_live_api_key == 'chosen-key'
+    assert provider.voice_live_api_version == '2026-06-01-preview'
+
+
 def test_azure_provider_voice_live_falls_back_to_openai_resource(monkeypatch: pytest.MonkeyPatch):
     # With only the Azure OpenAI resource configured, Voice Live reuses it and defaults the api-version.
     monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://ga.openai.azure.com')

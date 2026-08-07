@@ -69,11 +69,21 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     field, but when [`azure_voice_live`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live]
     is set the Voice Live session config is built from only the cross-protocol fields — `instructions`,
     `openai_voice` (by name), `turn_detection` (or `azure_voice_live_turn_detection`),
-    `input_transcription_model`,
-    `output_modality`, `max_tokens`, `tool_choice`, and tools. OpenAI-only fields that Voice Live's beta
-    session schema doesn't accept (e.g. `openai_input_noise_reduction`, `openai_output_speed`,
-    `openai_truncation`, `openai_turn_detection`, `thinking`, `parallel_tool_calls`) are **silently
-    ignored** under Voice Live; they still apply on the GA path.
+    `input_transcription_model`, `output_modality`, `max_tokens`, `tool_choice`, and tools. The
+    inherited `openai_*` fields, plus `thinking` and `parallel_tool_calls`, are **silently ignored**
+    under Voice Live; they still apply on the GA path.
+
+    They fall into two groups, and only the first is settled:
+
+    - `openai_output_speed`, `openai_turn_detection`, `thinking`, and `parallel_tool_calls` have no
+      counterpart in Voice Live's beta session object (see the recorded `session.created` payload in
+      `tests/realtime/cassettes/test_azure_voice_live_ws/`), so there is nothing to map them to.
+      Voice Live's own turn detection is configured with `azure_voice_live_turn_detection`.
+    - `openai_input_noise_reduction` and `openai_truncation` *do* have counterparts —
+      `input_audio_noise_reduction` and `truncation_strategy` — but under Azure's own vocabulary, which
+      the recording pins as `null` and so does not evidence. Mapping OpenAI's values onto them would be
+      guessing at the accepted shape, so they stay unmapped until a recording proves it; a dedicated
+      `azure_voice_live_*` setting is the natural home when it does.
     """
 
     azure_voice_live: bool
@@ -90,12 +100,19 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
 def _map_voice_live_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     """Map Voice Live's beta text events and delegate the remaining OpenAI-compatible events."""
     event_type = data.get('type')
-    if event_type == 'response.text.delta':
-        delta = data.get('delta')
-        return OutputTranscript(text=delta if isinstance(delta, str) else '', is_final=False, output_text=True)
-    if event_type == 'response.text.done':
-        text = data.get('text')
-        return OutputTranscript(text=text if isinstance(text, str) else '', is_final=True, output_text=True)
+    if event_type in ('response.text.delta', 'response.text.done'):
+        is_final = event_type == 'response.text.done'
+        content = data.get('text' if is_final else 'delta')
+        return OutputTranscript(
+            text=content if isinstance(content, str) else '',
+            is_final=is_final,
+            # Carried through like the shared OpenAI mapper does: the session keys part identity off
+            # `item_id`, so dropping it leaves the recorded `TextPart` without a provider id *and* stops
+            # a second output item in the same response from finalizing the first — two replies in one
+            # turn would accumulate into a single part.
+            item_id=item_id if isinstance(item_id := data.get('item_id'), str) and item_id else None,
+            output_text=True,
+        )
     return _map_openai_event(data)
 
 

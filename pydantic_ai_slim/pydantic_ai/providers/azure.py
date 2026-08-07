@@ -187,6 +187,9 @@ class AzureProvider(Provider[AsyncOpenAI]):
         azure_endpoint: str | None = None,
         api_version: str | None = None,
         api_key: str | None = None,
+        voice_live_endpoint: str | None = None,
+        voice_live_api_key: str | None = None,
+        voice_live_api_version: str | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None: ...
 
@@ -196,6 +199,9 @@ class AzureProvider(Provider[AsyncOpenAI]):
         azure_endpoint: str | None = None,
         api_version: str | None = None,
         api_key: str | None = None,
+        voice_live_endpoint: str | None = None,
+        voice_live_api_key: str | None = None,
+        voice_live_api_version: str | None = None,
         openai_client: AsyncAzureOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -212,6 +218,15 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 which reject the `api-version` query parameter.
             api_key: The API key to use for authentication, if not provided, the `AZURE_OPENAI_API_KEY` environment variable
                 will be used if available.
+            voice_live_endpoint: The [Azure AI Voice Live](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live)
+                endpoint, used only by [`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel]
+                with `azure_voice_live=True`. Voice Live is a distinct Azure resource, so when this is
+                not provided the `AZURE_VOICELIVE_ENDPOINT` environment variable is used, and finally
+                `azure_endpoint` as a fallback.
+            voice_live_api_key: The Voice Live API key; falls back to `AZURE_VOICELIVE_API_KEY`, then `api_key`.
+            voice_live_api_version: The Voice Live API version; falls back to `AZURE_VOICELIVE_API_VERSION`,
+                then a supported default. Deliberately *not* derived from `api_version`, which versions
+                the Azure OpenAI data plane on an unrelated schedule.
             openai_client: An existing
                 [`AsyncAzureOpenAI`](https://github.com/openai/openai-python#microsoft-azure-openai)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
@@ -229,7 +244,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
             # `api_key` raises its usual explanatory error instead of realtime sending the placeholder
             # as a credential and getting an opaque auth failure back.
             self._api_key = None if openai_client.api_key is API_KEY_SENTINEL else openai_client.api_key or None
-            self._resolve_voice_live_credentials()
+            self._resolve_voice_live_credentials(voice_live_endpoint, voice_live_api_key, voice_live_api_version)
         else:
             # Azure AI Voice Live (used by `AzureRealtimeModel`) is a distinct resource with its own
             # `AZURE_VOICELIVE_*` credentials; accept those as a fallback so a Voice Live user doesn't need
@@ -252,7 +267,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
 
             self._azure_endpoint = azure_endpoint.rstrip('/')
             self._api_key = api_key
-            self._resolve_voice_live_credentials()
+            self._resolve_voice_live_credentials(voice_live_endpoint, voice_live_api_key, voice_live_api_version)
 
             if http_client is None:
                 http_client = create_async_http_client()
@@ -291,16 +306,31 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 )
                 self._base_url = str(self._client.base_url)
 
-    def _resolve_voice_live_credentials(self) -> None:
+    def _resolve_voice_live_credentials(
+        self,
+        voice_live_endpoint: str | None,
+        voice_live_api_key: str | None,
+        voice_live_api_version: str | None,
+    ) -> None:
         """Resolve the Azure AI Voice Live credential set (endpoint/key/version) as one coherent group.
 
-        Voice Live is a distinct Azure resource, so prefer its own `AZURE_VOICELIVE_*` variables and fall
-        back to the resolved Azure OpenAI endpoint/key/default version — never a mix across resources.
-        Read by `AzureRealtimeModel`'s Voice Live path (`azure_voice_live=True`).
+        Each value follows the provider-wide precedence — the explicit argument, then the environment —
+        with one extra step at the end: Voice Live is a distinct Azure resource, so an unset value falls
+        back to its own `AZURE_VOICELIVE_*` variable before the resolved Azure OpenAI endpoint/key, never
+        a mix across resources for a value the caller named. Read by `AzureRealtimeModel`'s Voice Live
+        path (`azure_voice_live=True`).
+
+        The version deliberately does not fall back to `api_version`: that versions the Azure OpenAI data
+        plane, on a schedule unrelated to Voice Live's beta API, so inheriting it would dial a version
+        Voice Live does not serve.
         """
-        self._voice_live_endpoint = (os.getenv('AZURE_VOICELIVE_ENDPOINT') or self._azure_endpoint).rstrip('/')
-        self._voice_live_api_key = os.getenv('AZURE_VOICELIVE_API_KEY') or self._api_key
-        self._voice_live_api_version = os.getenv('AZURE_VOICELIVE_API_VERSION') or _DEFAULT_VOICE_LIVE_API_VERSION
+        self._voice_live_endpoint = (
+            voice_live_endpoint or os.getenv('AZURE_VOICELIVE_ENDPOINT') or self._azure_endpoint
+        ).rstrip('/')
+        self._voice_live_api_key = voice_live_api_key or os.getenv('AZURE_VOICELIVE_API_KEY') or self._api_key
+        self._voice_live_api_version = (
+            voice_live_api_version or os.getenv('AZURE_VOICELIVE_API_VERSION') or _DEFAULT_VOICE_LIVE_API_VERSION
+        )
 
     def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

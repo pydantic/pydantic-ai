@@ -19,6 +19,7 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.azure import (
         AzureRealtimeModel,
         AzureRealtimeModelSettings,
+        SemanticVAD,
         ServerVAD,
         _map_voice_live_event,  # pyright: ignore[reportPrivateUsage]
     )
@@ -196,6 +197,28 @@ def test_voice_live_event_mapping() -> None:
     assert _map_voice_live_event({'type': 'some.unknown.event'}) is None
 
 
+def test_voice_live_text_events_keep_item_id() -> None:
+    """Voice Live's text frames carry `item_id`, and it must survive the mapping like OpenAI's do.
+
+    Regression: dropping it left the recorded `TextPart` with no provider id, and — because the session
+    detects a new output item by comparing `item_id` — stopped a second reply in one response from
+    finalizing the first, so two replies accumulated into a single part.
+    """
+    assert _map_voice_live_event({'type': 'response.text.delta', 'delta': 'hi', 'item_id': 'item-1'}) == (
+        OutputTranscript(text='hi', is_final=False, item_id='item-1', output_text=True)
+    )
+    assert _map_voice_live_event({'type': 'response.text.done', 'text': 'hi there', 'item_id': 'item-1'}) == (
+        OutputTranscript(text='hi there', is_final=True, item_id='item-1', output_text=True)
+    )
+    # An absent or empty id stays `None` rather than becoming a falsy provider id.
+    assert _map_voice_live_event({'type': 'response.text.delta', 'delta': 'x', 'item_id': ''}) == (
+        OutputTranscript(text='x', is_final=False, item_id=None, output_text=True)
+    )
+    assert _map_voice_live_event({'type': 'response.text.done', 'text': 'x'}) == (
+        OutputTranscript(text='x', is_final=True, item_id=None, output_text=True)
+    )
+
+
 def test_voice_live_silently_ignores_openai_only_settings() -> None:
     """OpenAI-only settings inherited by `AzureRealtimeModelSettings` are dropped on the Voice Live path."""
     provider = AzureProvider(azure_endpoint='https://r.services.ai.azure.com', api_version='2024-10-01', api_key='k')
@@ -207,12 +230,25 @@ def test_voice_live_silently_ignores_openai_only_settings() -> None:
             azure_voice_live=True,
             openai_output_speed=1.5,
             openai_input_noise_reduction='near_field',
+            openai_truncation='auto',
+            openai_turn_detection=SemanticVAD(eagerness='high'),
+            thinking='low',
+            parallel_tool_calls=False,
         ),
     )
-    # The Voice Live session config is built from a fixed field set; the OpenAI-only knobs don't appear.
+    # The Voice Live session config is built from a fixed field set; the OpenAI-only knobs don't appear,
+    # under their OpenAI names or the names Voice Live's own session object uses for the two that have a
+    # counterpart (`input_audio_noise_reduction`, `truncation_strategy` — see the class docstring).
     assert 'speed' not in config
     assert 'output_audio' not in config
     assert 'noise_reduction' not in config
+    assert 'input_audio_noise_reduction' not in config
+    assert 'truncation' not in config
+    assert 'truncation_strategy' not in config
+    assert 'reasoning' not in config
+    assert 'parallel_tool_calls' not in config
+    # `openai_turn_detection` is *not* what configures Voice Live's VAD; the default server VAD stands.
+    assert config['turn_detection']['type'] == 'server_vad'
 
 
 def test_sideband_url_uses_the_ga_realtime_path() -> None:
