@@ -111,6 +111,7 @@ from . import (
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
     ToolVisibility,
+    _trim_messages_before_compaction,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -2072,6 +2073,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
         )
 
+        # Same ordering rule as `_build_responses_request_params`: the introduced-tools derivation
+        # and the mapping must both see the trimmed history, and re-compacting only compacts the
+        # current effective window rather than content an earlier compaction already replaced.
+        messages = _trim_messages_before_compaction(messages, self.system, requires_encrypted_content=True)
         instructions, openai_messages = await self._map_messages(
             messages,
             model_settings,
@@ -2508,22 +2513,50 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: OpenAIModelProfile,
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
+        # Deliberately a separate variable: `messages` itself stays untrimmed for
+        # `_resolve_server_side_state`, which recovers conversation/response IDs from responses the
+        # trim would drop; `_map_messages` applies the same idempotent trim to whatever slice that
+        # resolution hands it.
+        trimmed_messages = _trim_messages_before_compaction(messages, self.system, requires_encrypted_content=True)
+        # Call-time import mirroring `models/__init__.py`'s `_tool_search` import: the toolsets
+        # package imports `messages` while adapters load, so a module-level import would cycle.
+        from ..toolsets._tool_search import parse_discovered_tools
+
+        # A reveal whose `additional_tools` carrier sits before the compaction boundary is trimmed
+        # with it, while the tool's `'via_history'` visibility still promises a history item — so it
+        # would vanish from the request entirely. Until reveal state itself becomes boundary-aware
+        # (#7225 derives it from the post-compaction window, which makes this branch inert), such a
+        # tool is redeclared in `tools` with its schema: the compaction turn rebuilds the prefix
+        # anyway, so the declaration costs nothing extra.
+        post_trim_revealed = parse_discovered_tools(trimmed_messages)
+        wire_request_parameters = model_request_parameters
+        lost_reveals = {
+            name
+            for name, visibility in (model_request_parameters.tool_visibility or {}).items()
+            if visibility == 'via_history' and name not in post_trim_revealed
+        }
+        if lost_reveals:
+            tool_visibility: dict[str, ToolVisibility] = {
+                **(model_request_parameters.tool_visibility or {}),
+                **dict.fromkeys(sorted(lost_reveals), 'visible'),
+            }
+            wire_request_parameters = replace(model_request_parameters, tool_visibility=tool_visibility)
         history_declared_tool_names = {
             tool.name
-            for tool in model_request_parameters.function_tools
-            if model_request_parameters.visibility_of(tool.name) == 'via_history'
+            for tool in wire_request_parameters.function_tools
+            if wire_request_parameters.visibility_of(tool.name) == 'via_history'
         }
-        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
+        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, wire_request_parameters)
         extra_native_tools = model_settings.get('openai_native_tools', ())
         tools: list[responses.ToolParam] = (
-            self._get_native_tools(model_request_parameters) + list(extra_native_tools) + function_tools
+            self._get_native_tools(wire_request_parameters) + list(extra_native_tools) + function_tools
         )
         if not tools and not history_declared_tool_names:
             tool_choice = None
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
-        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        instructions, openai_messages = await self._map_messages(messages, model_settings, wire_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
@@ -3133,6 +3166,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Raw CoT is sent back to improve model performance in multi-turn conversations.
 
         """
+        messages = _trim_messages_before_compaction(messages, self.system, requires_encrypted_content=True)
         profile = self.profile
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
@@ -3523,7 +3557,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             item.provider_name == self.system
                             and item.provider_details
                             and 'encrypted_content' in item.provider_details
-                        ):  # pragma: no branch
+                        ):
                             openai_messages.append(
                                 ResponseCompactionItemParamParam(
                                     id=item.id,
@@ -4614,7 +4648,8 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
       [OpenAI's server-side auto-compaction](https://developers.openai.com/api/docs/guides/compaction)
       via the `context_management` field on the regular `/responses` request.
       The server triggers compaction when input tokens cross a threshold,
-      and the compacted item is returned alongside the normal response.
+      and the compacted item is returned alongside the normal response. On
+      subsequent requests, only that item and the content after it are sent.
       Compatible with [`openai_previous_response_id='auto'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]
       and server-side conversation state.
 

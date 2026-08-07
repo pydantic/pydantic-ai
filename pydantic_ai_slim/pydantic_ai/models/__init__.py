@@ -35,6 +35,7 @@ from ..messages import (
     BaseToolCallPart,
     BaseToolReturnPart,
     BinaryImage,
+    CompactionPart,
     FilePart,
     FileUrl,
     FinalResultEvent,
@@ -73,6 +74,7 @@ from ..profiles import (
     ModelProfileSpec,
     ToolAdditionMode,
     ToolDeferralMode,
+    _translate_legacy_profile_keys,  # pyright: ignore[reportPrivateUsage]
     merge_profile,
 )
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
@@ -1007,7 +1009,9 @@ class Model(ABC, Generic[InterfaceClient]):
         if user is None:
             pass
         elif callable(user):
-            resolved = user(resolved)
+            # The callable form's result bypasses `merge_profile`, so translate deprecated key
+            # spellings here too.
+            resolved = _translate_legacy_profile_keys(user(resolved))
         else:
             # Partial dict — merge on top
             resolved = merge_profile(resolved, user)
@@ -1939,6 +1943,74 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
             break
         count += 1
     return count
+
+
+def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
+    messages: list[ModelMessage], system: str, *, requires_encrypted_content: bool = False
+) -> list[ModelMessage]:
+    """Drop history before the latest same-provider compaction part the request will send.
+
+    Shared by the adapters that honor [`CompactionPart`][pydantic_ai.messages.CompactionPart]s on
+    the wire — each calls it from its own `_map_messages`, since whether a compaction part is
+    honored at all is provider semantics. Anthropic ignores (and doesn't bill) pre-boundary blocks,
+    so there the trim only saves request size; the OpenAI Responses API processes and bills
+    replayed items that precede a compaction item (live-verified), so there it is what makes
+    compaction actually compact. `requires_encrypted_content` mirrors OpenAI's render condition: a
+    part it wouldn't send must not act as a boundary either.
+
+    The standing prompt survives via `_standing_prompt_request`; nothing else from the prefix does.
+    On OpenAI, re-inserting it is defense-in-depth rather than the sole carrier: the compaction blob
+    demonstrably retains leading `system` input items — even a latent directive that never fired
+    before the boundary governs post-compaction replies without the item being re-sent
+    (live-verified) — but that retention is an undocumented property of the encrypted blob, and a
+    blob whose compacted window never contained the standing prompt (e.g. a history started
+    elsewhere) can't supply it. On Anthropic it is load-bearing: the top-level `system` parameter is
+    rebuilt from the opening `SystemPromptPart`s on every request, so trimming them away would
+    silently drop the standing prompt from all subsequent requests.
+    The Messages API accepts a request whose messages start with the assistant compaction block
+    (live-verified), and keeping e.g. the original first user message can 400 when it carries a
+    `tool_result` whose `tool_use` was trimmed away — validation runs even on ignored content.
+    Idempotent: re-applying to an already-trimmed list is a no-op.
+    """
+    for message_index in range(len(messages) - 1, -1, -1):
+        message = messages[message_index]
+        if not isinstance(message, ModelResponse):
+            continue
+        for part_index in range(len(message.parts) - 1, -1, -1):
+            part = message.parts[part_index]
+            if not isinstance(part, CompactionPart) or part.provider_name != system:
+                continue
+            if requires_encrypted_content and not (
+                part.provider_details and 'encrypted_content' in part.provider_details
+            ):
+                continue
+            tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
+            return [*_standing_prompt_request(messages[:message_index]), *tail]
+    return messages
+
+
+def _standing_prompt_request(prefix: list[ModelMessage]) -> list[ModelRequest]:
+    """The standing prompt from a trimmed-away prefix, as a request of its own.
+
+    System parts come from the first `ModelRequest` wherever it appears (a history may open with a
+    `ModelResponse`), sliced by `_standing_system_prompt_count` — the same opening-parts rule the
+    hoisting adapters use. Instructions come from the latest prefix request that carried any: what
+    the instruction fallback for direct `Model.request()` callers would otherwise have recovered
+    from the dropped history; a kept-tail request with its own instructions still wins, being more
+    recent. Mid-conversation `SystemPromptPart`s render inline as conversation content, which the
+    compaction summary replaces, so they are deliberately not preserved.
+    """
+    first_request = next((m for m in prefix if isinstance(m, ModelRequest)), None)
+    opening: Sequence[ModelRequestPart] = (
+        first_request.parts[: _standing_system_prompt_count(first_request)] if first_request else []
+    )
+    instructions = next(
+        (m.instructions for m in reversed(prefix) if isinstance(m, ModelRequest) and m.instructions is not None),
+        None,
+    )
+    if not opening and instructions is None:
+        return []
+    return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:

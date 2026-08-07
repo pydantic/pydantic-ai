@@ -12999,6 +12999,154 @@ async def test_anthropic_compaction_round_trip(allow_model_requests: None, anthr
     assert result.output
 
 
+async def test_anthropic_trims_before_latest_compaction(allow_model_requests: None):
+    response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='drop first request')]
+        ),
+        ModelResponse(
+            parts=[CompactionPart(content='old summary', provider_name='anthropic')], provider_name='anthropic'
+        ),
+        ModelRequest.user_text_prompt('drop between compactions'),
+        ModelResponse(
+            parts=[
+                TextPart(content='drop before boundary'),
+                CompactionPart(content='latest summary', provider_name='anthropic'),
+                TextPart(content='keep after boundary'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+    await model.count_tokens(messages, None, ModelRequestParameters())
+
+    create_kwargs, count_kwargs = get_mock_chat_completion_kwargs(mock_client)
+    # The messages start with the assistant compaction block — the API accepts that shape
+    # (live-verified), and a kept user anchor could 400 on an orphaned `tool_result` — while the
+    # standing system prompt survives via the separate `system` parameter, which the compaction
+    # block does not replace.
+    assert (
+        create_kwargs['messages']
+        == count_kwargs['messages']
+        == snapshot(
+            [
+                {
+                    'role': 'assistant',
+                    'content': [
+                        {'content': 'latest summary', 'type': 'compaction'},
+                        {'text': 'keep after boundary', 'type': 'text'},
+                    ],
+                },
+                {'role': 'user', 'content': [{'text': 'keep tail', 'type': 'text'}]},
+            ]
+        )
+    )
+    assert create_kwargs['system'] == count_kwargs['system'] == snapshot('Standing system prompt.')
+    assert 'compact-2026-01-12' in create_kwargs['betas']
+    assert 'compact-2026-01-12' in count_kwargs['betas']
+
+
+async def test_anthropic_standing_prompt_survives_response_first_history(allow_model_requests: None):
+    """A history that opens with a `ModelResponse` still keeps the first request's standing prompt."""
+    response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart(content='resumed mid-conversation')], provider_name='anthropic'),
+        ModelRequest(parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='dropped')]),
+        ModelResponse(parts=[CompactionPart(content='Summary.', provider_name='anthropic')], provider_name='anthropic'),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['system'] == snapshot('Standing system prompt.')
+    assert kwargs['messages'] == snapshot(
+        [
+            {'role': 'assistant', 'content': [{'content': 'Summary.', 'type': 'compaction'}]},
+            {'role': 'user', 'content': [{'text': 'keep tail', 'type': 'text'}]},
+        ]
+    )
+
+
+async def test_anthropic_standing_instructions_survive_compaction(allow_model_requests: None):
+    """A direct `Model.request()` call whose only instructions live before the boundary keeps them:
+    the standing-prompt request carries the latest prefix instructions, so the last-two-requests
+    fallback still finds them when the trailing request is tool-return-only."""
+    response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='dropped')], instructions='Standing instructions.'),
+        ModelResponse(
+            parts=[
+                CompactionPart(content='Summary.', provider_name='anthropic'),
+                ToolCallPart(tool_name='do_thing', args={}, tool_call_id='call-1'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='do_thing', content='done', tool_call_id='call-1')]),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['system'] == snapshot([{'text': 'Standing instructions.', 'type': 'text'}])
+
+
+async def test_anthropic_foreign_compaction_does_not_trim(allow_model_requests: None):
+    response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('keep before foreign boundary'),
+        ModelResponse(
+            parts=[CompactionPart(content='foreign summary', provider_name='openai'), TextPart(content='keep text')],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'keep before foreign boundary', 'type': 'text'}]},
+            {'role': 'assistant', 'content': [{'text': 'keep text', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': 'keep tail', 'type': 'text'}]},
+        ]
+    )
+
+
+async def test_anthropic_without_compaction_maps_unchanged(allow_model_requests: None):
+    response = completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    mock_client = MockAnthropic.create_mock(response)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('first request'),
+        ModelResponse(parts=[TextPart(content='first response')], provider_name='anthropic'),
+        ModelRequest.user_text_prompt('second request'),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['messages'] == snapshot(
+        [
+            {'role': 'user', 'content': [{'text': 'first request', 'type': 'text'}]},
+            {'role': 'assistant', 'content': [{'text': 'first response', 'type': 'text'}]},
+            {'role': 'user', 'content': [{'text': 'second request', 'type': 'text'}]},
+        ]
+    )
+
+
 async def test_anthropic_compaction_beta_header(allow_model_requests: None):
     """Test that compact-2026-01-12 beta is added when anthropic_context_management is set."""
     c = completion_message([BetaTextBlock(text='response', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
