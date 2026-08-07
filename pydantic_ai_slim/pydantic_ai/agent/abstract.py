@@ -730,6 +730,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] with `loop.run_until_complete(...)`.
         You therefore can't use this method inside async code or if there's an active event loop.
 
+        Use it only at the top level of your program, never from inside another agent run. Sync tools, output
+        functions and other sync callbacks run in worker threads that have no event loop of their own, so a
+        nested `run_sync()` builds a second one and can deadlock against the outer run. To delegate to another
+        agent, make the callback `async def` and `await` [`self.run`][pydantic_ai.agent.AbstractAgent.run]
+        instead. See [Agent delegation](../multi-agent-applications.md#agent-delegation).
+
         Example:
         ```python
         from pydantic_ai import Agent
@@ -1189,6 +1195,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         running all of the agent's async work on the caller's event loop while keeping context-manager and
         iterator lifecycles in stable tasks.
         You therefore can't use this method inside async code or if there's an active event loop.
+
+        Like [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], use it only at the top level of your
+        program, never from inside another agent run. See [Agent delegation](../multi-agent-applications.md#agent-delegation).
 
         The returned [`StreamedRunResultSync`][pydantic_ai.result.StreamedRunResultSync] is a synchronous
         context manager and should be used and closed on the thread where it was created. Use a `with` block
