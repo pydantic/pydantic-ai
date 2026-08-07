@@ -45,6 +45,9 @@ class SpanQuery(TypedDict, total=False):
 
     ## Attribute conditions
     has_attributes: dict[str, Any]
+    """Attribute values are compared with equality; a dict or list value also matches an attribute stored as its
+    JSON serialization, since OTel attributes cannot hold nested objects and instrumentation libraries like Logfire
+    store them as JSON strings. A list value also matches an attribute stored as a tuple."""
     has_attribute_keys: list[str]
 
     ## Status conditions
@@ -263,8 +266,11 @@ class SpanNode:
         if isinstance(expected, dict | list) and isinstance(stored, str):
             try:
                 return json.loads(stored) == expected
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, RecursionError):
                 return False
+        # The OTel SDK stores sequence attribute values as tuples
+        if isinstance(expected, list) and isinstance(stored, tuple):
+            return list(stored) == expected
         return False
 
     def _matches_query(self, query: SpanQuery) -> bool:  # noqa: C901
