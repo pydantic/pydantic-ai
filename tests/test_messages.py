@@ -2353,6 +2353,10 @@ def test_post_compaction_window_accepts_a_minimal_sequence():
         ]
     )
 
+    # The test is only meaningful if the double really refuses slices.
+    with pytest.raises(TypeError, match='slices not supported'):
+        messages[0:1]
+
     window = post_compaction_window(messages)
 
     assert len(window) == 2
