@@ -157,6 +157,48 @@ reading item 0, and the compaction example removed from Constraints (corrected h
   `is_error: true`); `stop_reason` reconstruction from `finish_reason`; multimodal tool returns ->
   `tool_result` content arrays; `parent_tool_use_id: null` (no subagent counterpart in the seam).
 
+### gh-aw parser requirements (resolved 2026-08-06 — full report in `local-notes/ghaw-parser-requirements.md`, uncommitted)
+
+Pinned oracle: `github/gh-aw` @ `fafef5837db7134eb1931954423f5c9d6e0bec3a`, entry point
+`actions/setup/js/parse_claude_log.cjs`. **Vendoring needs the whole family** (that file is a
+shell; logic lives in `log_parser_shared.cjs`, `log_parser_format.cjs`,
+`log_parser_step_summary_builder.cjs`, plus `error_codes`/`error_helpers`/`markdown_unfencing`).
+MIT (GitHub, Inc.) — retain the notice, header-comment each vendored file with upstream path +
+sha. Test through the pure `parseClaudeLog(string)` export (plain node, zero deps); the `main`
+export needs a github-script `core` global — don't use it. Assert on the **Information** section
+of the returned markdown: it reads the literal last raw JSON line, making it the strictly
+tighter oracle.
+
+Conformance rules, ordered by risk (1–4 are silently-wrong-but-green):
+
+1. **`result` is the final JSON line** — any parseable JSON after it (e.g. a trailing
+   `stream_event`) collapses the Information section to "No information available".
+2. **`message.content` is always a list of blocks**, never a bare string — an `Array.isArray`
+   guard silently drops the whole entry (this exact bug swallows the final answer text in Bill's
+   shim, unnoticed because his visible output came from the safe-outputs MCP tool).
+3. **`usage` lives on the `result` record only** — per-`assistant` usage is never read. Exactly
+   four names: `input_tokens`, `output_tokens`, `cache_creation_input_tokens`,
+   `cache_read_input_tokens`; at least one of input/output must be truthy or the block is
+   skipped. So the "per-response usage unavailable mid-run" gap is a non-issue: emit
+   Anthropic-fidelity zeros (or nothing) on assistant lines, real totals on `result`.
+4. **`is_error: true` on failed `tool_result` blocks** — omission renders failures as ✅ (Bill's
+   shim inherits this; his unhandled retry-prompts also leave calls unpaired → ❓).
+5. `tool_use.id` must exactly pair with `tool_result.tool_use_id`; unpaired renders ❓.
+6. **The final answer must be an `assistant` `text` block** — `result.result` is never read.
+7. `num_turns` honest (count of model responses): `>= GH_AW_MAX_TURNS` fails the build.
+8. `mcp_servers[].status: 'failed'` in init can fail the build — emit `'connected'` or omit.
+9. Emit at least one recognized entry, or gh-aw's guardrail `core.setFailed`s.
+10. `total_cost_usd`: omit rather than emit `0` (falsy in JS — renders nothing either way).
+11. Ignored by the oracle, emit only for CLI fidelity: per-line `uuid`/`session_id`/timestamps,
+    `parent_tool_use_id`, `duration_api_ms`, `stop_reason`, `result.subtype`/`is_error`,
+    `stream_event` lines, thinking `signature`.
+
+Also confirmed: nothing throws — unknown types/malformed lines/missing fields all skip
+gracefully, and gh-aw's real input is stream-json teed together with debug noise, so our clean
+JSONL is a safe direction. Bill's shim is post-hoc replay of `result.all_messages()` (no
+streaming, no text/thinking mapping) — a field-shape cheat-sheet only, not an ordering
+reference.
+
 ### Fixture findings (captured 2026-08-06, CLI 2.1.222 — see `tests/assets/claude_code_stream_json/`)
 
 - **One `assistant` line per content block**, sharing one `message.id`; `message.usage` repeated
