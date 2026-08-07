@@ -2,18 +2,33 @@
 
 from __future__ import annotations as _annotations
 
+from collections.abc import AsyncIterator
+from typing import Any, cast
+
 import pytest
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.azure import AzureProvider
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.realtime.azure import AzureRealtimeModel
+from pydantic_ai.realtime import RealtimeSessionErrorEvent
+from pydantic_ai.realtime.azure import AzureRealtimeConnection, AzureRealtimeModel
 
 
-def test_model_is_exported_from_realtime_package() -> None:
-    from pydantic_ai.realtime import AzureRealtimeModel as ExportedAzureRealtimeModel
+class _DroppedWebSocket:
+    """A socket that reports an abnormal close as soon as it is iterated."""
 
-    assert ExportedAzureRealtimeModel is AzureRealtimeModel
+    async def __aiter__(self) -> AsyncIterator[str]:
+        raise OSError('dropped')
+        yield ''  # pragma: no cover
+
+
+def test_model_is_not_exported_from_the_realtime_package() -> None:
+    # Concrete providers live in submodules (see the package docstring), so neither this model nor
+    # `OpenAIRealtimeModel` is reachable from `pydantic_ai.realtime` itself.
+    import pydantic_ai.realtime
+
+    with pytest.raises(AttributeError):
+        getattr(pydantic_ai.realtime, 'AzureRealtimeModel')
 
 
 def test_non_azure_provider_instance_is_rejected() -> None:
@@ -35,6 +50,22 @@ async def test_url_and_auth_headers() -> None:
         'wss://resource.openai.azure.com/openai/v1/realtime?model=gpt+realtime'
     )
     assert await model._auth_headers() == {'api-key': 'azure-key'}  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_connection_names_azure_not_openai() -> None:
+    # The GA protocol is shared with OpenAI, but the vendor in a connection's messages must not be:
+    # someone debugging a dropped or rejected Azure call would be sent to the wrong service.
+    conn = AzureRealtimeConnection(_DroppedWebSocket())  # type: ignore[arg-type]
+    events = [event async for event in conn]
+    assert events == [
+        RealtimeSessionErrorEvent(message='Azure OpenAI Realtime connection closed: dropped', recoverable=False)
+    ]
+    with pytest.raises(UserError, match='Azure OpenAI Realtime does not support'):
+        await conn.send(cast('Any', object()))
+    # The provider stamped onto content the connection can't carry names Azure too.
+    assert conn._provider_name == 'azure'  # pyright: ignore[reportPrivateUsage]
+    assert AzureRealtimeModel._connection_type is AzureRealtimeConnection  # pyright: ignore[reportPrivateUsage]
 
 
 def test_infer_provider_from_bare_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
