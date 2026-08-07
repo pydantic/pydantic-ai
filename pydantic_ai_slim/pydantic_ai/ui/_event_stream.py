@@ -329,12 +329,24 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         self, callback: _CallbackFunc[_CallbackArgT, EventT], arg: _CallbackArgT
     ) -> AsyncIterator[EventT]:
         if inspect.isasyncgenfunction(callback):
+            # Fast path for the common `async def ... yield` form.
             async for event in callback(arg):
                 yield event
         elif _utils.is_async_callable(callback):
+            # `async def ... return None`, or a callable object with a coroutine `__call__`.
             await callback(arg)
         else:
-            await _utils.run_in_executor(callback, arg)
+            # A plain callable can still return an async iterator or awaitable that neither
+            # `isasyncgenfunction` nor `is_async_callable` detects (a `def` that returns an async
+            # generator, or a callable instance whose `__call__` is an async generator). Run it
+            # off-thread in case it's blocking-sync, then honour whatever it returned so those
+            # `Callable[..., AsyncIterator]` / `Callable[..., Awaitable]` forms aren't silently dropped.
+            result = await _utils.run_in_executor(callback, arg)
+            if isinstance(result, AsyncIterator):
+                async for event in result:
+                    yield event
+            elif inspect.isawaitable(result):
+                await result
 
     async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
         """Fire hooks when turning from request to response or vice versa."""

@@ -5,7 +5,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Any, Literal, TypeAlias, cast, overload
 
@@ -86,6 +86,7 @@ from . import (
     StreamedResponse,
     ToolVisibility,
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
+    _trim_messages_before_compaction,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -605,6 +606,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def model_name(self) -> AnthropicModelName:
         """The model name."""
         return self._model_name
+
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Resolve the longest retention requested by active Anthropic cache settings."""
+        settings = merge_model_settings(self.settings, model_settings) or {}
+        return self._max_prompt_cache_retention(
+            settings.get('anthropic_cache'),
+            settings.get('anthropic_cache_instructions'),
+            settings.get('anthropic_cache_tool_definitions'),
+            settings.get('anthropic_cache_messages'),
+        )
 
     @property
     def system(self) -> str:
@@ -1586,6 +1597,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
+        messages = _trim_messages_before_compaction(messages, self.system)
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
         # Cross-provider files are dropped silently here, not raised via
