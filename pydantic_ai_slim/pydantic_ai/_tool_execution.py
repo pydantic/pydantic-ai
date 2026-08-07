@@ -17,6 +17,7 @@ from pydantic_graph import GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import _output, exceptions, messages as _messages, result
+from ._deferred_capabilities import LoadCapabilityCallPart
 from .exceptions import ToolFailedError, ToolRetryError
 from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDenied, ToolKind
 
@@ -89,23 +90,22 @@ _ToolCallPayload = (
 
 
 def _reject_unloaded_capability_reveals(
-    tools: Sequence[str], tool_manager: ToolManager[Any], *, tool_kind: str | None = None
+    tools: Sequence[str], tool_manager: ToolManager[Any], *, activating_capability_id: str | None = None
 ) -> None:
     """Reject `ToolReturn.tools` names owned by a capability that hasn't been loaded.
 
     A capability-owned tool must be revealed by loading its capability: `load_capability`
     activates the whole bundle — instructions, hooks, model settings — while a bare name
-    reveal would surface the tool with its capability's hooks skipped. The framework's own loader
-    is exempt by tool kind: it reveals exactly the bundle it just activated, so it no longer has to
-    mark the capability loaded mid-step to get past a guard aimed at user tools.
+    reveal would surface the tool with its capability's hooks skipped. `load_capability` passes for
+    the capability it is *activating* — named by `activating_capability_id`, so it stays subject to
+    the same rule for every other capability's tools and cannot smuggle one through. That is what
+    lets the loader stop marking the capability loaded mid-step to get past a guard aimed at user
+    tools.
 
     Gated on *availability*, not loadedness: an always-on capability is never
     `load_capability`-ed, so testing `loaded_capability_ids` rejected its own search-gated tool
     with an error naming a load the developer cannot perform.
     """
-    if tool_kind == 'capability-load':
-        # The framework's own loader: it reveals exactly the bundle it just activated.
-        return
     run_ctx = tool_manager.ctx
     for name in tools:
         toolset_tool = (tool_manager.tools or {}).get(name)
@@ -113,6 +113,7 @@ def _reject_unloaded_capability_reveals(
             toolset_tool is not None
             and (capability_id := toolset_tool.tool_def.capability_id) is not None
             and run_ctx is not None
+            and capability_id != activating_capability_id
             and capability_id not in run_ctx.available_capability_ids
         ):
             raise exceptions.UserError(
@@ -684,8 +685,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         parts: _FunctionCallParts = [return_part]
         if tools:
+            narrowed_call = _messages.ToolCallPart.narrow_type(call)
             _reject_unloaded_capability_reveals(
-                tools, self.tool_manager, tool_kind=tool_def.tool_kind if tool_def else None
+                tools,
+                self.tool_manager,
+                activating_capability_id=(
+                    narrowed_call.capability_id if isinstance(narrowed_call, LoadCapabilityCallPart) else None
+                ),
             )
             # Only call-level dedupe here: cross-call dedupe and `discovered_tool_names`
             # bookkeeping happen at assembly time in emitted history order, via

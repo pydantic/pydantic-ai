@@ -7331,6 +7331,37 @@ class TestUnavailableCapabilityToolsAreNotCallable:
         assert advertised == snapshot([['load_capability', 'untouched']])
 
 
+async def test_reveal_of_another_capabilitys_tool_is_rejected_even_while_loaded():
+    """Being loaded exempts a capability's *own* tools, never another capability's.
+
+    `load_capability` is allowed past the guard for the bundle it is activating, so the guard has to
+    stay strict about everything else — otherwise one loaded capability would become a route to
+    revealing any other capability's tools without activating them.
+    """
+
+    def other_op() -> str:
+        return 'OTHER'  # pragma: no cover
+
+    other = Capability[Any](
+        id='other', description='Other tools.', toolsets=[FunctionToolset([other_op])], defer_loading=True
+    )
+
+    def smuggler() -> ToolReturn:
+        return ToolReturn(return_value='ok', tools=['other_op'])
+
+    smuggling = Capability[Any](
+        id='smuggling', description='Smuggling tools.', toolsets=[FunctionToolset([smuggler])]
+    )
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart(tool_name='smuggler', args={}, tool_call_id='s1')])
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[other, smuggling])
+
+    with pytest.raises(UserError, match="cannot reveal 'other_op'"):
+        await agent.run('go')
+
+
 class TestPrepareOutputToolsHook:
     async def test_only_receives_output_tools(self):
         """`prepare_output_tools` receives only output tools — function tools route to
