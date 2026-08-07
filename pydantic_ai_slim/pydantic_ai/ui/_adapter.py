@@ -481,7 +481,27 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         if conversation_id is None:
             conversation_id = self.conversation_id
 
-        messages = self.messages
+        # `deferred_tool_results` is the one part of the run input an implementation is expected to
+        # reject a malformed request from — an AG-UI resume payload that fails the schema advertised
+        # to the client. Stashing that exception and re-raising it from the stream below puts it
+        # inside `transform_stream`'s error handling, so it reaches the client as a protocol error
+        # event instead of escaping the streaming response as an unhandled server error. Only the
+        # raising path is deferred: every request that resolves keeps deriving its run input here,
+        # so no other error and no `sanitize_messages` warning changes when it fires — which is also
+        # why this block sits where the eager resolution did, ahead of the state warning below.
+        # Only `UserError` is deferred, the exception an implementation raises to reject the
+        # request; any other exception is a bug in the implementation and keeps escaping as a server
+        # error rather than being dressed up as a protocol error the client can do nothing about.
+        frontend_messages: list[ModelMessage] = []
+        deferred_results_error: UserError | None = None
+        try:
+            if deferred_tool_results is None:
+                deferred_tool_results = self.deferred_tool_results
+        except UserError as e:
+            deferred_results_error = e
+        else:
+            frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
+
         toolset = self.toolset
         if toolset:
             output_type = [output_type or self.agent.output_type, DeferredToolRequests]
@@ -507,26 +527,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             run_capabilities.append(ReinjectSystemPrompt(replace_existing=True))
         if capabilities:
             run_capabilities.extend(capabilities)
-
-        # `deferred_tool_results` is the one part of the run input an implementation is expected to
-        # reject a malformed request from — an AG-UI resume payload that fails the schema advertised
-        # to the client. Stashing that exception and re-raising it from the stream below puts it
-        # inside `transform_stream`'s error handling, so it reaches the client as a protocol error
-        # event instead of escaping the streaming response as an unhandled server error. Only the
-        # raising path is deferred: every request that resolves keeps deriving its run input here,
-        # so no other error and no `sanitize_messages` warning changes when it fires. Only
-        # `UserError` is deferred, the exception an implementation raises to reject the request; any
-        # other exception is a bug in the implementation and keeps escaping as a server error rather
-        # than being dressed up as a protocol error the client can do nothing about.
-        frontend_messages: list[ModelMessage] = []
-        deferred_results_error: UserError | None = None
-        try:
-            if deferred_tool_results is None:
-                deferred_tool_results = self.deferred_tool_results
-        except UserError as e:
-            deferred_results_error = e
-        else:
-            frontend_messages = self.sanitize_messages(messages, deferred_tool_results=deferred_tool_results)
 
         async def stream_events() -> AsyncIterator[NativeEvent]:
             if deferred_results_error is not None:
