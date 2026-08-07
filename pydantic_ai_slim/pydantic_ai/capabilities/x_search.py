@@ -137,6 +137,9 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
     def _default_native(self) -> XSearchTool:
         return XSearchTool(**self._xsearch_kwargs())
 
+    def _default_toolset_id(self) -> str:
+        return 'x_search'
+
     def _native_unique_id(self) -> str:
         return XSearchTool.kind
 

@@ -82,6 +82,9 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
             kwargs['max_content_tokens'] = self.max_content_tokens
         return WebFetchTool(**kwargs)
 
+    def _default_toolset_id(self) -> str:
+        return 'web_fetch'
+
     def _native_unique_id(self) -> str:
         return WebFetchTool.kind
 

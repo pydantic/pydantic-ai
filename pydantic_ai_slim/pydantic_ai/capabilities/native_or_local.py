@@ -30,11 +30,12 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     ```
 
     Or subclassed to set defaults by overriding `_default_native`, `_default_local`,
-    and `_requires_native`.
+    `_default_toolset_id`, and `_requires_native`.
     The built-in [`WebSearch`][pydantic_ai.capabilities.WebSearch],
-    [`WebFetch`][pydantic_ai.capabilities.WebFetch], and
-    [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] capabilities
-    are all subclasses.
+    [`WebFetch`][pydantic_ai.capabilities.WebFetch],
+    [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration],
+    [`XSearch`][pydantic_ai.capabilities.XSearch], and
+    [`MCP`][pydantic_ai.capabilities.MCP] capabilities are all subclasses.
     """
 
     native: AgentNativeTool[AgentDepsT] | bool = True
@@ -120,6 +121,21 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         """
         return None
 
+    def _default_toolset_id(self) -> str | None:
+        """The `id` to stamp on the contributed local toolset when the user didn't pass one.
+
+        Override in subclasses that cover a single fixed capability, so their local fallback works
+        with [durable execution](../durable_execution/overview.md) — which identifies leaf toolsets
+        by `id` — without the user naming something they never constructed. Kept separate from
+        [`id`][pydantic_ai.capabilities.AbstractCapability.id], which stays `None` so the run keeps
+        deriving the capability's own id (and keeps auto-resolving duplicates) as it does for every
+        other capability.
+
+        Returns `None` by default: direct `NativeOrLocalTool` use has no fixed identity, since what
+        it contributes depends on what the user passes as `local=`.
+        """
+        return None
+
     def _native_unique_id(self) -> str:
         """The unique_id used for `unless_native` on local tool definitions.
 
@@ -175,12 +191,16 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
 
         # local is Tool | AbstractToolset after __post_init__ resolution.
         # When wrapping a bare local callable, stamp the capability's `id` onto the toolset so it can
-        # be used with durable execution (which wraps leaf toolsets by `id`). An `AbstractToolset`
-        # passed as `local=` keeps its own id and is never overwritten.
+        # be used with durable execution (which wraps leaf toolsets by `id`), falling back to the
+        # subclass's fixed default so single-purpose capabilities work there unconfigured. An
+        # `AbstractToolset` passed as `local=` keeps its own id and is never overwritten.
         toolset: AbstractToolset[AgentDepsT] = (
             cast(AbstractToolset[AgentDepsT], local)
             if isinstance(local, AbstractToolset)
-            else FunctionToolset([cast(Tool[AgentDepsT], local)], id=self.id)
+            else FunctionToolset(
+                [cast(Tool[AgentDepsT], local)],
+                id=self.id if self.id is not None else self._default_toolset_id(),
+            )
         )
 
         if self.native is not False:

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import contextvars
+import dataclasses
 import inspect
+import json
 import re
 import threading
 import warnings
@@ -12,24 +15,28 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from importlib.util import find_spec
 from pathlib import Path
-from types import NoneType
+from types import NoneType, SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
 import anyio
+import httpx
 import pytest
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from pydantic_ai import _agent_graph
+from pydantic_ai import ModelRequestNode, _agent_graph
+from pydantic_ai._agent_graph import CallToolsNode
 from pydantic_ai._enqueue import PendingMessage
+from pydantic_ai._output import ObjectOutputProcessor, OutputToolset, UnionOutputProcessor
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
 from pydantic_ai._utils import Some
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.agent.spec import AgentSpec, _infer_fmt, get_capability_registry  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
     MCP,
@@ -40,8 +47,10 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     IncludeToolReturnSchemas,
     Instrumentation,
+    NativeOrLocalTool,
     NativeTool,
     PrefixTools,
+    PrepareOutputTools,
     PrepareTools,
     ProcessHistory,
     RaiseContentFilterError,
@@ -59,10 +68,12 @@ from pydantic_ai.capabilities import (
     XSearch,
 )
 from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
+from pydantic_ai.capabilities._pending_messages import PendingMessageDrainCapability
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap
+from pydantic_ai.common_tools.x_search import XSearchSubagentTool, x_search_tool
 from pydantic_ai.exceptions import (
     AgentRunError,
     ApprovalRequired,
@@ -72,16 +83,20 @@ from pydantic_ai.exceptions import (
     SkipToolExecution,
     SkipToolValidation,
     ToolFailed,
+    ToolFailedError,
+    ToolRetryError,
     UnexpectedModelBehavior,
     UserError,
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryImage,
+    CompactionPart,
     EnqueuedMessagesEvent,
     FilePart,
     FunctionToolCallEvent,
     ImageUrl,
+    InstructionPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -112,7 +127,9 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import (
     AbstractNativeTool,
     CodeExecutionTool,
@@ -120,6 +137,7 @@ from pydantic_ai.native_tools import (
     MCPServerTool,
     WebFetchTool,
     WebSearchTool,
+    WebSearchUserLocation,
     XSearchTool,
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -129,8 +147,23 @@ from pydantic_ai.result import AgentStream, FinalResult
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc, ToolsetTool, WrapperToolset
+from pydantic_ai.tools import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    Tool,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
+from pydantic_ai.toolsets import (
+    AbstractToolset,
+    CombinedToolset,
+    FunctionToolset,
+    PreparedToolset,
+    ToolsetFunc,
+    ToolsetTool,
+    WrapperToolset,
+)
 from pydantic_ai.toolsets._capability_owned import (
     resolve_capability_id,
     tool_defs_from_pre_definition_load_returns,
@@ -139,6 +172,8 @@ from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
 )
+from pydantic_ai.toolsets.filtered import FilteredToolset
+from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
@@ -182,8 +217,6 @@ def test_capability_types() -> None:
 
 def test_instrumentation_default_settings() -> None:
     """`Instrumentation()` lazy-imports `InstrumentationSettings` and constructs default settings."""
-    from pydantic_ai.models.instrumented import InstrumentationSettings
-
     instr = Instrumentation()
     assert isinstance(instr.settings, InstrumentationSettings)
 
@@ -330,7 +363,6 @@ def test_agent_from_spec_with_agent_spec_object():
 
 def test_agent_from_spec_output_type():
     """Test Agent.from_spec with output_type parameter."""
-    from pydantic import BaseModel
 
     class MyOutput(BaseModel):
         name: str
@@ -358,7 +390,6 @@ def test_agent_from_spec_output_schema():
 
 def test_agent_from_spec_output_type_takes_precedence():
     """Test that output_type parameter takes precedence over output_schema in spec."""
-    from pydantic import BaseModel
 
     class MyOutput(BaseModel):
         name: str
@@ -2316,7 +2347,6 @@ def test_save_schema(tmp_path: str):
     AgentSpec._save_schema(schema_path)  # pyright: ignore[reportPrivateUsage]
 
     assert schema_path.exists()
-    import json
 
     schema = json.loads(schema_path.read_text(encoding='utf-8'))
     assert schema['type'] == 'object'
@@ -2415,8 +2445,6 @@ def test_to_file_yaml(tmp_path: str):
 
 
 def test_to_file_json(tmp_path: str):
-    import json
-
     spec = AgentSpec(model='test', name='my-agent')
     spec_path = Path(tmp_path) / 'agent.json'
     spec.to_file(spec_path)
@@ -2432,8 +2460,6 @@ def test_to_file_json(tmp_path: str):
 
 
 def test_to_file_json_with_absolute_schema_path(tmp_path: Path):
-    import json
-
     spec = AgentSpec(model='test', name='my-agent')
     spec_path = Path(tmp_path) / 'agent.json'
     schema_path = Path(tmp_path) / 'agent_schema.json'
@@ -2458,8 +2484,6 @@ def test_to_file_yaml_with_absolute_schema_path(tmp_path: Path):
 
 
 def test_to_file_json_with_external_absolute_schema_path(tmp_path: Path):
-    import json
-
     spec = AgentSpec(model='test', name='my-agent')
     spec_dir = tmp_path / 'specs'
     schema_dir = tmp_path / 'schemas'
@@ -2890,7 +2914,6 @@ def test_toolset_capability_get_toolset():
 
     ts_b = FunctionToolset()
     combined_cap = Capability[object](toolsets=[ts, ts_b])
-    from pydantic_ai.toolsets import CombinedToolset
 
     combined = cast(CombinedToolset, combined_cap.get_toolset())
     assert list(combined.toolsets) == [ts, ts_b]
@@ -2900,7 +2923,6 @@ def test_capability_stamps_id_on_contributed_function_toolset():
     """A capability's `id` is stamped on its contributed function toolset so it can be used with
     durable execution, which wraps leaf toolsets by `id` at construction time. User-provided
     toolsets keep their own ids and are never overwritten."""
-    from pydantic_ai.toolsets import CombinedToolset
 
     def my_tool(x: int) -> int:
         return x + 1  # pragma: no cover
@@ -2934,8 +2956,6 @@ def test_capability_stamps_id_on_contributed_function_toolset():
 def test_native_or_local_stamps_id_on_local_toolset():
     """`NativeOrLocalTool` stamps its `id` on the FunctionToolset wrapping a bare local callable, so
     the local fallback can be used with durable execution."""
-    from pydantic_ai.capabilities import NativeOrLocalTool
-    from pydantic_ai.toolsets import PreparedToolset
 
     def local_search(query: str) -> str:
         return 'result'  # pragma: no cover
@@ -2948,6 +2968,72 @@ def test_native_or_local_stamps_id_on_local_toolset():
     leaf = toolset.wrapped
     assert isinstance(leaf, FunctionToolset)
     assert leaf.id == 'search'
+
+
+def _bare_local(query: str) -> str:
+    return 'result'  # pragma: no cover
+
+
+@pytest.mark.parametrize(
+    'capability,expected_toolset_id,expected_capability_id',
+    [
+        pytest.param(WebSearch[object](local=_bare_local), 'web_search', None, id='web_search'),
+        pytest.param(WebSearch[object](local=_bare_local, id='custom'), 'custom', 'custom', id='web_search-override'),
+        # `None` is the only "unset" marker anywhere in the capability id machinery, so a falsy but
+        # explicit id is a user choice and is not replaced by the default.
+        pytest.param(WebSearch[object](local=_bare_local, id=''), '', '', id='web_search-empty-override'),
+        pytest.param(WebFetch[object](local=_bare_local), 'web_fetch', None, id='web_fetch'),
+        pytest.param(WebFetch[object](local=_bare_local, id='custom'), 'custom', 'custom', id='web_fetch-override'),
+        pytest.param(
+            ImageGeneration[object](fallback_model='openai-responses:gpt-5.4'),
+            'image_generation',
+            None,
+            id='image_generation',
+        ),
+        pytest.param(
+            ImageGeneration[object](fallback_model='openai-responses:gpt-5.4', id='custom'),
+            'custom',
+            'custom',
+            id='image_generation-override',
+        ),
+        pytest.param(XSearch[object](fallback_model='xai:grok-4.3'), 'x_search', None, id='x_search'),
+        pytest.param(
+            XSearch[object](fallback_model='xai:grok-4.3', id='custom'), 'custom', 'custom', id='x_search-override'
+        ),
+        # The carve-outs, both only reachable on `NativeOrLocalTool` itself: it has no fixed identity
+        # to default to, and a toolset the user built and named keeps its own `id`. (The four
+        # subclasses don't accept an `AbstractToolset` as `local=` at all.)
+        pytest.param(
+            NativeOrLocalTool[object](native=WebSearchTool(), local=_bare_local), None, None, id='no-fixed-identity'
+        ),
+        pytest.param(
+            NativeOrLocalTool[object](native=WebSearchTool(), local=FunctionToolset([Tool(_bare_local)], id='mine')),
+            'mine',
+            None,
+            id='user-toolset',
+        ),
+    ],
+)
+def test_single_purpose_capability_defaults_its_toolset_id(
+    capability: NativeOrLocalTool[object], expected_toolset_id: str | None, expected_capability_id: str | None
+):
+    """The single-purpose built-ins stamp a fixed default `id` on the toolset they contribute, so the
+    local fallback works with durable execution without the user naming a toolset they never
+    constructed. A user-supplied `id=` still wins, and a toolset the user passed as `local=` keeps
+    its own `id` — the default is only ever applied to a toolset we built for them.
+
+    The capability's own `id` stays `None` unless the user set it, so the run keeps deriving it from
+    the class name and keeps auto-resolving duplicates, exactly as for every other capability.
+
+    Not a VCR test: everything asserted is settled when the capability is constructed, before any
+    model request.
+    """
+    assert capability.id == expected_capability_id
+    toolset = capability.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    leaf = toolset.wrapped
+    assert isinstance(leaf, FunctionToolset)
+    assert leaf.id == expected_toolset_id
 
 
 def _noop_greet(name: str) -> str:
@@ -2963,8 +3049,6 @@ def test_capability_combines_toolsets_and_tools_together():
     toolset = FunctionToolset()
     cap = Capability[object](toolsets=[toolset], tools=[_noop_greet])
 
-    from pydantic_ai.toolsets import CombinedToolset
-
     combined = cast(CombinedToolset, cap.get_toolset())
     function_toolset, provided_toolset = combined.toolsets
     assert isinstance(function_toolset, FunctionToolset)
@@ -2977,8 +3061,6 @@ def test_capability_tool_plain_combines_with_toolsets():
     toolset = FunctionToolset()
     cap = Capability[object](toolsets=[toolset])
     cap.tool_plain(_noop_greet)
-
-    from pydantic_ai.toolsets import CombinedToolset
 
     combined = cast(CombinedToolset, cap.get_toolset())
     function_toolset, provided_toolset = combined.toolsets
@@ -2993,8 +3075,6 @@ def test_capability_tool_combines_with_toolsets():
     cap = Capability[object](toolsets=[toolset])
     cap.tool(_noop_greet_with_context)
 
-    from pydantic_ai.toolsets import CombinedToolset
-
     combined = cast(CombinedToolset, cap.get_toolset())
     function_toolset, provided_toolset = combined.toolsets
     assert isinstance(function_toolset, FunctionToolset)
@@ -3006,8 +3086,6 @@ def test_capability_opts_out_of_spec_serialization():
     """`Capability` holds non-serializable state (function tools, instructions, callable
     descriptions), so it opts out of spec construction like the other non-serializable
     capabilities, and passing it as a custom capability type fails loudly."""
-    from pydantic_ai.agent.spec import get_capability_registry
-
     assert Capability.get_serialization_name() is None
     with pytest.raises(ValueError, match='Capability has opted out of serialization'):
         get_capability_registry(custom_types=[Capability])
@@ -3274,6 +3352,46 @@ def test_duplicate_capability_ids_raise() -> None:
     )
 
 
+def _local_search_a(query: str) -> str:
+    return 'a'  # pragma: no cover
+
+
+def _local_search_b(query: str) -> str:
+    return 'b'  # pragma: no cover
+
+
+def test_single_purpose_capabilities_still_stack_without_an_explicit_id() -> None:
+    """The default toolset `id` must not leak into capability-`id` uniqueness.
+
+    The default lives on the contributed toolset, not on `AbstractCapability.id`, which stays `None`
+    — so two instances still resolve to distinct capability ids the way any other id-less capability
+    does, and both fallbacks reach the model. Covers stacking on one agent and the run-level layer,
+    which `Agent.run(capabilities=...)` documents as merged with the agent's own capabilities.
+
+    Not a VCR test: `FunctionModel` is the tap that reports which tools reached the model, so there
+    is no provider request to record.
+    """
+    tool_names: list[list[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_names.append(sorted(t.name for t in info.function_tools))
+        return ModelResponse(parts=[TextPart('done')])
+
+    stacked = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            WebSearch(native=False, local=_local_search_a),
+            WebSearch(native=False, local=_local_search_b),
+        ],
+    )
+    stacked.run_sync('hello')
+
+    layered = Agent(FunctionModel(model_fn), capabilities=[WebSearch(native=False, local=_local_search_a)])
+    layered.run_sync('hello', capabilities=[WebSearch(native=False, local=_local_search_b)])
+
+    assert tool_names == snapshot([['_local_search_a', '_local_search_b'], ['_local_search_a', '_local_search_b']])
+
+
 def test_deferred_capability_without_id_raises_at_construction() -> None:
     """A statically-provided deferred capability without an `id` fails fast at construction."""
     with pytest.raises(UserError, match='stable explicit `id` values'):
@@ -3498,8 +3616,6 @@ def test_load_capability_narrow_type_promotes_and_is_idempotent() -> None:
 def test_load_capability_parts_round_trip_through_message_history() -> None:
     """`capability-load` parts survive history (de)serialization as typed subclasses, and a
     user tool named `load_capability` without `tool_kind` is left as a plain `ToolCallPart`."""
-    from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest, ModelResponse
-
     raw: list[dict[str, Any]] = [
         {
             'kind': 'response',
@@ -4587,10 +4703,6 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 
 async def test_deferred_capability_load_drops_empty_toolset_instructions() -> None:
     """Empty toolset instructions are filtered from load returns."""
-    from dataclasses import dataclass
-
-    from pydantic_ai.messages import InstructionPart
-    from pydantic_ai.toolsets.wrapper import WrapperToolset
 
     @dataclass
     class _LiteralInstructionsToolset(WrapperToolset):
@@ -4798,16 +4910,12 @@ async def test_load_capability_retries_when_capability_is_already_loaded() -> No
 
 def test_infer_fmt_explicit():
     """_infer_fmt returns the explicit fmt when provided."""
-    from pydantic_ai.agent.spec import _infer_fmt  # pyright: ignore[reportPrivateUsage]
-
     assert _infer_fmt(Path('agent.txt'), 'json') == 'json'
     assert _infer_fmt(Path('agent.txt'), 'yaml') == 'yaml'
 
 
 def test_infer_fmt_unknown_extension():
     """_infer_fmt raises ValueError for unknown extension without explicit fmt."""
-    from pydantic_ai.agent.spec import _infer_fmt  # pyright: ignore[reportPrivateUsage]
-
     with pytest.raises(ValueError, match=re.escape("Could not infer format for filename 'agent.txt'")):
         _infer_fmt(Path('agent.txt'), None)
 
@@ -5681,8 +5789,6 @@ class _ReplacingCapability(AbstractCapability[Any]):
     replaced: bool = field(default=False, init=False)
 
     async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-        from pydantic_ai import ModelRequestNode
-
         if isinstance(node, ModelRequestNode) and not self.replaced:
             self.replaced = True
             return ModelRequestNode(request=node.request)  # pyright: ignore[reportUnknownVariableType]
@@ -7163,14 +7269,13 @@ class TestPrepareToolsHook:
 
     async def test_modify_tool_description(self):
         """Capability can modify tool descriptions."""
-        from dataclasses import replace as dc_replace
 
         @dataclass
         class PrefixDescriptionCap(AbstractCapability[Any]):
             async def prepare_tools(
                 self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
             ) -> list[ToolDefinition]:
-                return [dc_replace(td, description=f'[PREFIXED] {td.description}') for td in tool_defs]
+                return [replace(td, description=f'[PREFIXED] {td.description}') for td in tool_defs]
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             descs = [t.description for t in info.function_tools]
@@ -7196,9 +7301,7 @@ class TestPrepareToolsHook:
             async def prepare_tools(
                 self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
             ) -> list[ToolDefinition]:
-                from dataclasses import replace as dc_replace
-
-                return [dc_replace(td, description=f'{td.description}{self.suffix}') for td in tool_defs]
+                return [replace(td, description=f'{td.description}{self.suffix}') for td in tool_defs]
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             descs = [t.description for t in info.function_tools]
@@ -7304,7 +7407,6 @@ class TestPrepareOutputToolsHook:
 
     async def test_chaining_order(self):
         """Multiple capabilities chain `prepare_output_tools` in forward order."""
-        from dataclasses import replace as dc_replace
 
         @dataclass
         class AddSuffixCap(AbstractCapability[Any]):
@@ -7313,7 +7415,7 @@ class TestPrepareOutputToolsHook:
             async def prepare_output_tools(
                 self, ctx: RunContext[Any], tool_defs: list[ToolDefinition]
             ) -> list[ToolDefinition]:
-                return [dc_replace(td, description=f'{td.description or ""}{self.suffix}') for td in tool_defs]
+                return [replace(td, description=f'{td.description or ""}{self.suffix}') for td in tool_defs]
 
         descs: list[str | None] = []
 
@@ -7380,7 +7482,6 @@ class TestWrapNodeRunHook:
 
     async def test_works_with_iter_next(self):
         """wrap_node_run fires when driving iter() with next()."""
-        from pydantic_graph import End
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
@@ -7593,7 +7694,6 @@ class TestWrapNodeRunHook:
 
     async def test_works_with_manual_next(self):
         """wrap_node_run fires when using manual next() driving."""
-        from pydantic_graph import End
 
         @dataclass
         class NodeObserverCap(AbstractCapability[Any]):
@@ -7662,8 +7762,6 @@ class TestWebSearchCapability:
 
     def test_websearch_local_string_strategy(self, allow_model_requests: None):
         """WebSearch(local='duckduckgo') with non-supporting model → DuckDuckGo fallback used."""
-        from unittest.mock import patch
-
         pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
         from pydantic_ai.common_tools.duckduckgo import DDGS
 
@@ -7733,7 +7831,6 @@ class TestWebSearchCapability:
 
     def test_websearch_local_callable(self):
         """WebSearch(local=some_function) → bare callable wrapped in Tool."""
-        from pydantic_ai.tools import Tool
 
         def my_search(query: str) -> str:
             return f'results for {query}'  # pragma: no cover
@@ -7823,8 +7920,6 @@ class TestXSearchCapability:
 
     def test_xsearch_callable_native_with_fallback(self):
         """Callable native with fallback_model still creates a local fallback tool."""
-        from pydantic_ai.tools import Tool
-
         cap = XSearch(
             native=lambda ctx: XSearchTool(enable_image_understanding=True),
             fallback_model='xai:grok-4-1-fast-non-reasoning',
@@ -7956,22 +8051,16 @@ class TestXSearchCapability:
 
     def test_x_search_tool_unknown_kwarg_raises(self):
         """`x_search_tool(unknown=...)` raises TypeError naming the offending kwarg."""
-        from pydantic_ai.common_tools.x_search import x_search_tool
-
         with pytest.raises(TypeError, match=r"unexpected keyword argument '?bogus'?"):
             x_search_tool('xai:grok-4-1-fast-non-reasoning', native_tool=XSearchTool(), bogus=1)  # type: ignore[call-arg]
 
     def test_x_search_tool_missing_native_tool_raises(self):
         """`x_search_tool()` without `native_tool=` raises TypeError."""
-        from pydantic_ai.common_tools.x_search import x_search_tool
-
         with pytest.raises(TypeError, match=r"missing 1 required positional argument: 'native_tool'"):
             x_search_tool('xai:grok-4-1-fast-non-reasoning')  # type: ignore[call-arg]
 
     def test_xsearch_subagent_tool_unknown_attr_raises(self):
         """Unknown attribute access on `XSearchSubagentTool` raises AttributeError as usual."""
-        from pydantic_ai.common_tools.x_search import XSearchSubagentTool
-
         subagent = XSearchSubagentTool(model='xai:grok-4-1-fast-non-reasoning', native_tool=XSearchTool())
         with pytest.raises(AttributeError, match='no_such_field'):
             subagent.no_such_field  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
@@ -7997,9 +8086,6 @@ class TestWebFetchCapability:
 
     def test_webfetch_local_true_fallback(self, allow_model_requests: None):
         """WebFetch(local=True) with non-supporting model → markdownify fallback used."""
-        from unittest.mock import AsyncMock, patch
-
-        import httpx
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
@@ -8068,9 +8154,6 @@ class TestWebFetchCapability:
 
     def test_webfetch_domains_forwarded_to_local(self, allow_model_requests: None):
         """WebFetch(allowed_domains=..., local=True) with non-supporting model → falls back to local with domain filtering."""
-        from unittest.mock import AsyncMock, patch
-
-        import httpx
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
@@ -8118,7 +8201,6 @@ class TestWebFetchCapability:
 
     def test_webfetch_local_callable(self):
         """WebFetch(local=some_function) → bare callable wrapped in Tool."""
-        from pydantic_ai.tools import Tool
 
         def my_fetch(url: str) -> str:
             return f'fetched {url}'  # pragma: no cover
@@ -8130,9 +8212,6 @@ class TestWebFetchCapability:
 class TestImageGenerationCapability:
     def test_image_gen_init_params_match_builtin_tool(self):
         """ImageGeneration.__init__ accepts all ImageGenerationTool configurable fields."""
-        import dataclasses
-        import inspect
-
         # partial_images is excluded — not useful for subagent fallback (no streaming).
         # optional is excluded — applies to wire-side dropping, not local-fallback config.
         builtin_fields = {
@@ -8167,7 +8246,6 @@ class TestImageGenerationCapability:
 
     def test_image_generation_with_custom_local(self):
         """ImageGeneration(local=custom) → provides custom local fallback."""
-        from pydantic_ai.tools import Tool
 
         def my_gen(prompt: str) -> str:
             return 'image_url'  # pragma: no cover
@@ -8178,8 +8256,6 @@ class TestImageGenerationCapability:
 
     def test_image_generation_with_fallback_model(self):
         """ImageGeneration(fallback_model=...) creates a local fallback tool."""
-        from pydantic_ai.tools import Tool
-
         cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
@@ -8218,8 +8294,6 @@ class TestImageGenerationCapability:
 
     def test_image_generation_fallback_merges_custom_native_with_overrides(self):
         """Custom native tool settings are merged with capability-level overrides for the fallback."""
-        from pydantic_ai.tools import Tool
-
         custom_native = ImageGenerationTool(quality='high', size='1024x1024')
         cap = ImageGeneration(
             native=custom_native,
@@ -8232,8 +8306,6 @@ class TestImageGenerationCapability:
 
     def test_image_generation_callable_native_with_fallback(self):
         """When native is a callable, the fallback local tool still gets created."""
-        from pydantic_ai.tools import Tool
-
         cap = ImageGeneration(
             native=lambda ctx: ImageGenerationTool(quality='high'),
             fallback_model='openai-responses:gpt-5.4',
@@ -8258,8 +8330,6 @@ class TestImageGenerationCapability:
 
     async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
         """ImageGeneration with async callable fallback_model resolves the model per-run."""
-        from pydantic_ai.messages import BinaryImage, FilePart
-
         image_data = b'\x89PNG\r\n\x1a\n'  # minimal PNG header
 
         def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -8433,7 +8503,6 @@ class TestImageGenerationCapability:
     @pytest.mark.vcr()
     async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
         """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
-        from pydantic_ai.messages import BinaryImage
         from pydantic_ai.models.openai import OpenAIResponsesModel
         from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -8514,7 +8583,6 @@ class TestImageGenerationCapability:
     async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
         """ImageGeneration fallback with Google image model."""
         pytest.importorskip('google.genai', reason='google extra not installed')
-        from pydantic_ai.messages import BinaryImage
         from pydantic_ai.models.google import GoogleModel
         from pydantic_ai.providers.google import GoogleProvider
 
@@ -8636,6 +8704,8 @@ class TestMCPCapability:
             (MCP[object](url='https://mcp.example.com/api'), 'mcp.example.com-api'),
             # explicit id wins
             (MCP[object](url='https://mcp.example.com/api', id='docs'), 'docs'),
+            # `None` is the only "unset" marker, so a falsy but explicit id is not derived over
+            (MCP[object](url='https://mcp.example.com/api', id=''), ''),
             # native MCPServerTool id is reused for the local fallback
             (
                 MCP[object](
@@ -8705,6 +8775,30 @@ class TestMCPCapability:
         tools = await toolset.get_tools(_build_run_context())
         assert tools['local_tool'].tool_def.unless_native == 'mcp_server:dynamic-mcp'
 
+    def test_mcp_local_callable_toolset_gets_the_url_derived_id(self):
+        """A bare callable `local=` gets the same URL-derived id `MCP` gives its `MCPToolset` leaves.
+
+        `MCP` is the fifth `NativeOrLocalTool` subclass, so it defaults its contributed toolset's id
+        too — but off the server URL rather than its own name, which is why several can run on one
+        agent. An explicit `id=` still wins, and a client with no URL and no id stays id-less.
+        """
+
+        def local_tool() -> str:
+            return 'local result'  # pragma: no cover
+
+        derived = MCP(url='https://mcp.example.com/api', local=local_tool).get_toolset()
+        assert isinstance(derived, FunctionToolset)
+        assert derived.id == 'mcp.example.com-api'
+
+        explicit = MCP(url='https://mcp.example.com/api', local=local_tool, id='explicit').get_toolset()
+        assert isinstance(explicit, FunctionToolset)
+        assert explicit.id == 'explicit'
+
+        # Nothing to derive from, so it stays id-less and durable execution still demands an `id`.
+        bare = MCP(local=local_tool).get_toolset()
+        assert isinstance(bare, FunctionToolset)
+        assert bare.id is None
+
     def test_mcp_sse_transport(self):
         """MCP with /sse URL routes to an MCPToolset using FastMCP's SSE transport."""
         from fastmcp.client.transports import SSETransport
@@ -8739,8 +8833,6 @@ class TestMCPCapability:
 
     def test_mcp_allowed_tools_filters_local(self):
         """MCP(allowed_tools=...) applies FilteredToolset to the local toolset."""
-        from pydantic_ai.toolsets.filtered import FilteredToolset
-
         cap = MCP(url='https://mcp.example.com/api', allowed_tools=['tool1'], native=True)
         toolset = cap.get_toolset()
         assert toolset is not None
@@ -8796,7 +8888,6 @@ class TestNamedSpecDictRoundTrip:
 class TestPrepareToolsCapability:
     async def test_prepare_tools_filters(self):
         """PrepareTools capability filters tools using the provided callable."""
-        from pydantic_ai.capabilities import PrepareTools
 
         async def hide_secret_tools(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
             return [td for td in tool_defs if td.name != 'secret_tool']
@@ -8820,7 +8911,6 @@ class TestPrepareToolsCapability:
 
     async def test_prepare_tools_rejects_none(self):
         """PrepareTools rejects `None`; return [] to disable all tools explicitly."""
-        from pydantic_ai.capabilities import PrepareTools
 
         async def invalid(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
             return None
@@ -8836,12 +8926,9 @@ class TestPrepareToolsCapability:
 
     async def test_prepare_tools_modifies_definitions(self):
         """PrepareTools can modify tool definitions (e.g. set strict mode)."""
-        from dataclasses import replace as dc_replace
-
-        from pydantic_ai.capabilities import PrepareTools
 
         async def set_strict(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-            return [dc_replace(td, strict=True) for td in tool_defs]
+            return [replace(td, strict=True) for td in tool_defs]
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             strictness = [t.strict for t in info.function_tools]
@@ -8858,19 +8945,13 @@ class TestPrepareToolsCapability:
 
     def test_prepare_tools_not_serializable(self):
         """PrepareTools opts out of spec serialization."""
-        from pydantic_ai.capabilities import PrepareTools
-
         assert PrepareTools.get_serialization_name() is None
 
     async def test_prepare_tools_rejects_added_tools(self):
         """`prepare_func` may filter or modify tools but cannot add or rename."""
-        from dataclasses import replace as dc_replace
-
-        from pydantic_ai.capabilities import PrepareTools
-        from pydantic_ai.exceptions import UserError
 
         async def rename(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-            return [dc_replace(td, name='renamed') for td in tool_defs]
+            return [replace(td, name='renamed') for td in tool_defs]
 
         agent = Agent('test', capabilities=[PrepareTools(rename)])
 
@@ -8886,8 +8967,6 @@ class TestPrepareToolsCapability:
         hallucinates a call to it. Regression test: the hook must affect `ToolManager.tools`,
         not just the model's `ModelRequestParameters` — otherwise the model could (re)call
         a filtered tool and `ToolManager` would happily execute it."""
-        from pydantic_ai.capabilities import PrepareTools
-
         executed: list[str] = []
 
         async def hide_secret(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -8963,7 +9042,6 @@ class TestPrepareToolsCapability:
 class TestPrepareOutputToolsCapability:
     async def test_filters_output_tools(self):
         """`PrepareOutputTools` capability filters output tools using a callable."""
-        from pydantic_ai.capabilities import PrepareOutputTools
 
         class Out(BaseModel):
             value: str
@@ -8985,7 +9063,6 @@ class TestPrepareOutputToolsCapability:
 
     async def test_prepare_output_tools_rejects_none(self):
         """PrepareOutputTools rejects `None`; return [] to disable all output tools explicitly."""
-        from pydantic_ai.capabilities import PrepareOutputTools
 
         class Out(BaseModel):
             value: str
@@ -9004,8 +9081,6 @@ class TestPrepareOutputToolsCapability:
 
     async def test_only_sees_output_tools(self):
         """`PrepareOutputTools` only receives output tools — function tools route to `PrepareTools`."""
-        from pydantic_ai.capabilities import PrepareOutputTools
-
         seen_kinds: list[str] = []
 
         async def capture(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -9028,8 +9103,6 @@ class TestPrepareOutputToolsCapability:
 
     def test_not_serializable(self):
         """`PrepareOutputTools` opts out of spec serialization."""
-        from pydantic_ai.capabilities import PrepareOutputTools
-
         assert PrepareOutputTools.get_serialization_name() is None
 
 
@@ -9525,7 +9598,6 @@ class TestGetModelHook:
 
     async def test_callable_model_instance_is_static(self):
         """A callable `Model` instance is still a model, not a selector function."""
-        from unittest.mock import Mock
 
         class CallableModel(FunctionModel):
             __call__ = Mock(side_effect=AssertionError('model must not be called as a selector'))
@@ -9612,8 +9684,6 @@ class TestGetModelHook:
         assert selection_history_lengths == [0, 2]
 
     async def test_explicit_run_model_skips_selector(self):
-        from unittest.mock import Mock
-
         select = Mock(side_effect=AssertionError('selector should not run'))
 
         @dataclass
@@ -9905,8 +9975,6 @@ class TestGetModelHook:
         assert calls == ['user', 'registry']
 
     async def test_async_model_id_resolver_and_deferred_resolver(self):
-        from unittest.mock import AsyncMock
-
         calls: list[str] = []
         target = _text_model('resolved')
 
@@ -10231,7 +10299,6 @@ class TestGetModelHook:
 class TestGetWrapperToolsetHook:
     async def test_wrapper_prefixes_tools(self):
         """Capability can wrap the toolset to prefix tool names."""
-        from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
         @dataclass
         class PrefixCap(AbstractCapability[Any]):
@@ -10271,7 +10338,6 @@ class TestGetWrapperToolsetHook:
 
     async def test_wrapper_prefixes_tools_streaming(self):
         """Wrapper toolset works correctly with streaming runs."""
-        from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
         @dataclass
         class PrefixCap(AbstractCapability[Any]):
@@ -10294,8 +10360,6 @@ class TestGetWrapperToolsetHook:
 
     async def test_wrapper_does_not_affect_output_tools(self):
         """Wrapper toolset does not wrap output tools."""
-        from pydantic_ai.toolsets.wrapper import WrapperToolset
-
         seen_tool_names: list[list[str]] = []
 
         @dataclass
@@ -10369,7 +10433,6 @@ class TestGetWrapperToolsetHook:
 
     async def test_wrapper_chaining_order(self):
         """Multiple capabilities' wrappers compose by nesting: first wraps outermost."""
-        from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
         @dataclass
         class PrefixCap(AbstractCapability[Any]):
@@ -10415,7 +10478,6 @@ class TestGetWrapperToolsetHook:
 
     async def test_wrapper_with_per_run_capability(self):
         """Wrapper works correctly with capabilities returning new instances from for_run."""
-        from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
         @dataclass
         class PerRunPrefixCap(AbstractCapability[Any]):
@@ -10461,9 +10523,6 @@ class TestGetWrapperToolsetHook:
 
     async def test_wrapper_with_agent_prepare_tools(self):
         """Agent-level prepare_tools is applied before capability wrapper."""
-        from dataclasses import replace as dc_replace
-
-        from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
         @dataclass
         class PrefixCap(AbstractCapability[Any]):
@@ -10471,7 +10530,7 @@ class TestGetWrapperToolsetHook:
                 return PrefixedToolset(toolset, prefix='cap')
 
         async def agent_prepare(ctx: RunContext[Any], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-            return [dc_replace(td, description=f'[prepared] {td.description}') for td in tool_defs]
+            return [replace(td, description=f'[prepared] {td.description}') for td in tool_defs]
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             tool_names = sorted(t.name for t in info.function_tools)
@@ -10686,8 +10745,6 @@ def test_xsearch_unique_id():
 
 def test_web_search_with_constraints():
     """WebSearch capability populates native tool with all constraint kwargs."""
-    from pydantic_ai.native_tools import WebSearchUserLocation
-
     cap = WebSearch(
         local='duckduckgo',
         search_context_size='high',
@@ -10726,8 +10783,6 @@ def test_web_search_external_access_constraint():
 
 def test_web_search_duckduckgo_raises_without_extra(monkeypatch: pytest.MonkeyPatch):
     """WebSearch(local='duckduckgo') raises with install hint when [duckduckgo] extra is missing."""
-    import builtins
-
     original_import = builtins.__import__
 
     def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
@@ -10742,8 +10797,6 @@ def test_web_search_duckduckgo_raises_without_extra(monkeypatch: pytest.MonkeyPa
 
 def test_web_fetch_local_true_raises_without_extra(monkeypatch: pytest.MonkeyPatch):
     """WebFetch(local=True) raises with install hint when [web-fetch] extra is missing."""
-    import builtins
-
     original_import = builtins.__import__
 
     def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
@@ -10782,8 +10835,6 @@ def test_mcp_default_raises_user_error_when_mcp_extra_missing(monkeypatch: pytes
     MCP defaults to running the server locally, so the extra is required. To run without it,
     the user must opt into native-only (`native=True, local=False`).
     """
-    import builtins
-
     original_import = builtins.__import__
 
     def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
@@ -10807,8 +10858,6 @@ def test_mcp_native_only_constructs_without_mcp_extra():
 
 def test_mcp_local_true_raises_user_error_when_mcp_extra_missing(monkeypatch: pytest.MonkeyPatch):
     """`MCP(url=..., local=True)` raises a `UserError` with install hint when MCP extra is missing."""
-    import builtins
-
     original_import = builtins.__import__
 
     def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
@@ -10823,8 +10872,6 @@ def test_mcp_local_true_raises_user_error_when_mcp_extra_missing(monkeypatch: py
 
 def test_mcp_local_string_raises_user_error_when_mcp_extra_missing(monkeypatch: pytest.MonkeyPatch):
     """`MCP(url=..., local='https://override...')` raises a `UserError` when MCP extra is missing."""
-    import builtins
-
     original_import = builtins.__import__
 
     def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
@@ -10844,8 +10891,6 @@ def test_mcp_native_default_raises_user_error_when_mcp_extra_missing(monkeypatch
     `MCP(url=..., native=True)` would silently work as native-only. Locking in the new
     construction-time error so users get a clear migration to `native=True, local=False`.
     """
-    import builtins
-
     original_import = builtins.__import__
 
     def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
@@ -10944,24 +10989,18 @@ def test_mcp_local_true_silent_with_explicit_native():
 
 def test_native_or_local_base_no_default_native():
     """NativeOrLocalTool base class with native=True raises (no _default_native)."""
-    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
-
     with pytest.raises(UserError, match='native=True requires a subclass'):
         NativeOrLocalTool()
 
 
 def test_native_tool_from_spec_no_args():
     """NativeTool.from_spec() with no arguments raises TypeError."""
-    from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCapDirect
-
     with pytest.raises(TypeError, match='requires either a `tool` argument'):
-        NativeToolCapDirect.from_spec()
+        NativeToolCap.from_spec()
 
 
 def test_native_or_local_no_default_local():
     """NativeOrLocalTool base class _default_local() returns None."""
-    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
-
     cap = NativeOrLocalTool(native=WebSearchTool())
     # Base class _default_local() returns None — no local fallback
     assert cap.local is None
@@ -10970,7 +11009,6 @@ def test_native_or_local_no_default_local():
 
 def test_native_or_local_with_explicit_native():
     """NativeOrLocalTool used directly with an explicit native and local tool."""
-    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 
     def my_local_tool() -> str:
         """A local fallback tool."""
@@ -10987,8 +11025,6 @@ def test_native_or_local_with_explicit_native():
 
 def test_native_or_local_native_unique_id_non_abstract():
     """_native_unique_id() raises when native is callable (not AbstractNativeTool)."""
-    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
-
     cap = NativeOrLocalTool.__new__(NativeOrLocalTool)
     cap.native = lambda ctx: WebSearchTool()
     cap.local = False
@@ -10999,21 +11035,17 @@ def test_native_or_local_native_unique_id_non_abstract():
 
 def test_native_or_local_base_unknown_strategy_raises():
     """`NativeOrLocalTool(local='foo')` raises a UserError from the default `_resolve_local_strategy`."""
-    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
-
     with pytest.raises(UserError, match=r"`local='foo'` is not supported"):
         NativeOrLocalTool(native=WebSearchTool(), local='foo')
 
 
 def test_native_or_local_preserves_passed_tool_instance():
     """A pre-wrapped `Tool` passed as `local` is preserved (not re-wrapped or treated as a callable)."""
-    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
-    from pydantic_ai.tools import Tool as ToolDirect
 
     def my_search(query: str) -> str:
         return f'results for {query}'  # pragma: no cover
 
-    tool = ToolDirect(my_search)
+    tool = Tool(my_search)
     cap = NativeOrLocalTool(native=WebSearchTool(), local=tool)
     assert cap.local is tool
 
@@ -11025,13 +11057,11 @@ def test_native_or_local_id_kwarg_overrides_default():
     in the deferred-capability catalog), so users need a way to disambiguate when they instantiate
     the same capability twice in one agent.
     """
-    from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
-    from pydantic_ai.tools import Tool as ToolDirect
 
     def _nop() -> None:
         return None  # pragma: no cover
 
-    nop = ToolDirect(_nop)
+    nop = Tool(_nop)
 
     assert NativeOrLocalTool(native=WebSearchTool(), local=nop, id='custom').id == 'custom'
     assert WebFetch(local=nop, id='custom').id == 'custom'
@@ -11046,8 +11076,6 @@ def test_websearch_unknown_strategy_raises():
 
 def test_websearch_duckduckgo_missing_install_hint(monkeypatch: pytest.MonkeyPatch):
     """`WebSearch(local='duckduckgo')` raises a UserError with install hint when the extra is missing."""
-    import builtins
-
     original_import = builtins.__import__
 
     def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
@@ -11068,8 +11096,6 @@ def test_webfetch_unknown_strategy_raises():
 
 def test_webfetch_local_true_install_hint(monkeypatch: pytest.MonkeyPatch):
     """`WebFetch(local=True)` raises a UserError with install hint when the `web-fetch` extra is missing."""
-    import builtins
-
     original_import = builtins.__import__
 
     def mock_import(name: str, *args: Any, **kwargs: Any) -> Any:
@@ -11105,7 +11131,6 @@ def test_mcp_local_url_string_override_uses_provided_url():
 
 def test_validate_capability_not_dataclass():
     """Custom capability type without @dataclass raises ValueError."""
-    from pydantic_ai.agent.spec import get_capability_registry
 
     class NotADataclass(AbstractCapability[Any]):
         pass
@@ -11351,8 +11376,6 @@ class TestRunErrorHooks:
         assert 'on_run_error' not in cap.log
 
     async def test_on_run_error_fires_via_iter(self):
-        from pydantic_graph import End
-
         @dataclass
         class RecoverRunCap(AbstractCapability[Any]):
             called: bool = False
@@ -11391,9 +11414,6 @@ class TestNodeRunErrorHooks:
         assert 'on_node_run_error:ModelRequestNode' in cap.log
 
     async def test_on_node_run_error_can_recover_with_end(self):
-        from pydantic_ai.result import FinalResult
-        from pydantic_graph import End
-
         @dataclass
         class RecoverNodeCap(AbstractCapability[Any]):
             async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: BaseException) -> Any:
@@ -13681,8 +13701,6 @@ async def test_wrapper_capability_delegates_on_run_error():
 
 async def test_wrapper_capability_delegates_on_node_run_error():
     """WrapperCapability delegates on_node_run_error to the wrapped capability."""
-    from pydantic_ai.result import FinalResult
-    from pydantic_graph import End
 
     @dataclass
     class NodeRecoverCap(AbstractCapability[Any]):
@@ -13951,7 +13969,6 @@ class TestNodeStreamingWithHooks:
                 # Raise on CallToolsNode — after UserPromptNode and ModelRequestNode pass through.
                 # ModelRequestNode with tool calls doesn't produce a FinalResultEvent in run_stream(),
                 # so it falls through to wrap_node_run; CallToolsNode is next and triggers the error.
-                from pydantic_ai._agent_graph import CallToolsNode
 
                 if isinstance(node, CallToolsNode):
                     raise RuntimeError('wrap error')
@@ -14892,8 +14909,6 @@ class TestModelRetryFromHooks:
 
     async def test_after_tool_execute_validation_error(self):
         """after_tool_execute raises ValidationError — converted to ToolRetryError for retry."""
-        from pydantic import TypeAdapter
-
         tool_call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -15005,8 +15020,6 @@ class TestModelRetryFromHooks:
 
     async def test_before_tool_execute_validation_error(self):
         """before_tool_execute raises ValidationError — converted to ToolRetryError for retry."""
-        from pydantic import TypeAdapter
-
         tool_call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -15457,8 +15470,6 @@ class TestCtxAgentInCapability:
 class TestCompaction:
     def test_compaction_part_serialization(self):
         """CompactionPart round-trips through Pydantic serialization."""
-        from pydantic_ai.messages import CompactionPart, ModelMessagesTypeAdapter, ModelResponse
-
         # Anthropic-style (text content)
         anthropic_part = CompactionPart(content='Summary of conversation', provider_name='anthropic')
         assert anthropic_part.has_content()
@@ -15507,7 +15518,6 @@ class TestCompaction:
         """OpenAICompaction unwraps WrapperModel and raises for non-OpenAI model."""
         pytest.importorskip('openai')
         from pydantic_ai.models.openai import OpenAICompaction
-        from pydantic_ai.models.wrapper import WrapperModel
 
         wrapped = WrapperModel(FunctionModel(simple_model_function))
         agent = Agent(
@@ -15554,8 +15564,6 @@ class TestCompaction:
     def test_openai_compaction_stateful_model_settings(self):
         """Stateful mode returns `openai_context_management` via get_model_settings."""
         pytest.importorskip('openai')
-        from types import SimpleNamespace
-        from typing import cast
 
         from pydantic_ai.models.openai import OpenAICompaction
 
@@ -15627,8 +15635,6 @@ class TestCompaction:
 
     async def test_compaction_part_in_function_model_history(self):
         """FunctionModel handles message history containing CompactionPart."""
-        from pydantic_ai.messages import CompactionPart
-
         compaction_response = ModelResponse(
             parts=[CompactionPart(content='Summary: user greeted.', provider_name='anthropic')],
             provider_name='anthropic',
@@ -15645,7 +15651,6 @@ class TestCompaction:
 
     async def test_compaction_part_without_content_in_response(self):
         """CompactionPart with content=None (OpenAI-style) is handled alongside text."""
-        from pydantic_ai.messages import CompactionPart
 
         def model_with_compaction(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(
@@ -15668,8 +15673,6 @@ def test_thread_executor_not_serializable() -> None:
 
 
 def test_thread_executor_deprecated_alias() -> None:
-    from pydantic_ai.exceptions import PydanticAIDeprecationWarning
-
     with pytest.warns(PydanticAIDeprecationWarning, match='renamed to `UseThreadExecutor`'):
         from pydantic_ai.capabilities import ThreadExecutor
     assert ThreadExecutor is UseThreadExecutor
@@ -16168,8 +16171,6 @@ async def test_runtime_capability_with_mixed_position_root():
 
 async def test_after_node_run_end_to_node_override():
     """after_node_run can convert an End result back to a node, continuing execution."""
-    from pydantic_ai import ModelRequestNode
-
     call_count = 0
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -16225,7 +16226,6 @@ async def test_next_node_raises_on_error_marker():
 
 async def test_on_node_run_error_returns_end():
     """on_node_run_error can recover from an exception by returning End, completing the run."""
-    from pydantic_ai.result import FinalResult
 
     def always_fails(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise ValueError('model exploded')
@@ -16242,8 +16242,6 @@ async def test_on_node_run_error_returns_end():
 
 async def test_on_node_run_error_returns_node():
     """on_node_run_error can recover by returning a retry node, continuing execution."""
-    from pydantic_ai import ModelRequestNode
-
     call_count = 0
 
     def fails_then_succeeds(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -16267,8 +16265,6 @@ async def test_on_node_run_error_returns_node():
 
 async def test_after_node_run_node_to_end():
     """after_node_run can short-circuit a run by converting a continuation node to End."""
-    from pydantic_ai.result import FinalResult
-
     model_call_count = 0
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -16282,8 +16278,6 @@ async def test_after_node_run_node_to_end():
         """Short-circuit after the first model request node by converting the continuation to End."""
 
         async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
-            from pydantic_ai import ModelRequestNode
-
             # The ModelRequestNode produces a CallToolsNode (not End); convert it to End.
             if isinstance(node, ModelRequestNode) and not isinstance(result, End):
                 return End(FinalResult('short-circuited'))
@@ -17520,8 +17514,6 @@ async def test_enqueue_accepts_model_request_passthrough():
 
 def test_pending_message_drain_capability_is_not_spec_constructible():
     """`PendingMessageDrainCapability` is auto-injected only; can't be in an `AgentSpec`."""
-    from pydantic_ai.capabilities._pending_messages import PendingMessageDrainCapability
-
     assert PendingMessageDrainCapability.get_serialization_name() is None
 
 
@@ -20778,7 +20770,6 @@ class TestOutputHookErrorPaths:
 
     def test_wrapper_capability_output_hooks_delegate(self):
         """WrapperCapability delegates output hooks to wrapped capability."""
-        from pydantic_ai.capabilities.wrapper import WrapperCapability
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[TextPart(content='{"value": 5}')])
@@ -21073,8 +21064,6 @@ class TestOutputHookEdgeCases:
 
     def test_streaming_output_hooks_fire_on_partial(self):
         """Process hooks fire for plain text output (validate hooks are skipped)."""
-        from pydantic_ai.models.function import FunctionModel
-
         log: list[str] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -21101,8 +21090,6 @@ class TestOutputHookEdgeCases:
         """`ObjectOutputProcessor.hook_validate` — used by streaming paths without retries —
         must let `ValidationError` propagate unwrapped.
         """
-        from pydantic_ai._output import ObjectOutputProcessor
-
         processor = ObjectOutputProcessor(output=MyOutput)
 
         ctx = RunContext(
@@ -21122,8 +21109,6 @@ class TestOutputHookEdgeCases:
 
     def test_no_capability_fast_path_union_raw_validation_error(self):
         """Same as above but for `UnionOutputProcessor.hook_validate`."""
-        from pydantic_ai._output import UnionOutputProcessor
-
         processor = UnionOutputProcessor(outputs=[MyOutput])
 
         ctx = RunContext(
@@ -21146,10 +21131,6 @@ class TestOutputHookEdgeCases:
         through `ToolManager.validate_output_tool_call` / `execute_output_tool_call`, never
         through the normal toolset path. Calling `call_tool` directly must raise.
         """
-        import asyncio
-
-        from pydantic_ai._output import OutputToolset
-
         toolset = OutputToolset.build([MyOutput])
         assert toolset is not None
         toolset.max_retries = 1  # Agent normally sets this; required by `get_tools`
@@ -21250,8 +21231,6 @@ class TestErrorHookCoveragePaths:
 
     def test_wrapper_on_output_validate_error_delegates(self):
         """WrapperCapability delegates on_output_validate_error to the wrapped capability."""
-        from pydantic_ai.capabilities.wrapper import WrapperCapability
-
         call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -21289,7 +21268,6 @@ class TestErrorHookCoveragePaths:
 
     def test_wrapper_on_output_process_error_delegates(self):
         """WrapperCapability delegates on_output_process_error to the wrapped capability."""
-        from pydantic_ai.capabilities.wrapper import WrapperCapability
 
         def failing_func(value: int) -> str:
             raise ValueError('exec fail')
@@ -22194,8 +22172,6 @@ class TestHookExceptionHandling:
 
     async def test_validation_error_from_after_output_validate_triggers_retry(self):
         """ValidationError from after_output_validate should be caught and trigger model retry."""
-        from pydantic import TypeAdapter
-
         call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -22223,8 +22199,6 @@ class TestHookExceptionHandling:
 
     async def test_validation_error_from_after_output_process_triggers_retry(self):
         """ValidationError from after_output_process should be caught and trigger model retry."""
-        from pydantic import TypeAdapter
-
         call_count = 0
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -22569,9 +22543,6 @@ async def test_deferred_tool_handler_external_call():
             return ModelResponse(parts=[ToolCallPart('my_tool', {'x': 3}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Got it.')])
 
-    from pydantic_ai.exceptions import CallDeferred
-    from pydantic_ai.messages import ToolReturn
-
     async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         # Simulate external execution: return a ToolReturn with metadata
         return DeferredToolResults(
@@ -22685,8 +22656,6 @@ async def test_deferred_tool_handler_via_handle_call_wrap_validation_errors_fals
 
 async def test_deferred_tool_handler_via_handle_call_no_handler():
     """handle_call(resolve_deferred=True) re-raises when no handler is available."""
-    from pydantic_ai.toolsets import FunctionToolset
-
     # inner_tool is only available via ToolManager, not as a top-level agent tool
     inner_toolset = FunctionToolset()
 
@@ -22821,8 +22790,6 @@ async def test_deferred_tool_handler_external_call_plain_value():
             return ModelResponse(parts=[ToolCallPart('my_tool', {}, tool_call_id='call1')])
         return ModelResponse(parts=[TextPart('Got it.')])
 
-    from pydantic_ai.exceptions import CallDeferred
-
     async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(calls={call.tool_call_id: 'plain string result' for call in requests.calls})
 
@@ -22936,7 +22903,6 @@ async def test_deferred_tool_handler_batch_deny_via_bool_and_default():
 
 async def test_deferred_tool_handler_batch_approve_via_tool_approved_default():
     """Batch path: covers `approvals[id] = ToolApproved()` (default, no override_args)."""
-    from pydantic_ai.tools import ToolApproved
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -22964,7 +22930,6 @@ async def test_deferred_tool_handler_batch_approve_via_tool_approved_default():
 
 async def test_deferred_tool_handler_batch_external_tool_return_metadata():
     """Batch path: handler-supplied external `ToolReturn(value, metadata)` lands on the return part."""
-    from pydantic_ai.messages import ToolReturn as _ToolReturn
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -22974,7 +22939,7 @@ async def test_deferred_tool_handler_batch_external_tool_return_metadata():
     async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
             calls={
-                call.tool_call_id: _ToolReturn(
+                call.tool_call_id: ToolReturn(
                     return_value='computed', metadata={'source': 'external'}, content='user extra'
                 )
                 for call in requests.calls
@@ -22995,7 +22960,6 @@ async def test_deferred_tool_handler_batch_external_tool_return_metadata():
     assert tool_returns[0].content == 'computed'
     assert tool_returns[0].metadata == {'source': 'external'}
     # The `content` field on ToolReturn becomes a UserPromptPart.
-    from pydantic_ai.messages import UserPromptPart
 
     user_extras = [p for p in iter_message_parts(messages, ModelRequest, UserPromptPart) if p.content == 'user extra']
     assert len(user_extras) == 1
@@ -23068,10 +23032,6 @@ async def test_deferred_tool_handler_batch_external_retry_prompt_part():
 
 async def test_deferred_tool_handler_via_handle_call_external_tool_return():
     """Per-call path: handler-supplied external `ToolReturn(value, metadata)` is returned verbatim from handle_call."""
-    from pydantic_ai.exceptions import CallDeferred
-    from pydantic_ai.messages import ToolReturn as _ToolReturn
-    from pydantic_ai.toolsets import FunctionToolset
-
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool_plain
@@ -23080,7 +23040,7 @@ async def test_deferred_tool_handler_via_handle_call_external_tool_return():
 
     async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(
-            calls={call.tool_call_id: _ToolReturn(return_value='ext', metadata={'k': 'v'}) for call in requests.calls}
+            calls={call.tool_call_id: ToolReturn(return_value='ext', metadata={'k': 'v'}) for call in requests.calls}
         )
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -23107,16 +23067,13 @@ async def test_deferred_tool_handler_via_handle_call_external_tool_return():
 
     await agent.run('go')
     # Per-call path returns whatever the handler supplied verbatim — full ToolReturn wrapper preserved.
-    assert isinstance(captured_result, _ToolReturn)
+    assert isinstance(captured_result, ToolReturn)
     assert captured_result.return_value == 'ext'
     assert captured_result.metadata == {'k': 'v'}
 
 
 async def test_deferred_tool_handler_via_handle_call_tool_failed():
     """Per-call path: handler-supplied `ToolFailed` raises `ToolFailedError`, matching a tool that raises `ToolFailed` in-process."""
-    from pydantic_ai.exceptions import CallDeferred, ToolFailed, ToolFailedError
-    from pydantic_ai.toolsets import FunctionToolset
-
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool_plain
@@ -23171,8 +23128,6 @@ async def test_deferred_tool_handler_via_handle_call_with_resolve():
 
     This exercises the per-call resolution path used by CodeMode-style callers.
     """
-    from pydantic_ai.toolsets import FunctionToolset
-
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
@@ -23220,7 +23175,6 @@ async def test_deferred_tool_handler_via_handle_call_with_resolve():
 
 async def test_deferred_tool_handler_approved_tool_returns_tool_return():
     """Approved tool returning a ToolReturn preserves metadata and user content."""
-    from pydantic_ai.messages import ToolReturn as _ToolReturn, UserPromptPart
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -23236,7 +23190,7 @@ async def test_deferred_tool_handler_approved_tool_returns_tool_return():
     def my_tool(ctx: RunContext):
         if not ctx.tool_call_approved:
             raise ApprovalRequired
-        return _ToolReturn(return_value='result', metadata={'source': 'tool'}, content='user prompt extra')
+        return ToolReturn(return_value='result', metadata={'source': 'tool'}, content='user prompt extra')
 
     result = await agent.run('Hello')
     assert result.output == 'Done.'
@@ -23285,8 +23239,6 @@ async def test_deferred_tool_handler_approved_tool_raises_model_retry():
 
 async def test_deferred_tool_handler_approved_tool_override_args():
     """Approved tool with ToolApproved(override_args=...) uses the override."""
-    from pydantic_ai.tools import ToolApproved
-
     received_x = None
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -23317,9 +23269,6 @@ async def test_deferred_tool_handler_approved_tool_override_args():
 
 async def test_deferred_tool_handler_via_handle_call_retry():
     """handle_call path: approved tool raising ModelRetry propagates ToolRetryError."""
-    from pydantic_ai.exceptions import ToolRetryError
-    from pydantic_ai.toolsets import FunctionToolset
-
     inner_toolset = FunctionToolset()
     retry_count = 0
 
@@ -23435,8 +23384,6 @@ async def test_deferred_tool_handler_mixed_unresolved_and_re_deferred():
 
 async def test_deferred_tool_handler_re_deferred_as_call_deferred():
     """Approved tool that re-raises CallDeferred (not ApprovalRequired) stays in remaining.calls."""
-    from pydantic_ai.exceptions import CallDeferred
-
     call_count = 0
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -23475,16 +23422,13 @@ async def test_deferred_tool_handler_via_handle_call_preserves_tool_return():
     The deferred path should do the same — critical for CodeMode-style callers that
     check `isinstance(result, ToolReturn)` to preserve metadata on nested return parts.
     """
-    from pydantic_ai.messages import ToolReturn as _ToolReturn
-    from pydantic_ai.toolsets import FunctionToolset
-
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
     def inner_tool(ctx: RunContext):
         if not ctx.tool_call_approved:
             raise ApprovalRequired
-        return _ToolReturn(return_value='actual result', metadata={'source': 'inner'}, content='user extra')
+        return ToolReturn(return_value='actual result', metadata={'source': 'inner'}, content='user extra')
 
     async def handle_deferred(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
         return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
@@ -23514,7 +23458,7 @@ async def test_deferred_tool_handler_via_handle_call_preserves_tool_return():
 
     await agent.run('go')
     # handle_call returned the ToolReturn wrapper verbatim, not the unwrapped content
-    assert isinstance(captured_result, _ToolReturn)
+    assert isinstance(captured_result, ToolReturn)
     assert captured_result.return_value == 'actual result'
     assert captured_result.metadata == {'source': 'inner'}
     assert captured_result.content == 'user extra'
@@ -23522,8 +23466,6 @@ async def test_deferred_tool_handler_via_handle_call_preserves_tool_return():
 
 async def test_deferred_tool_handler_via_handle_call_denied_via_bool():
     """When a handler denies via `approvals[id] = False`, handle_call returns `ToolDenied()` with the default denial message."""
-    from pydantic_ai.toolsets import FunctionToolset
-
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
@@ -23564,9 +23506,6 @@ async def test_deferred_tool_handler_via_handle_call_denied_via_bool():
 
 async def test_deferred_tool_handler_via_handle_call_override_args():
     """When a handler approves with override_args, handle_call executes the tool with those args."""
-    from pydantic_ai.tools import ToolApproved
-    from pydantic_ai.toolsets import FunctionToolset
-
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
@@ -23608,9 +23547,6 @@ async def test_deferred_tool_handler_via_handle_call_override_args():
 
 async def test_deferred_tool_handler_via_handle_call_external_plain_value():
     """When a handler supplies an external-call plain value, handle_call returns it verbatim."""
-    from pydantic_ai.exceptions import CallDeferred
-    from pydantic_ai.toolsets import FunctionToolset
-
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool_plain
@@ -23648,9 +23584,6 @@ async def test_deferred_tool_handler_via_handle_call_external_plain_value():
 
 async def test_deferred_tool_handler_via_handle_call_external_model_retry():
     """When a handler supplies a `ModelRetry` external-call result, handle_call raises `ToolRetryError`."""
-    from pydantic_ai.exceptions import CallDeferred, ModelRetry, ToolRetryError
-    from pydantic_ai.toolsets import FunctionToolset
-
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool_plain
@@ -23695,9 +23628,6 @@ async def test_deferred_tool_handler_via_handle_call_external_model_retry():
 
 async def test_deferred_tool_handler_via_handle_call_external_retry_prompt_part():
     """When a handler supplies a `RetryPromptPart` external-call result, handle_call raises `ToolRetryError` with the part."""
-    from pydantic_ai.exceptions import CallDeferred, ToolRetryError
-    from pydantic_ai.toolsets import FunctionToolset
-
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool_plain
@@ -23748,8 +23678,6 @@ async def test_deferred_tool_handler_via_handle_call_external_retry_prompt_part(
 
 async def test_deferred_tool_handler_via_handle_call_denied_returns_message():
     """When a handler denies a deferred call, handle_call returns the custom `ToolDenied` value verbatim."""
-    from pydantic_ai.toolsets import FunctionToolset
-
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool
@@ -23792,9 +23720,6 @@ async def test_deferred_tool_handler_via_handle_call_denied_returns_message():
 
 async def test_deferred_tool_handler_via_handle_call_re_raises_new_exception():
     """After approval, if tool re-raises CallDeferred (not ApprovalRequired), the new exception type is propagated."""
-    from pydantic_ai.exceptions import CallDeferred
-    from pydantic_ai.toolsets import FunctionToolset
-
     inner_toolset = FunctionToolset()
     call_count = 0
 
@@ -23847,8 +23772,6 @@ async def test_deferred_tool_handler_via_handle_call_re_raises_new_exception():
 
 async def test_deferred_tool_handler_via_handle_call_handler_resolves_wrong_id():
     """handle_call path: handler returns results for wrong ID → remaining non-empty → raises original exc."""
-    from pydantic_ai.toolsets import FunctionToolset
-
     inner_toolset = FunctionToolset()
 
     @inner_toolset.tool

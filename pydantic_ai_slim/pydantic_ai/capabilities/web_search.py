@@ -27,7 +27,7 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
     pip install "pydantic-ai-slim[duckduckgo]"
     ```
 
-    `local=` also accepts any callable, `Tool`, or `AbstractToolset` for a custom fallback.
+    `local=` also accepts any callable or `Tool` for a custom fallback.
     """
 
     search_context_size: Literal['low', 'medium', 'high'] | None
@@ -93,6 +93,9 @@ class WebSearch(NativeOrLocalTool[AgentDepsT]):
         if self.external_web_access is not None:
             kwargs['external_web_access'] = self.external_web_access
         return WebSearchTool(**kwargs)
+
+    def _default_toolset_id(self) -> str:
+        return 'web_search'
 
     def _native_unique_id(self) -> str:
         return WebSearchTool.kind

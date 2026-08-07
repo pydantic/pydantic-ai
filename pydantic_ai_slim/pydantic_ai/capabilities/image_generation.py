@@ -186,6 +186,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     def _default_native(self) -> ImageGenerationTool:
         return ImageGenerationTool(**self._image_gen_kwargs())
 
+    def _default_toolset_id(self) -> str:
+        return 'image_generation'
+
     def _native_unique_id(self) -> str:
         return ImageGenerationTool.kind
 

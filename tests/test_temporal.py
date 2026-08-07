@@ -81,6 +81,7 @@ from pydantic_ai.capabilities import (
     ProcessHistory,
     ResolveModelId,
     Toolset,
+    WebSearch,
     WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -6889,6 +6890,30 @@ def test_durability_requires_agent_name():
         Agent(_durability_fn_model, capabilities=[durability])
 
 
+def test_durability_accepts_single_purpose_capability_without_explicit_id():
+    """A single-purpose capability's default toolset `id` names the activities of the toolset it contributes.
+
+    Temporal needs an `id` on every leaf toolset, and the local fallback of a `WebSearch` is a
+    toolset the user never constructed, so the capability's default is what makes it usable
+    without configuration.
+
+    Not a VCR test: everything asserted is settled at `Agent(...)` construction time, before any
+    model request.
+    """
+    agent = Agent(
+        _durability_fn_model,
+        name='web_search_agent',
+        capabilities=[WebSearch(local='duckduckgo'), TemporalDurability()],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    activity_names = {
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in bound.temporal_activities
+    }
+    assert 'agent__web_search_agent__toolset__web_search__call_tool' in activity_names
+
+
 def test_durability_explicit_name_overrides_agent_name_and_supports_unnamed_agent():
     named_agent = Agent(_durability_fn_model, name='agent-name', capabilities=[TemporalDurability(name='custom')])
     bound = TemporalDurability.from_agent(named_agent)
@@ -7047,6 +7072,33 @@ def test_durability_duplicate_toolset_id_rejected():
             toolsets=[FunctionToolset(id='dup'), FunctionToolset(id='dup')],
             capabilities=[TemporalDurability()],
         )
+
+
+def _alpha_search(query: str) -> str:
+    """Alpha search."""
+    return 'alpha'  # pragma: no cover
+
+
+def _beta_search(topic: str) -> str:
+    """Beta search."""
+    return 'beta'  # pragma: no cover
+
+
+async def test_durability_run_level_capability_reusing_default_toolset_id_rejected():
+    """A run-level toolset carrying an already-registered `id` is rejected, not silently swapped.
+
+    The single-purpose capabilities name their contributed toolset after themselves, so a static
+    and a run-level `WebSearch` reach the registry under one `id` without the user setting one.
+    Returning the registered wrapper there would offer the static capability's tools twice and
+    drop the run-level one's entirely.
+    """
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_run_level_dup',
+        capabilities=[WebSearch(native=False, local=_alpha_search), TemporalDurability()],
+    )
+    with pytest.raises(UserError, match="Two toolsets have the same `id` 'web_search'"):
+        await agent.run('hi', capabilities=[WebSearch(native=False, local=_beta_search)])
 
 
 def test_durability_same_toolset_instance_reused():
