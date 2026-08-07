@@ -7302,9 +7302,7 @@ class TestUnavailableCapabilityToolsAreNotCallable:
 
     async def test_capability_tool_is_refused_again_after_compaction(self):
         """A `CompactionPart` resets the load state, so the tool needs loading again."""
-        agent = Agent(
-            FunctionModel(_load_compact_then_call_secret_op), capabilities=[self._guarded_capability()]
-        )
+        agent = Agent(FunctionModel(_load_compact_then_call_secret_op), capabilities=[self._guarded_capability()])
 
         @agent.tool_plain
         def ping() -> str:
