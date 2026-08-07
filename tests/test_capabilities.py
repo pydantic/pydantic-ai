@@ -7111,14 +7111,13 @@ def secret_op() -> str:
 
 
 def _report_secret_op_outcome(messages: list[ModelMessage]) -> ModelResponse | None:
-    """Report whether a `secret_op` call executed or was blocked, once its result is in."""
-    last = messages[-1]
-    if isinstance(last, ModelRequest):
-        for part in last.parts:
-            if isinstance(part, ToolReturnPart) and part.tool_name == 'secret_op':
-                return make_text_response(f'RESULT: {part.content}')
-            if isinstance(part, RetryPromptPart):
-                return make_text_response(f'BLOCKED: {part.content}')
+    """Report the blocked call, once the retry prompt refusing it is in history.
+
+    `secret_op` never executes in these tests — that's the point — so a tool return for it would
+    itself be the failure, and is left to `secret_op`'s own unreachable body to catch.
+    """
+    for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+        return make_text_response(f'BLOCKED: {part.content}')
     return None
 
 
