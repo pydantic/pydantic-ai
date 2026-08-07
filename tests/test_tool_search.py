@@ -32,7 +32,7 @@ from pydantic_ai._tool_search import (
     synthesize_local_from_native_call,
     synthesize_local_tool_search_messages,
 )
-from pydantic_ai.capabilities import CAPABILITY_TYPES, ToolSearch
+from pydantic_ai.capabilities import CAPABILITY_TYPES, ProcessHistory, ToolSearch
 from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.capability import Capability
@@ -981,6 +981,71 @@ async def test_search_corpus_includes_already_discovered_tools() -> None:
     await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['first']}, ctx, search_tool)
 
     assert corpora == [['first_tool', 'second_tool']]
+
+
+async def test_stripped_reveal_exchange_heals_via_re_search() -> None:
+    """A history processor that strips a reveal exchange must not strand the revealed tool (#7259).
+
+    The search corpus never subtracts discovered names, so when the processor deletes the first
+    search exchange the model can simply search again; the new exchange survives, re-reveals the
+    tool, and the run completes. (A corpus that subtracted discovered names left the tool
+    simultaneously withheld on the wire and unsearchable — permanently unavailable.)
+    """
+
+    class SearchTwiceThenCallModel(TestModel):
+        request_number = 0
+
+        def _request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            type(self).request_number += 1
+            if self.request_number <= 2:
+                # Step 1 discovers the tool; the processor then strips that exchange, so step 2's
+                # history carries no evidence and the model searches again.
+                assert model_request_parameters.visibility_of('secret_lookup') == 'withheld'
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name=_SEARCH_TOOLS_NAME,
+                            args={'queries': ['secret lookup']},
+                            tool_call_id=f'search-{self.request_number}',
+                        )
+                    ]
+                )
+            # The second exchange survived: the tool is revealed again and callable.
+            assert model_request_parameters.visibility_of('secret_lookup') == 'visible'
+            if self.request_number == 3:
+                return ModelResponse(parts=[ToolCallPart(tool_name='secret_lookup', args={}, tool_call_id='lookup-1')])
+            return super()._request(messages, model_settings, model_request_parameters)
+
+    def strip_first_search_exchange(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(
+                message,
+                parts=[  # pyright: ignore[reportArgumentType]
+                    part
+                    for part in message.parts
+                    if not (
+                        isinstance(part, ToolCallPart | ToolSearchCallPart | ToolReturnPart | ToolSearchReturnPart)
+                        and part.tool_call_id == 'search-1'
+                    )
+                ],
+            )
+            for message in messages
+        ]
+
+    agent = Agent(SearchTwiceThenCallModel(), capabilities=[ProcessHistory(strip_first_search_exchange)])
+
+    @agent.tool_plain(defer_loading=True)
+    def secret_lookup() -> str:
+        return 'SECRET'
+
+    result = await agent.run('find and call the secret lookup tool')
+
+    assert 'SECRET' in str(result.output)
 
 
 async def test_tool_search_toolset_discovered_tools_keep_defer_loading():
