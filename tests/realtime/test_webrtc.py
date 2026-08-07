@@ -446,6 +446,35 @@ async def test_azure_entra_credential_mints_client_secret_with_bearer() -> None:
     assert secret.value == 'ek_az'
 
 
+def test_azure_entra_credential_survives_alongside_a_user_profile() -> None:
+    """The Entra credential and the user `profile=` layer coexist on the hand-written `__init__`.
+
+    `AzureRealtimeModel` is `@dataclass(init=False)` with a hand-written constructor, so `credential`
+    is assigned explicitly rather than generated. Pinning it next to `profile=` keeps a future edit to
+    that constructor from silently dropping either.
+    """
+
+    def _unused(request: httpx.Request) -> httpx.Response:
+        raise AssertionError('no request is made')  # pragma: no cover
+
+    credential = _FakeCredential()
+    model = AzureRealtimeModel(
+        'gpt-realtime',
+        provider=_azure_mock_provider(_unused),
+        credential=credential,
+        profile={'supports_webrtc': False},
+    )
+
+    assert model.credential is credential
+    # The user layer wins over the provider's, and the rest of the resolved profile is untouched.
+    assert model.profile.get('supports_webrtc') is False
+    assert model.profile.get('supports_text_output') is True
+    # Defaults still apply when neither is given.
+    plain = AzureRealtimeModel('gpt-realtime', provider=_azure_mock_provider(_unused))
+    assert plain.credential is None
+    assert plain.profile.get('supports_webrtc') is True
+
+
 # --- recorded signaling round-trips (real APIs) -----------------------------------------------------
 
 

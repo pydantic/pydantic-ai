@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
-from dataclasses import KW_ONLY, InitVar, dataclass, field
+from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol, cast
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -20,7 +20,9 @@ from ._base import (
     RealtimeClientSecret,
     RealtimeCodecEvent,
     RealtimeModelProfile,
+    RealtimeModelProfileSpec,
     RealtimeModelSettings,
+    ReconnectPolicy,
     WebRTCAnswer,
     merge_realtime_profile,
     resolve_advertised_tools,
@@ -144,7 +146,7 @@ class _VoiceLiveRealtimeConnection(AzureRealtimeConnection):
         return _map_voice_live_event(data)
 
 
-@dataclass
+@dataclass(init=False)
 class AzureRealtimeModel(OpenAIRealtimeModel):
     """Azure realtime model using the OpenAI GA protocol or Azure AI Voice Live.
 
@@ -168,16 +170,46 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
 
     _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = AzureRealtimeConnection
 
-    _: KW_ONLY
-    provider: InitVar[Provider[AsyncOpenAI] | str] = 'azure'
-    credential: AzureTokenCredential | None = field(default=None, kw_only=True)
+    credential: AzureTokenCredential | None = None
+    """Microsoft Entra ID credential; when set, every request to the resource uses a bearer token."""
 
-    def __post_init__(self, provider: Provider[AsyncOpenAI] | str) -> None:
+    def __init__(
+        self,
+        model: str = 'gpt-realtime',
+        *,
+        provider: Provider[AsyncOpenAI] | str = 'azure',
+        settings: RealtimeModelSettings | None = None,
+        profile: RealtimeModelProfileSpec | None = None,
+        reconnect: ReconnectPolicy | None = None,
+        credential: AzureTokenCredential | None = None,
+    ) -> None:
+        """Create an Azure OpenAI realtime model.
+
+        Args:
+            model: The Azure *deployment* name, which is what the realtime URL and the profile lookup
+                use. Azure deployments are conventionally named after their model; when yours isn't,
+                `profile` is how to correct the facts inferred from the name.
+            provider: The provider supplying the resource endpoint and API key. Defaults to `'azure'`.
+            settings: Model settings used as defaults for realtime sessions.
+            profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
+                merged over the provider's — a partial dict, or a callable taking the resolved profile
+                and returning the one to use.
+            reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to
+                transparently recover from a dropped connection.
+            credential: Optional Microsoft Entra ID credential (e.g. `azure.identity.DefaultAzureCredential()`).
+                When set, the realtime WebSocket session *and* the browser WebRTC signaling calls
+                authenticate with a bearer token instead of the resource `api-key`.
+        """
+        super().__init__(model, provider=provider, settings=settings, profile=profile, reconnect=reconnect)
+        self.credential = credential
+
+    @staticmethod
+    def _resolve_provider(provider: Provider[AsyncOpenAI] | str) -> AzureProvider:
         if isinstance(provider, str):
             provider = AzureProvider.for_realtime() if provider == 'azure' else infer_provider(provider)
         if not isinstance(provider, AzureProvider):
             raise UserError("`AzureRealtimeModel` requires an `AzureProvider` or `provider='azure'`.")
-        self._provider = provider
+        return provider
 
     @property
     def profile(self) -> RealtimeModelProfile:

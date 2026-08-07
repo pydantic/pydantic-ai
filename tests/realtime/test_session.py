@@ -244,6 +244,7 @@ def _profile(
     supports_manual_turn_control: bool = True,
     supports_interruption: bool = True,
     supports_output_truncation: bool = True,
+    supports_text_output: bool = True,
     supports_session_seeding: bool = True,
     supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(
         {WebSearchTool, WebFetchTool, CodeExecutionTool}
@@ -255,6 +256,7 @@ def _profile(
         supports_manual_turn_control=supports_manual_turn_control,
         supports_interruption=supports_interruption,
         supports_output_truncation=supports_output_truncation,
+        supports_text_output=supports_text_output,
         supports_session_seeding=supports_session_seeding,
         supported_native_tools=supported_native_tools,
     )
@@ -316,7 +318,7 @@ class FakeRealtimeModel(RealtimeModel):
     ) -> None:
         self._connection = connection
         self.settings = settings
-        self._profile = profile or _profile()
+        self._fixed_profile = profile or _profile()
         self.last_instructions: str | None = None
         self.last_tools: list[ToolDefinition] | None = None
         self.last_native_tools: list[AbstractNativeTool] | None = None
@@ -333,7 +335,9 @@ class FakeRealtimeModel(RealtimeModel):
 
     @property
     def profile(self) -> RealtimeModelProfile:
-        return self._profile
+        # A fixed, already-resolved profile: these tests pin session behavior per flag, not the
+        # default/provider/user layering the base class does (covered in the provider tests).
+        return self._fixed_profile
 
     @asynccontextmanager
     async def connect(
@@ -4208,6 +4212,39 @@ async def test_agent_realtime_session_rejects_seeding_when_unsupported() -> None
     with pytest.raises(UserError, match='does not support seeding a session'):
         async with agent.realtime(model, message_history=seed).session():
             pass  # pragma: no cover
+
+
+async def test_agent_realtime_session_rejects_text_output_when_unsupported() -> None:
+    # A model that only speaks rejects `output_modality='text'` up front, before dialing. Unlike a
+    # setting the provider merely ignores, this one changes what the caller gets back: Gemini fails the
+    # handshake over it and xAI would quietly answer with audio.
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn, profile=_profile(supports_text_output=False))
+    with pytest.raises(UserError, match="does not support `output_modality='text'`"):
+        async with agent.realtime(model, model_settings=RealtimeModelSettings(output_modality='text')).session():
+            pass  # pragma: no cover
+
+    # The same model is fine for the default audio modality, so the guard is scoped to the request.
+    async with agent.realtime(model, model_settings=RealtimeModelSettings(output_modality='audio')).session():
+        pass
+
+
+async def test_agent_realtime_session_allows_text_output_by_default() -> None:
+    # `supports_text_output` defaults to `True` — a realtime model that can't write is the exception —
+    # so a profile that says nothing about it still accepts `output_modality='text'`.
+    assert 'supports_text_output' not in _profile_without_text_output()
+    agent: Agent[None, str] = Agent()
+    conn = FakeRealtimeConnection([ResponseDone()])
+    model = FakeRealtimeModel(conn, profile=_profile_without_text_output())
+    async with agent.realtime(model, model_settings=RealtimeModelSettings(output_modality='text')).session():
+        pass
+    assert (model.last_model_settings or {}).get('output_modality') == 'text'
+
+
+def _profile_without_text_output() -> RealtimeModelProfile:
+    """A profile that never mentions `supports_text_output`, to pin the `True` default."""
+    return RealtimeModelProfile(supports_session_seeding=True)
 
 
 async def test_agent_realtime_session_audio_retention_forwarded() -> None:

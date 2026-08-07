@@ -3576,6 +3576,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     '`message_history`.'
                 )
 
+            output_modality = (resolved.model_settings or {}).get('output_modality', 'audio')
+            # Unlike a setting the provider merely ignores, this one changes what the caller gets back:
+            # a model that can't do it either fails the handshake (Gemini) or answers with speech anyway
+            # (xAI), so it is rejected here rather than after a connection is open.
+            if output_modality == 'text' and not resolved.model_profile.get('supports_text_output', True):
+                raise exceptions.UserError(
+                    f"The {resolved.model.model_name!r} realtime model does not support `output_modality='text'`; "
+                    'it only generates audio. Read the spoken answer from the transcript on the '
+                    '`SpeechPart` instead.'
+                )
+
             if provider_session is not None:
                 connection_manager = resolved.model.connect_webrtc(
                     provider_session,
@@ -3618,7 +3629,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         if resolved.instrumentation_settings is not None
                         else None
                     ),
-                    output_modality=(resolved.model_settings or {}).get('output_modality', 'audio'),
+                    output_modality=output_modality,
                     # Surfaced on the session span so the session's configured native tools and realtime
                     # settings are inspectable, respecting `include_model_request_parameters`.
                     model_request_parameters=resolved.model_request_parameters,

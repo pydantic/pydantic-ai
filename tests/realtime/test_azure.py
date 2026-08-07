@@ -234,6 +234,43 @@ def test_voice_live_text_events_keep_item_id() -> None:
     )
 
 
+def test_voice_live_profile_layers_over_the_user_profile() -> None:
+    """Voice Live's profile correction is applied *after* the user's `profile=`, so it wins.
+
+    `RealtimeModel.profile` now ends with a user layer, and the Voice Live override sits on top of it
+    via `super().profile`. That order is the safe one: `supports_webrtc=False` under Voice Live is a
+    fact about the transport, not a default, so a user claiming otherwise must not produce a session
+    that then fails at the signaling call.
+    """
+    provider = AzureProvider(azure_endpoint='https://r.openai.azure.com/openai/v1', api_key='k')
+    voice_live = AzureRealtimeModelSettings(azure_voice_live=True)
+
+    # The user layer reaches keys Voice Live doesn't speak for.
+    model = AzureRealtimeModel('gpt-realtime', provider=provider, profile={'supports_text_output': False})
+    assert model.profile.get('supports_text_output') is False
+    assert model.profile.get('supports_webrtc') is True
+
+    # ...but not `supports_webrtc` under Voice Live, in either `profile=` form.
+    forced = AzureRealtimeModel(
+        'gpt-realtime', provider=provider, settings=voice_live, profile={'supports_webrtc': True}
+    )
+    assert forced.profile.get('supports_webrtc') is False
+    callable_form = AzureRealtimeModel(
+        'gpt-realtime',
+        provider=provider,
+        settings=voice_live,
+        profile=lambda resolved: {**resolved, 'supports_webrtc': True},
+    )
+    assert callable_form.profile.get('supports_webrtc') is False
+
+    # Unrelated user keys still apply under Voice Live.
+    both = AzureRealtimeModel(
+        'gpt-realtime', provider=provider, settings=voice_live, profile={'supports_text_output': False}
+    )
+    assert both.profile.get('supports_text_output') is False
+    assert both.profile.get('supports_webrtc') is False
+
+
 def test_voice_live_silently_ignores_openai_only_settings() -> None:
     """OpenAI-only settings inherited by `AzureRealtimeModelSettings` are dropped on the Voice Live path."""
     provider = AzureProvider(azure_endpoint='https://r.services.ai.azure.com', api_version='2024-10-01', api_key='k')
@@ -301,6 +338,25 @@ async def test_connection_names_azure_not_openai() -> None:
     # The provider stamped onto content the connection can't carry names Azure too.
     assert conn._provider_name == 'azure'  # pyright: ignore[reportPrivateUsage]
     assert AzureRealtimeModel._connection_type is AzureRealtimeConnection  # pyright: ignore[reportPrivateUsage]
+
+
+def test_profile_override_corrects_a_deployment_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Azure's `model` is the *deployment* name, a user-chosen string that need not name the model, and
+    # the profile is inferred from it (reasoning effort is only accepted by `gpt-realtime-2*`). A
+    # deployment named anything else therefore loses `thinking` — `profile=` is the way to correct it,
+    # mirroring `profile=` on a standard `Model`.
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://resource.openai.azure.com/openai/v1')
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'azure-key')
+
+    inferred = AzureRealtimeModel('voice-prod', settings={'thinking': 'low'})
+    assert inferred.profile.get('supports_thinking') is False
+    assert 'reasoning' not in inferred._session_config('', None, None)  # pyright: ignore[reportPrivateUsage]
+
+    corrected = AzureRealtimeModel('voice-prod', settings={'thinking': 'low'}, profile={'supports_thinking': True})
+    assert corrected.profile.get('supports_thinking') is True
+    assert corrected._session_config('', None, None)['reasoning'] == {'effort': 'low'}  # pyright: ignore[reportPrivateUsage]
+    # Everything the provider said is still there — `profile=` is a layer, not a replacement.
+    assert corrected.profile.get('supports_image_input') is True
 
 
 def test_infer_provider_from_bare_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:

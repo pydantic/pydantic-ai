@@ -3633,10 +3633,11 @@ def test_profile() -> None:
         profile.get('supports_manual_turn_control'),
         profile.get('supports_interruption'),
         profile.get('supports_output_truncation'),
+        profile.get('supports_text_output'),
         profile.get('supports_session_seeding'),
         profile.get('supports_seeding_images'),
         profile.get('supports_seeding_audio'),
-    ) == (True, True, True, True, True, True, True)
+    ) == (True, True, True, True, True, True, True, True)
     assert profile.get('supported_native_tools') == frozenset()
     assert profile.get('audio_input_sample_rate') == 24000
     assert profile.get('audio_output_sample_rate') == 24000
@@ -3659,6 +3660,55 @@ def test_provider_driven_profile_merges_defaults_varies_by_model_and_intersects_
     assert text_profile.get('supports_image_input') is False
     assert image_profile.get('supports_interruption') is False  # merged from the default
     assert image_profile.get('supported_native_tools') == frozenset()  # model class implements none
+
+
+def test_user_profile_layer_merges_over_the_provider_and_accepts_a_callable() -> None:
+    # The third resolution layer, mirroring `Model.profile`: a partial dict merged over the resolved
+    # profile, or a callable that receives it and returns the profile to use.
+    merged = OpenAIRealtimeModel(
+        'gpt-realtime', profile=RealtimeModelProfile(supports_thinking=True, supports_image_input=False)
+    ).profile
+    assert merged.get('supports_thinking') is True  # the provider says `False` for GA `gpt-realtime`
+    assert merged.get('supports_image_input') is False  # overrides the provider's `True`
+    assert merged.get('supports_interruption') is True  # untouched keys still come from the provider
+
+    def only_thinking(resolved: RealtimeModelProfile) -> RealtimeModelProfile:
+        assert resolved.get('supports_interruption') is True  # the resolved profile is handed in
+        return RealtimeModelProfile(supports_thinking=True)
+
+    replaced = OpenAIRealtimeModel('gpt-realtime', profile=only_thinking).profile
+    assert replaced.get('supports_thinking') is True
+    # The callable replaces rather than merges, so a claim it drops is gone (and reads as the absent
+    # default, `False`, exactly as a provider that never made the claim would).
+    assert replaced.get('supports_interruption', False) is False
+
+
+def test_user_profile_layer_is_still_intersected_with_the_model_class_native_tools() -> None:
+    # `profile=` is a layer, not an escape from the final intersection: claiming a native tool the model
+    # class doesn't implement can't make it usable, exactly as on a standard `Model`.
+    profile = OpenAIRealtimeModel(
+        'gpt-realtime', profile=RealtimeModelProfile(supported_native_tools=frozenset({WebSearchTool}))
+    ).profile
+    assert profile.get('supported_native_tools') == frozenset()
+
+
+def test_user_profile_corrects_a_thinking_claim_defeated_by_the_model_name() -> None:
+    # `supports_thinking` is inferred from the model name, which on Azure is the *deployment* name — a
+    # user-chosen string that need not name the model. `profile=` is the documented way out, and the
+    # correction has to reach the wire, not just the profile dict.
+    provider = OpenAIProvider(api_key='k')
+    deployment = OpenAIRealtimeModel('voice-prod', provider=provider, settings={'thinking': 'low'})
+    assert deployment.profile.get('supports_thinking') is False
+    assert 'reasoning' not in deployment._session_config('', None, None)  # pyright: ignore[reportPrivateUsage]
+
+    corrected = OpenAIRealtimeModel(
+        'voice-prod',
+        provider=provider,
+        settings={'thinking': 'low'},
+        profile=RealtimeModelProfile(supports_thinking=True),
+    )
+    assert corrected.profile.get('supports_thinking') is True
+    assert corrected._session_config('', None, None)['reasoning'] == {'effort': 'low'}  # pyright: ignore[reportPrivateUsage]
 
 
 class _ConnectSequence:

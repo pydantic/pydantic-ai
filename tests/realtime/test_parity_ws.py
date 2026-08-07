@@ -64,6 +64,7 @@ class RealtimeParityCase:
     supports_manual_turn_control: bool
     supports_interruption: bool
     supports_native_tools: bool
+    supports_text_output: bool = True
     audio_input_sample_rate: int = 24000
 
 
@@ -110,6 +111,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_native_tools=False,
+        supports_text_output=False,  # Grok Voice always speaks
     ),
     RealtimeParityCase(
         id='xai-pinned',
@@ -120,6 +122,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_native_tools=False,
+        supports_text_output=False,  # Grok Voice always speaks
     ),
     RealtimeParityCase(
         id='google-current',
@@ -130,6 +133,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_native_tools=True,
+        supports_text_output=False,  # every Gemini Live model rejects a TEXT response modality
         audio_input_sample_rate=16000,
     ),
     RealtimeParityCase(
@@ -141,6 +145,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_native_tools=True,
+        supports_text_output=False,  # every Gemini Live model rejects a TEXT response modality
         audio_input_sample_rate=16000,
     ),
     RealtimeParityCase(
@@ -162,6 +167,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_native_tools=True,
+        supports_text_output=False,  # every Gemini Live model rejects a TEXT response modality
         audio_input_sample_rate=16000,
     ),
 ]
@@ -175,17 +181,21 @@ def _model(
     *,
     text_output: bool = False,
 ) -> RealtimeModel:
+    # A text turn is only asked for where the model can produce one: `output_modality='text'` on a
+    # model whose profile reports `supports_text_output=False` is a `UserError`, not a silent no-op,
+    # so the table row decides — and `test_text_tool_round_parity` asserts the row matches the profile.
+    settings = (
+        OpenAIRealtimeModelSettings(output_modality='text') if text_output and case.supports_text_output else None
+    )
     if case.model_kind == 'openai':
-        settings = OpenAIRealtimeModelSettings(output_modality='text') if text_output else None
         return OpenAIRealtimeModel(case.model_name, provider=provider, settings=settings)
     if case.model_kind == 'azure':
         assert isinstance(provider, AzureProvider)
-        settings = OpenAIRealtimeModelSettings(output_modality='text') if text_output else None
         return AzureRealtimeModel(case.model_name, provider=provider, settings=settings)
     if case.model_kind == 'xai':
         assert isinstance(provider, XaiProvider)
-        return XaiRealtimeModel(case.model_name, provider=provider)
-    return GoogleRealtimeModel(case.model_name, provider=provider)
+        return XaiRealtimeModel(case.model_name, provider=provider, settings=settings)
+    return GoogleRealtimeModel(case.model_name, provider=provider, settings=settings)
 
 
 async def _collect_complete_turn(session: Any, *, after_tool_result: bool = False) -> list[Any]:
@@ -222,6 +232,7 @@ async def test_text_tool_round_parity(
     assert profile.get('supports_manual_turn_control', False) is case.supports_manual_turn_control
     assert profile.get('supports_interruption', False) is case.supports_interruption
     assert bool(profile.get('supported_native_tools', frozenset())) is case.supports_native_tools
+    assert profile.get('supports_text_output', True) is case.supports_text_output
     assert profile.get('supports_session_seeding', False)
     assert profile.get('audio_input_sample_rate', 24000) == case.audio_input_sample_rate
     assert profile.get('audio_output_sample_rate', 24000) == 24000
