@@ -48,8 +48,8 @@
         "slug": "retries"
       },
       {
-        "label": "Cancellation & Timeouts",
-        "slug": "cancellation-and-timeouts"
+        "label": "Timeouts",
+        "slug": "timeouts"
       }
     ]
   },

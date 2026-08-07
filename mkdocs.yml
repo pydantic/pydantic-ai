@@ -30,7 +30,7 @@ nav:
           - message-history.md
           - direct.md
           - Retries: retries.md
-          - Cancellation & Timeouts: cancellation-and-timeouts.md
+          - Timeouts: timeouts.md
       - Models & Providers:
           - Overview: models/overview.md
           - HTTP Request Retries: models/http-request-retries.md
