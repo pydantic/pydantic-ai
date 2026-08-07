@@ -3,9 +3,11 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import gc
 import json
 import random
 import re
+import weakref
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
@@ -602,14 +604,23 @@ def test_ws_connect_lock_is_per_event_loop() -> None:
     # The lock is process-wide by intent (it guards a replacement of the `google.genai.live.ws_connect`
     # module global), but an `anyio.Lock` binds to the loop it is first used on, so one shared instance
     # would break an app that opens sessions from more than one runtime. Deliberately a sync test: it
-    # needs to own the loops. Within one loop the same lock still serializes every handshake.
-    async def take_locks() -> tuple[Any, Any]:
-        return rt_google._ws_connect_lock(), rt_google._ws_connect_lock()  # pyright: ignore[reportPrivateUsage]
+    # needs to own the loops. Within one loop the same lock still serializes every handshake, and the
+    # `RunVar` holding them is weak-keyed on the loop, so a torn-down loop's lock isn't retained.
+    refs: list[weakref.ReferenceType[Any]] = []
 
-    first, same = asyncio.run(take_locks())
-    assert same is first
-    other, _ = asyncio.run(take_locks())
-    assert other is not first
+    async def take_lock() -> Any:
+        lock = rt_google._ws_connect_lock()  # pyright: ignore[reportPrivateUsage]
+        assert rt_google._ws_connect_lock() is lock  # pyright: ignore[reportPrivateUsage]
+        refs.append(weakref.ref(lock))
+        return lock
+
+    first = asyncio.run(take_lock())
+    second = asyncio.run(take_lock())
+    assert second is not first
+
+    del first, second
+    gc.collect()
+    assert [ref() for ref in refs] == [None, None]
 
 
 def test_ws_trace_context_noop_without_http_options() -> None:

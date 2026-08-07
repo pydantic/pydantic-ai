@@ -25,7 +25,7 @@ from typing import Any, Literal, cast
 from urllib.parse import quote
 
 from anyio import Lock
-from anyio.lowlevel import current_token
+from anyio.lowlevel import RunVar
 from typing_extensions import assert_never
 
 try:
@@ -286,7 +286,7 @@ _TURN_COVERAGE = {
     'all_video': genai_types.TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO,
 }
 
-_WS_CONNECT_LOCKS: dict[object, Lock] = {}
+_WS_CONNECT_LOCK: RunVar[Lock] = RunVar('gemini_live_ws_connect_lock')
 
 
 def _ws_connect_lock() -> Lock:
@@ -302,9 +302,15 @@ def _ws_connect_lock() -> Lock:
     the loop (and async backend) it is first used on, so a shared instance breaks an app that opens
     sessions from more than one runtime — the same hazard `Provider._enter_lock` defers construction
     to avoid. Sessions racing this rewrite from different loops is the far-fetched case; sessions
-    racing it from one is the case that has to hold.
+    racing it from one is the case that has to hold. A `RunVar` holds them because its storage is
+    weak-keyed on the running loop, so an app that starts and tears down loops repeatedly doesn't
+    accumulate one lock per loop it ever ran.
     """
-    return _WS_CONNECT_LOCKS.setdefault(current_token(), Lock())
+    lock = _WS_CONNECT_LOCK.get(None)
+    if lock is None:
+        lock = Lock()
+        _WS_CONNECT_LOCK.set(lock)
+    return lock
 
 
 def _thinking_to_config(thinking: ThinkingLevel) -> genai_types.ThinkingConfig:
