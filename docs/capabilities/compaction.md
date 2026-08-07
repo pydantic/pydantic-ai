@@ -15,42 +15,13 @@ Each uses the corresponding provider API, so it's only available on that provide
 
 Pydantic AI treats a compaction part as a visibility boundary: the model starts anew from that point for derived tool state. Tool discoveries and on-demand capability loads before the boundary reset, so their tools are hidden again until searched for or loaded after the boundary. Searchable tools remain in the corpus and all registered tools remain callable if the model emits a valid call, even when their earlier schema or reveal evidence is no longer visible to the model. Capability and toolset authors should apply the same rule to their own derived state: compute anything the model needs to have seen — announcements, disclosures, catalogs — from [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] rather than remembering it in instance attributes, so it self-heals when compaction replaces the history that carried it.
 
-### History custody
+### Client-held history
 
-[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through the [UI adapters](../ui/overview.md), so compacted conversations remain usable when a frontend owns the message history. Client-supplied compaction items are honored — the conversation stays compacted — but never trusted to have retained the server's standing system prompt, which is re-inserted on ingest (see [Loading untrusted history](../message-history.md#loading-untrusted-history)).
+[`CompactionPart`][pydantic_ai.messages.CompactionPart]s round-trip through the [UI adapters](../ui/overview.md), whose protocols have the client transmit the full conversation history on each request, so compacted conversations keep working with such frontends. A client-submitted compaction item is honored — the conversation stays compacted — but it is never trusted to stand in for the agent's [system prompt](../agent.md#system-prompts): that still reaches the model on every request, as described under [Loading untrusted history](../message-history.md#loading-untrusted-history).
 
-Whoever owns the history owns its compaction boundaries. A compaction part is the latest history boundary — provider adapters trim everything before it from the request — so in a *mixed-custody* run, where the caller passes its own server-side `message_history` alongside client-submitted messages, honoring a client-supplied boundary would let the client hide that trusted history from the model and replace its context with the client's own summary. The UI adapters therefore drop client-supplied compaction items whenever server-side `message_history` is present; they are honored only when the client owns the conversation outright.
+If a run also receives its own server-side history — the [server-side persistence pattern](../ui/overview.md#trust-model-for-client-submitted-messages), where stored messages are passed as `message_history` and client messages only supply the latest turn — client-submitted compaction items are ignored instead. A compaction item marks a boundary before which nothing is sent to the model, so honoring one from the client would let it hide the server's own stored history from the model and substitute its summary for that context. Client-submitted compaction items are only honored when the client-transmitted messages are the entire conversation.
 
-Server-side custody is the strongest posture for compacted history. When history lives client-side, a caller can replay any compaction item the organization has ever minted — opaque provider state on OpenAI, a plaintext summary on Anthropic — which is equivalent in kind to fabricating plaintext history (see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history)), with the difference that the server cannot inspect an opaque item's contents. To keep custody server-side, store the full history keyed by conversation, send only display data to the client, and derive the model-visible window with [`post_compaction_window`][pydantic_ai.messages.post_compaction_window]:
-
-```python {title="server_side_compaction_custody.py"}
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
-from pydantic_ai.messages import CompactionPart, post_compaction_window
-from pydantic_ai.models.test import TestModel
-
-agent = Agent(TestModel())
-conversation_id = 'conversation-123'
-server_store: dict[str, list[ModelMessage]] = {
-    conversation_id: [
-        ModelResponse(
-            parts=[
-                CompactionPart(
-                    content='The user is planning a trip to Kyoto.',
-                    provider_name='anthropic',
-                ),
-                TextPart('What would you like to plan next?'),
-            ]
-        )
-    ]
-}
-
-history = post_compaction_window(server_store[conversation_id])
-result = agent.run_sync('Find a quiet neighborhood.', message_history=history)
-server_store[conversation_id].extend(result.new_messages())
-
-print(result.output)
-#> success (no tool calls)
-```
+Even then, a client can replay any compaction item the server's provider account has ever produced — opaque encrypted state on OpenAI, a plaintext summary on Anthropic. That is equivalent in kind to fabricating plain-text history, which client-transmitted history always permits (see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history)), with one difference: the server cannot inspect what an opaque item contains. If that matters for your deployment, keep the history server-side: persist the full message list keyed by conversation, send the client only display data, and pass the stored messages as `message_history` on each run. Don't trim the stored history around compaction boundaries yourself — each model adapter already omits what its own provider's compaction replaces, while models from other providers, which ignore a foreign compaction item, still get the full earlier history they need.
 
 ## Model-agnostic compaction
 

@@ -518,8 +518,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
         frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
         if message_history:
-            # Mixed custody: the server owns the history's compaction boundaries; a client-supplied
-            # one would trim the trusted server prefix off the wire. See `_drop_compaction_parts`.
+            # A client-supplied compaction part would trim the trusted server-side history off the
+            # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
             frontend_messages = _drop_compaction_parts(frontend_messages)
         message_history = [*(message_history or []), *frontend_messages]
 
