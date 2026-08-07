@@ -125,6 +125,7 @@ You can also pass messages from previous runs to continue a conversation or prov
 
 As shown in the example above, [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] makes it easy to stream the agent's final output as it comes in.
 It also takes an optional `event_stream_handler` argument that you can use to gain insight into what is happening during the run before the final output is produced.
+During a realtime session, the same handler stream can also contain realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members.
 
 The example below shows how to stream events and text output. You can also [stream structured output](output.md#streaming-structured-output).
 
@@ -237,6 +238,7 @@ _(This example is complete, it can be run "as is")_
 Like `agent.run_stream()`, [`agent.run()`][pydantic_ai.agent.AbstractAgent.run_stream] takes an optional `event_stream_handler`
 argument that lets you stream all events from the model's streaming response and the agent's execution of tools.
 Unlike `run_stream()`, it always runs the agent graph to completion even if text was received ahead of tool calls that looked like it could've been the final result.
+During a realtime session, an event stream handler can also receive realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members.
 
 For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] method is also available as a wrapper around `run(event_stream_handler=...)`. It is an async context manager that yields an async iterator over [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] ending with an [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] carrying the final run result.
 
