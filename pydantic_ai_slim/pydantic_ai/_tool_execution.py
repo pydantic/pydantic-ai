@@ -37,6 +37,60 @@ _OUTPUT_VALIDATION_FAILED = 'Output tool not used - output failed validation.'
 _TOOL_SKIPPED_FINAL_ALREADY_PROCESSED = 'Tool not executed - a final result was already processed.'
 
 
+def build_tool_return_part(
+    tool_result: Any,
+    *,
+    call: _messages.ToolCallPart,
+    tool_kind: _messages.ToolPartKind | None,
+) -> tuple[_messages.ToolReturnPart, str | Sequence[_messages.UserContent] | None, Sequence[str] | None]:
+    """Translate a settled function-tool result into normalized history, optional user content, and tool reveals.
+
+    The third element is the validated [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn.tools] request;
+    the caller decides how (or whether) those tools can be revealed on its surface.
+    """
+    if isinstance(tool_result, ToolDenied):
+        return (
+            _messages.ToolReturnPart(
+                tool_name=call.tool_name,
+                content=tool_result.message,
+                tool_call_id=call.tool_call_id,
+                outcome='denied',
+            ),
+            None,
+            None,
+        )
+
+    if isinstance(tool_result, _messages.ToolReturn):
+        tool_return = cast(_messages.ToolReturn[Any], tool_result)
+    elif isinstance(tool_result, list) and any(
+        isinstance(item, _messages.ToolReturn) for item in cast(list[Any], tool_result)
+    ):
+        raise exceptions.UserError(
+            f'The return value of tool {call.tool_name!r} contains invalid nested `ToolReturn` objects. '
+            f'`ToolReturn` should be used directly.'
+        )
+    else:
+        tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
+
+    tools = tool_return.tools
+    if tools is not None and (
+        isinstance(tools, str) or not isinstance(tools, Sequence) or any(not isinstance(name, str) for name in tools)
+    ):
+        raise exceptions.UserError(
+            '`ToolReturn.tools` must be a list of tool names; pass a list of strings instead of a bare '
+            'string, non-sequence value, or non-string elements.'
+        )
+
+    return_part = _messages.ToolReturnPart(
+        tool_name=call.tool_name,
+        tool_call_id=call.tool_call_id,
+        content=tool_return.return_value,
+        metadata=tool_return.metadata,
+        tool_kind=tool_kind,
+    )
+    return _messages.ToolReturnPart.narrow_type(return_part), tool_return.content or None, tools
+
+
 def _duplicate_tool_call_ids(calls: Sequence[_messages.ToolCallPart]) -> list[str]:
     """Return duplicate `tool_call_id` values, in the order each ID is first encountered as a duplicate."""
     seen: set[str] = set()
@@ -583,14 +637,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 else:
                     raise RuntimeError('Expected validated tool call')  # pragma: no cover
             elif isinstance(tool_call_result, ToolDenied):
-                return [
-                    _messages.ToolReturnPart(
-                        tool_name=call.tool_name,
-                        content=tool_call_result.message,
-                        tool_call_id=call.tool_call_id,
-                        outcome='denied',
-                    )
-                ], None
+                tool_result = tool_call_result
             elif isinstance(tool_call_result, exceptions.ToolFailed):
                 m = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
@@ -635,42 +682,16 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 )
             ], None
 
-        if isinstance(tool_result, _messages.ToolReturn):
-            tool_return = cast(_messages.ToolReturn[Any], tool_result)
-        elif isinstance(tool_result, list) and any(
-            isinstance(i, _messages.ToolReturn) for i in cast(list[Any], tool_result)
-        ):
-            raise exceptions.UserError(
-                f'The return value of tool {call.tool_name!r} contains invalid nested `ToolReturn` objects. '
-                f'`ToolReturn` should be used directly.'
-            )
-        else:
-            tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
-
-        tools = tool_return.tools
-        if tools is not None and (
-            isinstance(tools, str)
-            or not isinstance(tools, Sequence)
-            or any(not isinstance(name, str) for name in tools)
-        ):
-            raise exceptions.UserError(
-                '`ToolReturn.tools` must be a list of tool names; pass a list of strings instead of a bare '
-                'string, non-sequence value, or non-string elements.'
-            )
-
         # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
         # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the
         # typed identity intact across multi-turn history: the next turn's discovery parser /
         # cross-provider replay sees a typed `ToolSearchReturnPart` instead of a base part.
         tool_def = self.tool_manager.get_tool_def(call.tool_name)
-        return_part = _messages.ToolReturnPart(
-            tool_name=call.tool_name,
-            tool_call_id=call.tool_call_id,
-            content=tool_return.return_value,
-            metadata=tool_return.metadata,
+        return_part, tool_user_content, tools = build_tool_return_part(
+            tool_result,
+            call=call,
             tool_kind=tool_def.tool_kind if tool_def else None,
         )
-        return_part = _messages.ToolReturnPart.narrow_type(return_part)
 
         parts: _FunctionCallParts = [return_part]
         if tools:
@@ -684,7 +705,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     tools_added=list(dict.fromkeys(tools)), tool_call_id=call.tool_call_id
                 )
             )
-        return parts, tool_return.content or None
+        return parts, tool_user_content
 
     async def _call_tools(  # noqa: C901
         self,

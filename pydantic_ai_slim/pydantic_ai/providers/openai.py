@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
 import httpx
 
@@ -10,6 +10,9 @@ from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
+
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
     from openai import AsyncOpenAI
@@ -52,6 +55,28 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             openai_model_profile(model_name),
             OpenAIModelProfile(tool_addition_mode='with_definitions', tool_deferral_mode='with_tool_search'),
         )
+
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+        return {
+            'supports_image_input': True,
+            'supports_manual_turn_control': True,
+            'supports_interruption': True,
+            'supports_output_truncation': True,
+            'supports_session_seeding': True,
+            'supports_seeding_images': True,
+            'supports_seeding_audio': True,
+            # The realtime models keep talking while a tool call is outstanding — they're tuned to
+            # emit filler ("let me check that") rather than going silent — so there's no per-tool
+            # wire flag to set, unlike Gemini. The session already runs tools in the background and
+            # defers `response.create` while a response is active, so this is true end to end.
+            'supports_async_tool_calls': True,
+            'audio_input_sample_rate': 24000,
+            'audio_output_sample_rate': 24000,
+            # Reasoning effort is only accepted by the `gpt-realtime-2*` reasoning models; the GA
+            # `gpt-realtime` rejects it ("Unsupported option for this model").
+            'supports_thinking': model_name.startswith('gpt-realtime-2'),
+        }
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

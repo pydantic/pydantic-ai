@@ -1,0 +1,478 @@
+"""xAI Grok Voice realtime API provider for speech-to-speech sessions.
+
+Connects to `wss://api.x.ai/v1/realtime` over a WebSocket. xAI's realtime API is a deliberate clone of
+the OpenAI Realtime protocol, so this provider reuses the OpenAI codec from
+[`pydantic_ai.realtime.openai`][pydantic_ai.realtime.openai] — event mapping, session seeding, tool
+conversion, server-VAD config, and the WebSocket connection itself — and diverges only where xAI does:
+
+- the `session.update` shape (`voice`/`turn_detection` sit at the session top level, not nested under
+  `audio` as on OpenAI's GA surface);
+- input audio transcription, delivered as cumulative
+  `conversation.item.input_audio_transcription.updated` snapshots plus a final `.completed`, rather
+  than OpenAI's incremental `.delta` events (see [`map_event`][pydantic_ai.realtime.xai.map_event]);
+- native conversation resumption when a reconnect policy is configured: the provider-assigned
+  `conversation.id` is reused and its replay burst is suppressed from local history;
+- no output truncation (`conversation.item.truncate` is unsupported), so
+  [`RealtimeModelProfile.supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation]
+  is `False` while cancellation-based interruption still works;
+- no text output — the API has no response-modality control and always speaks — so
+  [`RealtimeModelProfile.supports_text_output`][pydantic_ai.realtime.RealtimeModelProfile.supports_text_output]
+  is `False` and `output_modality='text'` raises rather than silently coming back as audio.
+
+Requires the `websockets` package (the `realtime` optional group), `xai-sdk` (the `xai` group, for
+[`XaiProvider`][pydantic_ai.providers.xai.XaiProvider]), and `openai` (the `openai` group, whose SDK
+supplies the event types the shared OpenAI codec is built on):
+
+    pip install "pydantic-ai-slim[realtime,xai,openai]"
+"""
+
+from __future__ import annotations as _annotations
+
+import json
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import KW_ONLY, dataclass, field, replace
+from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import quote
+
+try:
+    import websockets
+    from openai.types.realtime import (
+        RealtimeResponseUsage,
+        RealtimeSessionCreateRequest,
+        ResponseFunctionCallArgumentsDoneEvent,
+        SessionCreatedEvent,
+    )
+    from websockets.asyncio.client import ClientConnection
+except ImportError as _import_error:  # pragma: no cover
+    raise ImportError(
+        'Please install the `websockets` and `openai` packages to use the xAI Grok Voice realtime model '
+        '(`openai` supplies the event types of the OpenAI codec this provider reuses), you can use the '
+        '`realtime`, `xai`, and `openai` optional groups - '
+        '`pip install "pydantic-ai-slim[realtime,xai,openai]"`'
+    ) from _import_error
+
+from .._instrumentation import get_instructions
+from ..exceptions import UserError
+from ..messages import ModelMessage
+from ..models import ModelRequestParameters
+from ..providers import infer_provider
+from ..tools import ToolDefinition
+from ..usage import RequestUsage
+from ._base import (
+    ConversationCreated,
+    ConversationItemCreated,
+    InputTranscript,
+    RealtimeCodecEvent,
+    RealtimeModel,
+    RealtimeModelProfileSpec,
+    RealtimeModelSettings,
+    RealtimeSessionReconnectEvent,
+    ReconnectPolicy,
+    ToolCall,
+    inject_trace_context,
+    resolve_advertised_tools,
+)
+from ._openai_protocol import (
+    RealtimeHandshakeError,
+    expect_event,
+    map_connect_errors,
+    map_conversation_event,
+    map_event as _map_openai_event,
+    realtime_websocket_url,
+    resolve_base_turn_detection,
+    resolve_transcription_model,
+    seed_items,
+    tool_choice_config,
+    tool_def_to_openai,
+    turn_detection_config,
+)
+from .openai import OpenAIRealtimeConnection, ServerVAD
+
+if TYPE_CHECKING:
+    from ..providers.xai import XaiProvider
+
+# `input_transcription_model='auto'` resolves to this — xAI's realtime transcription model. Kept behind
+# the `'auto'` sentinel (see `resolve_transcription_model`) so it can change without altering the behavior
+# of apps on `'auto'`.
+_AUTO_TRANSCRIPTION_MODEL = 'grok-transcribe'
+
+__all__ = (
+    'XaiRealtimeModel',
+    'XaiRealtimeModelSettings',
+    'XaiRealtimeConnection',
+    'map_event',
+)
+
+
+class XaiRealtimeModelSettings(RealtimeModelSettings, total=False):
+    """Settings specific to xAI realtime models.
+
+    Grok Voice always produces audio, so its profile reports
+    [`supports_text_output=False`][pydantic_ai.realtime.RealtimeModelProfile.supports_text_output] and
+    the inherited `output_modality='text'` is rejected up front rather than quietly ignored.
+    """
+
+    xai_voice: str
+    """Voice used for audio output, e.g. `eve`, or a custom voice ID."""
+
+    xai_turn_detection: ServerVAD
+    """xAI-specific server-VAD configuration.
+
+    When present, this fully overrides the cross-provider `turn_detection` setting.
+    """
+
+
+def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
+    """Map a raw xAI Grok Voice realtime event to a [`RealtimeCodecEvent`][pydantic_ai.realtime.codec.RealtimeCodecEvent].
+
+    xAI clones the OpenAI Realtime protocol, so most events map identically via the OpenAI codec.
+    The first exception is input audio transcription: xAI emits cumulative
+    `conversation.item.input_audio_transcription.updated` snapshots (which may retroactively *correct*
+    earlier text — `'Hello?'` becomes `'Hello, my name is'`) plus cumulative `.completed` snapshots,
+    rather than OpenAI's incremental `.delta`. The partials are surfaced as cumulative
+    [`InputTranscript`][pydantic_ai.realtime.codec.InputTranscript]s so a live transcript can render
+    the user's words as they are spoken; the session adopts each snapshot wholesale, appending when it
+    merely extends and replacing when xAI revises itself. The shared codec still drops interim
+    `.completed` snapshots.
+    The other exception is xAI's conversation lifecycle events, which are surfaced as codec control
+    events so the connection can capture `conversation.id` and the session can suppress resume replay.
+    """
+    event_type = data.get('type')
+    if event_type == 'conversation.item.input_audio_transcription.updated':
+        # xAI-only frame with no SDK model behind it, so it is read straight off the wire shape.
+        transcript = data.get('transcript')
+        item_id = data.get('item_id')
+        return InputTranscript(
+            text=transcript if isinstance(transcript, str) else '',
+            cumulative=True,
+            item_id=item_id if isinstance(item_id, str) else None,
+        )
+    if event_type in ('conversation.created', 'conversation.item.added', 'conversation.item.created'):
+        return map_conversation_event(data)
+    event = _map_openai_event(data)
+    if isinstance(event, ToolCall):
+        item_id = ResponseFunctionCallArgumentsDoneEvent.construct(**data).item_id
+        if item_id:
+            event = replace(event, item_id=item_id)
+    elif isinstance(event, InputTranscript):
+        # xAI's final `.completed` is a whole snapshot like its `.updated` partials, so it too must
+        # replace the accumulated text. Read as an increment it would be *appended* to the snapshots it
+        # supersedes, and a revised turn would end up saying everything twice.
+        event = replace(event, cumulative=True)
+    return event
+
+
+class XaiRealtimeConnection(OpenAIRealtimeConnection):
+    """A live WebSocket connection to the xAI Grok Voice realtime API.
+
+    Reuses [`OpenAIRealtimeConnection`][pydantic_ai.realtime.openai.OpenAIRealtimeConnection] for the
+    shared wire protocol, while mapping xAI's cumulative input transcription and conversation lifecycle
+    events and emitting the resumption replay controls captured during reconnect handshakes.
+    """
+
+    _provider_name = 'xai'
+    _provider_label = 'xAI Grok Voice'
+    _supports_tool_result_images = False
+
+    def __init__(
+        self,
+        ws: ClientConnection,
+        *,
+        dial: Callable[[], Awaitable[ClientConnection]] | None = None,
+        reconnect: ReconnectPolicy | None = None,
+        input_transcription_enabled: bool = True,
+        model_name: str | None = None,
+        model_name_getter: Callable[[], str | None] | None = None,
+        conversation_id: str | None = None,
+        replayed_items: list[ConversationItemCreated] | None = None,
+    ) -> None:
+        super().__init__(
+            ws,
+            dial=dial,
+            reconnect=reconnect,
+            input_transcription_enabled=input_transcription_enabled,
+            model_name=model_name,
+            model_name_getter=model_name_getter,
+        )
+        self._restores_state_on_reconnect = True
+        self._conversation_id = conversation_id
+        self._replayed_items = replayed_items if replayed_items is not None else []
+
+    def _map_response_usage(self, usage: RealtimeResponseUsage | None) -> RequestUsage | None:
+        mapped = super()._map_response_usage(usage)
+        if mapped is None:
+            return None
+        assert usage is not None
+        inp = usage.input_token_details or None
+        out = usage.output_token_details or None
+        # xAI bills Grok Voice by audio second, so this provider-owned bucket cannot be reconstructed
+        # from the OpenAI-protocol token counts.
+        for key, raw in (
+            ('input_grok_tokens', (inp.model_extra or {}).get('grok_tokens') if inp is not None else None),
+            ('output_grok_tokens', (out.model_extra or {}).get('grok_tokens') if out is not None else None),
+            ('billable_audio_seconds', (usage.model_extra or {}).get('billable_audio_seconds')),
+        ):
+            if isinstance(raw, int) and not isinstance(raw, bool) and raw:
+                mapped.details[key] = raw
+        return mapped
+
+    def set_conversation(self, conversation: Callable[[], Sequence[ModelMessage]]) -> None:
+        """Ignored: xAI restores the conversation itself, so replaying it would say everything twice."""
+
+    @property
+    def conversation_id(self) -> str | None:
+        """The xAI conversation ID used for native session resumption."""
+        return self._conversation_id
+
+    @conversation_id.setter
+    def conversation_id(self, conversation_id: str | None) -> None:
+        self._conversation_id = conversation_id
+
+    def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
+        return map_event(data)
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        async for event in super().__aiter__():
+            yield event
+            if isinstance(event, RealtimeSessionReconnectEvent):
+                replayed_items = self._replayed_items[:]
+                self._replayed_items.clear()
+                for replayed_item in replayed_items:
+                    yield replayed_item
+
+
+@dataclass(init=False)
+class XaiRealtimeModel(RealtimeModel):
+    """xAI Grok Voice realtime API model.
+
+    Pass `provider='xai'` (the default, which reads `XAI_API_KEY`) or an
+    [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider] constructed with `api_key=`. A custom
+    `api_host` is not supported, and a provider constructed only with `xai_client=` cannot be used
+    because the WebSocket connection needs access to the API key. The realtime WebSocket URL is
+    `wss://api.x.ai/v1/realtime`.
+
+    Args:
+        model: The model name, e.g. `grok-voice-latest` (the default, tracks the current model) or a
+            pinned version like `grok-voice-think-fast-1.0`. The `model` query parameter is required by
+            the server, which otherwise falls back to a default silently.
+        provider: The provider to use for authentication and the base URL. Defaults to `'xai'`.
+        profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
+            merged over the provider's — a partial dict, or a callable taking the resolved profile and
+            returning the one to use. Mirrors `profile=` on a standard
+            [`Model`][pydantic_ai.models.Model], and is the escape hatch when a model name doesn't
+            identify the model (e.g. an Azure deployment named something other than its model).
+        reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
+            recover from a dropped connection. Setting a policy enables xAI's native session resumption;
+            prior turns are restored when reconnecting within xAI's resumption window (reportedly ~30
+            minutes). With no policy, the low-level connection reports a non-recoverable session error;
+            `RealtimeSession` raises
+            [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from iteration.
+    """
+
+    model: str = 'grok-voice-latest'
+    _: KW_ONLY
+    settings: RealtimeModelSettings | None = None
+    reconnect: ReconnectPolicy | None = None
+    _provider: XaiProvider = field(init=False, repr=False)
+    _api_key: str = field(init=False, repr=False)
+
+    # Written out rather than generated because `profile` has to be an init argument while
+    # `RealtimeModel.profile` stays the *resolved* profile, exactly as on a standard `Model` — a
+    # dataclass field of that name would shadow the property.
+    def __init__(
+        self,
+        model: str = 'grok-voice-latest',
+        *,
+        provider: XaiProvider | str = 'xai',
+        settings: RealtimeModelSettings | None = None,
+        profile: RealtimeModelProfileSpec | None = None,
+        reconnect: ReconnectPolicy | None = None,
+    ) -> None:
+        self.model = model
+        self.settings = settings
+        self.reconnect = reconnect
+        self._profile = profile
+        if isinstance(provider, str):
+            provider = cast('XaiProvider', infer_provider(provider))
+        if provider.name != 'xai':
+            # Reading the xAI-specific `api_key`/`api_host` off a foreign provider below would fail with
+            # an `AttributeError` naming a field the user never heard of, instead of the real mistake.
+            raise UserError(f"`XaiRealtimeModel` requires an `XaiProvider` or `provider='xai'`; got {provider.name!r}.")
+        api_key = provider.api_key
+        if not api_key:
+            raise UserError(
+                'The xAI realtime provider needs an API key for the WebSocket connection, but the '
+                '`XaiProvider` was built from a pre-configured `xai_client` whose key is not exposed. '
+                'Pass `provider=XaiProvider(api_key=...)` (or set `XAI_API_KEY`) instead.'
+            )
+        if provider.api_host is not None:
+            # The realtime WebSocket URL is derived from `base_url` (the canonical xAI host), not the
+            # gRPC channel target set by `api_host`. Rather than silently connect to the canonical host
+            # with the key while the user expects their custom host, fail loudly.
+            raise UserError(
+                'The xAI realtime provider does not support a custom `api_host`: the realtime WebSocket '
+                'connects to the canonical xAI realtime endpoint, not the gRPC channel target that '
+                '`api_host` sets. Remove `api_host` from the `XaiProvider` to use realtime.'
+            )
+        self._provider = provider
+        self._api_key = api_key
+
+    @property
+    def model_name(self) -> str:
+        return self.model
+
+    @property
+    def system(self) -> str:
+        return 'xai'
+
+    def _session_config(
+        self,
+        instructions: str,
+        tools: list[ToolDefinition] | None,
+        model_settings: XaiRealtimeModelSettings | None,
+    ) -> dict[str, Any]:
+        model_settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        # xAI puts `voice` and `turn_detection` at the session top level, unlike OpenAI's GA surface which
+        # nests them under `audio`. `turn_detection` is always set: a dict enables VAD, `None` disables it.
+        audio_input: dict[str, Any] = {'format': {'type': 'audio/pcm', 'rate': 24000}}
+        transcription_model = resolve_transcription_model(
+            model_settings.get('input_transcription_model', 'auto'), default=_AUTO_TRANSCRIPTION_MODEL
+        )
+        if transcription_model is not None:
+            audio_input['transcription'] = {'model': transcription_model}
+        if 'xai_turn_detection' in model_settings:
+            turn_detection = model_settings['xai_turn_detection']
+        elif 'turn_detection' in model_settings:
+            turn_detection = resolve_base_turn_detection(model_settings['turn_detection'])
+        else:
+            turn_detection = ServerVAD()
+        config: dict[str, Any] = {
+            'instructions': instructions,
+            'turn_detection': turn_detection_config(turn_detection),
+            'audio': {'input': audio_input, 'output': {'format': {'type': 'audio/pcm', 'rate': 24000}}},
+        }
+        if voice := model_settings.get('xai_voice'):
+            config['voice'] = voice
+        advertised_tools, tool_choice = resolve_advertised_tools(tools, model_settings.get('tool_choice'))
+        if advertised_tools:
+            config['tools'] = [tool_def_to_openai(t) for t in advertised_tools]
+        if (max_tokens := model_settings.get('max_tokens')) is not None:
+            config['max_output_tokens'] = max_tokens
+        if (parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
+            config['parallel_tool_calls'] = parallel_tool_calls
+        if tool_choice is not None:
+            config['tool_choice'] = tool_choice_config(tool_choice)
+        if (thinking := model_settings.get('thinking')) is not None and self.profile.get('supports_thinking', False):
+            # Grok Voice exposes only enabled-at-high and disabled, so every enabled unified effort
+            # maps to its sole enabled value.
+            config['reasoning'] = {'effort': 'high' if thinking is not False else 'none'}
+        if self.reconnect is not None:
+            config['resumption'] = {'enabled': True}
+        return config
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[XaiRealtimeConnection]:
+        # The `model` query parameter is required: without it the server silently falls back to a default.
+        url = realtime_websocket_url(self._provider.base_url, model=self.model)
+        headers = {'Authorization': f'Bearer {self._api_key}'}
+        # Propagate trace context over the handshake (see the OpenAI provider for the rationale).
+        inject_trace_context(headers)
+        settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        handshake_timeout = settings.get('handshake_timeout', 30.0)
+        instructions = get_instructions(messages, model_request_parameters) or ''
+        session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
+        transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
+        # Convert the history to seed items before dialing. Content this provider can't replay is the
+        # caller's mistake, not the API's, so it should surface as a `UserError` without a socket ever
+        # being opened -- and stay outside `map_connect_errors`, which is only about reaching the API.
+        seed = await seed_items(messages, profile=self.profile, provider_name=self.system)
+
+        # `dial` opens and configures a connection. A reconnect closes the previous connection
+        # (including one left half-open by a failed handshake), then resumes the captured conversation,
+        # so sockets don't accumulate; teardown closes whatever is current.
+        cm: AbstractAsyncContextManager[ClientConnection] | None = None
+
+        # The model the server reports actually serving, from the `session.created` handshake. xAI
+        # accepts any model slug and silently substitutes its current default, so this is the only
+        # record of what actually served the session (see `RealtimeConnection.model_name`).
+        server_model: str | None = None
+        conversation_id: str | None = None
+        replayed_items: list[ConversationItemCreated] = []
+        connection: XaiRealtimeConnection | None = None
+
+        async def dial() -> ClientConnection:
+            nonlocal cm, conversation_id, server_model
+            if cm is not None:
+                previous, cm = cm, None
+                await previous.__aexit__(None, None, None)
+            resume_id = connection.conversation_id if connection is not None else None
+            dial_url = f'{url}&conversation_id={quote(resume_id, safe="")}' if resume_id else url
+            opening = websockets.connect(dial_url, additional_headers=headers)
+            ws = await opening.__aenter__()
+            cm = opening
+            created = await expect_event(ws, 'session.created', timeout=handshake_timeout)
+            session = SessionCreatedEvent.construct(**created).session
+            model = session.model if isinstance(session, RealtimeSessionCreateRequest) else None
+            if isinstance(model, str) and model:
+                server_model = model
+            if self.reconnect is not None:
+                conversation = map_conversation_event(
+                    await expect_event(ws, 'conversation.created', timeout=handshake_timeout)
+                )
+                if not isinstance(conversation, ConversationCreated):
+                    raise RealtimeHandshakeError(
+                        '`conversation.created` did not include a `conversation.id`, so the session '
+                        'cannot be resumed after a drop'
+                    )
+                conversation_id = conversation.conversation_id
+                if connection is not None:
+                    connection.conversation_id = conversation_id
+            await ws.send(json.dumps({'type': 'session.update', 'session': session_config}))
+
+            def capture_replayed_item(data: dict[str, Any]) -> None:
+                event = map_conversation_event(data, replayed=True)
+                if isinstance(event, ConversationItemCreated):
+                    replayed_items.append(event)
+
+            await expect_event(
+                ws,
+                'session.updated',
+                timeout=handshake_timeout,
+                on_unexpected=capture_replayed_item if resume_id is not None else None,
+            )
+            return ws
+
+        try:
+            # Map a rejected config or WebSocket upgrade to the same typed exceptions a regular request
+            # raises. The reconnect loop dials outside this manager, so it keeps treating a drop as
+            # retryable rather than fatal.
+            with map_connect_errors(self.model):
+                ws = await dial()
+                # Seed prior conversation once, after the initial handshake. Reconnects don't re-seed:
+                # xAI restores the server-side conversation and replays its item lifecycle events instead.
+                for item in seed:
+                    await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
+            connection = XaiRealtimeConnection(
+                ws,
+                dial=dial,
+                reconnect=self.reconnect,
+                input_transcription_enabled=transcription_enabled,
+                model_name=server_model,
+                # A re-dial's `session.created` updates `server_model`, so read it through the closure
+                # rather than snapshotting it here: xAI substitutes its current default for any slug,
+                # and after a reconnect that can be a different model than the one that started.
+                model_name_getter=lambda: server_model,
+                conversation_id=conversation_id,
+                replayed_items=replayed_items,
+            )
+            yield connection
+        finally:
+            if cm is not None:
+                await cm.__aexit__(None, None, None)
