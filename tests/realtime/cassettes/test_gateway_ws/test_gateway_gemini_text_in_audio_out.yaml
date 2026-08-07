@@ -1,0 +1,115 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    setup:
+      model: publishers/google/models/gemini-live-2.5-flash
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Answer in two or three words.
+        role: user
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  data:
+    setupComplete:
+      sessionId: 0fa701a5-cfb0-4077-acc4-094c6b5645c6
+- kind: message
+  direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Say a short greeting.
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: Hello
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        text: ' there.'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      outputTranscription:
+        finished: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: qO9z7/zxYPS585T10Peu9w/4Qvoj/Nf4DPUE897tS+vg
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: pgIqA4EDtAOFA0MD7QKjAlQCWgKfAtECSAOyA94D4APW
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        role: model
+        parts:
+        - inlineData:
+            mimeType: audio/pcm
+            data: 8v/y//D/7//u/+z/6//q/+n/6f/o/+n/6f/m/+f/5//l
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+      groundingMetadata: {}
+    usageMetadata:
+      promptTokenCount: 12
+      candidatesTokenCount: 3
+      totalTokenCount: 15
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 12
+      candidatesTokensDetails:
+      - modality: TEXT
+        tokenCount: 3
+      - modality: AUDIO
