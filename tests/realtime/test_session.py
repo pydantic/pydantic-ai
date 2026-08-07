@@ -108,7 +108,7 @@ from pydantic_ai.realtime.codec import (
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
@@ -5047,6 +5047,126 @@ async def test_agent_realtime_session_denied_tool_returns_denial_message() -> No
     assert isinstance(result.part, ToolReturnPart)
     assert result.part.outcome == 'denied'
     assert 'denied' in str(result.part.content).lower()
+
+
+# --- declarative `requires_approval=True` gating ------------------------------------------------
+#
+# A tool can be deferred *declaratively* (`requires_approval=True` → `ToolDefinition.kind='unapproved'`)
+# as well as by raising `ApprovalRequired`. The graph pipeline classifies by kind before executing
+# anything; the session's `handle_call` path used to execute first and react to what was raised, so a
+# `requires_approval=True` tool ran with approval silently skipped and no handler ever consulted. The
+# four tests below pin the whole matrix, and each asserts *whether the body ran* — the thing that
+# actually matters when the gate is approval.
+
+
+def _approval_agent() -> tuple[Agent[None, str], list[str]]:
+    """An agent whose only tool is declaratively approval-gated, plus an execution log."""
+    executed: list[str] = []
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain(requires_approval=True)
+    def transfer_funds() -> str:
+        executed.append('ran')
+        return 'transferred'
+
+    return agent, executed
+
+
+async def test_standard_run_pauses_on_a_declaratively_approval_gated_tool() -> None:
+    # The reference behavior the session has to match: the run ends with the call awaiting approval,
+    # and the body never runs.
+    agent, executed = _approval_agent()
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('transfer_funds', {}, tool_call_id='tc')])
+
+    result = await agent.run('go', model=FunctionModel(call_tool), output_type=[str, DeferredToolRequests])
+    assert isinstance(result.output, DeferredToolRequests)
+    assert [call.tool_name for call in result.output.approvals] == ['transfer_funds']
+    assert executed == []
+
+
+async def test_realtime_session_does_not_execute_an_approval_gated_tool_without_a_handler() -> None:
+    # No handler to resolve the approval: the session answers the model with the documented
+    # explanation and — the point of the gate — never runs the tool.
+    agent, executed = _approval_agent()
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='transfer_funds', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session() as session:
+        events = [e async for e in session]
+
+    assert executed == []
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert 'requires approval' in str(result.part.content)
+    assert 'cannot be completed during a realtime session' in str(result.part.content)
+
+
+async def test_realtime_session_denies_an_approval_gated_tool_through_a_handler() -> None:
+    # A `HandleDeferredToolCalls` handler that denies is now actually consulted, and the denial is
+    # recorded as such rather than as a successful return.
+    agent, executed = _approval_agent()
+
+    def deny(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: False for call in requests.approvals})
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='transfer_funds', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, capabilities=[HandleDeferredToolCalls(handler=deny)]).session() as session:
+        events = [e async for e in session]
+
+    assert executed == []
+    lifecycle = [event for event in events if isinstance(event, DeferredToolRequestsEvent)]
+    assert lifecycle == [
+        DeferredToolRequestsEvent(
+            DeferredToolRequests(approvals=[ToolCallPart(tool_name='transfer_funds', args='{}', tool_call_id='tc')])
+        )
+    ]
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert result.part.outcome == 'denied'
+
+
+async def test_realtime_session_executes_an_approval_gated_tool_once_approved() -> None:
+    # Approval granted inline: the tool runs and its real return reaches the model, so the gate
+    # blocks rather than breaks the tool.
+    agent, executed = _approval_agent()
+
+    def approve(ctx: RunContext[Any], requests: DeferredToolRequests) -> DeferredToolResults:
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='transfer_funds', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model, capabilities=[HandleDeferredToolCalls(handler=approve)]).session() as session:
+        events = [e async for e in session]
+
+    assert executed == ['ran']
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert result.part.content == 'transferred'
+    assert result.part.outcome == 'success'
+
+
+async def test_realtime_session_explains_a_declaratively_external_tool() -> None:
+    # `kind='external'` diverged the same way, differently: `execute_tool_call` refuses outright with
+    # `RuntimeError('External tools cannot be called')`, which would have escaped the session as an
+    # internal error. Classified with the same helper, it now takes the `CallDeferred` path and gets
+    # the documented explanation instead.
+    agent: Agent[None, str] = Agent(
+        toolsets=[ExternalToolset(tool_defs=[ToolDefinition(name='lookup', kind='external')])]
+    )
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='lookup', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+    async with agent.realtime(model).session() as session:
+        events = [e async for e in session]
+
+    assert not any(isinstance(e, RealtimeSessionErrorEvent) for e in events)
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert isinstance(result.part, ToolReturnPart)
+    assert 'runs externally' in str(result.part.content)
+    assert 'cannot be completed during a realtime session' in str(result.part.content)
 
 
 async def test_agent_realtime_session_resolves_per_run_toolsets() -> None:

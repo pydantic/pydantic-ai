@@ -1020,6 +1020,33 @@ class ToolManager(Generic[AgentDepsT]):
             raise
         if on_validate is not None:
             await on_validate(validated.args_valid)
+        # A tool can be deferred *declaratively* through `ToolDefinition.kind` — `requires_approval=True`
+        # makes it `'unapproved'`, an external tool `'external'` — as well as by raising. The graph
+        # pipeline classifies by kind *before* it executes anything (`_tool_execution._collect_deferred_calls`),
+        # so such a tool never runs unresolved. This method executes first and reacts to what was raised,
+        # so without the same classification a `requires_approval=True` tool would simply run: approval
+        # silently skipped, and a `HandleDeferredToolCalls` handler never consulted. Read the kind off the
+        # shared `ToolDefinition.defer` so the two paths can't drift apart again.
+        #
+        # Invalid arguments still take the execution path, which raises the validation error as a retry —
+        # matching the graph, which only collects a deferred call once its arguments validate. A deferral
+        # already raised during validation carries the caller's metadata, so it stays with the path below.
+        if (
+            not approved
+            and validated.args_valid
+            and validated.deferral is None
+            and (deferred_tool := validated.tool) is not None
+            and deferred_tool.tool_def.defer
+        ):
+            declared_deferral: CallDeferred | ApprovalRequired = (
+                CallDeferred() if deferred_tool.tool_def.kind == 'external' else ApprovalRequired()
+            )
+            return await self._resolve_single_deferred(
+                call,
+                declared_deferral,
+                wrap_validation_errors=wrap_validation_errors,
+                on_inline_deferred=on_inline_deferred,
+            )
         try:
             return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         except (CallDeferred, ApprovalRequired) as exc:

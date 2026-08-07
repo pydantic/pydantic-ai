@@ -67,7 +67,14 @@ restrictions—are canonical on the [Gemini provider page](gemini.md#native-tool
 
 [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] can resolve deferred
 or approval-required calls inline. If no handler resolves one, the model receives an explanation
-that the tool cannot complete during a realtime session.
+that the tool cannot complete during a realtime session — the tool itself is never executed.
+
+This covers both ways a call is deferred: raising
+[`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+[`CallDeferred`][pydantic_ai.exceptions.CallDeferred] from the tool, and declaring it up front with
+`requires_approval=True` or an [external toolset](../toolsets.md#external-toolset). An
+approval-gated tool is still advertised to the model, exactly as in a standard run; calling it opens
+the approval flow rather than running the tool.
 
 A realtime session cannot pause and return a `DeferredToolRequests` output for an out-of-band
 result. Resolve the request during the call or move that workflow to a standard agent run.
