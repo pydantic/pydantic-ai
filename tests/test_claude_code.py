@@ -40,6 +40,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPart,
     ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -408,6 +409,33 @@ async def test_a_tool_call_left_pending_by_an_error_is_reported_as_failed():
     )
 
 
+async def test_a_tool_call_cut_off_mid_arguments_re_emits_none_of_its_fragments():
+    """A call the run failed part-way through closes out on exactly the fragments it already streamed.
+
+    The completing fragment `_handle_tool_call_end` emits for arguments that never arrived as JSON
+    text must not fire for a call that streamed some, or a client would concatenate its truncated
+    JSON twice. The block reports the `INVALID_JSON` wrapper those arguments degrade to, while the
+    fragments stay verbatim what the model sent.
+    """
+    part = ToolCallPart('get_weather', '{"city":', tool_call_id='call-1')
+
+    async def events() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=part)
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='"Utre', tool_call_id='call-1'))
+        raise RuntimeError('kaboom')
+
+    lines = await _lines(_event_stream(include_partial_messages=True), events())
+
+    assert [
+        line['event']['delta']['partial_json']
+        for line in lines
+        if line['type'] == 'stream_event' and line['event'].get('delta', {}).get('type') == 'input_json_delta'
+    ] == snapshot(['{"city":', '"Utre'])
+    assert [line['message']['content'] for line in lines if line['type'] == 'assistant'] == snapshot(
+        [[{'type': 'tool_use', 'id': 'call-1', 'name': 'get_weather', 'input': {'INVALID_JSON': '{"city":'}}]]
+    )
+
+
 async def test_a_tool_call_left_pending_by_a_cancellation_is_not_an_error():
     """Cancelling a run interrupts its pending calls; an interrupted call is not a failed one.
 
@@ -514,6 +542,30 @@ async def test_adjacent_thinking_parts_become_one_unsigned_block():
     assert [line['message']['content'] for line in lines if line['type'] == 'assistant'] == snapshot(
         [[{'type': 'thinking', 'thinking': 'I should look it up'}]]
     )
+
+
+async def test_an_error_mid_run_of_adjacent_text_parts_still_reports_the_whole_buffer():
+    """A run that fails between adjacent text parts closes out one block carrying everything buffered.
+
+    A run of adjacent parts is the only time text no `assistant` line has reported yet is being held,
+    so it's the only time a failure could lose an answer the model had already produced.
+    """
+    first = TextPart('The answer is ')
+    second = TextPart('42')
+
+    async def events() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=first)
+        yield PartEndEvent(index=0, part=first, next_part_kind='text')
+        yield PartStartEvent(index=1, part=second, previous_part_kind='text')
+        raise RuntimeError('kaboom')
+
+    lines = await _lines(_event_stream(), events())
+
+    assert [line['message']['content'] for line in lines if line['type'] == 'assistant'] == snapshot(
+        [[{'type': 'text', 'text': 'The answer is 42'}]]
+    )
+    # `result.result` reports the failure rather than the answer, which the `errors` block repeats.
+    assert lines[-1]['result'] == snapshot('kaboom')
 
 
 async def test_multimodal_tool_result_uses_the_content_array_form():
@@ -678,6 +730,28 @@ def _reassembled_tool_inputs(lines: list[Any]) -> list[tuple[Any, Any]]:
     return pairs
 
 
+def _reassembled_thinking_signatures(lines: list[Any]) -> list[tuple[Any, Any]]:
+    """Pair each `thinking` block's `signature` with what its `signature_delta` fragments spell out.
+
+    The twin of `_reassembled_tool_inputs` for the other field partial-messages mode streams: a client
+    only ever sees the fragments, so what they spell out has to be exactly the whole-block signature.
+    An unsigned block emits none at all.
+    """
+    pairs: list[tuple[Any, Any]] = []
+    fragments: list[str] = []
+    for line in lines:
+        if line['type'] == 'stream_event':
+            delta = line['event'].get('delta')
+            if is_str_dict(delta) and delta.get('type') == 'signature_delta':
+                fragments.append(delta['signature'])
+        elif line['type'] == 'assistant':
+            block = line['message']['content'][0]
+            if block['type'] == 'thinking':
+                pairs.append((block.get('signature', ''), ''.join(fragments)))
+            fragments = []
+    return pairs
+
+
 async def test_partial_messages_mode():
     """`include_partial_messages` interleaves `stream_event` records without dropping the whole blocks.
 
@@ -707,6 +781,7 @@ async def test_partial_messages_mode():
     assert lines[-1]['type'] == 'result'
     # The fragments a client concatenates rebuild exactly the arguments the whole block reports.
     assert _reassembled_tool_inputs(lines) == snapshot([({'city': 'Utrecht'}, {'city': 'Utrecht'})])
+    assert _reassembled_thinking_signatures(lines) == snapshot([('sig-1', 'sig-1')])
     assert lines == snapshot(
         [
             {
@@ -1049,6 +1124,69 @@ async def test_a_delta_carrying_no_arguments_emits_no_fragment():
         if line['type'] == 'stream_event' and line['event'].get('delta', {}).get('type') == 'input_json_delta'
     ] == snapshot(['{}'])
     assert _reassembled_tool_inputs(lines) == snapshot([({}, {})])
+
+
+async def test_a_thinking_block_emits_its_whole_signature_as_one_final_delta():
+    """A block's signature is streamed once, as the last delta before the `assistant` line closing it.
+
+    Upstream a signature replaces the one before it rather than extending it, so forwarding each
+    `ThinkingPartDelta.signature_delta` would leave a client concatenating fragments that spell out
+    something no block ever claimed: a run of adjacent signed parts would rebuild both signatures for
+    a block signed with only the last, and a part re-signed mid-stream would rebuild the draft plus
+    the final one. One `signature_delta` per block is also how the CLI's own streams read.
+
+    Fed through `transform_stream` because a `FunctionModel` merges consecutive thinking deltas into
+    one part, so adjacent thinking parts can't be expressed as a stream function.
+    """
+    first = ThinkingPart('step one ', signature='sig-a')
+    second = ThinkingPart('step two', signature='sig-b')
+    answer = TextPart('Done.')
+    resigned = ThinkingPart('rethinking', signature='sig-final')
+
+    async def events() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=first)
+        yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta='sig-a'))
+        yield PartEndEvent(index=0, part=first, next_part_kind='thinking')
+        yield PartStartEvent(index=1, part=second, previous_part_kind='thinking')
+        yield PartDeltaEvent(index=1, delta=ThinkingPartDelta(signature_delta='sig-b'))
+        yield PartEndEvent(index=1, part=second)
+        yield PartStartEvent(index=2, part=answer)
+        yield PartEndEvent(index=2, part=answer)
+        yield PartStartEvent(index=3, part=ThinkingPart('rethinking'))
+        yield PartDeltaEvent(index=3, delta=ThinkingPartDelta(signature_delta='sig-draft'))
+        yield PartDeltaEvent(index=3, delta=ThinkingPartDelta(signature_delta='sig-final'))
+        yield PartEndEvent(index=3, part=resigned)
+
+    lines = await _lines(_event_stream(include_partial_messages=True), events())
+
+    assert _reassembled_thinking_signatures(lines) == snapshot([('sig-b', 'sig-b'), ('sig-final', 'sig-final')])
+    # Each block's signature comes after its content, which is where the last delta before the
+    # `assistant` record puts it.
+    assert [
+        line['event']['delta']['type']
+        for line in lines
+        if line['type'] == 'stream_event' and line['event']['type'] == 'content_block_delta'
+    ] == snapshot(
+        ['thinking_delta', 'thinking_delta', 'signature_delta', 'text_delta', 'thinking_delta', 'signature_delta']
+    )
+
+
+async def test_a_signature_carried_by_the_first_chunk_still_reaches_the_stream():
+    """A signature the model sends up front is streamed too, though no delta ever carries it.
+
+    Anthropic's redacted thinking arrives this way — the signature is set as the part is created, so
+    a stream forwarding only `signature_delta`s would report the block's signature nowhere.
+    """
+
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> StreamedChunks:
+        yield {0: DeltaThinkingPart(content='reasoning', signature='sig-at-start')}
+        yield 'Done.'
+
+    lines = await _run_lines(
+        Agent(FunctionModel(stream_function=stream_function)), 'think', include_partial_messages=True
+    )
+
+    assert _reassembled_thinking_signatures(lines) == snapshot([('sig-at-start', 'sig-at-start')])
 
 
 async def test_error_run_still_closes_with_a_result():

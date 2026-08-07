@@ -38,6 +38,8 @@ The `session_id`, `model` and `cwd` the stream reports are constructor parameter
 
 `stream-json` is message-level: each `assistant` line carries one complete content block — a `text`, `thinking` or `tool_use` block — rather than a delta, and all blocks of one model response share a message id. Nothing is emitted until a part is complete, so no partial text ever reaches the stream. Tool results arrive as `user` lines carrying `tool_result` blocks, paired to their call by id, and a run's history compaction becomes a `system`/`compact_boundary` record.
 
+Each of those records is modelled as a `TypedDict` in `pydantic_ai.ui.claude_code.types`, unioned as [`ClaudeCodeEvent`][pydantic_ai.ui.claude_code.ClaudeCodeEvent], so code that reads or builds them — a callback passed to [`transform_stream()`][pydantic_ai.ui.UIEventStream.transform_stream], say — can name shapes like [`AssistantRecord`][pydantic_ai.ui.claude_code.types.AssistantRecord] and [`ToolResultBlock`][pydantic_ai.ui.claude_code.types.ToolResultBlock] instead of matching raw dicts.
+
 Set `include_partial_messages=True` to additionally emit the `stream_event` records the CLI's `--include-partial-messages` flag produces, which wrap Anthropic-shaped streaming deltas. This is a superset: the whole-block `assistant` lines are still emitted.
 
 ```py {title="claude_code_partial.py"}

@@ -32,7 +32,7 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT
 from .. import UIEventStream
-from ._types import (
+from .types import (
     AssistantMessage,
     AssistantRecord,
     ClaudeCodeEvent,
@@ -251,12 +251,8 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
             yield self._content_block_delta({'type': 'thinking_delta', 'thinking': part.content})
 
     async def handle_thinking_delta(self, delta: ThinkingPartDelta) -> AsyncIterator[ClaudeCodeEvent]:
-        if not self.include_partial_messages:
-            return
-        if delta.content_delta:
+        if self.include_partial_messages and delta.content_delta:
             yield self._content_block_delta({'type': 'thinking_delta', 'thinking': delta.content_delta})
-        if delta.signature_delta:
-            yield self._content_block_delta({'type': 'signature_delta', 'signature': delta.signature_delta})
 
     async def handle_thinking_end(
         self, part: ThinkingPart, followed_by_thinking: bool = False
@@ -273,6 +269,13 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
             # Omitted rather than emitted empty for models that don't sign their thinking: an empty
             # signature is a value Anthropic rejects, whereas an absent one is simply unsigned.
             block['signature'] = self._thinking_signature
+            if self.include_partial_messages:
+                # The block's decided signature, emitted whole as the last delta before the
+                # `assistant` record, which is where the CLI puts its single `signature_delta`.
+                # Forwarding each `signature_delta` instead can't reassemble: upstream a signature
+                # replaces rather than extends the one before it, so concatenating the fragments a
+                # run of parts produces yields something no block ever claimed.
+                yield self._content_block_delta({'type': 'signature_delta', 'signature': self._thinking_signature})
         for event in self._close_block(block):
             yield event
 
@@ -320,7 +323,10 @@ class ClaudeCodeEventStream(UIEventStream[None, ClaudeCodeEvent, AgentDepsT, Out
         # Concatenating a call's `input_json_delta` fragments has to yield exactly its `input`, so a
         # call whose args never arrived as JSON text emits them here as one complete fragment. That
         # covers `dict` args, which Pydantic AI merges by key rather than by concatenation. A call
-        # can't mix the two: applying a delta of the other kind is rejected upstream.
+        # can't mix the two: applying a delta of the other kind is rejected upstream. The invariant
+        # holds for well-formed args only: args that never parse (a call truncated mid-JSON) reach
+        # the block as the `INVALID_JSON` wrapper `args_as_json_str` degrades them to, while the
+        # fragments stay the raw truth of what the model sent.
         if self.include_partial_messages and not self._args_fragment_emitted and part.args:
             yield self._input_json_delta(args_json)
         block: ToolUseBlock = {
