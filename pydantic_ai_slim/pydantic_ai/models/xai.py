@@ -38,6 +38,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -49,6 +50,8 @@ from ..models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
@@ -376,9 +379,11 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user(part.model_response()))
                 else:
                     tool_results.append(part)
+            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                raise _unsynthesized_tool_availability_delta_error()
             elif isinstance(part, SpeechPart):  # pragma: no cover
-                # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
-                pass
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
 
@@ -444,8 +449,8 @@ class XaiModel(Model[AsyncClient]):
                 # Compaction parts are not sent back to models that don't support compaction.
                 pass
             elif isinstance(item, SpeechPart):  # pragma: no cover
-                # Realtime audio parts are converted to `TextPart`s in `Model.prepare_messages`.
-                pass
+                # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(item)
 
@@ -656,7 +661,7 @@ class XaiModel(Model[AsyncClient]):
             A tuple of (filtered_tool_defs, tool_choice).
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         profile = self.profile
 
@@ -1260,7 +1265,14 @@ def _get_native_tools(model_request_parameters: ModelRequestParameters) -> list[
                 )
             )
         elif isinstance(builtin_tool, FileSearchTool):
-            tools.append(collections_search(collection_ids=list(builtin_tool.file_store_ids)))
+            tools.append(
+                collections_search(
+                    collection_ids=list(builtin_tool.file_store_ids),
+                    limit=builtin_tool.max_num_results,
+                    instructions=builtin_tool.instructions,
+                    retrieval_mode=builtin_tool.retrieval_mode,
+                )
+            )
         else:  # pragma: no cover
             supported = ', '.join(t.__name__ for t in XaiModel.supported_native_tools())
             raise UserError(

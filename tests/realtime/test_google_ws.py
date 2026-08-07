@@ -33,7 +33,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool
-from pydantic_ai.realtime import RealtimeModelProfile, ResponseCompleteEvent
+from pydantic_ai.realtime import RealtimeModelProfile, RealtimeTurnCompleteEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -73,7 +73,7 @@ async def test_audio_in_server_vad_turn(
         with anyio.fail_after(45):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     # Pin the spoken-turn event order for this cassette (Gemini streams input transcripts natively).
@@ -84,7 +84,7 @@ async def test_audio_in_server_vad_turn(
             'PartStartEvent',
             'PartDeltaEvent',
             'PartEndEvent',
-            'ResponseCompleteEvent',
+            'RealtimeTurnCompleteEvent',
         ]
     )
 
@@ -110,7 +110,7 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot(
@@ -129,11 +129,14 @@ async def test_text_in_audio_out_turn(gemini_ws_cassette: tuple[Provider[Any], R
 
     messages = session.all_messages()
     assert collapse_event_types(events) == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'ResponseCompleteEvent']
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'RealtimeTurnCompleteEvent']
     )
     assert [type(m).__name__ for m in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())], timestamp=IsDatetime()
+        parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
+        run_id=IsStr(),
     )
     response = messages[1]
     assert isinstance(response, ModelResponse)
@@ -174,7 +177,7 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     assert sent_frames_containing(cassette, 'Store the supplied sensor value.') == snapshot(
@@ -205,7 +208,6 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
                                         'required': ['zqx_measurement'],
                                         'type': 'OBJECT',
                                     },
-                                    'response': {'type': 'STRING'},
                                 }
                             ]
                         }
@@ -233,6 +235,8 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     assert messages[0] == ModelRequest(
         parts=[UserPromptPart(content='Please record a reading of 5 with the note "steady".', timestamp=IsDatetime())],
         timestamp=IsDatetime(),
+        conversation_id=IsStr(),
+        run_id=IsStr(),
     )
     tool_response = messages[1]
     assert isinstance(tool_response, ModelResponse)
@@ -299,7 +303,7 @@ async def test_asap_enqueue_waits_for_response_boundary(
         tool_ctx = ctx
         return 'armed'
 
-    completions: list[ResponseCompleteEvent] = []
+    completions: list[RealtimeTurnCompleteEvent] = []
     enqueued = False
     async with agent.realtime(model).session() as session:
         await session.send('Begin.')
@@ -314,12 +318,12 @@ async def test_asap_enqueue_waits_for_response_boundary(
                     assert tool_ctx is not None
                     tool_ctx.enqueue('This is the queued follow-up.')
                     enqueued = True
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     completions.append(event)
                     if len(completions) == 2:
                         break
 
-    assert [event.interrupted for event in completions] == [False, False]
+    assert len(completions) == 2
     transcripts = [
         part.transcript
         for message in session.all_messages()
@@ -347,7 +351,7 @@ async def test_message_history_seeding(gemini_ws_cassette: tuple[Provider[Any], 
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch
                 events.append(event)
-                if isinstance(event, ResponseCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     # The seeded turns were sent on the wire as inactive context: a single `client_content` frame
@@ -400,6 +404,8 @@ def test_profile_allow_seeding() -> None:
         supports_thinking=True,  # the default native-audio model supports a thinking config
         # Supported, not enabled: gates the opt-in `google_async_tool_calls` setting.
         supports_async_tool_calls=True,
+        # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
+        supports_tool_return_schema=True,
         supported_native_tools=frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool}),
         audio_input_sample_rate=16000,
         audio_output_sample_rate=24000,

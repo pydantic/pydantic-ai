@@ -5,12 +5,12 @@ objects to ask about them, enable *Watch* for proactive narration, or show it a 
 The example demonstrates:
 
 - provider-agnostic [realtime sessions](../realtime/index.md) with profile-derived PCM sample rates
-- [image input](../realtime/index.md#images) using
+- [image input](../realtime/audio.md#images) using
   [`BinaryContent`][pydantic_ai.messages.BinaryContent]
 - live vision with `turn_coverage='all_input'` and a *Watch* toggle
 - a regular function tool that delegates diagram rendering to a second
   [`Agent`][pydantic_ai.Agent]
-- [web search](../realtime/index.md#built-in-tools-web-search) with
+- [web search](../realtime/tools.md#native-tools) with
   [`WebSearch`][pydantic_ai.capabilities.WebSearch] and clickable citations
 - a model picker and provider-aware voice, modality, VAD, and Gemini settings
 
@@ -22,6 +22,11 @@ Add credentials for a picker model to the repository-root `.env`, for example:
 GOOGLE_API_KEY=your-google-api-key
 ```
 
+The sketch-redraw tool delegates to a separate drawing agent —
+`gateway/anthropic:claude-haiku-4-5` by default, which needs `PYDANTIC_AI_GATEWAY_API_KEY`. Without
+it, set `CAMERA_DRAW_MODEL` to a model your credentials cover (any `provider:model`), or
+`CAMERA_DRAW=false` to disable drawing; the rest of the assistant works either way.
+
 With [dependencies installed](./setup.md#usage), start the local server:
 
 ```bash
@@ -30,9 +35,11 @@ uv run --all-packages uvicorn pydantic_ai_examples.realtime_camera.app:app
 
 Open <http://localhost:8000>, select **Start**, and allow camera and microphone access.
 
-The picker accepts only the models listed in `ALLOWED_MODELS` in the example. Set
-`CAMERA_REALTIME_MODEL` before starting the server to add a different configured deployment to that
-allowlist and make it the default. The selected model's realtime profile supplies the browser's PCM
+The picker accepts only the models listed in `ALLOWED_MODELS` in the example; `gateway/`-prefixed
+variants of those IDs are also accepted, since the [gateway](../realtime/observability.md#gateway-trace-propagation)
+routes to the same model. Set `CAMERA_REALTIME_MODEL` before starting the server to add a different
+configured deployment to that allowlist and make it the default. Note that the gateway serves Gemini
+Live through Vertex AI, which hosts a different set of Live models than the Gemini Developer API. The selected model's realtime profile supplies the browser's PCM
 input and output sample rates: Gemini input uses 16 kHz, while OpenAI and Azure input uses 24 kHz.
 
 !!! warning "Keep the example local"
@@ -70,10 +77,12 @@ HTTP(S) source URLs.
 ## Redraw a diagram
 
 With `CAMERA_DRAW=true` (the default), the realtime agent can call `redraw_diagram`. It gives a
-detailed textual description of the visible sketch to a separate vision-capable
+detailed textual description of the visible sketch to a separate
 [`Agent`][pydantic_ai.Agent], which produces self-contained HTML. The browser displays that HTML in
 an opaque-origin iframe that blocks scripts and network access, and retains the PNG export action.
 
+The default is a fast small model because the user is waiting on a live call: the redraw's latency
+is dominated by HTML output tokens, so a larger model mostly adds thinking time, not quality.
 Configure the drawing model independently:
 
 ```bash

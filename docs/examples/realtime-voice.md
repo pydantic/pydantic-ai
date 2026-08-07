@@ -7,7 +7,7 @@ Demonstrates:
 
 - [realtime sessions](../realtime/index.md)
 - [tools](../tools.md)
-- [barge-in](../realtime/index.md#turn-taking-and-barge-in) (interrupting the model mid-sentence)
+- [barge-in](../realtime/turns.md#barge-in) (interrupting the model mid-sentence)
 
 The agent exposes a single `get_weather` tool the model can call mid-conversation, and the terminal
 shows a running transcript of both sides of the conversation plus any tool calls.

@@ -60,8 +60,8 @@ from ._base import (
     RealtimeCodecEvent,
     RealtimeModel,
     RealtimeModelSettings,
+    RealtimeSessionReconnectEvent,
     ReconnectPolicy,
-    SessionReconnectEvent,
     ToolCall,
     inject_trace_context,
     resolve_advertised_tools,
@@ -90,12 +90,22 @@ if TYPE_CHECKING:
 # of apps on `'auto'`.
 _AUTO_TRANSCRIPTION_MODEL = 'grok-transcribe'
 
+__all__ = (
+    'XaiRealtimeModel',
+    'XaiRealtimeModelSettings',
+    'XaiRealtimeConnection',
+    'map_event',
+)
+
 
 class XaiRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings specific to xAI realtime models.
 
     xAI ignores the inherited `output_modality` setting and always produces audio output.
     """
+
+    xai_voice: str
+    """Voice used for audio output, e.g. `eve`, or a custom voice ID."""
 
     xai_turn_detection: ServerVAD
     """xAI-specific server-VAD configuration.
@@ -220,7 +230,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         async for event in super().__aiter__():
             yield event
-            if isinstance(event, SessionReconnectEvent):
+            if isinstance(event, RealtimeSessionReconnectEvent):
                 replayed_items = self._replayed_items[:]
                 self._replayed_items.clear()
                 for replayed_item in replayed_items:
@@ -314,7 +324,7 @@ class XaiRealtimeModel(RealtimeModel):
             'turn_detection': turn_detection_config(turn_detection),
             'audio': {'input': audio_input, 'output': {'format': {'type': 'audio/pcm', 'rate': 24000}}},
         }
-        if voice := model_settings.get('voice'):
+        if voice := model_settings.get('xai_voice'):
             config['voice'] = voice
         advertised_tools, tool_choice = resolve_advertised_tools(tools, model_settings.get('tool_choice'))
         if advertised_tools:
@@ -342,7 +352,7 @@ class XaiRealtimeModel(RealtimeModel):
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[XaiRealtimeConnection]:
         # The `model` query parameter is required: without it the server silently falls back to a default.
-        url = f'{realtime_websocket_url(self._provider.base_url)}?model={quote(self.model, safe="")}'
+        url = realtime_websocket_url(self._provider.base_url, model=self.model)
         headers = {'Authorization': f'Bearer {self._api_key}'}
         # Propagate trace context over the handshake (see the OpenAI provider for the rationale).
         inject_trace_context(headers)

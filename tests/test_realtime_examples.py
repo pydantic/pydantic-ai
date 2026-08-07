@@ -66,13 +66,38 @@ def test_playback_buffer_interrupt_tracks_active_turn_during_underrun() -> None:
     assert playback.interrupt() is None
 
 
-def test_camera_websocket_origin_requires_loopback_host() -> None:
-    assert realtime_camera._same_origin(  # pyright: ignore[reportPrivateUsage]
-        Mock(headers={'origin': 'http://localhost:8000', 'host': 'localhost:8000'})
+def test_camera_websocket_origin_guard(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Direct loopback and proxied (forwarded-host) origins connect; cross-site and DNS-rebinding don't."""
+    same_origin = realtime_camera._same_origin  # pyright: ignore[reportPrivateUsage]
+
+    assert same_origin(Mock(headers={'origin': 'http://localhost:8000', 'host': 'localhost:8000'}))
+    # DNS rebinding: an attacker domain resolving to 127.0.0.1 matches `Host` with its own origin,
+    # so a bare same-origin comparison is not enough — non-loopback origins need a proxy or allowlist.
+    assert not same_origin(Mock(headers={'origin': 'http://attacker.example:8000', 'host': 'attacker.example:8000'}))
+    # A reverse proxy that rewrites `Host` forwards the browser-facing host; browsers cannot send
+    # `X-Forwarded-Host`, so it proves a proxy hop.
+    assert same_origin(
+        Mock(
+            headers={
+                'origin': 'https://app.proxy.example',
+                'host': '127.0.0.1:8000',
+                'x-forwarded-host': 'app.proxy.example',
+            }
+        )
     )
-    assert not realtime_camera._same_origin(  # pyright: ignore[reportPrivateUsage]
-        Mock(headers={'origin': 'http://attacker.example:8000', 'host': 'attacker.example:8000'})
+    assert not same_origin(
+        Mock(
+            headers={
+                'origin': 'https://evil.example',
+                'host': '127.0.0.1:8000',
+                'x-forwarded-host': 'app.proxy.example',
+            }
+        )
     )
+    assert not same_origin(Mock(headers={'host': '127.0.0.1:8000'}))
+    # Proxies that forward neither `Host` nor `X-Forwarded-Host` are covered by the explicit allowlist.
+    monkeypatch.setenv('CAMERA_ALLOWED_ORIGINS', 'https://tunnel.example, https://other.example')
+    assert same_origin(Mock(headers={'origin': 'https://tunnel.example', 'host': '127.0.0.1:8000'}))
 
 
 async def test_camera_defaults_are_safe_to_embed_in_script(monkeypatch: pytest.MonkeyPatch) -> None:

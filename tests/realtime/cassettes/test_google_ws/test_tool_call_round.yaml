@@ -27,8 +27,6 @@ interactions:
             required:
             - zqx_measurement
             type: OBJECT
-          response:
-            type: STRING
       inputAudioTranscription: {}
       outputAudioTranscription: {}
 - kind: message

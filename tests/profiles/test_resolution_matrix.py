@@ -127,6 +127,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_supports_reasoning': False,
     'openai_reasoning_enabled_by_default': False,
     'openai_supports_reasoning_effort_none': False,
+    'openai_supports_minimal_reasoning_effort': True,
     'openai_responses_supports_reasoning_mode': False,
     'openai_responses_supports_reasoning_context': False,
     'openai_responses_requires_function_call_status_none': False,
@@ -202,6 +203,7 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supports_forced_tool_choice': True,
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
+            'tool_deferral_mode': 'standalone',
         }
     )
 
@@ -230,6 +232,7 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_forced_tool_choice': True,
             'anthropic_supports_task_budgets': True,
+            'tool_deferral_mode': 'standalone',
         }
     )
 
@@ -248,6 +251,7 @@ def test_anthropic_claude_haiku_4_5():
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
+            'tool_deferral_mode': 'standalone',
         }
     )
 
@@ -290,6 +294,8 @@ def test_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'tool_addition_mode': 'with_definitions',
+            'tool_deferral_mode': 'with_tool_search',
         }
     )
 
@@ -323,8 +329,11 @@ def test_openai_gpt_5_6():
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_responses_supports_reasoning_mode': True,
+            'tool_addition_mode': 'with_definitions',
             'openai_supports_phase': True,
             'openai_supports_prompt_cache_breakpoints': True,
+            'tool_deferral_mode': 'with_tool_search',
+            'openai_supports_minimal_reasoning_effort': False,
         }
     )
 
@@ -355,8 +364,6 @@ def test_openrouter_openai_gpt_5_6_reasoning_mode(model_name: str):
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
 def test_azure_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_mode') is True
@@ -403,6 +410,8 @@ def test_openai_gpt_4o():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'tool_addition_mode': 'with_definitions',
+            'tool_deferral_mode': 'with_tool_search',
         }
     )
 
@@ -426,6 +435,8 @@ def test_openai_o3_mini():
             'openai_supports_encrypted_reasoning_content': True,
             'openai_reasoning_enabled_by_default': True,
             'openai_supports_reasoning': True,
+            'tool_addition_mode': 'with_definitions',
+            'tool_deferral_mode': 'with_tool_search',
         }
     )
 
@@ -597,6 +608,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'anthropic_supports_forced_tool_choice': True,
             'bedrock_thinking_variant': 'anthropic',
+            'tool_deferral_mode': 'standalone',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': True,
         }
@@ -625,6 +637,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_supports_forced_tool_choice': True,
             'bedrock_thinking_variant': 'anthropic',
+            'tool_deferral_mode': 'standalone',
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': True,
         }
@@ -854,6 +867,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'anthropic_supports_forced_tool_choice': True,
+            'tool_deferral_mode': 'standalone',
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1114,8 +1128,6 @@ def test_openrouter_unknown_provider_falls_back_to_overlay_only():
 
 def test_azure_openai_gpt_5():
     """Azure OpenAI — bare model name."""
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('gpt-5.4')
     assert _normalize(profile) == snapshot(
         {
@@ -1139,33 +1151,55 @@ def test_azure_openai_gpt_5():
 
 
 def test_azure_mistral_prefix():
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('mistral-large-latest')
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
         }
     )
 
 
 def test_azure_mistral_small_latest():
     """Azure reuses the shared Mistral profile, so `thinking` is ignored: adjustable reasoning is native-provider-only."""
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('mistral-small-latest')
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
+        }
+    )
+
+
+def test_azure_ministral_3b():
+    """Azure — a Mistral-family model whose name has no `mistral` prefix must still resolve to the Mistral profile."""
+    profile = AzureProvider.model_profile('ministral-3b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
+        }
+    )
+
+
+def test_azure_magistral_small_latest():
+    """Azure — a Mistral-family model whose name has no `mistral` prefix must still resolve to the Mistral profile (magistral additionally sets thinking flags)."""
+    profile = AzureProvider.model_profile('magistral-small-latest')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'openai_chat_supports_document_input': False,
+            'openai_chat_supports_max_completion_tokens': False,
+            'supports_thinking': True,
+            'thinking_always_enabled': True,
         }
     )
 
 
 def test_azure_cohere_prefix():
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('cohere-command-r-plus')
     assert _normalize(profile) == snapshot(
         {
@@ -1176,8 +1210,6 @@ def test_azure_cohere_prefix():
 
 
 def test_azure_grok_prefix():
-    from pydantic_ai.providers.azure import AzureProvider
-
     profile = AzureProvider.model_profile('grok-4')
     assert _normalize(profile) == snapshot(
         {
@@ -1653,6 +1685,7 @@ def test_vercel_anthropic_claude_sonnet():
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
+            'tool_deferral_mode': 'standalone',
         }
     )
 
@@ -1750,6 +1783,7 @@ def test_heroku_returns_openai_transformer():
             'supported_native_tools': frozenset(
                 {AdvisorTool, CodeExecutionTool, MCPServerTool, MemoryTool, ToolSearchTool, WebFetchTool, WebSearchTool}
             ),
+            'tool_deferral_mode': 'standalone',
         }
     )
 
@@ -1863,3 +1897,66 @@ def test_huggingface_unknown_provider_returns_none():
     """Unknown provider prefix → `None` (no fallback overlay like other gateways)."""
 
     assert _normalize(HuggingFaceProvider.model_profile('unknown/some-model')) is None
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+@pytest.mark.parametrize(
+    'model_name,supported',
+    [
+        ('claude-opus-5', True),
+        ('claude-opus-4-8', True),
+        ('claude-fable-5', True),
+        # Serves the `system` role but rejects tool deltas — the two capabilities are independent.
+        ('claude-sonnet-5', False),
+        ('claude-sonnet-4-6', False),
+        ('claude-haiku-4-5', False),
+        ('claude-opus-4-7', False),
+        ('claude-opus-4-6', False),
+    ],
+)
+def test_anthropic_tool_availability_delta_support(model_name: str, supported: bool):
+    """Pins the live-verified per-model matrix for `tool_addition` / `tool_removal`.
+
+    Not derivable from a version cutoff: `claude-sonnet-5` is newer than `claude-opus-4-8` and rejects
+    the blocks, so every entry was checked against the API rather than inferred.
+    """
+    profile = AnthropicProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('tool_addition_mode') == ('by_reference' if supported else None)
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.1', 'gpt-5', 'gpt-4.1', 'gpt-4o'],
+)
+def test_openai_tool_availability_delta_support(model_name: str):
+    """Every model on the first-party provider gets Responses `additional_tools`, including old ones.
+
+    OpenAI documents a model restriction for the sibling `tool_search` tool and none for this item, and
+    13 models from `gpt-4o-mini` up each called a tool that only an `additional_tools` item declared,
+    against a control with the item removed that never did. A previous version of this test pinned
+    `gpt-5.4` and `gpt-5` as unsupported on the strength of a probe whose prompt named the tool and asked
+    for it by name — which a model that never received the declaration can satisfy from the prompt alone.
+
+    The gate that remains is the provider, not the model: `openai_model_profile` is shared with
+    OpenAI-compatible endpoints that speak the Responses API without necessarily implementing the item,
+    and they keep the `False` default.
+    """
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    profile = OpenAIProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('tool_addition_mode') == 'with_definitions'
+
+
+def test_openai_compatible_endpoints_do_not_get_tool_availability_delta():
+    """The shared model profile stays off, so only the first-party provider opts in.
+
+    `additional_tools` is measured against OpenAI itself; an Azure, OpenRouter or vLLM deployment speaking
+    the same API hasn't been, and sending an item it doesn't implement would drop an availability change
+    silently rather than loudly.
+    """
+    from pydantic_ai.profiles.openai import openai_model_profile
+
+    profile = openai_model_profile('gpt-5.6')
+    assert profile.get('tool_addition_mode') is None

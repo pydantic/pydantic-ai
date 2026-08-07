@@ -9,6 +9,7 @@ from urllib.parse import urlencode, urlparse, urlunparse
 
 from anyio.to_thread import run_sync
 from openai import AsyncOpenAI
+from openai.types.realtime.realtime_audio_config_output import VoiceID
 
 from ..exceptions import UserError
 from ..providers import Provider, infer_provider
@@ -33,6 +34,7 @@ from ._openai_protocol import (
     tool_choice_config,
     tool_def_to_openai,
     turn_detection_config,
+    with_realtime_query,
 )
 from ._openai_webrtc import relay_sdp_offer as _relay_sdp_offer
 from .openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, OpenAIRealtimeModelSettings
@@ -66,7 +68,8 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     This inherits every [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]
     field, but when [`azure_voice_live`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live]
     is set the Voice Live session config is built from only the cross-protocol fields — `instructions`,
-    `voice`, `turn_detection` (or `azure_voice_live_turn_detection`), `input_transcription_model`,
+    `openai_voice` (by name), `turn_detection` (or `azure_voice_live_turn_detection`),
+    `input_transcription_model`,
     `output_modality`, `max_tokens`, `tool_choice`, and tools. OpenAI-only fields that Voice Live's beta
     session schema doesn't accept (e.g. `openai_input_noise_reduction`, `openai_output_speed`,
     `openai_truncation`, `openai_turn_detection`, `thinking`, `parallel_tool_calls`) are **silently
@@ -173,7 +176,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
                     query=urlencode({'api-version': self._azure_provider.voice_live_api_version, 'model': self.model}),
                 )
             )
-        return f'{self._realtime_ws_base()}?{urlencode({"model": self.model})}'
+        return with_realtime_query(self._realtime_ws_base(), model=self.model)
 
     def _webrtc_http_base(self) -> str:
         # Azure exposes the WebRTC signaling endpoints under the GA `/openai/v1/` path, regardless of the
@@ -268,7 +271,14 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         }
         if transcription_model is not None:
             config['input_audio_transcription'] = {'model': transcription_model}
-        if voice := settings.get('voice'):
+        if voice := settings.get('openai_voice'):
+            if isinstance(voice, VoiceID):
+                # Voice Live's session schema addresses a voice by provider + *name*, with no place for
+                # an OpenAI custom-voice id, so accepting one would silently drop it.
+                raise UserError(
+                    'Azure AI Voice Live does not accept an OpenAI custom `VoiceID`; set `openai_voice` '
+                    'to a voice name instead.'
+                )
             config['voice'] = {'type': 'openai', 'name': voice}
         advertised_tools, tool_choice = resolve_advertised_tools(list(tools or []), settings.get('tool_choice'))
         if advertised_tools:

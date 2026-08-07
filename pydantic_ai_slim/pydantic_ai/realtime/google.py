@@ -62,6 +62,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -104,11 +105,11 @@ from ._base import (
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    RealtimeResponseInterruptedEvent,
+    RealtimeSessionErrorEvent,
+    RealtimeSessionReconnectEvent,
     ReconnectPolicy,
-    ResponseCompleteEvent,
-    ResponseInterruptedEvent,
-    SessionErrorEvent,
-    SessionReconnectEvent,
+    ResponseDone,
     SessionUsageEvent,
     TextInput,
     ToolCall,
@@ -120,6 +121,15 @@ from ._base import (
     resolve_advertised_tools,
     seed_speech_content,
     seed_user_content,
+)
+
+__all__ = (
+    'GoogleRealtimeModel',
+    'GoogleRealtimeModelSettings',
+    'GoogleRealtimeConnection',
+    'AutomaticVAD',
+    'MultiSpeaker',
+    'ContextCompression',
 )
 
 
@@ -146,8 +156,10 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
 
     google_language_code: str
     """BCP-47 language code for audio output."""
+    google_voice: str
+    """Prebuilt voice used for audio output, e.g. `Puck`."""
     google_multi_speaker: MultiSpeaker
-    """Per-speaker voice assignments; takes precedence over `voice`."""
+    """Per-speaker voice assignments; takes precedence over `google_voice`."""
     google_affective_dialog: bool
     """Whether to enable emotion-aware delivery (native-audio models only)."""
     google_proactive_audio: bool
@@ -356,7 +368,9 @@ async def _seed_request_parts(
 ) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
     for part in message_parts:
-        if isinstance(part, SystemPromptPart):
+        if isinstance(part, (SystemPromptPart, ToolAvailabilityDeltaPart)):
+            # System prompts are seeded through session instructions, and tool-availability news
+            # from a prior standard run is stale here: the session advertises its own tools.
             continue
         elif isinstance(part, UserPromptPart):
             parts.extend(
@@ -450,8 +464,45 @@ _SCHEMA_LIST_KEYWORDS = frozenset({'anyOf'})
 _SCHEMA_MAP_KEYWORDS = frozenset({'properties'})
 
 
+def _flatten_all_of(json_schema: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort merge of an `allOf` intersection, which `Schema` has no field for.
+
+    `properties` are merged and `required` unioned across the members and the parent's own keys;
+    for anything else the parent wins, then later members. Imperfect for genuinely conflicting
+    constraints, but the alternative — the keyword filter below dropping `allOf` outright — erases
+    the parameter's entire shape into an unconstrained `{}`, which loses far more. Boolean members
+    are skipped: `True` adds no constraint, and `False` (nothing validates) is inexpressible.
+    """
+    members = json_schema.get('allOf')
+    if not isinstance(members, list):
+        return json_schema
+    merged: dict[str, Any] = {}
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    parent = {key: value for key, value in json_schema.items() if key != 'allOf'}
+    candidates: list[dict[str, Any]] = [
+        *(cast('dict[str, Any]', member) for member in cast('list[Any]', members) if isinstance(member, dict)),
+        parent,
+    ]
+    for member in candidates:
+        member = _flatten_all_of(member)
+        for key, value in member.items():
+            if key == 'properties' and isinstance(value, dict):
+                properties.update(cast('dict[str, Any]', value))
+            elif key == 'required' and isinstance(value, list):
+                required.extend(name for name in cast('list[str]', value) if name not in required)
+            else:
+                merged[key] = value
+    if properties:
+        merged['properties'] = properties
+    if required:
+        merged['required'] = required
+    return merged
+
+
 def _drop_unsupported_keywords(json_schema: dict[str, Any]) -> dict[str, Any]:
     """Drop the keywords Gemini's `Schema` has no field for, recursively."""
+    json_schema = _flatten_all_of(json_schema)
     kept: dict[str, Any] = {}
     for key, value in json_schema.items():
         if key not in _SCHEMA_KEYWORDS:
@@ -731,14 +782,14 @@ class GoogleRealtimeModel(RealtimeModel):
         return frozenset({WebSearchTool, WebFetchTool, CodeExecutionTool})
 
     def _speech_config(self, model_settings: GoogleRealtimeModelSettings) -> genai_types.SpeechConfig | None:
-        """Build the speech/voice config from `voice`, `multi_speaker`, and `language_code`.
+        """Build the speech/voice config from `google_voice`, `google_multi_speaker`, and `google_language_code`.
 
-        `multi_speaker` takes precedence over `voice` (they are mutually exclusive in the API).
+        `google_multi_speaker` takes precedence over `google_voice` (they are mutually exclusive in the API).
         """
         voice_config: genai_types.VoiceConfig | None = None
         multi_speaker_config: genai_types.MultiSpeakerVoiceConfig | None = None
         multi_speaker = model_settings.get('google_multi_speaker')
-        voice = model_settings.get('voice')
+        voice = model_settings.get('google_voice')
         language_code = model_settings.get('google_language_code')
         if multi_speaker is not None:
             multi_speaker_config = genai_types.MultiSpeakerVoiceConfig(
@@ -1008,7 +1059,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 raise RealtimeError(model_name=self.model, message=f'Could not reach the realtime API: {e}') from e
             # Seed prior conversation once, after the initial connect, as inactive context turns (no
             # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
-            # resumption restores server state, and a `SessionReconnectEvent` starts a fresh turn.
+            # resumption restores server state, and a `RealtimeSessionReconnectEvent` starts a fresh turn.
             if turns := await _seed_turns(messages, profile=self.profile, provider_name=self.system):
                 await session.send_client_content(turns=turns, turn_complete=False)
             yield GoogleRealtimeConnection(
@@ -1073,6 +1124,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._reconnect = reconnect
         self._resumption_handle: str | None = None
         self._turn_interrupted = False
+        # Whether the model has streamed response output (audio, transcript, text, or native-tool
+        # parts) since the last `turn_complete`. A dropped-and-redialed connection never continues an
+        # in-flight turn (session resumption restores conversation state, not the generation;
+        # verified live), so when this is set at reconnect time the turn's boundary would otherwise
+        # never arrive — see `__aiter__`, which closes the orphaned turn before the reconnect event.
+        self._turn_open = False
 
     @property
     def input_transcription_enabled(self) -> bool:
@@ -1153,13 +1210,25 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     # No reconnect policy: a dropped connection is fatal. Surface it as a
                     # non-recoverable error and end the stream cleanly, rather than returning silently
                     # (mirroring the OpenAI provider), so callers don't treat a truncated turn as complete.
-                    yield SessionErrorEvent(message=f'{self._provider_label} connection closed: {e}', recoverable=False)
+                    yield RealtimeSessionErrorEvent(
+                        message=f'{self._provider_label} connection closed: {e}', recoverable=False
+                    )
                     return
                 state_restored = self._resumption_handle is not None
                 if await self._try_reconnect():
-                    yield SessionReconnectEvent(state_restored=state_restored)
+                    if self._turn_open:
+                        # The dropped connection was mid-turn. Gemini never continues an in-flight
+                        # generation on the re-dialed connection (resumption restores conversation
+                        # state only), so its `turn_complete` will never arrive — without a synthetic
+                        # boundary the session would keep the partial response open forever, never
+                        # ending the turn or delivering messages queued behind it.
+                        self._turn_open = False
+                        self._turn_interrupted = False
+                        self._native_part_index = 0
+                        yield ResponseDone(interrupted=True)
+                    yield RealtimeSessionReconnectEvent(state_restored=state_restored)
                     continue
-                yield SessionErrorEvent(
+                yield RealtimeSessionErrorEvent(
                     message=f'{self._provider_label} connection closed; reconnect failed: {e}', recoverable=False
                 )
                 return
@@ -1235,15 +1304,19 @@ class GoogleRealtimeConnection(RealtimeConnection):
             )
         if content.interrupted:
             self._turn_interrupted = True
-            events.append(ResponseInterruptedEvent())
+            events.append(RealtimeResponseInterruptedEvent())
         native_tool_parts += _map_grounding_parts(content, self._provider_name)
         for part in native_tool_parts:
             index = self._native_part_index
             self._native_part_index += 1
             events.extend((PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part)))
+        # Only response output opens a turn — input transcripts stream between turns too, and a turn
+        # "opened" by one would close as an empty interrupted response if the connection then dropped.
+        if native_tool_parts or any(isinstance(event, (AudioDelta, OutputTranscript)) for event in events):
+            self._turn_open = True
         # `turn_complete` is emitted by `_map_message` *after* the message's `usage_metadata`, not here:
         # Gemini packs `turnComplete` and `usageMetadata` into the same message, and the session
-        # finalizes the response's usage on `ResponseCompleteEvent`, so the usage must be accounted first
+        # finalizes the response's usage on `ResponseDone`, so the usage must be accounted first
         # (matching OpenAI's codec, which emits usage before the turn boundary).
         return events
 
@@ -1261,6 +1334,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # never issued is what "Gemini rejects unknown ids" is about.
                 call_id = call.id or generate_tool_call_id()
                 self._tool_calls[call_id] = (name, call.id)
+                # A tool call opens the turn like audio output does: the session holds a partial
+                # response for it, so a drop before `turn_complete` needs the same synthetic boundary.
+                self._turn_open = True
                 events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=json.dumps(call.args or {})))
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
             # The cancellation carries Gemini's own call ids, which match the `tool_call_id`s emitted
@@ -1281,11 +1357,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 )
             )
         # Emit the turn boundary last — after this message's usage — so the session folds the turn's
-        # tokens into the finalized `ModelResponse` / `chat` span before `ResponseCompleteEvent` closes it.
+        # tokens into the finalized `ModelResponse` / `chat` span before `ResponseDone` closes it.
         if message.server_content is not None and message.server_content.turn_complete:
             interrupted = self._turn_interrupted
-            events.append(ResponseCompleteEvent(interrupted=interrupted))
+            events.append(ResponseDone(interrupted=interrupted))
             self._turn_interrupted = False
+            self._turn_open = False
             self._native_part_index = 0
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
         update = message.session_resumption_update

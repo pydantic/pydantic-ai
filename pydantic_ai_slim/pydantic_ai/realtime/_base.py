@@ -40,6 +40,15 @@ from ..messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RealtimeInputSpeechEndEvent as RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent as RealtimeInputSpeechStartEvent,
+    RealtimeInputTranscriptionErrorEvent as RealtimeInputTranscriptionErrorEvent,
+    RealtimeOutputSpeechEndEvent as RealtimeOutputSpeechEndEvent,
+    RealtimeOutputSpeechStartEvent as RealtimeOutputSpeechStartEvent,
+    RealtimeResponseInterruptedEvent as RealtimeResponseInterruptedEvent,
+    RealtimeSessionErrorEvent as RealtimeSessionErrorEvent,
+    RealtimeSessionReconnectEvent as RealtimeSessionReconnectEvent,
+    RealtimeTurnCompleteEvent as RealtimeTurnCompleteEvent,
     SpeechPart,
     TextContent,
     UploadedFile,
@@ -92,7 +101,7 @@ class RealtimeError(ModelAPIError):
     A subclass of [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], since losing the connection
     to a realtime provider is the same kind of failure as a request-response call that couldn't reach
     the API. Catch it specifically to separate the session's own failures from those of any text agent
-    the session [delegates to](../realtime/index.md#delegating-to-a-text-agent).
+    the session [delegates to](../realtime/tools.md#delegating-work-during-a-call).
     """
 
 
@@ -158,16 +167,6 @@ class RealtimeModelSettings(TypedDict, total=False):
     so `'required'` is ignored and allow-lists restrict availability without requiring a tool call.
 
     Supported by: OpenAI, Azure OpenAI, Gemini (`'none'` and function-tool allow-lists only), and xAI.
-    """
-
-    voice: str
-    """Voice used for audio output, e.g. `alloy` (OpenAI), `Puck` (Gemini), or `eve` (xAI).
-
-    Each provider ships its own voices, so this stays a plain string;
-    [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] narrows it
-    to the ones OpenAI documents.
-
-    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
     """
 
     input_transcription_model: KnownRealtimeTranscriptionModelName | str | None
@@ -452,7 +451,7 @@ class ToolCall:
     args: str
     """Raw JSON-encoded arguments. May be an empty string if the model sent no arguments."""
     response_usage_follows: bool = False
-    """Whether a per-response [`SessionUsageEvent`][pydantic_ai.realtime.SessionUsageEvent] will follow
+    """Whether a per-response [`SessionUsageEvent`][pydantic_ai.realtime.codec.SessionUsageEvent] will follow
     this call before the provider's response is complete.
 
     OpenAI-protocol providers report calls before `response.done`, which carries usage; the session
@@ -474,12 +473,12 @@ class ToolCallCancelled:
 
 
 @dataclass
-class ResponseCompleteEvent:
-    """The model finished (or was interrupted during) one response.
+class ResponseDone:
+    """The provider reported that its current response is done.
 
-    One per [`ModelResponse`][pydantic_ai.messages.ModelResponse], so a conversational turn that calls
-    tools emits several — the call, then the spoken answer. Wait for
-    [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] for the end of the *exchange*.
+    This codec event is consumed by the session to finalize a
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse]. Providers do not necessarily report a
+    terminal for every model response the session records in history.
     """
 
     interrupted: bool = False
@@ -494,22 +493,7 @@ class ResponseCompleteEvent:
     provider_details: dict[str, Any] | None = None
     """Raw provider terminal status details retained on the finalized response, when available."""
 
-    event_kind: Literal['response_complete'] = 'response_complete'
-    """Event type identifier, used as a discriminator."""
-
-
-@dataclass
-class TurnCompleteEvent:
-    """The exchange is over: the model has finished replying and nothing is outstanding.
-
-    Emitted after the last [`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent] of a
-    conversational turn — the one with no tool calls still running and no further response in flight. It
-    is the event to stop consuming on, and the reason it exists: a turn that calls a tool completes
-    several responses, and *which* one is last differs by model, so `ResponseCompleteEvent` alone can't
-    tell you the model is done. Synthesized by the session rather than reported by a provider.
-    """
-
-    event_kind: Literal['turn_complete'] = 'turn_complete'
+    event_kind: Literal['response_done'] = 'response_done'
     """Event type identifier, used as a discriminator."""
 
 
@@ -551,114 +535,6 @@ class TranscriptUpdate:
 
 
 @dataclass
-class InputSpeechStartEvent:
-    """The provider detected that the user started speaking.
-
-    Useful for barge-in: stop playing any buffered model audio when this arrives, since the model's
-    in-progress turn is being interrupted.
-
-    Reported by OpenAI, Azure OpenAI, and xAI. Gemini Live does not report speech onset.
-    """
-
-    item_id: str | None = None
-    """Provider id of the user input item this speech segment belongs to, when reported."""
-
-    event_kind: Literal['input_speech_start'] = 'input_speech_start'
-    """Event type identifier, used as a discriminator."""
-
-
-@dataclass
-class ResponseInterruptedEvent:
-    """The provider cut the model's in-progress response short.
-
-    Arrives as soon as the provider interrupts, ahead of the
-    [`ResponseCompleteEvent`][pydantic_ai.realtime.ResponseCompleteEvent] that terminates the response
-    with `interrupted=True`, so it's the point at which to flush buffered model audio.
-
-    Reported by Gemini Live, which interrupts server-side when it hears the user speak. The other
-    providers report the user's speech onset as
-    [`InputSpeechStartEvent`][pydantic_ai.realtime.InputSpeechStartEvent] and leave the cancellation
-    to [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt], so they never report this.
-    """
-
-    event_kind: Literal['response_interrupted'] = 'response_interrupted'
-    """Event type identifier, used as a discriminator."""
-
-
-@dataclass
-class InputSpeechEndEvent:
-    """The provider detected that the user stopped speaking.
-
-    Useful as a 'processing' indicator: the user's turn has ended and the model is about to respond.
-    """
-
-    item_id: str | None = None
-    """Provider id of the user input item this speech segment belongs to, when reported.
-
-    Used to attach retained input audio (`audio_retention='input_audio'`/`'all'`) to the right user turn
-    when turns overlap, since transcripts for different items can finalize out of order.
-    """
-
-    event_kind: Literal['input_speech_end'] = 'input_speech_end'
-    """Event type identifier, used as a discriminator."""
-
-
-@dataclass
-class OutputSpeechStartEvent:
-    """The provider started playing the model's audio to the listener.
-
-    Only reported where the provider, rather than your code, holds the audio on its way to the
-    listener: on a [WebRTC sideband](../realtime/index.md#browser-webrtc) the media flows
-    browser ↔ provider, so the session never sees audio and this is its only signal that the model has
-    become audible. An ordinary session owns the audio and knows when it starts playing it, so no
-    provider reports this there.
-
-    This is about *playback*, not generation: the provider produces audio faster than it plays it, so
-    this can arrive well after the audio itself was generated.
-    """
-
-    event_kind: Literal['output_speech_start'] = 'output_speech_start'
-    """Event type identifier, used as a discriminator."""
-
-
-@dataclass
-class OutputSpeechEndEvent:
-    """The provider stopped playing the model's audio to the listener.
-
-    The counterpart to
-    [`OutputSpeechStartEvent`][pydantic_ai.realtime.OutputSpeechStartEvent], and the
-    honest end of a spoken turn: because the provider generates audio far ahead of playing it, it is
-    still talking long after [`TurnCompleteEvent`][pydantic_ai.realtime.TurnCompleteEvent] reports the
-    response finished. Drive a "speaking" indicator from this pair rather than from turn completion.
-    """
-
-    event_kind: Literal['output_speech_end'] = 'output_speech_end'
-    """Event type identifier, used as a discriminator."""
-
-
-@dataclass
-class InputTranscriptionErrorEvent:
-    """The provider failed to transcribe a user audio input turn, but the session continues.
-
-    This is recoverable; `item_id` and `content_index` locate the affected user turn.
-    """
-
-    message: str
-    """Human-readable error message."""
-    type: str | None = None
-    """Provider error category, if any."""
-    code: str | None = None
-    """Provider error code, if any."""
-    item_id: str | None = None
-    """Provider conversation-item ID for the affected user turn, when available."""
-    content_index: int | None = None
-    """Content index within the affected user turn, when available."""
-
-    event_kind: Literal['input_transcription_error'] = 'input_transcription_error'
-    """Event type identifier, used as a discriminator."""
-
-
-@dataclass
 class SessionUsageEvent:
     """Usage reported by the provider for a model response or another run-level operation."""
 
@@ -681,27 +557,6 @@ class SessionUsageEvent:
     """
 
     event_kind: Literal['session_usage'] = 'session_usage'
-    """Event type identifier, used as a discriminator."""
-
-
-@dataclass
-class SessionReconnectEvent:
-    """The connection dropped and was automatically re-established; inspect `state_restored` for continuity.
-
-    Session configuration (instructions, tools, voice, ...) is restored on every reconnect. OpenAI
-    starts with fresh server-side conversation state; Gemini and xAI restore conversation state when
-    their session-resumption support is enabled (xAI enables it automatically when `reconnect` is set).
-    """
-
-    state_restored: bool = False
-    """Whether the provider restored prior conversation state on reconnect.
-
-    `False` (OpenAI/Azure OpenAI — the server starts a fresh conversation) means the consumer should
-    treat the session as having lost prior turns; `True` (xAI Grok Voice and Gemini Live, when their native
-    session resumption is active) means prior turns were restored.
-    """
-
-    event_kind: Literal['session_reconnect'] = 'session_reconnect'
     """Event type identifier, used as a discriminator."""
 
 
@@ -734,23 +589,6 @@ class ConversationItemCreated:
     """Whether the provider identified this item as part of a resumption replay."""
 
 
-@dataclass
-class SessionErrorEvent:
-    """A provider-reported error occurred in the session."""
-
-    message: str
-    """Human-readable error message."""
-    type: str | None = None
-    """Provider error category, e.g. `invalid_request_error` or `server_error`."""
-    code: str | None = None
-    """Provider error code, if any."""
-    recoverable: bool = True
-    """Whether the session can continue. A protocol `error` is recoverable; a dropped connection is not."""
-
-    event_kind: Literal['session_error'] = 'session_error'
-    """Event type identifier, used as a discriminator."""
-
-
 RealtimeCodecEvent = TypeAliasType(
     'RealtimeCodecEvent',
     AudioDelta
@@ -758,20 +596,20 @@ RealtimeCodecEvent = TypeAliasType(
     | InputTranscript
     | ToolCall
     | ToolCallCancelled
-    | ResponseCompleteEvent
-    | InputSpeechStartEvent
-    | ResponseInterruptedEvent
-    | InputSpeechEndEvent
-    | OutputSpeechStartEvent
-    | OutputSpeechEndEvent
-    | InputTranscriptionErrorEvent
+    | ResponseDone
+    | RealtimeInputSpeechStartEvent
+    | RealtimeResponseInterruptedEvent
+    | RealtimeInputSpeechEndEvent
+    | RealtimeOutputSpeechStartEvent
+    | RealtimeOutputSpeechEndEvent
+    | RealtimeInputTranscriptionErrorEvent
     | SessionUsageEvent
-    | SessionReconnectEvent
+    | RealtimeSessionReconnectEvent
     | ConversationCreated
     | ConversationItemCreated
     | PartStartEvent
     | PartEndEvent
-    | SessionErrorEvent,
+    | RealtimeSessionErrorEvent,
 )
 """Union of the low-level codec events yielded by [`RealtimeConnection`][pydantic_ai.realtime.codec.RealtimeConnection].
 
@@ -788,7 +626,7 @@ This is the provider-facing vocabulary: providers translate their wire protocol 
 # `pydantic_ai.messages`: `AudioDelta`/`OutputTranscript`/`InputTranscript` become `PartStartEvent` /
 # `PartDeltaEvent` / `PartEndEvent` for `SpeechPart`s, and `ToolCall` becomes a
 # `ToolCallPart` part (start/end) plus `FunctionToolCallEvent` / `FunctionToolResultEvent` around its
-# execution. The remaining control-plane events pass through unchanged.
+# execution. Some control-plane events pass through unchanged.
 
 
 RealtimeEvent = TypeAliasType(
@@ -800,18 +638,19 @@ RealtimeEvent = TypeAliasType(
     | FunctionToolResultEvent
     | DeferredToolRequestsEvent
     | DeferredToolResultsEvent
-    | ResponseCompleteEvent
-    | TurnCompleteEvent
-    | InputSpeechStartEvent
-    | ResponseInterruptedEvent
-    | InputSpeechEndEvent
-    | OutputSpeechStartEvent
-    | OutputSpeechEndEvent
-    | InputTranscriptionErrorEvent
-    | SessionReconnectEvent
-    | SessionErrorEvent,
+    | RealtimeTurnCompleteEvent
+    | RealtimeInputSpeechStartEvent
+    | RealtimeResponseInterruptedEvent
+    | RealtimeInputSpeechEndEvent
+    | RealtimeOutputSpeechStartEvent
+    | RealtimeOutputSpeechEndEvent
+    | RealtimeInputTranscriptionErrorEvent
+    | RealtimeSessionReconnectEvent
+    | RealtimeSessionErrorEvent,
 )
 """Union of events yielded by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession].
+
+This is a strict subset of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent].
 
 Content is streamed as the shared [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] /
 [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] / [`PartEndEvent`][pydantic_ai.messages.PartEndEvent]
@@ -884,7 +723,12 @@ class RealtimeModelProfile(TypedDict, total=False):
     """Whether the model runs tool calls asynchronously without blocking generation.
 
     Gemini Live maps this to `Behavior.NON_BLOCKING` on function declarations and
-    `FunctionResponseScheduling.WHEN_IDLE` on function responses."""
+    `FunctionResponseScheduling.INTERRUPT` on function responses."""
+    supports_tool_return_schema: bool
+    """Whether the model natively renders a tool's [`return_schema`][pydantic_ai.tools.ToolDefinition.return_schema]
+    (Gemini Live's function-declaration `response` schema). Where it can't, a tool that opted in via
+    `include_return_schema` gets the schema injected into its description instead, exactly as on a
+    standard [`Model`][pydantic_ai.models.Model]."""
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The [native tools][pydantic_ai.native_tools.AbstractNativeTool] the model runs server-side, e.g.
     [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
@@ -909,6 +753,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
     'supports_async_tool_calls': False,
+    'supports_tool_return_schema': False,
     'supported_native_tools': frozenset(),
     'audio_input_sample_rate': 24000,
     'audio_output_sample_rate': 24000,
@@ -1236,11 +1081,12 @@ class ReconnectPolicy:
     """How to recover when a realtime connection drops mid-session.
 
     On a dropped connection the session is re-dialed and its configuration (instructions, tools,
-    voice, ...) re-applied, emitting a [`SessionReconnectEvent`][pydantic_ai.realtime.SessionReconnectEvent] event. What
-    server-side state survives depends on the provider: OpenAI Realtime and Azure OpenAI start a
-    fresh turn (the audio buffer and prior turns are lost), while Gemini Live and xAI restore prior
-    turns. Gemini requires `google_enable_session_resumption=True`; xAI enables native resumption
-    automatically whenever a reconnect policy is set.
+    voice, ...) re-applied, emitting a
+    [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] event. What server-side state
+    survives depends on the provider: OpenAI Realtime and Azure OpenAI start a fresh turn (the audio
+    buffer and prior turns are lost), while Gemini Live and xAI restore prior turns. Gemini requires
+    `google_enable_session_resumption=True`; xAI enables native resumption automatically whenever a
+    reconnect policy is set.
     """
 
     max_attempts: int = 3
@@ -1294,13 +1140,16 @@ def inject_trace_context(headers: MutableMapping[str, str]) -> None:
     building the handshake headers propagates trace context to the server, so a proxy like the
     Pydantic AI Gateway can nest its own realtime spans under the client's trace.
 
-    It is a no-op when no span is active (the default propagator writes nothing without a valid span
+    It is a no-op when no span is active (the propagator writes nothing without a valid span
     context) and harmless against providers that ignore the header, so it is safe to call
-    unconditionally.
+    unconditionally. The W3C trace-context propagator is used directly rather than the configured
+    global propagators: those commonly include baggage propagation, and this header set goes to
+    third-party providers, which must see the trace IDs but not whatever application metadata the
+    active OTel baggage carries.
     """
-    from opentelemetry.propagate import inject
+    from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-    inject(headers)
+    TraceContextTextMapPropagator().inject(headers)
 
 
 SeedContent = TypeAliasType('SeedContent', 'str | BinaryContent')

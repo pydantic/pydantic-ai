@@ -32,16 +32,16 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeModelProfile,
-    SessionReconnectEvent,
-    SessionUsageEvent,
+    RealtimeSessionReconnectEvent,
     TurnDetection,
     WebRTCSession,
 )
-from pydantic_ai.realtime._base import ConversationCreated, ConversationItemCreated, SessionErrorEvent
+from pydantic_ai.realtime._base import ConversationCreated, ConversationItemCreated, RealtimeSessionErrorEvent
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,
     OutputTranscript,
+    SessionUsageEvent,
     ToolCall,
 )
 from pydantic_ai.tools import ToolDefinition
@@ -58,6 +58,15 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.xai import XaiRealtimeConnection, XaiRealtimeModel, map_event
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='xai-sdk / websockets not installed')
+
+
+def test_xai_public_exports_are_curated() -> None:
+    assert rt_xai.__all__ == (
+        'XaiRealtimeModel',
+        'XaiRealtimeModelSettings',
+        'XaiRealtimeConnection',
+        'map_event',
+    )
 
 
 def _model(settings: rt_xai.XaiRealtimeModelSettings | None = None, **kwargs: Any) -> XaiRealtimeModel:
@@ -229,6 +238,7 @@ def test_profile() -> None:
         supports_seeding_audio=False,
         supports_thinking=True,
         supports_async_tool_calls=False,
+        supports_tool_return_schema=False,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supported_native_tools=frozenset(),
@@ -256,8 +266,8 @@ async def test_webrtc_entry_points_are_unsupported() -> None:
 
 
 def test_session_config_shape() -> None:
-    """`voice` and `turn_detection` sit at the session top level (unlike OpenAI's nested GA shape)."""
-    model = _model(rt_xai.XaiRealtimeModelSettings(voice='ara'))
+    """`xai_voice` maps to top-level `voice`, alongside `turn_detection`, in xAI's session shape."""
+    model = _model(rt_xai.XaiRealtimeModelSettings(xai_voice='ara'))
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
     config = model._session_config('Be nice', tools, None)  # pyright: ignore[reportPrivateUsage]
     assert config == {
@@ -564,7 +574,7 @@ async def test_connect_handshake_url_auth_and_session_config(monkeypatch: pytest
     model = XaiRealtimeModel(
         'grok-voice-latest',
         provider=XaiProvider(api_key='k'),
-        settings=rt_xai.XaiRealtimeModelSettings(voice='eve'),
+        settings=rt_xai.XaiRealtimeModelSettings(xai_voice='eve'),
     )
     async with _connect(model, 'Be nice') as conn:
         assert isinstance(conn, XaiRealtimeConnection)
@@ -722,7 +732,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
-    assert events == [SessionReconnectEvent(state_restored=True), OutputTranscript(text='hi', is_final=True)]
+    assert events == [RealtimeSessionReconnectEvent(state_restored=True), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]  # both the dropped and the current socket are closed
     # The last URL is the re-dial attempted after `good` hung up, which the stand-in refuses.
     assert connect.urls == [
@@ -796,7 +806,7 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
         await session.send('Hello.')
         events = await collect_session_events(session)
 
-    assert sum(isinstance(event, SessionReconnectEvent) for event in events) == 1
+    assert sum(isinstance(event, RealtimeSessionReconnectEvent) for event in events) == 1
     messages = session.all_messages()
     assert len(messages) == 2
     assert isinstance(messages[0], ModelRequest)
@@ -818,7 +828,7 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
     """A failed reconnect through `connect()`'s dial leaves nothing to close on teardown.
 
     The dial nulls `cm` before re-dialing, so when the re-dial fails (an expected `OSError`) and the
-    session ends via a `SessionErrorEvent`, teardown finds `cm` already `None` and skips the close.
+    session ends via a `RealtimeSessionErrorEvent`, teardown finds `cm` already `None` and skips the close.
     """
     dropped = _DropAfterHandshake([_created(), _conversation_created(), _updated()])
 
@@ -853,7 +863,7 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
         events = [e async for e in conn]
 
     # The message names xAI, not the OpenAI protocol whose connection class this reuses.
-    fatal = [e for e in events if isinstance(e, SessionErrorEvent) and not e.recoverable]
+    fatal = [e for e in events if isinstance(e, RealtimeSessionErrorEvent) and not e.recoverable]
     assert [e.message for e in fatal] == [IsStr(regex=r'xAI Grok Voice connection closed; reconnect failed: .*')]
     # The dropped socket is closed as the reconnect nulls `cm` before re-dialing; the refused re-dial
     # never enters its context manager, so `cm` stays `None` and teardown closes nothing further. A

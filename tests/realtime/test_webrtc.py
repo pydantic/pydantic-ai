@@ -142,7 +142,9 @@ async def test_agent_realtime_signaling_resolves_bound_configuration() -> None:
     assert model.expires_after_seconds == 45
     assert len(model.calls) == 2
     for instructions, tools, settings in model.calls:
-        assert instructions == 'Literal instructions.\n\nDynamic instructions.\n\nToolset instructions.'
+        # Static parts (the literal and the toolset's own instructions) sort ahead of the dynamic
+        # `@agent.instructions` function, exactly as a graph run's request does.
+        assert instructions == 'Literal instructions.\n\nToolset instructions.\n\nDynamic instructions.'
         assert tools is not None
         assert [tool.name for tool in tools] == ['agent_tool', 'accessor_tool']
         assert settings == RealtimeModelSettings(max_tokens=100, output_modality='text')
@@ -258,7 +260,7 @@ async def test_create_client_secret(openai_api_key: str, request: pytest.Fixture
     model = OpenAIRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key=openai_api_key))
     secret = await model.create_client_secret(
         instructions='Be brief.',
-        model_settings=OpenAIRealtimeModelSettings(voice='marin'),
+        model_settings=OpenAIRealtimeModelSettings(openai_voice='marin'),
         expires_after_seconds=60,
     )
 
@@ -279,7 +281,7 @@ async def test_agent_create_client_secret(openai_api_key: str, request: pytest.F
         return f'20 C in {city}'  # pragma: no cover - resolved into the request, never called
 
     secret = await agent.realtime(
-        model, model_settings=OpenAIRealtimeModelSettings(voice='marin')
+        model, model_settings=OpenAIRealtimeModelSettings(openai_voice='marin')
     ).create_client_secret(expires_after_seconds=60)
 
     assert secret.value
@@ -349,7 +351,7 @@ async def test_answer_webrtc_offer(openai_api_key: str) -> None:
     answer = await model.answer_webrtc_offer(
         REAL_SDP_OFFER,
         instructions='Answer in two words.',
-        model_settings=OpenAIRealtimeModelSettings(voice='cedar'),
+        model_settings=OpenAIRealtimeModelSettings(openai_voice='cedar'),
     )
 
     assert answer.session.provider_name == 'openai'
@@ -366,9 +368,9 @@ async def test_agent_answer_webrtc_offer(openai_api_key: str) -> None:
     def get_temperature(city: str) -> str:
         return f'20 C in {city}'  # pragma: no cover - resolved into the request, never called
 
-    answer = await agent.realtime(model, model_settings=OpenAIRealtimeModelSettings(voice='cedar')).answer_webrtc_offer(
-        REAL_SDP_OFFER
-    )
+    answer = await agent.realtime(
+        model, model_settings=OpenAIRealtimeModelSettings(openai_voice='cedar')
+    ).answer_webrtc_offer(REAL_SDP_OFFER)
 
     assert answer.session.provider_name == 'openai'
     assert answer.session.call_id.startswith('rtc_')

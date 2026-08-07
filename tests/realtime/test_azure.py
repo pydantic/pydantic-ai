@@ -50,7 +50,7 @@ async def test_url_and_auth_headers() -> None:
     model = AzureRealtimeModel('gpt realtime', provider=provider)
 
     assert model._realtime_url() == (  # pyright: ignore[reportPrivateUsage]
-        'wss://resource.openai.azure.com/openai/v1/realtime?model=gpt+realtime'
+        'wss://resource.openai.azure.com/openai/v1/realtime?model=gpt%20realtime'
     )
     assert await model._auth_headers() == {'api-key': 'azure-key'}  # pyright: ignore[reportPrivateUsage]
 
@@ -82,7 +82,7 @@ def test_voice_live_session_config_options() -> None:
         azure_voice_live=True,
         azure_voice_live_turn_detection=ServerVAD(silence_duration_ms=750),
         input_transcription_model=None,
-        voice='alloy',
+        openai_voice='alloy',
         max_tokens=123,
         tool_choice='required',
     )
@@ -197,6 +197,27 @@ def test_voice_live_silently_ignores_openai_only_settings() -> None:
     assert 'speed' not in config
     assert 'output_audio' not in config
     assert 'noise_reduction' not in config
+
+
+def test_sideband_url_uses_the_ga_realtime_path() -> None:
+    """The sideband control URL follows the resource endpoint, like the session URL.
+
+    Regression: deriving it from the provider's `base_url` instead of the shared
+    `_realtime_ws_base()` seam dropped Azure's `/openai/v1` whenever the endpoint wasn't already in
+    the GA form, and the sideband dialed a path the resource doesn't serve.
+    """
+    provider = AzureProvider(
+        azure_endpoint='https://resource.openai.azure.com', api_version='2024-10-01', api_key='azure-key'
+    )
+    model = AzureRealtimeModel('gpt-realtime', provider=provider)
+
+    # The provider's own `base_url` is the SDK's `/openai/` form, which is exactly what made deriving
+    # the sideband URL from it wrong.
+    assert provider.base_url == 'https://resource.openai.azure.com/openai/'
+
+    assert model._sideband_url('rtc_123') == (  # pyright: ignore[reportPrivateUsage]
+        'wss://resource.openai.azure.com/openai/v1/realtime?call_id=rtc_123'
+    )
 
 
 def test_infer_provider_from_bare_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:

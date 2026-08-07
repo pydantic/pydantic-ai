@@ -44,11 +44,13 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolApproved,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolDenied,
     ToolReturn,
     ToolReturnPart,
     UploadedFile,
+    UserError,
     UserPromptPart,
     VideoUrl,
 )
@@ -58,6 +60,7 @@ from pydantic_ai.messages import (
     MULTI_MODAL_CONTENT_TYPES,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
+    RealtimeSessionErrorEvent,
     ToolReturnContent,
     is_multi_modal_content,
     narrow_message_parts,
@@ -898,6 +901,17 @@ def test_deferred_tool_events_serialization_roundtrip():
     """
     adapter = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
 
+    realtime_event = RealtimeSessionErrorEvent(message='Connection dropped', recoverable=False)
+    serialized = adapter.dump_python(realtime_event, mode='json')
+    assert serialized == {
+        'message': 'Connection dropped',
+        'type': None,
+        'code': None,
+        'recoverable': False,
+        'event_kind': 'realtime_session_error',
+    }
+    assert adapter.validate_python(serialized) == realtime_event
+
     requests_event = DeferredToolRequestsEvent(
         requests=DeferredToolRequests(
             calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='call_1')],
@@ -964,6 +978,7 @@ def test_deferred_tool_events_serialization_roundtrip():
                         'return_value': {'result': 42},
                         'content': 'Done',
                         'metadata': {'foo': 'bar'},
+                        'tools': None,
                         'kind': 'tool-return',
                     },
                     'call_3': {'message': 'Try again', 'kind': 'model-retry'},
@@ -1966,6 +1981,38 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
+def test_args_as_json_str_valid_json_verbatim():
+    """args_as_json_str should return valid object JSON verbatim, preserving key order and whitespace."""
+    part = ToolCallPart(tool_name='test_tool', args='{"b":  1, "a": 2}')
+    assert part.args_as_json_str() == '{"b":  1, "a": 2}'
+
+
+def test_args_as_json_str_dict_args():
+    """args_as_json_str should serialize dict args."""
+    part = ToolCallPart(tool_name='test_tool', args={'key': 'value'})
+    assert part.args_as_json_str() == '{"key":"value"}'
+
+
+def test_args_as_json_str_malformed_json_returns_invalid_json_wrapper():
+    """args_as_json_str should return the serialized INVALID_JSON wrapper for malformed JSON, like args_as_dict."""
+    malformed = '{"query": "bad", "ids":[4556]</parameter>\n<parameter name="limit": 8}'
+    part = ToolCallPart(tool_name='test_tool', args=malformed)
+    assert json.loads(part.args_as_json_str()) == {INVALID_JSON_KEY: malformed}
+
+
+def test_args_as_json_str_non_dict_json_returns_invalid_json_wrapper():
+    """args_as_json_str should return the serialized INVALID_JSON wrapper for valid JSON that's not a dict."""
+    json_list = '[1, 2, 3]'
+    part = ToolCallPart(tool_name='test_tool', args=json_list)
+    assert json.loads(part.args_as_json_str()) == {INVALID_JSON_KEY: json_list}
+
+
+def test_args_as_json_str_empty_args():
+    """args_as_json_str should return '{}' when args is None/empty."""
+    part = ToolCallPart(tool_name='test_tool', args=None)
+    assert part.args_as_json_str() == '{}'
+
+
 def test_user_prompt_part_with_text_content():
     part = UserPromptPart(
         content=[
@@ -2542,6 +2589,22 @@ async def test_agent_run_with_speech_history():
     )
 
 
+@pytest.mark.anyio
+async def test_agent_run_with_speech_only_response():
+    """A custom model returning only realtime `SpeechPart`s yields their transcript as text output.
+
+    `ModelResponse.text` already reads speech transcripts as the response's text, so the agent graph
+    must agree — not judge the response empty and force a retry.
+    """
+
+    def speak(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='hello from speech')])
+
+    agent = Agent(FunctionModel(speak))
+    result = await agent.run('hi')
+    assert result.output == 'hello from speech'
+
+
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
 @pytest.mark.anyio
 async def test_openai_mapping_of_prepared_speech_history():
@@ -2559,3 +2622,68 @@ async def test_openai_mapping_of_prepared_speech_history():
     prepared = model.prepare_messages(history)
     openai_messages = await model._map_messages(prepared, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
     assert openai_messages == snapshot([{'role': 'user', 'content': 'Hello'}, {'role': 'assistant', 'content': 'Hi!'}])
+
+
+@pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
+@pytest.mark.anyio
+async def test_unprepared_speech_history_raises():
+    """A `SpeechPart` that reaches an adapter unconverted raises rather than silently vanishing.
+
+    `Model.request()` / `count_tokens()` are public and don't run `prepare_messages`, so a caller
+    driving a model directly with realtime history would otherwise lose the turn's speech — possibly
+    the whole user message — with no error.
+    """
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='fake'))
+    history: list[ModelMessage] = [ModelRequest(parts=[SpeechPart(speaker='user', transcript='Hello')])]
+    with pytest.raises(UserError, match=r'`SpeechPart` cannot be sent to this model as-is'):
+        await model._map_messages(history, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_function_model_estimates_usage_from_unprepared_speech():
+    """`FunctionModel.request()` doesn't run `prepare_messages`, so user speech can arrive unconverted;
+    its transcript still counts toward estimated usage — the same as its converted text form — rather
+    than the turn undercounting to zero.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('ok')])
+
+    model = FunctionModel(respond)
+    speech: list[ModelMessage] = [ModelRequest(parts=[SpeechPart(speaker='user', transcript='Hello from speech')])]
+    text: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hello from speech')])]
+
+    speech_usage = (await model.request(speech, None, ModelRequestParameters())).usage
+    text_usage = (await model.request(text, None, ModelRequestParameters())).usage
+    assert speech_usage.input_tokens == text_usage.input_tokens
+    assert speech_usage.input_tokens > 50  # more than the flat per-request overhead: the transcript counted
+
+
+def test_tool_availability_delta_round_trip():
+    """Tool availability changes retain their discriminator and optional cause across persistence."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='load-1')])
+    ]
+
+    assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
+
+
+def test_tool_availability_delta_accepts_legacy_added_field():
+    messages = ModelMessagesTypeAdapter.validate_python(
+        [{'kind': 'request', 'parts': [{'part_kind': 'tool-availability-delta', 'added': ['new_tool']}]}]
+    )
+    assert messages == [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'])])]
+
+
+def test_tool_availability_delta_otel_message_uses_system_role():
+    """Tool availability is framework control state, not user-authored content."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'])])]
+
+    assert InstrumentationSettings().messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'system',
+                'parts': [{'type': 'text', 'content': 'Tool availability changed: +new_tool'}],
+            }
+        ]
+    )

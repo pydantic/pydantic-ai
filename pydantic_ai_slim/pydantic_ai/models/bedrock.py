@@ -8,7 +8,6 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from functools import cached_property
 from itertools import count
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, overload
@@ -51,6 +50,7 @@ from pydantic_ai import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -67,6 +67,8 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
@@ -630,12 +632,6 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
-    @cached_property
-    def profile(self) -> BedrockModelProfile:
-        # The resolved profile dict may also carry cross-class fields (e.g. `anthropic_*` for Anthropic-on-Bedrock
-        # models) — read those with `cast` or `.get()`, since the narrowed type only exposes `bedrock_*` keys.
-        return cast(BedrockModelProfile, super().profile)
-
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """The set of builtin tool types this model can handle."""
@@ -809,6 +805,7 @@ class BedrockConverseModel(Model[BaseClient]):
         yield BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
+            _model_profile=cast(BedrockModelProfile, self.profile),
             _event_stream=response['stream'],
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
@@ -1043,7 +1040,7 @@ class BedrockConverseModel(Model[BaseClient]):
             inference_config['maxTokens'] = max_tokens
         if (temperature := model_settings.get('temperature')) is not None:
             inference_config['temperature'] = temperature
-        if top_p := model_settings.get('top_p'):
+        if (top_p := model_settings.get('top_p')) is not None:
             inference_config['topP'] = top_p
         if stop_sequences := model_settings.get('stop_sequences'):
             inference_config['stopSequences'] = stop_sequences
@@ -1056,9 +1053,9 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: BedrockModelSettings | None,
     ) -> ToolConfigurationTypeDef | None:
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
-        profile = self.profile
+        profile = cast(BedrockModelProfile, self.profile)
         supports = _support_tool_forcing(
             self.model_name, profile, model_settings, model_request_parameters, resolved_tool_choice
         )
@@ -1263,9 +1260,11 @@ class BedrockConverseModel(Model[BaseClient]):
                             if supports_tool_result_status:
                                 error_result['status'] = 'error'
                             bedrock_messages.append({'role': 'user', 'content': [{'toolResult': error_result}]})
+                    elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                        raise _unsynthesized_tool_availability_delta_error()
                     elif isinstance(part, SpeechPart):  # pragma: no cover
-                        # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
-                        pass
+                        # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
@@ -1632,6 +1631,7 @@ class BedrockStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Bedrock models."""
 
     _model_name: BedrockModelName
+    _model_profile: BedrockModelProfile
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _provider_name: str
     _provider_url: str
@@ -1732,7 +1732,13 @@ class BedrockStreamedResponse(StreamedResponse):
                                 ):
                                     yield event
                         if text := delta.get('text'):
-                            for event in self._parts_manager.handle_text_delta(vendor_part_id=index, content=text):
+                            for event in self._parts_manager.handle_text_delta(
+                                vendor_part_id=index,
+                                content=text,
+                                ignore_leading_whitespace=self._model_profile.get(
+                                    'ignore_streamed_leading_whitespace', False
+                                ),
+                            ):
                                 yield event
                         if 'toolUse' in delta:
                             tool_use = delta['toolUse']

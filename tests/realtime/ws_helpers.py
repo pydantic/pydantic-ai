@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai.realtime import RealtimeError, RealtimeEvent, RealtimeSession, SessionErrorEvent
+from pydantic_ai.realtime import RealtimeError, RealtimeEvent, RealtimeSession, RealtimeSessionErrorEvent
 from pydantic_ai.realtime._base import RealtimeCodecEvent, RealtimeConnection
 
 from .ws_cassettes import CassetteMessage, RealtimeCassette
@@ -17,7 +17,7 @@ async def collect_codec_events(connection: RealtimeConnection, *, sideband: bool
     """Drain a connection through the end of its scripted conversation.
 
     Both the fakes and the recordings end with the server hanging up, which a WebSocket-backed
-    connection reports as a final non-recoverable `SessionErrorEvent` (see
+    connection reports as a final non-recoverable `RealtimeSessionErrorEvent` (see
     `test_clean_close_is_reported_as_a_fatal_error`). Asserting and stripping it here keeps every
     caller's expectations about the conversation rather than its ending.
 
@@ -28,7 +28,7 @@ async def collect_codec_events(connection: RealtimeConnection, *, sideband: bool
     if sideband:
         return events
     closed = events.pop()
-    assert isinstance(closed, SessionErrorEvent), closed
+    assert isinstance(closed, RealtimeSessionErrorEvent), closed
     assert not closed.recoverable and 'connection closed' in closed.message, closed
     return events
 

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
 from pydantic_ai._instructions import AgentInstructions, normalize_instructions
-from pydantic_ai._utils import gather, replace_no_init
+from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
@@ -83,8 +83,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             cap.apply(visitor)
 
     @property
-    def has_wrap_node_run(self) -> bool:
-        return any(c.has_wrap_node_run for c in self.capabilities)
+    def _has_wrap_node_run(self) -> bool:
+        return any(c._has_wrap_node_run for c in self.capabilities)
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
@@ -162,14 +162,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
         def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
             merged: ModelSettings | None = None
+            # This layering only runs in the classic request pipeline, where `ctx.model_settings`
+            # never holds `RealtimeModelSettings` (realtime sessions resolve settings at connect).
             for entry in settings_chain:
                 # Mutate ctx.model_settings so each dynamic entry sees the
                 # accumulated settings from all prior layers.
-                ctx.model_settings = merge_model_settings(ctx.model_settings, merged)
+                ctx.model_settings = merge_model_settings(cast('ModelSettings | None', ctx.model_settings), merged)
                 resolved = entry(ctx) if callable(entry) else entry
                 merged = merge_model_settings(merged, resolved)
             # Update ctx.model_settings to include the final entry's contribution
-            ctx.model_settings = merge_model_settings(ctx.model_settings, merged)
+            ctx.model_settings = merge_model_settings(cast('ModelSettings | None', ctx.model_settings), merged)
             return merged if merged is not None else ModelSettings()
 
         return resolve
@@ -396,11 +398,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
+        wrapped_streams = [stream]
         for capability in reversed(self.capabilities):
             if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
                 stream = capability.wrap_run_event_stream(cap_ctx, stream=stream)
-        async for event in stream:
-            yield event
+                wrapped_streams.append(stream)
+        try:
+            async for event in stream:
+                yield event
+        finally:
+            await aclose_all(reversed(wrapped_streams))
 
     # --- Model request lifecycle hooks ---
 

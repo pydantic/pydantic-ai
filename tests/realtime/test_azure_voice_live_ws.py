@@ -23,8 +23,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.realtime import RealtimeModelProfile, TurnCompleteEvent
-from pydantic_ai.realtime._base import SessionErrorEvent
+from pydantic_ai.realtime import RealtimeModelProfile, RealtimeTurnCompleteEvent
+from pydantic_ai.realtime._base import RealtimeSessionErrorEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import RealtimeCassette
@@ -53,7 +53,7 @@ async def test_text_in_audio_out_turn(
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - breaks on the recorded terminal event
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     assert sent_frames_containing(cassette, 'Answer in two or three words.') == snapshot(
@@ -78,12 +78,15 @@ async def test_text_in_audio_out_turn(
     )
 
     assert collapse_event_types(events) == snapshot(
-        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'ResponseCompleteEvent', 'TurnCompleteEvent']
+        ['PartStartEvent', 'PartDeltaEvent', 'PartEndEvent', 'RealtimeTurnCompleteEvent']
     )
     messages = session.all_messages()
     assert [type(message).__name__ for message in messages] == snapshot(['ModelRequest', 'ModelResponse'])
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())], timestamp=IsDatetime()
+        parts=[UserPromptPart(content='Say a short greeting.', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
+        run_id=IsStr(),
     )
     response = messages[1]
     assert isinstance(response, ModelResponse)
@@ -137,6 +140,7 @@ async def test_audio_in_server_vad_turn(
         # Inherited from the OpenAI realtime profile, which Azure delegates to wholesale: Voice Live
         # serves the same models, and they keep talking while a tool call is outstanding.
         supports_async_tool_calls=True,
+        supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         supports_thinking=False,
@@ -152,7 +156,7 @@ async def test_audio_in_server_vad_turn(
         with anyio.fail_after(45):
             async for event in session:  # pragma: no branch - breaks on the recorded terminal event
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     messages = session.all_messages()
@@ -209,7 +213,7 @@ async def test_tool_call_round(
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - breaks on the recorded terminal event
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
     assert sent_frames_containing(cassette, 'Look up the weather for a city.') == snapshot(
@@ -259,7 +263,10 @@ async def test_tool_call_round(
         ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
     )
     assert messages[0] == ModelRequest(
-        parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())], timestamp=IsDatetime()
+        parts=[UserPromptPart(content='What is the weather in London?', timestamp=IsDatetime())],
+        timestamp=IsDatetime(),
+        conversation_id=IsStr(),
+        run_id=IsStr(),
     )
     tool_response = messages[1]
     assert isinstance(tool_response, ModelResponse)
@@ -304,10 +311,10 @@ async def test_message_history_seeding(
         with anyio.fail_after(30):
             async for event in session:  # pragma: no branch - breaks on the recorded terminal event
                 events.append(event)
-                if isinstance(event, TurnCompleteEvent):
+                if isinstance(event, RealtimeTurnCompleteEvent):
                     break
 
-    assert [event for event in events if isinstance(event, SessionErrorEvent)] == []
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
     assert sent_frames_containing(cassette, 'My name is Alice') == snapshot(
         [
             {

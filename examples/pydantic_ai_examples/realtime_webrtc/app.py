@@ -48,7 +48,11 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import FunctionToolCallEvent, FunctionToolResultEvent
-from pydantic_ai.realtime import TurnCompleteEvent, WebRTCSession, infer_realtime_model
+from pydantic_ai.realtime import (
+    RealtimeTurnCompleteEvent,
+    WebRTCSession,
+    infer_realtime_model,
+)
 from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings
 
 load_dotenv()
@@ -102,7 +106,7 @@ def lookup_support_policy(topic: str) -> str:
 
 
 model = infer_realtime_model(os.getenv('WEBRTC_REALTIME_MODEL', 'openai:gpt-realtime'))
-settings = OpenAIRealtimeModelSettings(voice=VOICE)
+settings = OpenAIRealtimeModelSettings(openai_voice=VOICE)
 if transcription_model := os.getenv('WEBRTC_TRANSCRIPTION_MODEL'):
     settings['input_transcription_model'] = transcription_model
 realtime = agent.realtime(model, model_settings=settings)
@@ -141,7 +145,7 @@ async def run_sideband(call: Call) -> None:
                         tool=event.part.tool_name,
                         content=event.part.content,
                     )
-                elif isinstance(event, TurnCompleteEvent):
+                elif isinstance(event, RealtimeTurnCompleteEvent):
                     logfire.info('turn complete', messages=len(session.all_messages()))
     except asyncio.CancelledError:
         raise

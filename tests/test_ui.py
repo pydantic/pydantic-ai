@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import warnings
 from collections.abc import AsyncIterator, MutableMapping, Sequence
@@ -7,13 +8,15 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
+import anyio
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import HandleDeferredToolCalls, ReinjectSystemPrompt
+from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.messages import (
     BinaryImage,
     DeferredToolRequestsEvent,
@@ -300,6 +303,28 @@ async def test_event_stream_back_to_back_text():
             '</stream>',
         ]
     )
+
+
+async def test_event_stream_close_finalizes_native_stream_without_protocol_trailer():
+    """A disconnected consumer cannot receive protocol trailers, but its native stream must be closed."""
+    finalized = anyio.Event()
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        try:
+            yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+            await asyncio.sleep(30)  # pragma: no cover
+        finally:
+            finalized.set()
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    transformed = DummyUIEventStream(run_input=request).transform_stream(event_generator())
+
+    assert await anext(transformed) == '<stream>'
+    assert await anext(transformed) == '<response>'
+    await _utils.aclose_if_supported(transformed)
+
+    with anyio.fail_after(5):
+        await finalized.wait()
 
 
 async def test_event_stream_error_closes_open_text():
@@ -798,6 +823,127 @@ async def test_run_stream_response_error():
             '</stream>',
         ]
     )
+
+
+async def test_run_stream_cancelled_run_closes_tools_as_interrupted():
+    """A cancelled run closes its pending tool calls with `outcome='interrupted'`, not `'failed'`:
+    a failed closeout would tell the model on reload that the tool errored, while interrupted
+    matches how cancellation records tool calls in message history."""
+    agent = Agent(model=TestModel())
+
+    @agent.tool
+    async def tool(ctx: RunContext, query: str) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this tool
+        # completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream()]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            "<tool-call name='tool'>{'query': 'a'}",
+            "</tool-call name='tool'>",
+            '</response>',
+            '<request>',
+            "<function-tool-call name='tool'>{'query': 'a'}</function-tool-call>",
+            "<function-tool-result name='tool'>The tool call was interrupted before a result was produced.</function-tool-result>",
+            "<error type='RunCancelled'>The agent run was cancelled.</error>",
+            '</request>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_run_stream_on_cancel():
+    agent = Agent(model=TestModel())
+
+    @agent.tool
+    async def tool(ctx: RunContext, query: str) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this tool
+        # completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = DummyUIAdapter(agent, request)
+    event_stream = adapter.build_event_stream()
+    cancellations: list[RunCancelled] = []
+    completions: list[AgentRunResult[Any]] = []
+
+    async def on_cancel(cancelled: RunCancelled) -> AsyncIterator[str]:
+        cancellations.append(cancelled)
+        yield '<cancelled>'
+
+    events = [
+        event
+        async for event in event_stream.transform_stream(
+            adapter.run_stream_native(), on_complete=completions.append, on_cancel=on_cancel
+        )
+    ]
+
+    assert '<cancelled>' in events
+    assert completions == []
+    assert cancellations == [event_stream.cancelled]
+    assert cancellations[0].all_messages()
+
+
+async def test_run_stream_on_cancel_not_called_for_success_or_error():
+    cancellations: list[RunCancelled] = []
+
+    success_adapter = DummyUIAdapter(
+        Agent(model=TestModel()), DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    )
+    success_stream = success_adapter.build_event_stream()
+    async for _ in success_stream.transform_stream(success_adapter.run_stream_native(), on_cancel=cancellations.append):
+        pass
+
+    async def stream_error(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        raise ValueError('plain error')
+        yield  # pragma: no cover
+
+    error_adapter = DummyUIAdapter(
+        Agent(model=FunctionModel(stream_function=stream_error)),
+        DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]),
+    )
+    async for _ in error_adapter.run_stream(on_cancel=cancellations.append):
+        pass
+
+    assert cancellations == []
+    assert success_stream.cancelled is None
+
+
+async def test_run_stream_error_wrapping_nested_cancellation_reported_as_error():
+    """An ordinary error raised while a nested `RunCancelled` is being handled carries that
+    `RunCancelled` in its implicit `__context__`. It must be reported to the client as an error,
+    not reclassified as a cancellation by chain-walking `__context__` (which would swallow the
+    failure into an abort/finished signal and never tell the client the run errored).
+
+    The agent graph re-parents such an error's `__context__` to its `TaskGroup`'s `ExceptionGroup`
+    before it reaches `transform_stream`, so a public-API run can't reproduce the misclassification;
+    inject the context-carrying exception straight into the stream to pin the classifier itself."""
+    adapter = DummyUIAdapter(
+        Agent(model=TestModel()), DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    )
+    event_stream = adapter.build_event_stream()
+
+    async def failing_stream() -> AsyncIterator[Any]:
+        try:
+            raise RunCancelled('nested run was cancelled')
+        except RunCancelled:
+            raise ValueError('delegate failed')
+        yield  # pragma: no cover
+
+    cancellations: list[RunCancelled] = []
+    events = [event async for event in event_stream.transform_stream(failing_stream(), on_cancel=cancellations.append)]
+
+    assert cancellations == []
+    assert event_stream.cancelled is None
+    assert "<error type='ValueError'>delegate failed</error>" in events
 
 
 async def test_run_stream_request_error():

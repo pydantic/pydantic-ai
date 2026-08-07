@@ -40,6 +40,7 @@ from pydantic_ai import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -50,11 +51,13 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import Capability, NativeTool
+from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
+from pydantic_ai.messages import INVALID_JSON_KEY
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -71,7 +74,6 @@ from ..conftest import (
     IsNow,
     IsStr,
     TestEnv,
-    iter_message_parts,
     message,
     try_import,
 )
@@ -116,42 +118,6 @@ pytestmark = [
 ]
 
 
-async def test_openai_deferred_capability_keeps_native_tool_search(
-    allow_model_requests: None, openai_api_key: str, vcr: Any
-):
-    """OpenAI requires native tool search for a deferred capability and can reveal and call its tool."""
-    model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    refunds = Capability[None](
-        id='refunds',
-        description='Refund policy tools. Load this capability before looking up refund policy.',
-        defer_loading=True,
-    )
-
-    @refunds.tool_plain
-    def lookup_refund_policy(order_id: str) -> str:
-        return f'{order_id}: refund allowed'
-
-    agent: Agent[None, str] = Agent(model, deps_type=type(None), capabilities=[refunds])
-    result = await agent.run(
-        'First load the refunds capability. Then call lookup_refund_policy for order-123. Return only the tool result.'
-    )
-
-    request_bodies = [json.loads(request.body) for request in vcr.requests]
-    assert len(request_bodies) >= 2
-    for request_body in request_bodies:
-        assert any(tool.get('type') == 'tool_search' for tool in request_body['tools'])
-        [lookup_tool] = [
-            tool
-            for tool in request_body['tools']
-            if tool.get('type') == 'function' and tool.get('name') == 'lookup_refund_policy'
-        ]
-        assert lookup_tool['defer_loading'] is True
-    assert any(
-        part.tool_name == 'lookup_refund_policy'
-        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
-    )
-
-
 async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: Any) -> None:  # pragma: lax no cover
     """Helper function to clean up OpenAI file search resources if they exist."""
     if file is not None:
@@ -187,6 +153,148 @@ async def test_openai_responses_model_simple_response(allow_model_requests: None
     agent = Agent(model=model)
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.')
+
+
+async def test_tool_availability_delta_uses_additional_tools(allow_model_requests: None):
+    """The wire item declares the revealed tool, and `tools` is left exactly as the previous turn sent it.
+
+    `tools` is the first cache section, so the delta turn has to send it unchanged or the whole cached
+    prefix moves — which is what this feature exists to prevent. A tool-search corpus member is already
+    declared there behind `defer_loading`, so the `additional_tools` item is the entire reveal and the
+    declaration (and `tool_search` with it) stays put.
+
+    This used to assert `'tools' not in request_kwargs`, pinning a promotion out of `tools`. The API
+    allows the stable shape, verified live: the deferred entry plus `tool_search` plus an item naming the
+    same tool returns 200, and the model calls the tool directly rather than searching first.
+    """
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='output-1',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='done', type='output_text', annotations=[])],
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'order_id': {'type': 'string'}},
+            'required': ['order_id'],
+        },
+        defer_loading=True,
+        with_native=ToolSearchTool.kind,
+    )
+
+    await model.request(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])],
+        None,
+        ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool(optional=True)]),
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert request_kwargs['input'] == snapshot(
+        [
+            {
+                'type': 'additional_tools',
+                'role': 'developer',
+                'tools': [
+                    {
+                        'name': 'lookup_refund_policy',
+                        'parameters': {
+                            'type': 'object',
+                            'properties': {'order_id': {'type': 'string'}},
+                            'required': ['order_id'],
+                            'additionalProperties': False,
+                        },
+                        'strict': True,
+                        'type': 'function',
+                        'description': 'Look up the refund policy for an order.',
+                    }
+                ],
+            }
+        ]
+    )
+    assert [tool.get('name') or tool.get('type') for tool in request_kwargs['tools']] == snapshot(
+        ['tool_search', 'lookup_refund_policy']
+    )
+    [wire_tool] = [tool for tool in request_kwargs['tools'] if tool.get('name') == 'lookup_refund_policy']
+    assert wire_tool['defer_loading'] is True
+
+
+async def test_tool_availability_delta_ignores_visible_and_unknown_tools() -> None:
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='not-used'))
+    _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['always_ready', 'missing'])])],
+        OpenAIResponsesModelSettings(),
+        ModelRequestParameters(
+            function_tools=[ToolDefinition(name='always_ready')],
+            tool_visibility={'always_ready': 'visible'},
+        ),
+    )
+    assert items == []
+
+
+@pytest.mark.parametrize(
+    ('tool_choice', 'expected'),
+    [
+        pytest.param('required', 'required', id='required'),
+        # Forcing an `additional_tools`-declared name by itself works on the live API
+        # even though the name is absent from the `tools` array.
+        pytest.param(
+            ['lookup_refund_policy'],
+            {'type': 'function', 'name': 'lookup_refund_policy'},
+            id='forced_by_name_via_history',
+        ),
+    ],
+)
+async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
+    allow_model_requests: None,
+    tool_choice: Literal['required'] | list[str],
+    expected: Any,
+) -> None:
+    """A tool revealed through `additional_tools` still participates in `tool_choice` resolution."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+    )
+    always_ready = ToolDefinition(
+        name='always_ready',
+        description='An always-available tool.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+
+    _, parameters = model.prepare_request(
+        None,
+        ModelRequestParameters(
+            function_tools=[tool, always_ready],
+            revealed_tool_names={tool.name},
+        ),
+    )
+    await model.request(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])],
+        OpenAIResponsesModelSettings(tool_choice=tool_choice),
+        parameters,
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert request_kwargs['tool_choice'] == expected
+    assert [tool['name'] for tool in request_kwargs['tools']] == ['always_ready']
+    assert request_kwargs['input'][0]['type'] == 'additional_tools'
 
 
 async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):
@@ -563,6 +671,25 @@ async def test_openai_responses_gpt_5_6_reasoning_off_keeps_sampling_params(
     request_body = single_request_body(vcr)
     assert request_body['reasoning'] == snapshot({'effort': 'none', 'context': 'all_turns'})
     assert request_body['temperature'] == 0.5
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_responses_gpt_5_6_minimal_thinking_uses_low_effort(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """VCR test: unified minimal thinking falls back to the lowest active effort GPT-5.6 accepts.
+
+    OpenAI documents `low` as the lowest active GPT-5.6 reasoning effort:
+    https://developers.openai.com/api/docs/guides/latest-model. A successful request and the body assertion
+    prove Pydantic AI maps its provider-agnostic `thinking='minimal'` level to `'low'` before sending it.
+    """
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking='minimal'))
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    assert single_request_body(vcr)['reasoning'] == snapshot({'effort': 'low', 'context': 'all_turns'})
 
 
 async def test_openai_responses_gpt_5_5_drops_sampling_params_by_default(
@@ -2813,7 +2940,7 @@ def test_model_profile_strict_not_supported():
     )
 
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, visibility='visible')  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {
@@ -2833,7 +2960,7 @@ def test_model_profile_strict_not_supported():
             openai_model_profile('gpt-4o'), OpenAIModelProfile(openai_supports_strict_tool_definition=False)
         ),
     )
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, visibility='visible')  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {
@@ -2854,6 +2981,28 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
     assert result.output == snapshot(
         'The capital of Mexico is Mexico City. It serves as the political, cultural, and economic heart of the country and is one of the largest metropolitan areas in the world.'
     )
+
+
+async def test_reasoning_model_with_temperature_does_not_mutate_caller_settings(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    settings = OpenAIResponsesModelSettings(temperature=0.5, top_p=0.9)
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await Agent(model, model_settings=settings).run('What is the capital of Mexico?')
+
+    assert settings == {'temperature': 0.5, 'top_p': 0.9}
 
 
 async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
@@ -15058,3 +15207,60 @@ async def test_openai_responses_web_search_tool_external_web_access_default_omit
     response_kwargs = get_mock_responses_kwargs(mock_client)[0]
     assert len(response_kwargs['tools']) == 1
     assert response_kwargs['tools'] == snapshot([{'type': 'web_search', 'search_context_size': 'medium'}])
+
+
+async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_model_requests: None):
+    """Malformed tool-call args are sent to the Responses API as the `INVALID_JSON` wrapper.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/7042. Responses builds its
+    own `ResponseFunctionToolCallParam` rather than reusing the Chat Completions mapping, so the
+    twin of `tests/models/test_openai.py::test_openai_malformed_tool_args_degraded_on_the_wire`
+    is what pins the transport `openai:` model names resolve to by default.
+    """
+    bad_args = '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
+
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'Please fix the tool call and try again.',
+        message_history=[
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='search_knowledge', tool_call_id='call_123', args=bad_args)],
+                timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        tool_name='search_knowledge',
+                        tool_call_id='call_123',
+                        content='Invalid JSON: expected `,` or `}` at line 1 column 99',
+                    )
+                ]
+            ),
+        ],
+    )
+    assert result.output == 'done'
+
+    function_call = get_mock_responses_kwargs(mock_client)[0]['input'][0]
+    assert function_call == snapshot(
+        {
+            'name': 'search_knowledge',
+            'arguments': '{"INVALID_JSON":"{\\"query\\": \\"bad query\\", \\"file_ids\\":[4556]</parameter>\\n<parameter name=\\"limit\\": 8}"}',
+            'call_id': 'call_123',
+            'type': 'function_call',
+        }
+    )
+    assert json.loads(function_call['arguments']) == {INVALID_JSON_KEY: bad_args}

@@ -47,19 +47,20 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
     AudioInput,
+    RealtimeResponseInterruptedEvent,
     RealtimeSession,
-    ResponseCompleteEvent,
-    ResponseInterruptedEvent,
-    SessionReconnectEvent,
-    SessionUsageEvent,
+    RealtimeSessionReconnectEvent,
+    RealtimeTurnCompleteEvent,
     TurnDetection,
     WebRTCSession,
 )
-from pydantic_ai.realtime._base import ImageInput, SessionErrorEvent, TextInput
+from pydantic_ai.realtime._base import ImageInput, RealtimeSessionErrorEvent, TextInput
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     InputTranscript,
     OutputTranscript,
+    ResponseDone,
+    SessionUsageEvent,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -89,10 +90,23 @@ with try_import() as imports_successful:
         ReconnectPolicy,
     )
 
+
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
 ]
+
+
+def test_google_public_exports_are_curated() -> None:
+    assert rt_google.__all__ == (
+        'GoogleRealtimeModel',
+        'GoogleRealtimeModelSettings',
+        'GoogleRealtimeConnection',
+        'AutomaticVAD',
+        'MultiSpeaker',
+        'ContextCompression',
+    )
+
 
 _GOOGLE_API_URL = 'https://generativelanguage.googleapis.com/'
 
@@ -319,6 +333,55 @@ def test_schema_drops_false_any_of_member() -> None:
     )
 
     assert schema.properties['value'].any_of == [genai_types.Schema(type=genai_types.Type.STRING)]  # type: ignore[index]
+
+
+def test_schema_flattens_all_of_instead_of_erasing_it() -> None:
+    """`Schema` can't express an intersection; its members merge rather than vanish.
+
+    Dropping `allOf` like any other unsupported keyword would leave `{}` — an unconstrained
+    parameter — where the schema had a type and constraints.
+    """
+    schema = rt_google._schema_from_json_schema(  # pyright: ignore[reportPrivateUsage]
+        {
+            'type': 'object',
+            'properties': {
+                'value': {
+                    'allOf': [
+                        {'type': 'string', 'minLength': 2},
+                        {'maxLength': 5},
+                        True,
+                    ],
+                }
+            },
+            'required': ['value'],
+        }
+    )
+
+    value = schema.properties['value']  # type: ignore[index]
+    assert value.type == genai_types.Type.STRING  # pyright: ignore[reportUnknownMemberType]
+    assert (value.min_length, value.max_length) == (2, 5)  # pyright: ignore[reportUnknownMemberType]
+
+
+def test_schema_flattens_all_of_object_members() -> None:
+    """`allOf` members contributing `properties` and `required` merge into one object schema.
+
+    An intersection of object shapes is the common `allOf` use (e.g. a base model plus a mixin);
+    merging keeps every field and its requiredness where dropping the keyword would erase them all.
+    """
+    schema = rt_google._schema_from_json_schema(  # pyright: ignore[reportPrivateUsage]
+        {
+            'allOf': [
+                {'type': 'object', 'properties': {'a': {'type': 'string'}}, 'required': ['a']},
+                {'properties': {'b': {'type': 'integer'}}, 'required': ['a', 'b']},
+            ],
+        }
+    )
+
+    assert schema.type == genai_types.Type.OBJECT
+    properties = schema.properties or {}
+    assert properties['a'].type == genai_types.Type.STRING
+    assert properties['b'].type == genai_types.Type.INTEGER
+    assert schema.required == ['a', 'b']
 
 
 def test_tool_def_rejects_a_recursive_schema() -> None:
@@ -712,6 +775,8 @@ def test_profile() -> None:
     # The default model is native-audio, the only Gemini family that honors `NON_BLOCKING`.
     # Supported is not the same as enabled: it gates the opt-in `google_async_tool_calls` setting.
     assert profile.get('supports_async_tool_calls') is True
+    # Gemini Live renders an opted-in return schema natively (the declaration's `response`).
+    assert profile.get('supports_tool_return_schema') is True
     assert profile.get('audio_input_sample_rate') == 16000
     assert profile.get('audio_output_sample_rate') == 24000
 
@@ -724,7 +789,7 @@ def test_config_full() -> None:
         max_tokens=256,
         temperature=0.5,
         top_p=0.9,
-        voice='Puck',
+        google_voice='Puck',
         google_vad=AutomaticVAD(prefix_padding_ms=200, silence_duration_ms=400),
     )
     model = GoogleRealtimeModel(settings=settings)
@@ -1038,8 +1103,8 @@ def test_map_transcriptions_interrupt_and_turn_complete() -> None:
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         InputTranscript(text='weather?', is_final=True),
         OutputTranscript(text='Sunny', is_final=False),
-        ResponseInterruptedEvent(),
-        ResponseCompleteEvent(interrupted=True),
+        RealtimeResponseInterruptedEvent(),
+        ResponseDone(interrupted=True),
     ]
 
 
@@ -1048,10 +1113,10 @@ def test_map_interruption_latches_until_turn_complete() -> None:
     interrupted = genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(interrupted=True))
     completed = genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(turn_complete=True))
     assert conn._map_message(interrupted) == [  # pyright: ignore[reportPrivateUsage]
-        ResponseInterruptedEvent()
+        RealtimeResponseInterruptedEvent()
     ]
-    assert conn._map_message(completed) == [ResponseCompleteEvent(interrupted=True)]  # pyright: ignore[reportPrivateUsage]
-    assert conn._map_message(completed) == [ResponseCompleteEvent(interrupted=False)]  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_message(completed) == [ResponseDone(interrupted=True)]  # pyright: ignore[reportPrivateUsage]
+    assert conn._map_message(completed) == [ResponseDone(interrupted=False)]  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_interruption_finalizes_session_response_as_interrupted() -> None:
@@ -1078,10 +1143,10 @@ async def test_interruption_finalizes_session_response_as_interrupted() -> None:
     async with session:
         async for event in session:
             events.append(event)
-            if isinstance(event, ResponseCompleteEvent):
+            if isinstance(event, RealtimeTurnCompleteEvent):
                 break
 
-    assert ResponseInterruptedEvent() in events
+    assert RealtimeResponseInterruptedEvent() in events
     assert not any(event.event_kind == 'input_speech_start' for event in events)
     response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
     assert response.state == 'interrupted'
@@ -1357,14 +1422,14 @@ async def test_connect_streams_events() -> None:
         events = [e async for e in conn]
     assert captured['model'] == 'gemini-2.5-flash-native-audio-latest'
     # Both turns stream, then the server closes the socket; without a reconnect policy that surfaces a
-    # non-recoverable `SessionErrorEvent` before the stream ends (see `test_iter_ends_on_api_error_close`).
+    # non-recoverable `RealtimeSessionErrorEvent` before the stream ends (see `test_iter_ends_on_api_error_close`).
     assert events[:4] == [
         OutputTranscript(text='hi', is_final=True),
-        ResponseCompleteEvent(interrupted=False),
+        ResponseDone(interrupted=False),
         OutputTranscript(text='bye', is_final=True),
-        ResponseCompleteEvent(interrupted=False),
+        ResponseDone(interrupted=False),
     ]
-    assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
+    assert isinstance(events[-1], RealtimeSessionErrorEvent) and events[-1].recoverable is False
     assert events[-1].message.startswith('Gemini Live connection closed: ')
 
 
@@ -1478,8 +1543,8 @@ async def test_connect_continues_after_empty_server_turn() -> None:
 
     events = [event async for event in _conn(session)]
 
-    assert events[:2] == [OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent(interrupted=False)]
-    assert isinstance(events[-1], SessionErrorEvent)
+    assert events[:2] == [OutputTranscript(text='hi', is_final=True), ResponseDone(interrupted=False)]
+    assert isinstance(events[-1], RealtimeSessionErrorEvent)
 
 
 async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1650,12 +1715,12 @@ async def test_connect_wires_reconnect_only_with_resumption() -> None:
 
 async def test_iter_ends_on_api_error_close() -> None:
     # The SDK surfaces a server-closed socket as an `APIError`; without a reconnect policy iteration
-    # should end (not raise) but first surface a non-recoverable `SessionErrorEvent` so callers can tell a
+    # should end (not raise) but first surface a non-recoverable `RealtimeSessionErrorEvent` so callers can tell a
     # dropped connection from a completed turn (mirroring the OpenAI provider).
     session = _RecordingSession([[_turn('hi')]], close_exc=genai_errors.APIError(1011, {'message': 'go away'}))
     events = [e async for e in _conn(session)]
-    assert events[:2] == [OutputTranscript(text='hi', is_final=True), ResponseCompleteEvent(interrupted=False)]
-    assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
+    assert events[:2] == [OutputTranscript(text='hi', is_final=True), ResponseDone(interrupted=False)]
+    assert isinstance(events[-1], RealtimeSessionErrorEvent) and events[-1].recoverable is False
 
 
 async def test_iter_ends_on_oserror() -> None:
@@ -1663,7 +1728,9 @@ async def test_iter_ends_on_oserror() -> None:
 
     events = [event async for event in _conn(session)]
 
-    assert events == [SessionErrorEvent(message='Gemini Live connection closed: connection reset', recoverable=False)]
+    assert events == [
+        RealtimeSessionErrorEvent(message='Gemini Live connection closed: connection reset', recoverable=False)
+    ]
 
 
 # --- config: voice / tone / turn-taking knobs --------------------------------
@@ -1671,7 +1738,7 @@ async def test_iter_ends_on_oserror() -> None:
 
 def test_speech_config_voice_and_language() -> None:
     speech = (
-        GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(voice='Puck', google_language_code='pl-PL'))
+        GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_voice='Puck', google_language_code='pl-PL'))
         ._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
         .speech_config
     )
@@ -1682,10 +1749,10 @@ def test_speech_config_voice_and_language() -> None:
 
 
 def test_speech_config_multi_speaker_overrides_voice() -> None:
-    # multi_speaker and voice are mutually exclusive in the API → multi_speaker wins, voice dropped.
+    # Multi-speaker and single-voice configs are mutually exclusive in the API, so multi-speaker wins.
     model = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(
-            voice='Puck', google_multi_speaker=MultiSpeaker(voices={'Joe': 'Puck', 'Jane': 'Kore'})
+            google_voice='Puck', google_multi_speaker=MultiSpeaker(voices={'Joe': 'Puck', 'Jane': 'Kore'})
         )
     )
     speech = model._config('hi', None, None).speech_config  # pyright: ignore[reportPrivateUsage]
@@ -1897,11 +1964,11 @@ async def test_reconnect_resumes_then_gives_up() -> None:
     conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
     events = [e async for e in conn]
     assert events[:3] == [
-        SessionReconnectEvent(state_restored=True),
+        RealtimeSessionReconnectEvent(state_restored=True),
         OutputTranscript(text='back', is_final=True),
-        ResponseCompleteEvent(interrupted=False),
+        ResponseDone(interrupted=False),
     ]
-    assert isinstance(events[-1], SessionErrorEvent) and events[-1].recoverable is False
+    assert isinstance(events[-1], RealtimeSessionErrorEvent) and events[-1].recoverable is False
     # reconnect resumed from the stored handle; one success + two failed attempts.
     assert handles == ['h1', 'h1', 'h1']
 
@@ -1928,8 +1995,66 @@ async def test_reconnect_reports_whether_state_was_actually_restored(handle: str
 
     events = [e async for e in conn]
 
-    reconnects = [e for e in events if isinstance(e, SessionReconnectEvent)]
-    assert reconnects == [SessionReconnectEvent(state_restored=handle is not None)]
+    reconnects = [e for e in events if isinstance(e, RealtimeSessionReconnectEvent)]
+    assert reconnects == [RealtimeSessionReconnectEvent(state_restored=handle is not None)]
+
+
+async def test_reconnect_closes_orphaned_turn_with_interrupted_boundary() -> None:
+    # s1 completes one turn, then drops mid-way through a second (output streamed, no `turn_complete`).
+    # The re-dialed connection never continues an in-flight generation — session resumption restores
+    # conversation state, not the generation (verified live: a resumed session stays silent) — so the
+    # orphaned turn's boundary would never arrive. The connection closes it with an interrupted
+    # `ResponseDone` ahead of the reconnect event; without one the session keeps the partial response
+    # open forever, never ending the turn or delivering messages queued behind it. The completed first
+    # turn doesn't arm this: only output since the last boundary marks a turn open.
+    partial = genai_types.LiveServerMessage(
+        server_content=genai_types.LiveServerContent(
+            output_transcription=genai_types.Transcription(text='cut off', finished=False)
+        )
+    )
+    s1 = _RecordingSession([[_turn('done')], [partial]])
+    dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
+    )
+    conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
+
+    events = [e async for e in conn]
+
+    assert events[:6] == [
+        OutputTranscript(text='done', is_final=True),
+        ResponseDone(interrupted=False),
+        OutputTranscript(text='cut off', is_final=False),
+        ResponseDone(interrupted=True),
+        RealtimeSessionReconnectEvent(state_restored=True),
+        OutputTranscript(text='back', is_final=True),
+    ]
+
+
+async def test_reconnect_closes_orphaned_turn_opened_by_a_tool_call() -> None:
+    # A tool call opens the turn like audio output does: the session holds a partial response for
+    # it, so a socket that drops between the `toolCall` and `turn_complete` needs the same synthetic
+    # interrupted boundary — otherwise the turn (and every message queued behind it) stalls forever.
+    tool_call = genai_types.LiveServerMessage(
+        tool_call=genai_types.LiveServerToolCall(
+            function_calls=[genai_types.FunctionCall(id='c1', name='get_weather', args={})]
+        )
+    )
+    s1 = _RecordingSession([[tool_call]])
+    dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
+    conn = GoogleRealtimeConnection(
+        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
+    )
+    conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
+
+    events = [e async for e in conn]
+
+    assert events[:4] == [
+        ToolCall(tool_call_id='c1', tool_name='get_weather', args='{}'),
+        ResponseDone(interrupted=True),
+        RealtimeSessionReconnectEvent(state_restored=True),
+        OutputTranscript(text='back', is_final=True),
+    ]
 
 
 async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1954,7 +2079,7 @@ async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None
     )
     conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
     events = [e async for e in conn]
-    assert events[0] == SessionReconnectEvent(state_restored=True)
+    assert events[0] == RealtimeSessionReconnectEvent(state_restored=True)
     # Every backoff delay is the jittered 0.35s, never the un-jittered 0.5s base delay.
     assert delays
     assert all(delay == pytest.approx(0.35) for delay in delays)
@@ -2008,8 +2133,8 @@ async def test_connect_reconnect_closes_previous_session() -> None:
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
     # `state_restored` is covered by its own test; this one is about closing the previous session's CM.
-    assert isinstance(events[0], SessionReconnectEvent)
-    assert events[1:3] == [OutputTranscript(text='back', is_final=True), ResponseCompleteEvent(interrupted=False)]
-    assert isinstance(events[-1], SessionErrorEvent)
+    assert isinstance(events[0], RealtimeSessionReconnectEvent)
+    assert events[1:3] == [OutputTranscript(text='back', is_final=True), ResponseDone(interrupted=False)]
+    assert isinstance(events[-1], RealtimeSessionErrorEvent)
     # cm0 closed when reconnecting into cm1; cm1 closed when the next reconnect runs out of sessions.
     assert closed == [0, 1]

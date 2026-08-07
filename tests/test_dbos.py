@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    CancellationToken,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -50,6 +51,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    RunCancelled,
     ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -306,6 +308,12 @@ runtime_handler_stream_agent = Agent(
     name='runtime_handler_stream_agent',
 )
 runtime_handler_stream_dbos_agent = DBOSAgent(runtime_handler_stream_agent)  # pyright: ignore[reportDeprecated]
+
+iter_handler_stream_agent = Agent(
+    FunctionModel(stream_function=runtime_handler_stream_function),
+    name='iter_handler_stream_agent',
+    capabilities=[DBOSDurability(event_stream_handler=runtime_event_stream_handler)],
+)
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
@@ -717,6 +725,39 @@ async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
     # events asserted below). It is no longer invoked a second time at the graph level against the
     # already-consumed, empty stream, so it doesn't appear as a separate top-level workflow step.
     assert 'runtime_event_stream_handler' not in step_names
+
+    exported_event_messages = [
+        event
+        for span in capfire.exporter.exported_spans_as_dict()
+        if (attributes := span.get('attributes'))
+        and attributes.get('logfire.msg') == 'runtime_event'
+        and isinstance((event := attributes.get('event')), str)
+    ]
+    assert exported_event_messages != []
+
+
+async def test_dbos_agent_iter_in_workflow_fires_event_stream_handler(
+    allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire
+) -> None:
+    """`agent.iter()` inside a DBOS workflow delivers events to the durable `event_stream_handler`.
+
+    The handler used to be skipped entirely under `iter()`, because `wrap_run_event_stream` was
+    applied by `run()`/`run_stream()` rather than by the node stream primitives.
+    """
+
+    @DBOS.workflow()
+    async def run_iter_workflow() -> str | None:
+        async with iter_handler_stream_agent.iter('Say hello') as run:
+            async for _node in run:
+                pass
+        assert run.result is not None
+        return run.result.output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_iter_workflow()
+
+    assert output == snapshot('Hello world')
 
     exported_event_messages = [
         event
@@ -2298,6 +2339,23 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     assert output == 'Echo: Hello DBOS'
 
 
+async def test_dbos_durability_rejects_cancellation_token_in_workflow(dbos: DBOS) -> None:
+    """A same-process `cancellation_token` can't cross the durable boundary, so it's rejected inside
+    a workflow — but the same durable-capable agent still accepts one when run outside a workflow."""
+    agent = Agent(_durability_fn_model, name='durability_cancel_token', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> None:
+        await agent.run('Hello', cancellation_token=CancellationToken())
+
+    with pytest.raises(UserError, match='`cancellation_token` cannot be used with DBOS durable execution'):
+        await run_durable_agent()
+
+    # Outside a workflow the capability is transparent, so the token works like a normal run.
+    result = await agent.run('Hello', cancellation_token=CancellationToken())
+    assert result.output == 'Echo: Hello'
+
+
 async def test_dbos_durability_registers_legacy_workflows_opt_in(dbos: DBOS) -> None:
     agent = Agent(
         _durability_fn_model,
@@ -2557,6 +2615,66 @@ async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None
         await run_workflow()
 
     await agent.run('run')
+
+
+async def test_dbos_step_wrapped_tool_rejects_cancel_in_workflow(dbos: DBOS) -> None:
+    """`ctx.cancel()` inside a step-wrapped (dynamic) tool raises instead of replay-diverging.
+
+    Recovery replays the recorded step output without re-executing the tool, so an in-step
+    cancellation would silently not happen again. Outside a workflow the step degrades to a
+    plain call and cancellation keeps working.
+    """
+
+    async def cancel(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_cancel_dynamic',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([cancel]), id='cancel_dynamic')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='cancellation would silently not happen again'):
+        await run_workflow()
+
+    with pytest.raises(RunCancelled):
+        await agent.run('run')
+
+
+async def test_dbos_plain_tool_cancel_works_in_workflow(dbos: DBOS) -> None:
+    """A plain function tool is NOT step-wrapped under DBOS: it runs at workflow level, where
+    `cancel()` is live and replay-consistent (workflow-level code re-executes on recovery),
+    so cancellation works and surfaces as an ordinary `RunCancelled` application outcome."""
+
+    async def cancel(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_cancel_plain',
+        tools=[cancel],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(RunCancelled):
+        await run_workflow()
 
 
 async def test_dbos_dynamic_get_tools_rejects_enqueue_in_workflow(dbos: DBOS) -> None:

@@ -31,6 +31,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserContent,
@@ -40,7 +41,12 @@ from ..native_tools import AbstractNativeTool
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 @dataclass(init=False)
@@ -49,6 +55,12 @@ class FunctionModel(Model):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    # A test double has no wire, so its "renderer" is whatever the test simulates: declaring every
+    # mode makes the `profile=` handed to it the whole simulation (no claim still means no channel),
+    # instead of requiring a subclass to restate what the profile already says.
+    supported_tool_deferral_modes = frozenset({'standalone', 'with_tool_search'})
+    supported_tool_addition_modes = frozenset({'by_reference', 'with_definitions'})
 
     function: FunctionDef | None
     stream_function: StreamFunctionDef | None
@@ -136,7 +148,7 @@ class FunctionModel(Model):
             model_request_parameters,
         )
         agent_info = AgentInfo(
-            function_tools=model_request_parameters.function_tools,
+            function_tools=model_request_parameters.declared_function_tools,
             allow_text_output=model_request_parameters.allow_text_output,
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
@@ -171,7 +183,7 @@ class FunctionModel(Model):
             model_request_parameters,
         )
         agent_info = AgentInfo(
-            function_tools=model_request_parameters.function_tools,
+            function_tools=model_request_parameters.declared_function_tools,
             allow_text_output=model_request_parameters.allow_text_output,
             output_tools=model_request_parameters.output_tools,
             model_settings=model_settings,
@@ -401,9 +413,13 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # 
                     request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
                     request_tokens += _estimate_string_tokens(part.model_response())
-                elif isinstance(part, SpeechPart):  # pragma: no cover
-                    # Realtime audio parts are converted to `UserPromptPart`s in `Model.prepare_messages`.
-                    pass
+                elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                    raise _unsynthesized_tool_availability_delta_error()
+                elif isinstance(part, SpeechPart):
+                    # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
+                    # user speech can arrive unconverted; estimate from the transcript like the
+                    # response side below rather than undercounting the turn to zero.
+                    request_tokens += _estimate_string_tokens(part.content)
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):

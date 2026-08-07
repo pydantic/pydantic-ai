@@ -21,6 +21,8 @@ from typing_extensions import TypeAliasType
 
 from ..exceptions import UserError
 from ..messages import (
+    DeferredToolRequestsEvent,
+    DeferredToolResultsEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
@@ -33,29 +35,27 @@ from ._base import (
     AudioInput,
     AudioRetention,
     ImageInput,
-    InputSpeechEndEvent,
-    InputSpeechStartEvent,
-    InputTranscriptionErrorEvent,
     KnownRealtimeTranscriptionModelName,
-    OutputSpeechEndEvent,
-    OutputSpeechStartEvent,
     RealtimeClientSecret,
     RealtimeError,
     RealtimeEvent,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
+    RealtimeInputTranscriptionErrorEvent,
     RealtimeModel,
     RealtimeModelProfile,
     RealtimeModelSettings,
+    RealtimeOutputSpeechEndEvent,
+    RealtimeOutputSpeechStartEvent,
     RealtimeProviderSession,
+    RealtimeResponseInterruptedEvent,
+    RealtimeSessionErrorEvent,
     RealtimeSessionInput,
+    RealtimeSessionReconnectEvent,
+    RealtimeTurnCompleteEvent,
     ReconnectPolicy,
-    ResponseCompleteEvent,
-    ResponseInterruptedEvent,
-    SessionErrorEvent,
-    SessionReconnectEvent,
-    SessionUsageEvent,
     TextInput,
     TranscriptUpdate,
-    TurnCompleteEvent,
     TurnDetection,
     WebRTCAnswer,
     WebRTCSession,
@@ -84,7 +84,7 @@ KnownRealtimeModelName = TypeAliasType(
 def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
     """Infer a realtime model from a `provider:model` identifier.
 
-    Accepts a bare provider (`openai`, `azure`, `xai`, `google`) or a
+    The provider is one of `openai`, `azure`, `xai`, or `google` (e.g. `openai:gpt-realtime`), or a
     [Pydantic AI Gateway](../gateway.md) route (`gateway/openai:gpt-realtime`,
     `gateway/google:gemini-live-2.5-flash`), which connects through the gateway's built-in provider —
     the provider string is passed to the realtime model as its `provider`, so authentication and the
@@ -92,7 +92,9 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
     """
     provider, separator, model_name = model.partition(':')
     if not separator or not model_name:
-        provider = ''
+        raise UserError(
+            f'Realtime model identifiers use the `provider:model` format (e.g. `openai:gpt-realtime`); got {model!r}.'
+        )
     # `gateway/openai` routes the OpenAI realtime protocol through the Pydantic AI Gateway: the
     # provider string is passed straight to `OpenAIRealtimeModel`, whose handshake reads the gateway
     # base URL and bearer key from `gateway_provider` and already carries the same trace context the
@@ -135,6 +137,8 @@ __all__ = (
     # Shared message/part events (re-exported from `pydantic_ai.messages`) that a session yields.
     'SpeechPart',
     'SpeechPartDelta',
+    'DeferredToolRequestsEvent',
+    'DeferredToolResultsEvent',
     'FunctionToolCallEvent',
     'FunctionToolResultEvent',
     'PartDeltaEvent',
@@ -146,11 +150,11 @@ __all__ = (
     'AudioInput',
     'AudioRetention',
     'ImageInput',
-    'InputSpeechStartEvent',
-    'OutputSpeechStartEvent',
-    'OutputSpeechEndEvent',
-    'InputSpeechEndEvent',
-    'InputTranscriptionErrorEvent',
+    'RealtimeInputSpeechStartEvent',
+    'RealtimeInputSpeechEndEvent',
+    'RealtimeOutputSpeechStartEvent',
+    'RealtimeOutputSpeechEndEvent',
+    'RealtimeInputTranscriptionErrorEvent',
     'KnownRealtimeTranscriptionModelName',
     'KnownRealtimeModelName',
     'RealtimeClientSecret',
@@ -163,15 +167,13 @@ __all__ = (
     'RealtimeSessionInput',
     'ReconnectPolicy',
     'RealtimeProviderSession',
-    'SessionReconnectEvent',
-    'SessionErrorEvent',
-    'SessionUsageEvent',
+    'RealtimeSessionErrorEvent',
+    'RealtimeSessionReconnectEvent',
     'TextInput',
     'TranscriptUpdate',
-    'TurnCompleteEvent',
+    'RealtimeTurnCompleteEvent',
     'TurnDetection',
-    'ResponseCompleteEvent',
-    'ResponseInterruptedEvent',
+    'RealtimeResponseInterruptedEvent',
     'WebRTCAnswer',
     'WebRTCSession',
     'infer_realtime_model',
