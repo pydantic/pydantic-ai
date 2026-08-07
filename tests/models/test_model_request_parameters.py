@@ -1,11 +1,9 @@
-import warnings
 from dataclasses import replace
 from typing import Literal
 
 import pytest
 from pydantic import TypeAdapter
 
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import (
     CodeExecutionTool,
