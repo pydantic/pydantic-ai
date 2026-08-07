@@ -1903,6 +1903,10 @@ class RealtimeSession:
             self._active_user = None
             self._user_transcript = ''
         else:
+            # Same guard as `_handle_input_transcript`: once an item is closed, a stray duplicate or
+            # late error event must not re-open it and record a second (blank) user turn.
+            if item_id in self._finalized_user_item_ids:
+                return []
             active = self._active_users_by_id.pop(item_id, None)
             start_emitted = active is not None
             part = (
