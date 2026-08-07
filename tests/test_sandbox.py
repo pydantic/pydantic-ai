@@ -390,6 +390,18 @@ async def test_read_file_falls_back_to_full_read_without_sed():
     assert backend.fs.reads == ['/workspace/file']
 
 
+async def test_read_file_missing_file_falls_back_to_filesystem_error():
+    """A missing file makes the slice attempt exit non-zero, so the filesystem read runs
+    and surfaces the authoritative error.
+    """
+    backend = FakeSandbox('missing')
+
+    with pytest.raises(KeyError):
+        await Sandbox(backend).read_file('nope.txt', limit=3)
+
+    assert backend.fs.reads == ['/workspace/nope.txt']
+
+
 async def test_read_file_on_unavailable_sandbox_surfaces_reason():
     """The slice attempt swallows `run()`'s failure so the filesystem read surfaces the
     authoritative policy reason instead.
