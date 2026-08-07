@@ -110,6 +110,21 @@ members = [
 required-version = ">=0.9.25"
 default-groups = ["dev", "lint", "docs"]
 exclude-newer = "7 days"
+conflicts = [
+    # The `mcp-tasks` extra lives in the FastMCP 4 / MCP SDK v2 universe, while this workspace
+    # deliberately locks FastMCP 3 through the dev group's `fastmcp` and the `[mcp]` extra's
+    # `fastmcp-slim` (the FastMCP 4 CI job layers `--with` overrides onto the frozen lock).
+    # Lock-side forks only: pip resolves `[mcp,mcp-tasks]` together fine, the extra's
+    # pre-release floor opts the shared `fastmcp-slim` range into the FastMCP 4 betas.
+    [
+        { package = "pydantic-ai-slim", extra = "mcp-tasks" },
+        { group = "dev" },
+    ],
+    [
+        { package = "pydantic-ai-slim", extra = "mcp-tasks" },
+        { package = "pydantic-ai-slim", extra = "mcp" },
+    ],
+]
 constraint-dependencies = [
     "ray>=2.55.0",
     "authlib>=1.6.7",
@@ -144,6 +159,11 @@ constraint-dependencies = [
 ]
 
 [tool.uv.exclude-newer-package]
+# Test-only, and the wire types it carries are the reference the MCP SDK v1/v2 compat readers are
+# checked against — released 2026-07-28, days inside the rolling window. Drop this line once the
+# window has moved past it. Timezone-explicit because uv resolves a bare date in the local
+# timezone, which would make `uv lock --check` machine-dependent.
+mcp-types = "2026-07-30T00:00:00Z"
 # These are our own packages, not worth defending from supply chain attacks on them.
 pydantic = false
 pydantic-core = false
@@ -182,8 +202,11 @@ dev = [
     "brotli>=1.2.0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
-    # `fastmcp` package alongside. FastMCP 4 uses MCP SDK v2, which is not yet supported (#6661).
-    "fastmcp>=3.3.0,<4",
+    # `fastmcp` package alongside, tracking the same range as the `[mcp]` extra (#6661).
+    "fastmcp>=3.3.0,<5",
+    # The MCP SDK v2 wire types as a standalone pure-Pydantic distribution, so the tests can check
+    # the compat readers' field-name pairs against the real v2 models while running against v1.
+    "mcp-types>=2.0.0",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
 docs = [
