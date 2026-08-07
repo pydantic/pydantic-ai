@@ -254,15 +254,16 @@ class SpanNode:
         return self._matches_query(query)
 
     def _attribute_matches(self, key: str, expected: Any) -> bool:
-        """Check if a span attribute matches an expected value, handling JSON-serialized dicts/lists."""
+        """Check if a span attribute matches an expected value, handling JSON-serialized dicts and lists."""
         stored = self.attributes.get(key)
         if stored == expected:
             return True
-        # OTel stores dict/list values as JSON strings; deserialize for comparison
-        if isinstance(stored, str) and not isinstance(expected, str):
+        # OTel attribute values can only be primitives or sequences thereof, so instrumentation
+        # libraries like Logfire store dict and list values as JSON strings.
+        if isinstance(expected, dict | list) and isinstance(stored, str):
             try:
                 return json.loads(stored) == expected
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError:
                 return False
         return False
 

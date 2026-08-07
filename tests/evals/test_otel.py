@@ -230,46 +230,43 @@ async def test_span_node_matches(span_tree: SpanTree):
     assert not child1_node.matches(SpanQuery(name_equals='child1', has_attributes={'type': 'normal'}))
 
 
-async def test_span_node_matches_json_attributes():
-    """Test that has_attributes matches dict/list values stored as JSON strings by OTel."""
-    from datetime import datetime, timezone
+async def test_span_node_matches_json_serialized_attributes():
+    """Test that has_attributes matches dict and list values that are stored as JSON strings."""
+    with context_subtree() as tree:
+        with logfire.span(
+            'span',
+            dict_attr={'foo': 1, 'bar': {'baz': True}},
+            list_attr=[1, 2, 3],
+            str_attr='hello',
+            numeric_str='42',
+        ):
+            pass
 
-    from pydantic_evals.otel.span_tree import SpanNode
+    assert isinstance(tree, SpanTree)
+    node = tree.roots[0]
+    # Logfire stores dict and list attribute values as JSON strings
+    assert node.attributes['dict_attr'] == '{"foo":1,"bar":{"baz":true}}'
+    assert node.attributes['list_attr'] == '[1,2,3]'
 
-    node = SpanNode(
-        name='test',
-        trace_id=1,
-        span_id=1,
-        parent_span_id=None,
-        start_timestamp=datetime(2020, 1, 1, tzinfo=timezone.utc),
-        end_timestamp=datetime(2020, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
-        attributes={
-            'str_attr': 'hello',
-            'dict_attr': '{"foo":1,"bar":true}',
-            'list_attr': '[1,2,3]',
-            'nested_dict': '{"a":{"b":2}}',
-            'not_json': 'plain text',
-        },
-    )
-
-    # Direct string match still works
-    assert node.matches(SpanQuery(has_attributes={'str_attr': 'hello'}))
-    assert not node.matches(SpanQuery(has_attributes={'str_attr': 'world'}))
-
-    # Dict attribute match: stored as JSON string, queried as dict
-    assert node.matches(SpanQuery(has_attributes={'dict_attr': {'foo': 1, 'bar': True}}))
-    assert not node.matches(SpanQuery(has_attributes={'dict_attr': {'foo': 1, 'bar': False}}))
+    # Dict attribute queried as a dict
+    assert node.matches(SpanQuery(has_attributes={'dict_attr': {'foo': 1, 'bar': {'baz': True}}}))
+    assert not node.matches(SpanQuery(has_attributes={'dict_attr': {'foo': 1, 'bar': {'baz': False}}}))
     assert not node.matches(SpanQuery(has_attributes={'dict_attr': {'wrong': 1}}))
 
-    # List attribute match: stored as JSON string, queried as list
+    # List attribute queried as a list
     assert node.matches(SpanQuery(has_attributes={'list_attr': [1, 2, 3]}))
     assert not node.matches(SpanQuery(has_attributes={'list_attr': [1, 2, 4]}))
 
-    # Nested dict comparison
-    assert node.matches(SpanQuery(has_attributes={'nested_dict': {'a': {'b': 2}}}))
+    # Combined with a plain string condition
+    assert node.matches(SpanQuery(has_attributes={'dict_attr': {'foo': 1, 'bar': {'baz': True}}, 'str_attr': 'hello'}))
 
-    # Non-JSON string with dict expected: graceful fallback to False
-    assert not node.matches(SpanQuery(has_attributes={'not_json': {'key': 'val'}}))
+    # A stored string is not deserialized when the query value is a primitive:
+    # the string '42' must not match the int 42
+    assert node.matches(SpanQuery(has_attributes={'numeric_str': '42'}))
+    assert not node.matches(SpanQuery(has_attributes={'numeric_str': 42}))
+
+    # A stored string that isn't valid JSON doesn't match a dict query
+    assert not node.matches(SpanQuery(has_attributes={'str_attr': {'key': 'val'}}))
 
 
 async def test_span_tree_repr(span_tree: SpanTree):
