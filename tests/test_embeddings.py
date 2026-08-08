@@ -380,6 +380,7 @@ class TestOpenAI:
         mock_client = AsyncMock()
         mock_embedding_item = MagicMock()
         mock_embedding_item.embedding = [0.1, 0.2, 0.3]
+        mock_embedding_item.index = 0
 
         mock_response = MagicMock()
         mock_response.data = [mock_embedding_item]
@@ -402,6 +403,36 @@ class TestOpenAI:
                 timestamp=IsDatetime(),
             )
         )
+
+    async def test_batch_embeddings_sorted_by_index(self):
+        """Response items may arrive out of order; order by `index` to match inputs."""
+        mock_client = AsyncMock()
+
+        item_b = MagicMock()
+        item_b.index = 1
+        item_b.embedding = [0.2]
+
+        item_a = MagicMock()
+        item_a.index = 0
+        item_a.embedding = [0.1]
+
+        item_c = MagicMock()
+        item_c.index = 2
+        item_c.embedding = [0.3]
+
+        # Deliberately reverse of request order
+        mock_response = MagicMock()
+        mock_response.data = [item_c, item_a, item_b]
+        mock_response.usage = None
+        mock_response.model = 'test-model'
+        mock_client.embeddings.create.return_value = mock_response
+
+        provider = OpenAIProvider(openai_client=mock_client)
+        model = OpenAIEmbeddingModel('test-model', provider=provider)
+
+        result = await model.embed(['a', 'b', 'c'], input_type='document')
+        assert result.embeddings == [[0.1], [0.2], [0.3]]
+        assert result.inputs == ['a', 'b', 'c']
 
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_instrumentation(self, openai_api_key: str, capfire: CaptureLogfire):

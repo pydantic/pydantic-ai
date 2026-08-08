@@ -143,7 +143,9 @@ class OpenAIEmbeddingModel(EmbeddingModel):
         except APIConnectionError as e:  # pragma: no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
-        embeddings = [item.embedding for item in response.data]
+        # OpenAI returns per-item `index` so batch results can be reordered to
+        # match the request. Do not assume response.data order equals inputs.
+        embeddings = [item.embedding for item in sorted(response.data, key=lambda item: item.index)]
 
         return EmbeddingResult(
             embeddings=embeddings,
