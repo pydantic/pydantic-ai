@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -31,6 +32,7 @@ class RequestCapture:
 
     paths: list[str] = field(default_factory=list[str])
     raw_bodies: list[bytes] = field(default_factory=list[bytes])
+    headers: list[httpx.Headers] = field(default_factory=list[httpx.Headers])
     client: httpx.AsyncClient = field(init=False)
 
     def __post_init__(self) -> None:
@@ -41,6 +43,9 @@ class RequestCapture:
         # for a capture, while a test typically inspects one of them. Parsing happens in `body`.
         self.paths.append(request.url.path)
         self.raw_bodies.append(request.read())
+        # The cassette serializer strips `anthropic-*` headers, so the wire is the only place a test
+        # can see beta gating.
+        self.headers.append(request.headers)
 
     def bodies(self, path_suffix: str = '') -> list[dict[str, Any]]:
         """Every captured body whose URL path ends with `path_suffix`, parsed on demand."""
@@ -58,8 +63,12 @@ class RequestCapture:
 
 
 @pytest.fixture
-def request_capture() -> RequestCapture:
-    return RequestCapture()
+async def request_capture(anyio_backend: str) -> AsyncIterator[RequestCapture]:
+    capture = RequestCapture()
+    yield capture
+    # Built directly rather than through `create_async_http_client`, so the autouse
+    # `close_httpx_clients` tracker never sees it and its pool would otherwise leak per test.
+    await capture.client.aclose()
 
 
 class AnthropicModelFactory(Protocol):

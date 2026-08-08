@@ -4744,7 +4744,10 @@ async def test_anthropic_opus_47_keeps_non_sampling_extra_body(allow_model_reque
     [pytest.param(True, id='provider_specific'), pytest.param(False, id='unified')],
 )
 async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(
-    allow_model_requests: None, anthropic_api_key: str, provider_specific_thinking: bool
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    provider_specific_thinking: bool,
 ):
     """Adaptive thinking is compatible with Tool Output, so the request keeps `output_mode='tool'`.
 
@@ -4768,16 +4771,7 @@ async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(
         if provider_specific_thinking
         else ModelSettings(thinking='high')
     )
-    sent_bodies: list[dict[str, Any]] = []
-
-    async def capture_request(request: httpx.Request) -> None:
-        sent_bodies.append(json.loads(request.read()))
-
-    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
-    m = AnthropicModel(
-        'claude-opus-4-6',
-        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client),
-    )
+    m = anthropic_model('claude-opus-4-6', capture=True)
 
     class CityLocation(BaseModel):
         city: str
@@ -4787,7 +4781,7 @@ async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(
     result = await agent.run('What is the capital of France?')
 
     assert result.output == snapshot(CityLocation(city='Paris', country='France'))
-    assert [(body['thinking'], body['tool_choice']) for body in sent_bodies] == snapshot(
+    assert [(body['thinking'], body['tool_choice']) for body in request_capture.bodies()] == snapshot(
         [({'type': 'adaptive'}, {'type': 'any'})]
     )
 
@@ -11893,24 +11887,18 @@ async def test_anthropic_lazy_advertisement_appends_with_tool_addition(allow_mod
 
 
 @pytest.mark.vcr()
-async def test_anthropic_lazy_advertisement_live(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+async def test_anthropic_lazy_advertisement_live(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    vcr: Any,
+):
     """A real mixed run appends and calls a capability tool on the first reveal request.
 
     The cassette serializer strips `anthropic-*` headers, so the request hook pins beta gating
     against the actual generated wire while the recorded bodies pin tools and `tool_addition`.
     """
-    beta_headers: list[str] = []
-    sent_bodies: list[bytes] = []
-
-    async def capture_request(request: httpx.Request) -> None:
-        beta_headers.append(request.headers.get('anthropic-beta', ''))
-        sent_bodies.append(request.read())
-
-    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
-    model = AnthropicModel(
-        'claude-opus-4-8',
-        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client),
-    )
+    model = anthropic_model('claude-opus-4-8', capture=True)
     refunds = Capability[None](
         id='refunds',
         description='Refund policy tools. Load this capability before looking up refund policy.',
@@ -11930,17 +11918,14 @@ async def test_anthropic_lazy_advertisement_live(allow_model_requests: None, ant
         tools=[Tool(searchable_tool, defer_loading=True)],
         capabilities=[refunds, ToolSearch()],
     )
-    try:
-        result = await agent.run(
-            'First load the refunds capability. Then call lookup_refund_policy for order A-4417. '
-            'Return only the tool result.'
-        )
-    finally:
-        await http_client.aclose()
+    result = await agent.run(
+        'First load the refunds capability. Then call lookup_refund_policy for order A-4417. '
+        'Return only the tool result.'
+    )
 
     # Read off the wire, not `vcr.requests`: the cassette is frozen and matched without reference to
     # the body, so tool/`tool_addition` claims asserted against it survive the code drifting away.
-    request_bodies = [json.loads(body) for body in sent_bodies]
+    request_bodies = request_capture.bodies()
     assert len(request_bodies) >= 3
     before, reveal, *later = request_bodies
     before_tools = before['tools']
@@ -11963,6 +11948,7 @@ async def test_anthropic_lazy_advertisement_live(allow_model_requests: None, ant
     assert set(addition_names) <= set(reveal_names)
     assert all(request_body['tools'] == reveal_tools for request_body in later)
 
+    beta_headers = [h.get('anthropic-beta', '') for h in request_capture.headers]
     beta = 'mid-conversation-tool-changes-2026-07-01'
     assert beta not in beta_headers[0]
     assert all(beta in header for header in beta_headers[1:])
@@ -11973,20 +11959,14 @@ async def test_anthropic_lazy_advertisement_live(allow_model_requests: None, ant
 
 
 @pytest.mark.vcr()
-async def test_anthropic_fable_5_lazy_advertisement_live(allow_model_requests: None, anthropic_api_key: str, vcr: Any):
+async def test_anthropic_fable_5_lazy_advertisement_live(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    vcr: Any,
+):
     """Fable 5 accepts a same-request deferred definition and `tool_addition` reveal."""
-    beta_headers: list[str] = []
-    sent_bodies: list[bytes] = []
-
-    async def capture_request(request: httpx.Request) -> None:
-        beta_headers.append(request.headers.get('anthropic-beta', ''))
-        sent_bodies.append(request.read())
-
-    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
-    model = AnthropicModel(
-        'claude-fable-5',
-        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client),
-    )
+    model = anthropic_model('claude-fable-5', capture=True)
     refunds = Capability[None](
         id='refunds',
         description='Refund policy tools. Load this capability before looking up refund policy.',
@@ -12006,17 +11986,14 @@ async def test_anthropic_fable_5_lazy_advertisement_live(allow_model_requests: N
         tools=[Tool(searchable_tool, defer_loading=True)],
         capabilities=[refunds, ToolSearch()],
     )
-    try:
-        result = await agent.run(
-            'First load the refunds capability. Then call lookup_refund_policy for order A-4417. '
-            'Return only the tool result.'
-        )
-    finally:
-        await http_client.aclose()
+    result = await agent.run(
+        'First load the refunds capability. Then call lookup_refund_policy for order A-4417. '
+        'Return only the tool result.'
+    )
 
     # Read off the wire, not `vcr.requests`: the cassette is frozen and matched without reference to
     # the body, so tool/`tool_addition` claims asserted against it survive the code drifting away.
-    request_bodies = [json.loads(body) for body in sent_bodies]
+    request_bodies = request_capture.bodies()
     assert len(request_bodies) >= 3
     before, reveal, *later = request_bodies
     before_tools = before['tools']
@@ -12039,6 +12016,7 @@ async def test_anthropic_fable_5_lazy_advertisement_live(allow_model_requests: N
     assert set(addition_names) <= set(reveal_names)
     assert all(request_body['tools'] == reveal_tools for request_body in later)
 
+    beta_headers = [h.get('anthropic-beta', '') for h in request_capture.headers]
     beta = 'mid-conversation-tool-changes-2026-07-01'
     assert beta not in beta_headers[0]
     assert all(beta in header for header in beta_headers[1:])
@@ -12521,7 +12499,7 @@ async def test_anthropic_count_tokens_keeps_memory_tool(allow_model_requests: No
 
 @pytest.mark.vcr()
 async def test_anthropic_count_tokens_with_adaptive_thinking_and_output_tools(
-    allow_model_requests: None, anthropic_api_key: str
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """`/v1/messages/count_tokens` accepts the forced `tool_choice` that adaptive thinking now keeps.
 
@@ -12533,15 +12511,7 @@ async def test_anthropic_count_tokens_with_adaptive_thinking_and_output_tools(
     The pair is read off an httpx event hook rather than the cassette, so a regression that stops
     sending it fails here instead of replaying a recording that still holds the old payload.
     """
-    sent_bodies: dict[str, dict[str, Any]] = {}
-
-    async def capture_request(request: httpx.Request) -> None:
-        sent_bodies[request.url.path] = json.loads(request.read())
-
-    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
-    m = AnthropicModel(
-        'claude-opus-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client)
-    )
+    m = anthropic_model('claude-opus-4-6', capture=True)
 
     class CityLocation(BaseModel):
         city: str
@@ -12557,7 +12527,7 @@ async def test_anthropic_count_tokens_with_adaptive_thinking_and_output_tools(
     )
 
     assert result.output == snapshot(CityLocation(city='Paris', country='France'))
-    count_tokens_body = sent_bodies['/v1/messages/count_tokens']
+    count_tokens_body = request_capture.body('/v1/messages/count_tokens')
     assert (count_tokens_body['thinking'], count_tokens_body['tool_choice']) == snapshot(
         ({'type': 'adaptive'}, {'type': 'any'})
     )
