@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel, Field
+from pydantic.errors import PydanticUserError
 
 from pydantic_ai import (
     Agent,
@@ -56,7 +57,9 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    RunCancelled,
     ToolFailed,
+    UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
 )
@@ -696,6 +699,38 @@ async def test_prefect_agent_run_in_flow_with_runtime_event_stream_handler(
 
     result = await run_agent()
     assert result.output == snapshot('Hello world')
+
+    exported_messages = [
+        attributes['logfire.msg']
+        for span in capfire.exporter.exported_spans_as_dict()
+        if (attributes := span.get('attributes')) and attributes.get('logfire.msg') == 'runtime_event'
+    ]
+    assert exported_messages != []
+
+
+async def test_prefect_agent_iter_in_flow_fires_event_stream_handler(
+    allow_model_requests: None, capfire: CaptureLogfire
+) -> None:
+    """`agent.iter()` inside a Prefect flow delivers events to the durable `event_stream_handler`.
+
+    The handler used to be skipped entirely under `iter()`, because `wrap_run_event_stream` was
+    applied by `run()`/`run_stream()` rather than by the node stream primitives.
+    """
+    agent = Agent(
+        FunctionModel(stream_function=runtime_handler_stream_function),
+        name='iter_handler_stream_agent',
+        capabilities=[PrefectDurability(event_stream_handler=runtime_event_stream_handler)],
+    )
+
+    @flow(name='test_prefect_agent_iter_in_flow_fires_event_stream_handler')
+    async def run_iter_flow() -> str | None:
+        async with agent.iter('Say hello') as run:
+            async for _node in run:
+                pass
+        assert run.result is not None
+        return run.result.output
+
+    assert await run_iter_flow() == snapshot('Hello world')
 
     exported_messages = [
         attributes['logfire.msg']
@@ -1839,6 +1874,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'capability_loaded',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
+        '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
@@ -2969,6 +3005,34 @@ async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
     await agent.run('run')
 
 
+async def test_prefect_task_wrapped_tool_rejects_cancel() -> None:
+    """`ctx.cancel()` inside a task-wrapped tool raises instead of replay-diverging.
+
+    A cache hit replays the recorded task output without re-executing the tool, so an in-task
+    cancellation would silently not happen again. Outside a flow the tool runs inline and
+    cancellation keeps working.
+    """
+
+    async def cancel(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    durability: PrefectDurability[object] = PrefectDurability()
+    agent = Agent(TestModel(), deps_type=object, name='prefect_cancel', tools=[cancel], capabilities=[durability])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='cancellation would silently not happen again'):
+        await run_agent()
+
+    with pytest.raises(RunCancelled):
+        await agent.run('run')
+
+
 async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:
     """The MCP task path guards enqueue too: a `process_tool_call=` hook receives the run context."""
     mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='enqueue_mcp')
@@ -3000,6 +3064,74 @@ async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest
     outside_context = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=[])
     assert await durable.call_tool('hook', {}, outside_context, tool) == 'done'
     assert len(outside_context.pending_messages or []) == 1
+
+
+async def test_prefect_mcp_tool_metadata_configures_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`metadata={'prefect': ...}` on an MCP tool reaches the task, as the Prefect docs promise.
+
+    The default `retries` is 0, so the retry only happens if the per-tool config is honored.
+    """
+    calls = 0
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='config_mcp')
+
+    async def flaky_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError('transient')
+        return 'done'
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', flaky_call_tool)
+    durable = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='flaky', metadata={'prefect': TaskConfig(retries=1, retry_delay_seconds=0.0)}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @flow
+    async def run_tool() -> Any:
+        return await durable.call_tool('flaky', {}, ctx, tool)
+
+    assert await run_tool() == 'done'
+    assert calls == 2
+
+
+async def test_prefect_mcp_tool_metadata_false_runs_inline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`metadata={'prefect': False}` opts an MCP tool out of task wrapping.
+
+    Unlike Temporal, where MCP tools can't leave the activity because workflow code can't do I/O,
+    a Prefect flow can call the server itself, so the opt-out runs the call inline in flow code.
+    """
+    ran_in_task: list[bool] = []
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='opt_out_mcp')
+
+    async def recording_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        ran_in_task.append(TaskRunContext.get() is not None)
+        return 'done'
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', recording_call_tool)
+    durable = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='inline', metadata={'prefect': False}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @flow
+    async def run_tool() -> Any:
+        return await durable.call_tool('inline', {}, ctx, tool)
+
+    assert await run_tool() == 'done'
+    assert ran_in_task == [False]
 
 
 async def test_prefect_model_request_task_rejects_enqueue() -> None:
@@ -3177,7 +3309,10 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
         return condition
 
     condition = condition_of(TaskConfig())
+    # The same three types Temporal marks non-retryable on every activity config.
     assert await condition(None, None, _State(UserError('bad config'))) is False
+    assert await condition(None, None, _State(PydanticUserError('bad schema', code=None))) is False
+    assert await condition(None, None, _State(UnexpectedModelBehavior('bad response'))) is False
     assert await condition(None, None, _State(RuntimeError('boom'))) is True
 
     def deny(task: Any, task_run: Any, state: Any) -> bool:

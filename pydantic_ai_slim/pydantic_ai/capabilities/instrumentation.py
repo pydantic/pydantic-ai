@@ -20,6 +20,7 @@ from pydantic_ai._instrumentation import (
     get_instructions,
     has_stale_message_json,
     open_model_request_span,
+    redact_binary_content,
     safe_to_json,
     serialize_any,
     time_to_first_chunk_ctx,
@@ -189,7 +190,7 @@ class Instrumentation(AbstractCapability[Any]):
                         (
                             result.output
                             if isinstance(result.output, str)
-                            else safe_to_json(serialize_any(result.output)).decode()
+                            else safe_to_json(serialize_any(redact_binary_content(result.output, settings))).decode()
                         ),
                     )
 
@@ -249,7 +250,7 @@ class Instrumentation(AbstractCapability[Any]):
             attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
-            attrs['metadata'] = safe_to_json(serialize_any(metadata)).decode()
+            attrs['metadata'] = safe_to_json(serialize_any(redact_binary_content(metadata, settings))).decode()
 
         usage_attrs = (
             {
@@ -399,10 +400,11 @@ class Instrumentation(AbstractCapability[Any]):
                 # ERROR for older instrumentation versions that expected that shape.
                 span.set_attribute(names.tool_deferral_name_attr, type(exc).__name__)
                 if include_content and span.is_recording() and exc.metadata is not None:
+                    redacted_metadata = redact_binary_content(exc.metadata, settings)
                     try:
-                        metadata_str = to_json(exc.metadata).decode()
+                        metadata_str = to_json(redacted_metadata).decode()
                     except (TypeError, ValueError):
-                        metadata_str = repr(exc.metadata)
+                        metadata_str = repr(redacted_metadata)
                     span.set_attribute(names.tool_deferral_metadata_attr, metadata_str)
                 if settings.version < 5:
                     span.record_exception(exc, escaped=True)
@@ -448,7 +450,9 @@ class Instrumentation(AbstractCapability[Any]):
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=self._tool_span_attributes(call),
             action=lambda: handler(args),
-            serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
+            serialize_result=lambda value: tool_return_ta.dump_json(
+                redact_binary_content(value, self.settings)
+            ).decode(),
             handle_tool_control_flow=True,
         )
 
@@ -492,7 +496,7 @@ class Instrumentation(AbstractCapability[Any]):
         if tool_call is not None and tool_call.tool_call_id:
             attributes['gen_ai.tool.call.id'] = tool_call.tool_call_id
         if include_content:
-            attributes[names.tool_arguments_attr] = safe_to_json(output).decode()
+            attributes[names.tool_arguments_attr] = safe_to_json(redact_binary_content(output, self.settings)).decode()
 
         attributes['logfire.json_schema'] = to_json(
             {
@@ -516,5 +520,7 @@ class Instrumentation(AbstractCapability[Any]):
             span_name=names.get_output_tool_span_name(span_target),
             attributes=attributes,
             action=lambda: handler(output),
-            serialize_result=lambda value: safe_to_json(serialize_any(value)).decode(),
+            serialize_result=lambda value: safe_to_json(
+                serialize_any(redact_binary_content(value, self.settings))
+            ).decode(),
         )

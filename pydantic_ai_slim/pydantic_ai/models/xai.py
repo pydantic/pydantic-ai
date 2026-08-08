@@ -37,6 +37,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -48,6 +49,7 @@ from ..models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
@@ -240,6 +242,14 @@ class XaiModelSettings(ModelSettings, total=False):
     `xai_max_turns` does not necessarily equal the total number of tool calls made.
     """
 
+    xai_agent_count: int
+    """Number of agents for xAI multi-agent models (e.g. `grok-4.20-multi-agent`).
+
+    Forwarded to `chat.create(agent_count=...)`. Documented values are `4` and `16`; more
+    agents increase token usage and latency. Only affects multi-agent models; other models
+    ignore it. The multi-agent API is in beta, so the accepted values may change.
+    """
+
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.
 # Most keys are the same, but some differ (e.g., 'stop_sequences' -> 'stop').
@@ -259,6 +269,7 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'xai_previous_response_id': 'previous_response_id',
     'xai_reasoning_effort': 'reasoning_effort',
     'xai_max_turns': 'max_turns',
+    'xai_agent_count': 'agent_count',
 }
 
 
@@ -375,6 +386,8 @@ class XaiModel(Model[AsyncClient]):
                     xai_messages.append(user(part.model_response()))
                 else:
                     tool_results.append(part)
+            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                raise _unsynthesized_tool_availability_delta_error()
             else:
                 assert_never(part)
 
@@ -649,7 +662,7 @@ class XaiModel(Model[AsyncClient]):
             A tuple of (filtered_tool_defs, tool_choice).
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         profile = self.profile
 
@@ -1253,7 +1266,14 @@ def _get_native_tools(model_request_parameters: ModelRequestParameters) -> list[
                 )
             )
         elif isinstance(builtin_tool, FileSearchTool):
-            tools.append(collections_search(collection_ids=list(builtin_tool.file_store_ids)))
+            tools.append(
+                collections_search(
+                    collection_ids=list(builtin_tool.file_store_ids),
+                    limit=builtin_tool.max_num_results,
+                    instructions=builtin_tool.instructions,
+                    retrieval_mode=builtin_tool.retrieval_mode,
+                )
+            )
         else:  # pragma: no cover
             supported = ', '.join(t.__name__ for t in XaiModel.supported_native_tools())
             raise UserError(

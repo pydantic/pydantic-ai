@@ -49,8 +49,10 @@ from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
     heartbeating,
+    model_response_payload_errors,
     temporalize_toolset as _default_temporalize_toolset,
     toolset_temporal_activities,
+    validate_activity_config,
     with_non_retryable_errors,
 )
 
@@ -165,6 +167,14 @@ def serialization_user_error(error: PydanticSerializationError) -> UserError:
         '`TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and '
         '`tool_call_metadata`, and tool `metadata`.'
     )
+
+
+IMAGE_OUTPUT_UNSUPPORTED_MESSAGE = (
+    'Image output is not supported with Temporal because the image would ride the activity payload, '
+    'which is capped by the server blob-size limit (2MB by default, leaving about 1.5MB of raw image '
+    'bytes once base64-encoded).'
+)
+"""Shared by the capability and the deprecated `TemporalModel`, which reject image output identically."""
 
 
 @dataclass(init=False)
@@ -282,6 +292,23 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self.run_context_type = run_context_type
         self.continue_as_new = continue_as_new
         self._deps_type = deps_type
+
+        # An unknown key, or a value Temporal's own types don't accept, would only fail when the
+        # config is splatted into `workflow.start_activity()` inside the workflow, where the
+        # `TypeError` wedges the workflow task forever. Validation also *coerces* — a
+        # round-tripped `'PT5M'` becomes a `timedelta` — so the validated config is what we keep.
+        if activity_config is not None:
+            activity_config = validate_activity_config(activity_config, '`activity_config`')
+        if model_activity_config is not None:
+            model_activity_config = validate_activity_config(model_activity_config, '`model_activity_config`')
+        if event_stream_handler_activity_config is not None:
+            event_stream_handler_activity_config = validate_activity_config(
+                event_stream_handler_activity_config, '`event_stream_handler_activity_config`'
+            )
+        toolset_activity_config = {
+            ts_id: validate_activity_config(config, f'`toolset_activity_config[{ts_id!r}]`')
+            for ts_id, config in (toolset_activity_config or {}).items()
+        }
 
         # Normalize the activity config on copies: mutating the caller's `ActivityConfig` or a
         # `RetryPolicy` shared with other activities would leak the non-retryable entries into
@@ -587,16 +614,18 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
             config: ActivityConfig = {'summary': f'request model: {model_name}', **self._model_activity_config}
-            return await execute_activity(activity=self.request_activity, args=[params(request), deps], **config)
+            with model_response_payload_errors(model_name):
+                return await execute_activity(activity=self.request_activity, args=[params(request), deps], **config)
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
             config: ActivityConfig = {
                 'summary': f'request model: {model_name} (stream)',
                 **self._model_activity_config,
             }
-            result = await execute_activity(
-                activity=self.request_stream_activity, args=[params(request), deps], **config
-            )
+            with model_response_payload_errors(model_name):
+                result = await execute_activity(
+                    activity=self.request_stream_activity, args=[params(request), deps], **config
+                )
             if isinstance(result, ModelResponse):
                 stream = CompletedStreamedResponse(
                     result,
@@ -634,4 +663,4 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
-            raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')
+            raise UserError(IMAGE_OUTPUT_UNSUPPORTED_MESSAGE)

@@ -17,6 +17,7 @@ from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from .exceptions import UserError
 
 if TYPE_CHECKING:
+    from ._cancel import RunCancellation
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
     from .models import Model
@@ -125,6 +126,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     to add messages rather than mutating it directly.
     """
 
+    _cancellation: RunCancellation | None = field(default=None, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The run's cancellation controller, used by [`cancel`][pydantic_ai.tools.RunContext.cancel].
+    Holds a live task reference, so it is runtime-only: `None` in synthetic contexts that aren't
+    backed by a running agent, and not available across durable-execution serialization boundaries
+    (e.g. inside a Temporal activity).
+    """
+
     _event_stream_buffer: list[_messages.AgentStreamEvent] | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
@@ -190,12 +200,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
 
     discovered_tool_names: set[str] = field(default_factory=set[str])
-    """Names of deferred tools revealed via tool-search return parts in the message history.
+    """Names of deferred function tools revealed by durable message history.
 
-    The tool-side mirror of `loaded_capability_ids`: the runtime-revealed subset that
-    `ToolSearchToolset.get_tools` reads to decide which deferred tools to make visible this
-    turn. Populated during run preparation from message history. Use `available_tool_names`
-    for the full set of currently-callable tools (always-visible plus these).
+    Includes names revealed by tool-search returns and `ToolAvailabilityDeltaPart`s, including
+    deltas from any tool's `ToolReturn.tools` and `load_capability`. Read by
+    `is_tool_available` and the reveal builders. Populated during run preparation from message
+    history. Use `available_tool_names` for the full set of currently-callable tools
+    (always-visible plus these).
     Managed by the framework: safe to read, but don't mutate it directly.
     """
 
@@ -252,28 +263,49 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """
         if self.tool_manager is None or self.tool_manager.tools is None:
             return set[str]() | self.discovered_tool_names
+        return {name for name, tool_def in self.tools.items() if self.is_tool_available(tool_def)}
+
+    def is_tool_available(self, tool: str | ToolDefinition) -> bool:
+        """Whether a function tool is currently available to the model.
+
+        Pass a [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] when checking a definition
+        held by a toolset, especially inside `get_tools`. This form evaluates the definition's
+        own fields against the reveal state recorded in history, so it remains
+        reliable when a wrapping toolset has removed the definition from the resolved tool set.
+
+        Pass a tool name where [`tools`][pydantic_ai.tools.RunContext.tools] is reliable, such as
+        model-request hooks or ordinary tool execution. The name form looks up the current definition
+        in `tools`; when live tool state is unavailable (including inside a Temporal activity), it
+        falls back to `available_tool_names`. An unknown name returns `False`. See
+        [`available_tool_names`][pydantic_ai.tools.RunContext.available_tool_names] for the timing
+        caveat, and [`ModelRequestParameters.revealed_tool_names`][pydantic_ai.models.ModelRequestParameters.revealed_tool_names]
+        for the reveal state sent through the model-request pipeline.
+        """
+        if isinstance(tool, str):
+            if self.tool_manager is None or self.tool_manager.tools is None:
+                # Same live-state condition as `available_tool_names`: mid-`get_tools` the
+                # manager exists but its tool set isn't resolved yet, so fall back to history.
+                return tool in self.available_tool_names
+            tool_def = self.tools.get(tool)
+            if tool_def is None:
+                return False
+        else:
+            tool_def = tool
+
         # Local import avoids a module-level cycle: `native_tools._tool_search` imports
         # `RunContext` for tool-search strategy callables.
         from .native_tools._tool_search import ToolSearchTool
 
-        tools = self.tools
-        # "Always available" = not search-managed AND not deferred. We deliberately keep the
-        # `not defer_loading` check rather than relying on `with_native is None` alone: depending
-        # on hook timing, a deferred tool can be read here before the tool-search toolset has
-        # stamped `with_native='tool-search'` on it, so `with_native is None` by itself would leak
-        # a still-hidden tool. Gating on `defer_loading` keeps it hidden until it's genuinely revealed.
-        always_available = {
-            name
-            for name, tool_def in tools.items()
-            if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading
-        }
-        runtime_revealed = self.discovered_tool_names & set(tools)
-        loaded_capability_tools = {
-            name
-            for name, tool_def in tools.items()
-            if tool_def.capability_id is not None and tool_def.capability_id in self.loaded_capability_ids
-        }
-        return always_available | runtime_revealed | loaded_capability_tools
+        # "Always available" deliberately checks `defer_loading`, not only `with_native`: a deferred
+        # definition can be observed before tool search stamps `with_native='tool-search'` on it.
+        if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading:
+            return True
+        if tool_def.name in self.discovered_tool_names:
+            # Deliberately not gated on capability state: a fabricated history part could equally
+            # fabricate the full `load_capability` exchange, so a gate here adds no trust boundary.
+            # History integrity is the deployment's job (authenticated endpoints, server-side history).
+            return True
+        return False
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:
@@ -332,6 +364,37 @@ class RunContext(Generic[RunContextAgentDepsT]):
             return None
         self.pending_messages.append(pending)
         return pending.enqueue_id
+
+    def cancel(self) -> None:
+        """Cancel the agent run this context belongs to.
+
+        Safe to call from anywhere a `RunContext` is available — tools, `event_stream_handler`s,
+        and capability hooks. This *requests* cancellation: it returns normally, and the calling
+        code keeps running until its next `await`, where the cancellation is delivered — so the
+        caller can still do cleanup, but its return value (e.g. a tool's result) is discarded. The
+        run then stops what it is doing (the in-flight model request is torn down, sibling tool
+        tasks are cancelled and drained, a suspended server-side job is best-effort cancelled) and
+        ends with [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], preserving everything that
+        completed before the cancellation took effect in message history. Idempotent; a no-op once
+        the run has finished. Cancellation is terminal: capability hooks may observe it and clean
+        up, but cannot recover the run to success.
+
+        Raises:
+            UserError: If this `RunContext` isn't backed by a running agent (e.g. the synthetic
+                context from `Agent.system_prompt_parts`, or across a durable-execution
+                serialization boundary such as a Temporal activity).
+        """
+        # Read via `__dict__` because `TemporalRunContext.__getattribute__` raises a
+        # serialize-it-yourself `UserError` for absent fields, which would be misleading here:
+        # the controller holds a live task reference and can never cross an activity boundary.
+        cancellation: RunCancellation | None = self.__dict__.get('_cancellation')
+        if cancellation is None:
+            raise UserError(
+                '`cancel` is only available during an agent run (from tools, event stream handlers, '
+                'or capability hooks) in the same process as the run itself. '
+                'This `RunContext` has no run to cancel.'
+            )
+        cancellation.cancel()
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

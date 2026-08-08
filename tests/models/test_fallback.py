@@ -3,10 +3,11 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timezone
+from decimal import Decimal
 from typing import Any, Literal, cast
 
 import pytest
@@ -27,27 +28,53 @@ from pydantic_ai import (
     ToolCallPart,
     ToolDefinition,
     ToolReturnPart,
+    UsageLimitExceeded,
+    UserError,
     UserPromptPart,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.messages import InstructionPart, ModelResponseState, NativeToolCallPart, NativeToolReturnPart
+from pydantic_ai.messages import (
+    InstructionPart,
+    ModelResponseState,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    ToolAvailabilityDeltaPart,
+)
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsFloat, IsNow, IsStr, strip_logfire_metrics, try_import
 
 with try_import() as openai_imports_successful:
+    from anthropic.types.beta import BetaTextBlock, BetaUsage
+    from openai.types.chat import ChatCompletionMessage
+
+    from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .mock_openai import (
+        MockOpenAI,
+        completion_message as openai_completion_message,
+        get_mock_chat_completion_kwargs,
+    )
+    from .test_anthropic import (
+        MockAnthropic,
+        completion_message as anthropic_completion_message,
+        get_mock_chat_completion_kwargs as get_mock_anthropic_kwargs,
+    )
 
 requires_openai = pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 
@@ -96,6 +123,19 @@ def test_all_fields_are_accessible() -> None:
     fallback_model = FallbackModel(failure_model, success_model)
     for f in dataclasses.fields(fallback_model):
         getattr(fallback_model, f.name)  # must not raise
+
+
+def test_model_id_survives_wrapping() -> None:
+    """A `WrapperModel` around a `FallbackModel` reports the fallback's own ID.
+
+    `Model.model_id` derives from `system` and `model_name`, so without a forward the wrapper
+    recombines the two already-joined fallback strings into an ID naming neither sub-model. Every
+    durability engine, `InstrumentedModel` and `ConcurrencyLimitedModel` interpose a wrapper here,
+    and the ID names a Temporal activity and keys a Prefect cache.
+    """
+    fallback_model = FallbackModel(failure_model, success_model)
+
+    assert WrapperModel(fallback_model).model_id == fallback_model.model_id
 
 
 def test_first_successful() -> None:
@@ -155,6 +195,81 @@ def test_first_failed() -> None:
     )
 
 
+@requires_openai
+async def test_fallback_reprojects_anthropic_delta_to_openai_announcement(allow_model_requests: None) -> None:
+    """The fallback target projects stored reveal control onto its own channel."""
+    anthropic_client = MockAnthropic.create_mock(ModelAPIError('claude-opus-4-8', 'temporary failure'))
+    openai_client = MockOpenAI.create_mock(
+        openai_completion_message(ChatCompletionMessage(role='assistant', content='ok'))
+    )
+    model = FallbackModel(
+        AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=anthropic_client)),
+        OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)),
+    )
+    tool = ToolDefinition(name='revealed_tool', description='Revealed.', defer_loading=True)
+    parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='always_ready'), tool], revealed_tool_names={tool.name}
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='start')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
+    ]
+
+    await model.request(history, None, parameters)
+
+    request = get_mock_chat_completion_kwargs(openai_client)[0]
+    assert request['messages'][-1] == {
+        'role': 'system',
+        'content': 'The following tool(s) are now available: `revealed_tool`',
+    }
+
+
+@requires_openai
+async def test_fallback_reprojects_openai_delta_to_anthropic_tool_addition(allow_model_requests: None) -> None:
+    """An announcement from a failed adapter never leaks into Anthropic's native reveal channel."""
+    openai_client = MockOpenAI.create_mock(ModelAPIError('gpt-5', 'temporary failure'))
+    anthropic_client = MockAnthropic.create_mock(
+        anthropic_completion_message(
+            [BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=1, output_tokens=1)
+        )
+    )
+    model = FallbackModel(
+        OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)),
+        AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(anthropic_client=anthropic_client)),
+    )
+    tool = ToolDefinition(
+        name='revealed_tool',
+        description='Revealed.',
+        defer_loading=True,
+        with_native=ToolSearchTool.kind,
+    )
+    parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='search_tools', unless_native=ToolSearchTool.kind), tool],
+        native_tools=[ToolSearchTool(optional=True)],
+        revealed_tool_names={tool.name},
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='start')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
+    ]
+
+    await model.request(history, None, parameters)
+
+    request = get_mock_anthropic_kwargs(anthropic_client)[0]
+    assert 'mid-conversation-tool-changes-2026-07-01' in request['betas']
+    assert request['messages'][-1] == {
+        'role': 'system',
+        'content': [
+            {
+                'type': 'tool_addition',
+                'tool': {'type': 'tool_reference', 'name': 'revealed_tool'},
+            }
+        ],
+    }
+    [revealed] = [wire_tool for wire_tool in request['tools'] if wire_tool.get('name') == tool.name]
+    assert revealed['defer_loading'] is True
+
+
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, success_model)
@@ -197,8 +312,8 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
-                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -348,8 +463,8 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
-                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -471,8 +586,8 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': None,
                         'revealed_tool_names': [],
-                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -852,6 +967,7 @@ async def test_fallback_model_structured_output():
 
         assert info.model_request_parameters == snapshot(
             ModelRequestParameters(
+                tool_visibility={},
                 output_mode='tool',
                 output_tools=[
                     ToolDefinition(
@@ -883,6 +999,7 @@ async def test_fallback_model_structured_output():
 
         assert info.model_request_parameters == snapshot(
             ModelRequestParameters(
+                tool_visibility={},
                 output_mode='native',
                 output_object=OutputObjectDefinition(
                     json_schema={
@@ -906,6 +1023,7 @@ async def test_fallback_model_structured_output():
 
         assert info.model_request_parameters == snapshot(
             ModelRequestParameters(
+                tool_visibility={},
                 output_mode='prompted',
                 output_object=OutputObjectDefinition(
                     json_schema={
@@ -980,6 +1098,7 @@ async def test_fallback_model_structured_output_instrumented(capfire: CaptureLog
     def prompted_output_func(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.model_request_parameters == snapshot(
             ModelRequestParameters(
+                tool_visibility={},
                 output_mode='prompted',
                 output_object=OutputObjectDefinition(
                     json_schema={
@@ -1082,8 +1201,8 @@ Don't include any text or Markdown fencing before or after.
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
-                        'deferred_capability_ids': [],
                         'output_mode': 'prompted',
                         'output_object': {
                             'json_schema': {
@@ -1236,6 +1355,63 @@ async def test_response_handler_triggered() -> None:
                 conversation_id=IsStr(),
             ),
         ]
+    )
+
+
+async def test_response_handler_rejected_cost_counts_toward_limit() -> None:
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    def response(cost: str) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('response')], usage=RequestUsage(cost=Decimal(cost)))
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return response('0.006')
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return response('0.005')
+
+    model = FallbackModel(
+        FunctionModel(primary, model_name='primary'),
+        FunctionModel(fallback, model_name='fallback'),
+        fallback_on=reject_primary,
+    )
+
+    with pytest.raises(UsageLimitExceeded, match=r"`usage.cost`=Decimal\('0.011'\)"):
+        await Agent(model).run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+
+
+async def test_response_handler_preserves_successful_model_usage_for_pricing() -> None:
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'gpt-4o-mini'
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('rejected')],
+            usage=RequestUsage(input_tokens=100, output_tokens=10, cost=Decimal('0.001')),
+        )
+
+    def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('accepted')],
+            usage=RequestUsage(input_tokens=20, output_tokens=2, cost=Decimal('0.002')),
+        )
+
+    model = FallbackModel(
+        FunctionModel(primary, model_name='gpt-4o-mini'),
+        FunctionModel(fallback, model_name='gpt-4o'),
+        fallback_on=reject_primary,
+    )
+
+    result = await Agent(model).run('test')
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.usage == RequestUsage(input_tokens=20, output_tokens=2, cost=Decimal('0.003'))
+    assert (
+        response.cost().total_price
+        == ModelResponse(parts=[], usage=RequestUsage(input_tokens=20, output_tokens=2), model_name='gpt-4o')
+        .cost()
+        .total_price
     )
 
 
@@ -1646,28 +1822,40 @@ def test_callable_class_exception_handler() -> None:
     assert result.output == 'success'
 
 
-def test_unresolvable_forward_ref_treated_as_exception_handler() -> None:
-    """A handler with unresolvable forward refs is treated as an exception handler."""
-    # Create a function whose type hints can't be resolved (triggers except branch in get_first_param_type)
-    exec_globals: dict[str, object] = {}
-    exec(  # nosec - test-only dynamic function creation for unresolvable forward ref
-        """
-def handler(x: "NonExistentType") -> bool:
-    return isinstance(x, Exception)
-""",
-        exec_globals,
-    )
-    handler = exec_globals['handler']
+@pytest.mark.parametrize('callable_class', [False, True])
+def test_unresolvable_annotations_handler_error(create_module: Callable[[str], Any], callable_class: bool) -> None:
+    """A handler whose annotations can't be resolved raises instead of being silently ignored.
 
-    # Classified as exception handler (forward ref can't resolve), so responses pass through
-    fallback = FallbackModel(
-        primary_model,
-        fallback_model_impl,
-        fallback_on=handler,  # type: ignore[arg-type]
-    )
-    agent = Agent(model=fallback)
-    result = agent.run_sync('hello')
-    assert result.output == 'primary response'
+    `ModelResponse` imported under `if TYPE_CHECKING:` in a module using `from __future__ import
+    annotations` used to make the handler look like an exception handler, so it was never called
+    for responses and the user's rejection policy silently became a no-op. Callable classes are
+    named by their class, not by the address-bearing repr of the instance.
+    """
+    mod = create_module("""
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pydantic_ai import ModelResponse
+
+
+def reject_primary(response: ModelResponse) -> bool:
+    return 'primary' in str(response)
+
+
+class RejectPrimary:
+    def __call__(self, response: ModelResponse) -> bool:
+        return 'primary' in str(response)
+""")
+    handler = mod.RejectPrimary() if callable_class else mod.reject_primary
+    name = 'RejectPrimary' if callable_class else 'reject_primary'
+
+    with pytest.raises(
+        UserError,
+        match=rf"Unable to resolve the type annotations of '{name}': name 'ModelResponse' is not defined\.",
+    ):
+        FallbackModel(primary_model, fallback_model_impl, fallback_on=handler)
 
 
 def test_fallback_on_single_exception_type_direct() -> None:
@@ -1688,8 +1876,6 @@ def test_fallback_on_single_exception_type_direct() -> None:
 
 def test_empty_fallback_on_list_error() -> None:
     """Test that empty fallback_on list raises UserError."""
-    from pydantic_ai.exceptions import UserError
-
     with pytest.raises(UserError, match='empty fallback_on'):
         FallbackModel(
             primary_model,
@@ -1700,8 +1886,6 @@ def test_empty_fallback_on_list_error() -> None:
 
 def test_empty_fallback_on_tuple_error() -> None:
     """Test that empty fallback_on tuple raises UserError."""
-    from pydantic_ai.exceptions import UserError
-
     with pytest.raises(UserError, match='empty fallback_on'):
         FallbackModel(
             primary_model,
@@ -1844,8 +2028,6 @@ async def test_fallback_model_concurrent_entry():
     https://github.com/pydantic/pydantic-ai/pull/4421
     """
     import asyncio
-
-    from pydantic_ai.models.wrapper import WrapperModel
 
     class SlowEnterModel(WrapperModel):
         """Wrapper that yields during __aenter__ to widen the race window."""
@@ -2388,6 +2570,26 @@ async def test_fallback_same_model_rewind_recovery_does_not_duplicate() -> None:
     # response's own pre-existing metadata is preserved.
     assert (response_msg.metadata or {}).get('__pydantic_ai__', {}).get('replace_previous_response') is None
     assert (response_msg.metadata or {}).get('provider_key') == 'v'
+
+
+async def test_fallback_replaced_continuation_cost_counts_toward_limit() -> None:
+    calls = 0
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[TextPart('partial')], usage=RequestUsage(cost=Decimal('0.006')), state='suspended'
+            )
+        if calls == 2:
+            raise ModelHTTPError(status_code=500, model_name='primary', body='continuation failed')
+        return ModelResponse(parts=[TextPart('full answer')], usage=RequestUsage(cost=Decimal('0.005')))
+
+    model = FallbackModel(FunctionModel(primary, model_name='primary'))
+
+    with pytest.raises(UsageLimitExceeded, match=r"`usage.cost`=Decimal\('0.011'\)"):
+        await Agent(model).run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
 
 
 async def test_fallback_streaming_same_model_rewind_recovery_does_not_duplicate() -> None:

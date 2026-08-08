@@ -220,9 +220,9 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
         return OllamaProvider
     elif provider == 'github':
-        from .github import GitHubProvider
+        from .github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
-        return GitHubProvider
+        return GitHubProvider  # pyright: ignore[reportDeprecated]
     elif provider == 'litellm':
         from .litellm import LiteLLMProvider
 
@@ -247,6 +247,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .sentence_transformers import SentenceTransformersProvider
 
         return SentenceTransformersProvider
+    elif provider == 'snowflake':
+        from .snowflake import SnowflakeProvider
+
+        return SnowflakeProvider
     elif provider == 'voyageai':
         from .voyageai import VoyageAIProvider
 

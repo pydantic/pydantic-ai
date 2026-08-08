@@ -12,6 +12,7 @@ copyright: © Pydantic Services Inc. 2024 to present
 nav:
   - index.md
   - install.md
+  - V1 → V2 Migration Map: migration.md
   - help.md
   - troubleshooting.md
   - Coding Agent Skills: coding-agent-skills.md
@@ -28,6 +29,8 @@ nav:
           - Agent Specs: agent-spec.md
           - message-history.md
           - direct.md
+          - Retries: retries.md
+          - Timeouts: timeouts.md
       - Models & Providers:
           - Overview: models/overview.md
           - HTTP Request Retries: models/http-request-retries.md
@@ -43,6 +46,7 @@ nav:
           - models/mistral.md
           - models/ollama.md
           - models/openrouter.md
+          - models/snowflake.md
           - models/zai.md
       - Tools & Toolsets:
           - tools.md
@@ -77,15 +81,15 @@ nav:
           - Handle Deferred Tool Calls: capabilities/handle-deferred-tool-calls.md
           - Process History: capabilities/process-history.md
           - Process Event Stream: capabilities/process-event-stream.md
-          - Durable Execution:
-              - Overview: durable_execution/overview.md
-              - Temporal: durable_execution/temporal.md
-              - DBOS: durable_execution/dbos.md
-              - Prefect: durable_execution/prefect.md
-              - Restate: durable_execution/restate.md
-              - Kitaru: durable_execution/kitaru.md
-              - Apache Airflow: durable_execution/airflow.md
           - Third-Party Capabilities: capabilities/third-party.md
+      - Durable Execution:
+          - Overview: durable_execution/overview.md
+          - Temporal: durable_execution/temporal.md
+          - DBOS: durable_execution/dbos.md
+          - Prefect: durable_execution/prefect.md
+          - Restate: durable_execution/restate.md
+          - Kitaru: durable_execution/kitaru.md
+          - Apache Airflow: durable_execution/airflow.md
       - MCP:
           - Overview: mcp/overview.md
           - mcp/client.md
@@ -163,6 +167,7 @@ nav:
           - examples/stream-whales.md
       - Complex Workflows:
           - examples/flight-booking.md
+          - examples/medical-agent-delegation.md
       - Business Applications:
           - examples/slack-lead-qualifier.md
       - UI Examples:
@@ -202,6 +207,7 @@ nav:
           - api/models/ollama.md
           - api/models/openai.md
           - api/models/openrouter.md
+          - api/models/snowflake.md
           - api/models/test.md
           - api/models/zai.md
           - api/models/wrapper.md

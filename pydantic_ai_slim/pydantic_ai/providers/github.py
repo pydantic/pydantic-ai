@@ -4,8 +4,10 @@ import os
 from typing import overload
 
 import httpx
+from typing_extensions import deprecated
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
@@ -26,11 +28,16 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
+@deprecated(
+    '`GitHubProvider` is deprecated and will be removed in v3. GitHub Models was retired on 2026-07-30, '
+    'so its inference API is no longer available. See https://docs.github.com/en/github-models.',
+    category=PydanticAIDeprecationWarning,
+)
 class GitHubProvider(Provider[AsyncOpenAI]):
-    """Provider for GitHub Models API.
+    """Provider for the retired GitHub Models API.
 
-    GitHub Models provides access to various AI models through an OpenAI-compatible API.
-    See <https://docs.github.com/en/github-models> for more information.
+    GitHub Models was [retired on 2026-07-30](https://docs.github.com/en/github-models); the inference API is no
+    longer available, so this provider is deprecated and will be removed in v3.
     """
 
     @property

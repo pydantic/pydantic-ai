@@ -246,6 +246,7 @@ The following providers have dedicated documentation on Pydantic AI:
 - [Laminar](https://docs.laminar.sh/tracing/integrations/pydantic-ai)
 - [Respan](https://respan.ai/docs/integrations/pydantic-ai)
 - [Raindrop](https://raindrop.ai/docs/integrations/pydantic-ai)
+- [Sentry](https://docs.sentry.io/platforms/python/integrations/pydantic-ai/)
 
 ## Advanced usage
 
@@ -358,6 +359,10 @@ Agent.instrument_all(instrumentation_settings)
 ```
 
 ### Excluding binary content
+
+When `include_binary_content=False` is set, binary file data (images, audio, documents) is excluded from telemetry: from user prompts and model responses, from tool returns, from the agent's own output and the arguments its output function receives, and from run and tool deferral metadata. The media type is still recorded everywhere; where the value is recorded as the file itself rather than as a message part, so are its vendor metadata and its identifier, which is derived from the content when you don't set one.
+
+Binary content is found inside dictionaries, lists and [`ToolReturn`][pydantic_ai.messages.ToolReturn]s, but not inside your own types: a [`BinaryContent`][pydantic_ai.messages.BinaryContent] held as a field of a model or dataclass you define is still recorded in full.
 
 ```python {title="excluding_binary_content.py"}
 from pydantic_ai import Agent, InstrumentationSettings
