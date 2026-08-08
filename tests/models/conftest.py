@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx
 import pytest
@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 if TYPE_CHECKING:
     from vcr.cassette import Cassette
 
+    from pydantic_ai.models.anthropic import AnthropicModel
     from tests.cassette_utils import CassetteContext
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
@@ -59,6 +60,33 @@ class RequestCapture:
 @pytest.fixture
 def request_capture() -> RequestCapture:
     return RequestCapture()
+
+
+class AnthropicModelFactory(Protocol):
+    def __call__(self, model_name: str, *, api_key: str | None = None, capture: bool = False) -> AnthropicModel: ...
+
+
+@pytest.fixture
+def anthropic_model(anthropic_api_key: str, request_capture: RequestCapture) -> AnthropicModelFactory:
+    """Factory for Anthropic models in VCR-recorded integration tests.
+
+    `capture=True` routes the model through the `request_capture` fixture's client, so the test can
+    assert on the request as sent rather than as recorded. Both fixtures are function-scoped, so a
+    test reading `request_capture` sees the same instance this wired in.
+    """
+
+    def _create_model(model_name: str, *, api_key: str | None = None, capture: bool = False) -> AnthropicModel:
+        # Imported here rather than at module scope: this conftest also loads on shards installed
+        # without the `anthropic` extra, where a top-level import would fail at collection.
+        from pydantic_ai.models.anthropic import AnthropicModel
+        from pydantic_ai.providers.anthropic import AnthropicProvider
+
+        provider = AnthropicProvider(
+            api_key=api_key or anthropic_api_key, http_client=request_capture.client if capture else None
+        )
+        return AnthropicModel(model_name, provider=provider)
+
+    return _create_model
 
 
 def content_blocks(body: dict[str, Any], block_type: str) -> list[dict[str, Any]]:

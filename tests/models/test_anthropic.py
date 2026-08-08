@@ -97,7 +97,7 @@ from ..conftest import (
     try_import,
 )
 from ..parts_from_messages import part_types_from_messages
-from .conftest import RequestCapture, cache_breakpoints, content_blocks, message_shape
+from .conftest import AnthropicModelFactory, RequestCapture, cache_breakpoints, content_blocks, message_shape
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -1809,12 +1809,10 @@ async def test_anthropic_task_budget_remaining_rejects_compaction_part_in_histor
 
 
 async def test_anthropic_mixed_strict_tool_run(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """Exercise both strict=True and strict=False tool definitions against the live API."""
-    m = AnthropicModel(
-        'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-5', capture=True)
     agent = Agent(
         m,
         system_prompt='Always call `country_source` first, then call `capital_lookup` with that result before replying.',
@@ -3382,12 +3380,9 @@ def test_init_with_provider_string(env: TestEnv):
 
 
 async def test_anthropic_model_instructions(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = AnthropicModel(
-        'claude-3-opus-latest',
-        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
-    )
+    m = anthropic_model('claude-3-opus-latest', capture=True)
     agent = Agent(m)
 
     @agent.instructions
@@ -5144,15 +5139,13 @@ def test_streaming_usage_with_compaction():
 
 
 async def test_anthropic_model_empty_message_on_history(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """The Anthropic API will error if you send an empty message on the history.
 
     Check <https://github.com/pydantic/pydantic-ai/pull/1027> for more details.
     """
-    m = AnthropicModel(
-        'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-5', capture=True)
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run(
@@ -5176,11 +5169,9 @@ What specific information about potatoes would be most helpful to you?\
 
 
 async def test_anthropic_web_search_tool(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = AnthropicModel(
-        'claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-0', capture=True)
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
 
@@ -5616,11 +5607,9 @@ Mexico City is experiencing typical rainy season weather with moderate temperatu
 
 
 async def test_anthropic_model_web_search_tool_stream(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = AnthropicModel(
-        'claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-0', capture=True)
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(m, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
 
@@ -6494,11 +6483,9 @@ So for today, you can expect partly sunny to sunny skies with a high around 76°
 
 @pytest.mark.vcr()
 async def test_anthropic_web_fetch_tool(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = AnthropicModel(
-        'claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-0', capture=True)
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(m, capabilities=[NativeTool(WebFetchTool())], model_settings=settings)
 
@@ -6759,13 +6746,11 @@ It notes that "virtually every Python agent framework and LLM library" uses Pyda
 
 @pytest.mark.vcr()
 async def test_anthropic_web_fetch_tool_stream(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):  # pragma: lax no cover
     from pydantic_ai.messages import PartDeltaEvent, PartStartEvent
 
-    m = AnthropicModel(
-        'claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-0', capture=True)
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(m, capabilities=[NativeTool(WebFetchTool())], model_settings=settings)
 
@@ -8410,11 +8395,9 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-this-repositor
 
 
 async def test_anthropic_code_execution_tool(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Any, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, vcr: Any, request_capture: RequestCapture
 ):
-    m = AnthropicModel(
-        'claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-6', capture=True)
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(
         m,
@@ -8569,11 +8552,9 @@ async def test_anthropic_code_execution_tool(
 
 
 async def test_anthropic_code_execution_tool_stream(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = AnthropicModel(
-        'claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-6', capture=True)
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(m, capabilities=[NativeTool(CodeExecutionTool())], model_settings=settings)
 
@@ -8944,17 +8925,17 @@ async def test_anthropic_code_execution_tool_version_setting(
 
 
 async def test_anthropic_server_tool_pass_history_to_another_provider(
-    allow_model_requests: None, anthropic_api_key: str, openai_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    openai_api_key: str,
+    request_capture: RequestCapture,
 ):
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
     openai_model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
-    anthropic_model = AnthropicModel(
-        'claude-sonnet-4-5',
-        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
-    )
-    agent = Agent(anthropic_model, capabilities=[NativeTool(WebSearchTool())])
+    model = anthropic_model('claude-sonnet-4-5', capture=True)
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run('What day is today?')
     assert (request_capture.body()['tools'], request_capture.body().get('tool_choice')) == snapshot(
@@ -9015,15 +8996,16 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
 
 
 async def test_anthropic_server_tool_receive_history_from_another_provider(
-    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    gemini_api_key: str,
+    request_capture: RequestCapture,
 ):
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
     google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
-    anthropic_model = AnthropicModel(
-        'claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    model = anthropic_model('claude-sonnet-4-6', capture=True)
     agent = Agent(capabilities=[NativeTool(CodeExecutionTool())])
 
     result = await agent.run('How much is 3 * 12390?', model=google_model)
@@ -9044,7 +9026,7 @@ async def test_anthropic_server_tool_receive_history_from_another_provider(
         ]
     )
 
-    result = await agent.run('Multiplied by 12390', model=anthropic_model, message_history=result.all_messages())
+    result = await agent.run('Multiplied by 12390', model=model, message_history=result.all_messages())
     assert (request_capture.body()['tools'], request_capture.body().get('tool_choice')) == snapshot(
         ([{'name': 'code_execution', 'type': 'code_execution_20260120'}], None)
     )
@@ -9112,11 +9094,9 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
 
 
 async def test_anthropic_tool_output(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = AnthropicModel(
-        'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-5', capture=True)
 
     class CityLocation(BaseModel):
         city: str
@@ -9230,11 +9210,9 @@ async def test_anthropic_tool_output(
 
 
 async def test_anthropic_text_output_function(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = AnthropicModel(
-        'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-5', capture=True)
 
     def upcase(text: str) -> str:
         return text.upper()
@@ -9340,11 +9318,9 @@ async def test_anthropic_text_output_function(
 
 @pytest.mark.vcr()
 async def test_anthropic_prompted_output(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = AnthropicModel(
-        'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-5', capture=True)
 
     class CityLocation(BaseModel):
         city: str
@@ -9455,11 +9431,9 @@ Don't include any text or Markdown fencing before or after.
 
 
 async def test_anthropic_prompted_output_multiple(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = AnthropicModel(
-        'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-5', capture=True)
 
     class CityLocation(BaseModel):
         city: str
@@ -9575,15 +9549,13 @@ Don't include any text or Markdown fencing before or after.
 
 
 async def test_anthropic_tool_with_thinking(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """When using thinking with tool calls in Anthropic, we need to send the thinking part back to the provider.
 
     This tests the issue raised in https://github.com/pydantic/pydantic-ai/issues/2040.
     """
-    m = AnthropicModel(
-        'claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-0', capture=True)
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000})
     agent = Agent(m, model_settings=settings)
 
@@ -9724,11 +9696,9 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
 
 
 async def test_anthropic_text_editor_code_execution_tool(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = AnthropicModel(
-        'claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-6', capture=True)
     agent = Agent(
         m,
         capabilities=[NativeTool(CodeExecutionTool())],
@@ -9883,11 +9853,9 @@ Everything looks perfect! 🎉\
 
 
 async def test_anthropic_text_editor_code_execution_tool_stream(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = AnthropicModel(
-        'claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-6', capture=True)
     agent = Agent(
         m,
         capabilities=[NativeTool(CodeExecutionTool())],
@@ -10644,11 +10612,9 @@ async def test_anthropic_code_execution_tool_message_replay_infers_anthropic_too
 
 
 async def test_anthropic_web_search_tool_stream(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    m = AnthropicModel(
-        'claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    m = anthropic_model('claude-sonnet-4-0', capture=True)
     agent = Agent(m, instructions='You are a helpful assistant.', capabilities=[NativeTool(WebSearchTool())])
 
     event_parts: list[Any] = []
@@ -11195,14 +11161,12 @@ These stories represent major international diplomatic developments, significant
 
 
 async def test_anthropic_text_parts_ahead_of_built_in_tool_call(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     # Verify that text parts ahead of the built-in tool call are not included in the output
 
-    anthropic_model = AnthropicModel(
-        'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
-    agent = Agent(anthropic_model, capabilities=[NativeTool(WebSearchTool())], instructions='Be very concise.')
+    model = anthropic_model('claude-sonnet-4-5', capture=True)
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool())], instructions='Be very concise.')
 
     result = await agent.run('Briefly mention 1 event that happened today in history?')
     assert (request_capture.body()['tools'], request_capture.body().get('tool_choice')) == snapshot(
@@ -12230,12 +12194,10 @@ async def test_anthropic_defer_loading_needs_a_reveal_mechanism(
 
 @pytest.mark.vcr()
 async def test_anthropic_explicit_tool_search_keeps_search_surface(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Any, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, vcr: Any, request_capture: RequestCapture
 ):
     """A mixed corpus retains explicit keyword search and can discover a standalone deferred tool."""
-    model = AnthropicModel(
-        'claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    model = anthropic_model('claude-sonnet-4-6', capture=True)
     refunds = Capability[None](id='refunds', description='Refund policy tools.', defer_loading=True)
 
     @refunds.tool_plain
@@ -12323,12 +12285,10 @@ async def test_anthropic_always_on_capability_toolset_is_visible(
 
 @pytest.mark.vcr()
 async def test_anthropic_deferred_capability_tool_callable_without_tool_search(
-    allow_model_requests: None, anthropic_api_key: str, vcr: Any, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, vcr: Any, request_capture: RequestCapture
 ):
     """Anthropic accepts a capability-revealed tool that stays deferred without a tool-search surface."""
-    model = AnthropicModel(
-        'claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    model = anthropic_model('claude-sonnet-4-6', capture=True)
     refunds = Capability[None](
         id='refunds',
         description='Refund policy tools. Load this capability before looking up refund policy.',
@@ -12402,15 +12362,13 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 @pytest.mark.vcr()
 async def test_anthropic_deferred_capability_without_tool_search_across_models(
     allow_model_requests: None,
-    anthropic_api_key: str,
+    anthropic_model: AnthropicModelFactory,
     vcr: Any,
     model_name: str,
     request_capture: RequestCapture,
 ):
     """All Anthropic models honor standalone deferred capability reveals without a search surface."""
-    model = AnthropicModel(
-        model_name, provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    model = anthropic_model(model_name, capture=True)
     refunds = Capability[None](
         id='refunds',
         description='Refund policy tools. Load this capability before looking up refund policy.',
@@ -13409,12 +13367,10 @@ async def test_anthropic_compaction_capability_preserves_existing_edits(
 
 
 async def test_anthropic_compaction_round_trip(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """Test that CompactionPart is correctly round-tripped in Anthropic message mapping."""
-    model = AnthropicModel(
-        'claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    model = anthropic_model('claude-sonnet-4-6', capture=True)
 
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello!')]),
@@ -13771,14 +13727,12 @@ async def test_anthropic_compaction_only_response(allow_model_requests: None):
 
 
 async def test_anthropic_compaction_end_to_end(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """End-to-end test: Anthropic returns a compaction block when context exceeds threshold."""
     from pydantic_ai.messages import CompactionPart
 
-    model = AnthropicModel(
-        'claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    model = anthropic_model('claude-sonnet-4-6', capture=True)
 
     padding = 'The quick brown fox jumps over the lazy dog. ' * 5000  # ~230k chars ≈ ~55k tokens
     agent = Agent(
@@ -13813,7 +13767,7 @@ async def test_anthropic_compaction_end_to_end(
 
 
 async def test_anthropic_compaction_usage_with_cache(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """Verify usage aggregation when compaction + prompt caching interact in a real response.
 
@@ -13826,9 +13780,7 @@ async def test_anthropic_compaction_usage_with_cache(
     Where the cache breakpoints sit is asserted off the wire rather than the cassette, because a
     breakpoint that moves still replays against a recording that pins the old position.
     """
-    model = AnthropicModel(
-        'claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    model = anthropic_model('claude-sonnet-4-6', capture=True)
     padding = 'The quick brown fox jumps over the lazy dog. ' * 5000  # ~55k tokens
     agent = Agent(
         model=model,
@@ -13866,16 +13818,14 @@ async def test_anthropic_compaction_usage_with_cache(
 
 
 async def test_anthropic_compaction_usage_with_cache_streaming(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
     """Same as the non-streaming variant, but via `agent.run_stream`. The real API sends the
     `iterations` array on the `message_delta` event (not `message_start`), so this pins the
     merge-across-events path — specifically that the compaction cache (55k tokens) survives
     the delta overwriting top-level `cache_creation_input_tokens` back to 0.
     """
-    model = AnthropicModel(
-        'claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    model = anthropic_model('claude-sonnet-4-6', capture=True)
     padding = 'The quick brown fox jumps over the lazy dog. ' * 5000
     agent = Agent(
         model=model,
@@ -14018,11 +13968,9 @@ async def test_pause_turn_exceeds_max_generation_continuations(allow_model_reque
 
 @pytest.mark.vcr()
 async def test_pause_turn_web_search_vcr(
-    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    model = AnthropicModel(
-        'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
-    )
+    model = anthropic_model('claude-sonnet-4-5', capture=True)
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 4096}, max_tokens=15000)
     agent = Agent(model, capabilities=[NativeTool(WebSearchTool())], model_settings=settings)
 
