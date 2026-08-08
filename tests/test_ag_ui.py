@@ -4269,6 +4269,12 @@ async def test_event_stream_without_run_input_generates_identity():
     )
     assert (event_stream.thread_id, event_stream.run_id) == (thread_id, run_id)
 
+    # The IDs are minted per field, per construction: a default shared across the two fields or
+    # across streams would still satisfy the assertions above.
+    assert event_stream.thread_id != event_stream.run_id
+    other_stream = AGUIEventStream()
+    assert (other_stream.thread_id, other_stream.run_id) != (event_stream.thread_id, event_stream.run_id)
+
 
 async def test_event_stream_without_run_input_uses_explicit_identity():
     """A transport that already owns the run's identity passes it to the stream directly."""

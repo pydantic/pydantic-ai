@@ -121,7 +121,7 @@ from pydantic_ai.ui.ag_ui import AGUIEventStream
 event_stream = AGUIEventStream(thread_id='conversation-123', run_id='workflow-456')
 ```
 
-Each defaults to a new UUID, which is minted per stream and so per run: a conversation that spans more than one run — a run resumed after a [tool approval](./ag-ui.md#tool-approval-interrupts) above all — has to pass its own `thread_id` for the frontend to correlate the runs. Passing the [`conversation_id` and `run_id`](../message-history.md#correlating-runs-with-run_id-and-conversation_id) of the agent run itself lines the protocol's identity up with the run's traces, which is what [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] does for you on the request path.
+Each defaults to a new UUID, minted every time the stream is constructed: a conversation that spans more than one run — a run resumed after a [tool approval](./ag-ui.md#tool-approval-interrupts) above all — has to pass its own `thread_id` for the frontend to correlate the runs. Constructing the stream inside replay-able [durable execution](../durable_execution/overview.md) workflow code makes that a determinism hazard too, as the defaults are re-minted on every replay, so pass an explicit `thread_id` and `run_id` there. Passing the [`conversation_id` and `run_id`](../message-history.md#correlating-runs-with-run_id-and-conversation_id) of the agent run itself lines the protocol's identity up with the run's traces, which is what [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] does for you on the request path.
 
 ## Trust model for client-submitted messages
 
