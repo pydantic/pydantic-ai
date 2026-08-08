@@ -116,8 +116,8 @@ When `load_capability` succeeds:
 
 - the call is typed as a capability-load message part
 - the return may include resolved capability instructions and owned toolset instructions
-- the capability id is added to `ctx.available_capability_ids`
-- tools owned by the loaded capability become visible on later steps
+- the capability id appears in `ctx.available_capability_ids` from the *next* step onwards, not within the step that loaded it — both sets are derived from message history before each model request
+- tools owned by the loaded capability become visible, and callable, on later steps
 - `load_capability` remains visible so the tool set stays stable
 
 Use `ctx.is_tool_available(tool_def)` when a wrapping toolset needs to decide whether a definition it holds is currently visible. The definition form remains reliable inside `get_tools`; the name form looks in the current resolved `ctx.tools` snapshot and is intended for model-request hooks and tool execution.
