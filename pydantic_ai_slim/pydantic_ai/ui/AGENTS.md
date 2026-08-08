@@ -20,3 +20,11 @@ A field earns an adapter property when **both** hold:
 One without the other is the trap: a protocol-specific property with a generic name means the day a second protocol grows the same concept, the base-class version can't be added without breaking the first adapter's return type. Normalizing early to dodge that is not the fix either — a shape derived from a single protocol is a guess, and a lossy one when it discards structure the protocol chose (AG-UI's `context` is a `list` of `description`/`value` pairs, and `description` is not unique, so a `dict` silently drops entries).
 
 The agent run is not a sink for the leftovers, either: `RunContext.metadata` is attached to the run span, so routing client-submitted text there by default would put unbounded untrusted content into every user's traces.
+
+## The event stream is an encoder, so it owns what it emits
+
+`UIEventStream.run_input` is optional because a stream is constructible with no request behind it: transports that carry native events out of band — a durable execution workflow, a queue, a websocket fan-out — encode at an API edge the adapter never reaches ([6970](https://github.com/pydantic/pydantic-ai/issues/6970)).
+
+So a value a subclass emits is a field of that subclass, overwritten from `run_input` in `__post_init__` when one is given — the request's identity wins over an explicitly passed value, it doesn't merely default it, and passing both warns rather than discarding one in silence — that's `AGUIEventStream.thread_id` / `run_id`, which the protocol requires on `RUN_STARTED` and `RUN_FINISHED`. Telling an explicitly passed value apart from a generated default is what `_GeneratedID` is for: comparing against the run input's value can't, since a generated ID differs from it too. Reading `self.run_input.<field>` at emit time is what makes a stream un-constructible without a request, and it's the reason a `run_input` stub had to be fabricated before.
+
+This is the opposite case from the adapter-property rule above, not an exception to it: the field exists because the stream *emits* it, not to forward a protocol object's contents to the caller. An unread `run_input` field still earns nothing.
