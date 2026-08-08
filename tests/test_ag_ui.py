@@ -4305,7 +4305,8 @@ async def test_event_stream_identity_comes_from_run_input():
         yield PartEndEvent(index=0, part=TextPart(content='Hello'))
 
     run_input = create_input(UserMessage(id='msg_1', content='Hello'))
-    event_stream = AGUIEventStream(run_input=run_input, thread_id='ignored', run_id='ignored')
+    with pytest.warns(UserWarning, match=r'`thread_id` and `run_id` are ignored when a `run_input` is given'):
+        event_stream = AGUIEventStream(run_input=run_input, thread_id='ignored', run_id='ignored')
 
     events = [
         json.loads(event.removeprefix('data: '))
@@ -4329,6 +4330,25 @@ async def test_event_stream_identity_comes_from_run_input():
             },
         ]
     )
+
+
+def test_event_stream_identity_warns_only_on_a_redundant_argument():
+    """Passing an ID that `run_input` then overrides is a silent no-op without the warning.
+
+    The stream marks the IDs it generates itself, so supplying only one of the pair names only that
+    one, and the adapter's own construction — `run_input` and nothing else — stays quiet.
+    """
+    run_input = create_input(UserMessage(id='msg_1', content='Hello'))
+
+    with pytest.warns(UserWarning, match=r'^`thread_id` is ignored when a `run_input` is given'):
+        AGUIEventStream(run_input=run_input, thread_id='ignored')
+
+    with pytest.warns(UserWarning, match=r'^`run_id` is ignored when a `run_input` is given'):
+        AGUIEventStream(run_input=run_input, run_id='ignored')
+
+    # `filterwarnings = ['error']` turns a warning from either of these into a failure.
+    assert AGUIEventStream(run_input=run_input).thread_id == run_input.thread_id
+    assert AGUIEventStream(thread_id='thread-1', run_id='run-1').thread_id == 'thread-1'
 
 
 async def test_file_part_emits_no_ag_ui_event():

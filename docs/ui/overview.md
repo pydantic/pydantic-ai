@@ -113,7 +113,7 @@ async def encode_events(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str
 
 An event stream instance carries the state of one run as it goes (the current message ID, the part it's streaming, the tool calls it's waiting on), so build a new one per run rather than reusing it.
 
-The AG-UI protocol identifies every run to the frontend: its `RUN_STARTED` and `RUN_FINISHED` events carry a thread ID and a run ID, which [`AGUIEventStream`][pydantic_ai.ui.ag_ui.AGUIEventStream] reads off the run input when it has one. Without a run input, pass the IDs your own transport already assigns to the conversation and the run:
+The AG-UI protocol identifies every run to the frontend: its `RUN_STARTED` and `RUN_FINISHED` events carry a thread ID and a run ID, which [`AGUIEventStream`][pydantic_ai.ui.ag_ui.AGUIEventStream] reads off the run input when it has one, warning you if you pass IDs it then overrides. Without a run input, pass the IDs your own transport already assigns to the conversation and the run:
 
 ```py {title="encode_ag_ui_events.py"}
 from pydantic_ai.ui.ag_ui import AGUIEventStream
