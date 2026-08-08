@@ -65,6 +65,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     CachePoint,
+    FinishReason,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
@@ -99,7 +100,7 @@ from .mock_xai import (
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from xai_sdk.chat import required_tool
-    from xai_sdk.proto import chat_pb2, usage_pb2
+    from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
 
     from pydantic_ai.models import xai as xai_module
     from pydantic_ai.models.xai import (
@@ -1447,6 +1448,63 @@ async def test_xai_stream_text_finish_reason(allow_model_requests: None):
                     finish_reason='stop',
                 )
             )
+
+
+def _text_chunk_with_proto_finish_reason(
+    text: str, proto_reason: sample_pb2.FinishReason
+) -> tuple[chat_types.Response, chat_types.Chunk]:
+    chunk_proto = chat_pb2.GetChatCompletionChunk(id='grok-123')
+    chunk_proto.outputs.append(
+        chat_pb2.CompletionOutputChunk(
+            index=0,
+            finish_reason=proto_reason,
+            delta=chat_pb2.Delta(content=text, role=chat_pb2.MessageRole.ROLE_ASSISTANT),
+        )
+    )
+    chunk_proto.created.GetCurrentTime()
+
+    response_proto = chat_pb2.GetChatCompletionResponse(
+        id='grok-123',
+        outputs=[
+            chat_pb2.CompletionOutput(
+                index=0,
+                finish_reason=proto_reason,
+                message=chat_pb2.CompletionMessage(content=text, role=chat_pb2.MessageRole.ROLE_ASSISTANT),
+            )
+        ],
+        usage=usage_pb2.SamplingUsage(prompt_tokens=2, completion_tokens=1),
+    )
+    response_proto.created.GetCurrentTime()
+
+    return chat_types.Response(response_proto, index=None), chat_types.Chunk(chunk_proto, index=None)
+
+
+@pytest.mark.parametrize(
+    ('proto_reason_name', 'expected'),
+    [
+        ('REASON_STOP', 'stop'),
+        ('REASON_MAX_LEN', 'length'),
+        ('REASON_MAX_CONTEXT', 'length'),
+        ('REASON_TOOL_CALLS', 'tool_call'),
+        ('REASON_TIME_LIMIT', 'error'),
+        # The proto default for "not set yet", which every chunk before the last one carries.
+        ('REASON_INVALID', None),
+    ],
+)
+async def test_xai_stream_finish_reason(
+    allow_model_requests: None, proto_reason_name: str, expected: FinishReason | None
+):
+    proto_reason: sample_pb2.FinishReason = getattr(sample_pb2.FinishReason, proto_reason_name)
+    stream = [_text_chunk_with_proto_finish_reason('hello', proto_reason)]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+
+    async with m.request_stream(
+        [ModelRequest(parts=[UserPromptPart(content='')])], None, ModelRequestParameters()
+    ) as stream_response:
+        async for _ in stream_response:
+            pass
+        assert stream_response.finish_reason == expected
 
 
 class MyTypedDict(TypedDict, total=False):
