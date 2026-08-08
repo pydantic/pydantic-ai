@@ -24,6 +24,7 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
+from ...messages import ModelMessagesTypeAdapter
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
 from ._logfire import LogfirePlugin
@@ -52,6 +53,14 @@ try:
     import anyio._backends._trio  # pyright: ignore[reportUnusedImport]  # noqa: F401
 except ImportError:
     pass
+
+# Same reasoning as the anyio backends above: `ModelMessagesTypeAdapter` is built with
+# `defer_build=True`, so its pydantic-core schema for the wide `ModelMessage` union is only
+# compiled on the first real `dump_json`/`validate_json` call. Force that build now, during
+# ordinary worker startup, so a workflow that's first to serialize message history across a
+# `continue_as_new` boundary never pays that compile cost inside sandboxed workflow compute
+# (where it would count against Temporal's deadlock-detection timeout).
+ModelMessagesTypeAdapter.dump_json([])
 
 
 def _data_converter(converter: DataConverter | None) -> DataConverter:

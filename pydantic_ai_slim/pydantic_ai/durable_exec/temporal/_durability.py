@@ -88,6 +88,15 @@ class _EventStreamHandlerParams:
 _StreamedActivityPayload: TypeAlias = StreamedActivityResult | ModelResponse
 
 
+ContinueAsNewArgs: TypeAlias = 'Callable[[RunContext[AgentDepsT]], Mapping[str, Any]]'
+"""Callable that builds the keyword arguments for `temporalio.workflow.continue_as_new()`.
+
+It receives the run's [`RunContext`][pydantic_ai.tools.RunContext] — including the current
+`messages`, `usage`, and `usage_limits` — and returns the kwargs passed to
+`workflow.continue_as_new(**kwargs)`.
+"""
+
+
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
 """Default `heartbeat_timeout` for the model-request activities.
 
@@ -152,6 +161,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     activity_config: ActivityConfig
     """Base Temporal activity config used for all activities."""
 
+    continue_as_new_args: ContinueAsNewArgs[AgentDepsT] | None
+    """Callable that builds the `workflow.continue_as_new()` kwargs, or `None` to never continue as new."""
+
     def __init__(
         self,
         *,
@@ -164,6 +176,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         event_stream_handler_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+        continue_as_new_args: ContinueAsNewArgs[AgentDepsT] | None = None,
     ):
         """Create a TemporalDurability capability.
 
@@ -203,6 +216,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 merged on top of the base config.
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
+            continue_as_new_args: Optional callable invoked just before each model
+                request — a point with zero in-flight activities — when running
+                inside a workflow and `workflow.info().is_continue_as_new_suggested()`
+                is true. It receives the run's `RunContext` and returns the kwargs
+                for `workflow.continue_as_new(**kwargs)`, which restarts the
+                workflow with a fresh event history and never returns. `None` (the
+                default) never continues as new.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -219,6 +239,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self.run_context_type = run_context_type
+        self.continue_as_new_args = continue_as_new_args
         self._deps_type = deps_type
 
         # Normalize the activity config on copies: mutating the caller's `ActivityConfig` or a
@@ -462,6 +483,28 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 'Attach all capabilities at agent construction time so `TemporalDurability.for_agent()` '
                 'can register their activities.'
             )
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Continue the workflow as new when Temporal suggests it and `continue_as_new_args` is set.
+
+        Just before a model request is the only point in the agent graph with zero
+        in-flight activities — the previous turn's tool results are already folded
+        into `ctx.messages` — so `workflow.continue_as_new()` can safely end the
+        workflow task here. It never returns, so nothing escapes to user code.
+        """
+        if (
+            not self.in_durable_context
+            or self.continue_as_new_args is None
+            or not workflow.info().is_continue_as_new_suggested()
+        ):
+            return request_context
+
+        kwargs = self.continue_as_new_args(ctx)
+        workflow.continue_as_new(**kwargs)
 
     async def wrap_model_request(
         self,
