@@ -14,16 +14,16 @@ Two rules that keep findings precise, applied to every finding.
 
 Raise a finding only for a problem the PR's own added or changed lines create. A
 real bug that already existed in code this PR merely touches, moves, or sits next
-to is out of scope: the PR did not introduce it, so flagging it as a blocking
-issue here is noise the author dismisses and tracks separately. If a serious
-pre-existing defect is genuinely worth surfacing, note it as low-severity and say
-it is pre-existing, do not rate it high on this PR.
+to is out of scope: the PR did not introduce it, so flagging it here is noise the
+author dismisses and tracks separately. A pre-existing defect worth surfacing
+belongs in its own issue, not in this PR's review output at any severity.
 
 A line can show as added (`+`) without being new. When code is wrapped in a new
 block (a loop, `try`, `with`, `if`) or relocated, its indentation changes and git
 records the old line as a delete plus an add. Treat a `+` line as introduced only
-when the same text (ignoring leading whitespace) is not also deleted in the same
-hunk under unchanged semantics. When in doubt whether the line, and the problem
+when the same text (ignoring leading whitespace) is not deleted anywhere in the
+PR's diff -- including another hunk or another file, since code moves across both
+-- under unchanged semantics. When in doubt whether the line, and the problem
 with it, is genuinely new, prefer not flagging.
 
 ## Verify the claim before flagging
