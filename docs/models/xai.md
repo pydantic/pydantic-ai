@@ -135,6 +135,12 @@ The `XSearch` capability accepts:
 
 As an alternative to the capability, you can pass the lower-level [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] directly via `capabilities=[NativeTool(XSearchTool(...))]` — see the [X Search Tool documentation](../native-tools.md#x-search-tool) — or enable raw output globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](../agent.md#model-run-settings).
 
+## File attachments
+
+When you include a document in a user prompt, xAI automatically uses its `attachment_search` server-side tool to search the document. Set [`XaiModelSettings.xai_include_attachment_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_attachment_search_output] to `True` to include the raw search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. See [document input](../input.md#document-input) for supported input forms.
+
+Attachment search applies to files attached directly to a conversation. To search persistent xAI collections instead, use [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool].
+
 ## Reasoning effort
 
 Grok 4.3 supports `reasoning_effort` values of `'none'`, `'low'`, `'medium'`, and `'high'`. You can configure it directly with [`XaiModelSettings.xai_reasoning_effort`][pydantic_ai.models.xai.XaiModelSettings.xai_reasoning_effort], or use the cross-provider [`ModelSettings.thinking`][pydantic_ai.settings.ModelSettings.thinking] setting:
