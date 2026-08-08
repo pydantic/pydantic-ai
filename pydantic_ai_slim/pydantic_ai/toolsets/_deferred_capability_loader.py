@@ -53,7 +53,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         load_tool = ToolsetTool(
             toolset=self,
             tool_def=load_tool_def,
-            max_retries=1,
+            max_retries=ctx.max_retries,
             args_validator=_load_capability_args_ta.validator,  # pyright: ignore[reportArgumentType]
         )
 
