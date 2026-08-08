@@ -1,0 +1,52 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '82'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: hi
+      max_output_tokens: 16
+      model: gpt-5.1-turbo
+      store: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '155'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '101'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        code: model_not_found
+        message: The requested model 'gpt-5.1-turbo' does not exist.
+        param: model
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+version: 1

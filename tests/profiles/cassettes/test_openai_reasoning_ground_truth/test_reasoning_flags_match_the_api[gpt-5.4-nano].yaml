@@ -1,0 +1,545 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '114'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: hi
+      max_output_tokens: 16
+      model: gpt-5.4-nano
+      reasoning:
+        effort: none
+      store: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1669'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '661'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785793365
+      created_at: 1785793364
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0e0c8c95137ea84a016a710b54be5c819d930eea3eb8a8c992
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: 16
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-nano-2026-03-17
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: "Hi! \U0001F44B How can I help you today?"
+          type: output_text
+        id: msg_0e0c8c95137ea84a016a710b553870819da3cc7e84911fb518
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: current_turn
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 7
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 15
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 22
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '101'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: hi
+      max_output_tokens: 16
+      model: gpt-5.4-nano
+      store: false
+      temperature: 0.5
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1669'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '1104'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785793366
+      created_at: 1785793365
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0f1cd5310a30eaba016a710b55a02881a3a63eb158e93e3845
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: 16
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-nano-2026-03-17
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: "Hi! \U0001F44B How can I help you today?"
+          type: output_text
+        id: msg_0f1cd5310a30eaba016a710b562c7481a38cc640b041211087
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: current_turn
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 0.5
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 7
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 15
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 22
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '116'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: hi
+      max_output_tokens: 16
+      model: gpt-5.4-nano
+      reasoning:
+        mode: standard
+      store: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1669'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '724'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785793367
+      created_at: 1785793366
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0735ef137ef52344016a710b56c1a081a29d97675ab621d428
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: 16
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-nano-2026-03-17
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: "Hi! \U0001F44B How can I help you today?"
+          type: output_text
+        id: msg_0735ef137ef52344016a710b572e9481a29a8ad49d4d656848
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: current_turn
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 7
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 15
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 22
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '111'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: hi
+      max_output_tokens: 16
+      model: gpt-5.4-nano
+      reasoning:
+        mode: pro
+      store: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '165'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '241'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+    parsed_body:
+      error:
+        code: unsupported_value
+        message: '`reasoning.mode` is not supported with this model.'
+        param: reasoning.mode
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '120'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: hi
+      max_output_tokens: 16
+      model: gpt-5.4-nano
+      reasoning:
+        context: all_turns
+      store: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1666'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '680'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785793368
+      created_at: 1785793368
+      error: null
+      frequency_penalty: 0.0
+      id: resp_00a24891d099cdef016a710b5807a8819fa451320779646adb
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: 16
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.4-nano-2026-03-17
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: "Hi! \U0001F44B How can I help you today?"
+          type: output_text
+        id: msg_00a24891d099cdef016a710b586eec819fb74f8a1de2810355
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 7
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 15
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 22
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

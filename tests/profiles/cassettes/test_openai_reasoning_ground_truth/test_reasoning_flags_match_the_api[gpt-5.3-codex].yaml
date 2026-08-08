@@ -1,0 +1,247 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '115'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: hi
+      max_output_tokens: 16
+      model: gpt-5.3-codex
+      reasoning:
+        effort: none
+      store: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1659'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '622'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785792849
+      created_at: 1785792848
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0747f6cbcaff3a18016a710950c9c881a281a97225a9bb67f7
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: 16
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.3-codex
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: "Hi! \U0001F44B How can I help you today?"
+          type: output_text
+        id: msg_0747f6cbcaff3a18016a7109513f2881a28666c77bdde51750
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: current_turn
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 7
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 15
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 22
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '102'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: hi
+      max_output_tokens: 16
+      model: gpt-5.3-codex
+      store: false
+      temperature: 0.5
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1659'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '564'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785792850
+      created_at: 1785792849
+      error: null
+      frequency_penalty: 0.0
+      id: resp_00a1f91c44ca395a016a710951875c819ebbad965f0a6cd680
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: 16
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.3-codex
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: "Hi! \U0001F44B How can I help you today?"
+          type: output_text
+        id: msg_00a1f91c44ca395a016a710951e688819eb3ccd3bf8810cf0a
+        phase: final_answer
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: current_turn
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: false
+      temperature: 0.5
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 7
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 15
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 22
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

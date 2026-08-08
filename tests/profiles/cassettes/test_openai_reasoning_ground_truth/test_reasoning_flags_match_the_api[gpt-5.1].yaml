@@ -1,0 +1,247 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '109'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: hi
+      max_output_tokens: 16
+      model: gpt-5.1
+      reasoning:
+        effort: none
+      store: false
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1653'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '859'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: null
+      created_at: 1785792844
+      error: null
+      frequency_penalty: 0.0
+      id: resp_01e8834687df730f016a71094c958c819d9a8cb7c94217e601
+      incomplete_details:
+        reason: max_output_tokens
+      instructions: null
+      max_output_tokens: 16
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.1-2025-11-13
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: "Hi!  \n\nWhat would you like"
+          type: output_text
+        id: msg_01e8834687df730f016a71094d1ae4819da638f4e0ad6a5f1a
+        role: assistant
+        status: incomplete
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: incomplete
+      store: false
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 7
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 16
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 23
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '96'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input: hi
+      max_output_tokens: 16
+      model: gpt-5.1
+      store: false
+      temperature: 0.5
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1651'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '895'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: null
+      created_at: 1785792845
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0cf490744274effc016a71094d939c819d927a489989ffd867
+      incomplete_details:
+        reason: max_output_tokens
+      instructions: null
+      max_output_tokens: 16
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.1-2025-11-13
+      moderation: null
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Hi! What would you like to
+          type: output_text
+        id: msg_0cf490744274effc016a71094e1728819d9a248b3fd24d8a0e
+        role: assistant
+        status: incomplete
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: none
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: incomplete
+      store: false
+      temperature: 0.5
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools: []
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 7
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 16
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 23
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1
