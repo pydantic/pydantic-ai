@@ -13,6 +13,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -20,10 +21,16 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import HistoryProcessor, ProcessHistory, ReinjectSystemPrompt
+from pydantic_ai.capabilities import Capability, HistoryProcessor, ProcessHistory, ReinjectSystemPrompt
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import (
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
+    ToolAvailabilityDeltaPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -2078,3 +2085,58 @@ def drop_first(ctx: RunContext[None], messages: list[ModelMessage]) -> list[Mode
         match=r"Unable to resolve the type annotations of 'drop_first': name 'RunContext' is not defined\.",
     ):
         await agent.run('Hello')
+
+
+async def test_processed_history_that_loads_a_capability_makes_its_tools_callable() -> None:
+    """A capability a processor loads is advertised *and* callable, not advertised and refused.
+
+    The mirror of the test above: a processor can add load evidence as well as remove it. Both the
+    request's reveal state and the execution gate are derived from history, so if only one of them
+    reads the *processed* history, the model is offered a tool the run then refuses to run.
+    """
+    calls: list[str] = []
+
+    def secret_op() -> str:
+        calls.append('executed')
+        return 'secret'
+
+    def inject_load(messages: list[ModelMessage]) -> list[ModelMessage]:
+        if any(isinstance(part, LoadCapabilityReturnPart) for message in messages for part in message.parts):
+            return messages
+        return [
+            *messages[:-1],
+            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'guarded'}, tool_call_id='injected-load')]),
+            ModelRequest(
+                parts=[
+                    LoadCapabilityReturnPart(content={'instructions': 'Use secret_op.'}, tool_call_id='injected-load'),
+                    ToolAvailabilityDeltaPart(tools_added=['secret_op'], tool_call_id='injected-load'),
+                ]
+            ),
+            messages[-1],
+        ]
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert 'secret_op' in info.model_request_parameters.revealed_tool_names
+        assert not [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, RetryPromptPart)
+        ]
+        if calls:
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='secret_op', args={}, tool_call_id='call-secret')])
+
+    capability = Capability(
+        id='guarded',
+        description='Guarded',
+        toolsets=[FunctionToolset([secret_op])],
+        defer_loading=True,
+    )
+    agent = Agent(FunctionModel(model_fn), capabilities=[capability, ProcessHistory(inject_load)])
+
+    result = await agent.run('go')
+
+    assert result.output == 'done'
+    assert calls == ['executed']
