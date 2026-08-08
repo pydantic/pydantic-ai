@@ -223,7 +223,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         self._reasoning_started = False
 
         if self._use_reasoning:
-            from ._thinking_0_13 import handle_thinking_start as _impl
+            from ._thinking_0_11 import handle_thinking_start as _impl
         else:
             from ._thinking_0_10 import handle_thinking_start as _impl
         async for event in _impl(self, part):
@@ -238,7 +238,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         )
 
         if self._use_reasoning:
-            from ._thinking_0_13 import handle_thinking_delta as _impl
+            from ._thinking_0_11 import handle_thinking_delta as _impl
         else:
             from ._thinking_0_10 import handle_thinking_delta as _impl
         async for event in _impl(self, delta):
@@ -250,7 +250,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         assert self._reasoning_message_id is not None, 'handle_thinking_start must be called before handle_thinking_end'
 
         if self._use_reasoning:
-            from ._thinking_0_13 import handle_thinking_end as _impl
+            from ._thinking_0_11 import handle_thinking_end as _impl
         else:
             from ._thinking_0_10 import handle_thinking_end as _impl
         async for event in _impl(self, part):
@@ -278,7 +278,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         )
         if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(part.tool_kind)):
             # Clients echo this back as `ToolCall.encrypted_value`, so `tool_kind` survives
-            # streaming-built histories. The event is 0.1.13+, hence the gated import.
+            # streaming-built histories. The event is 0.1.11+, hence the gated import.
             from ag_ui.core import ReasoningEncryptedValueEvent
 
             yield ReasoningEncryptedValueEvent(
