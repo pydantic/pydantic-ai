@@ -105,6 +105,16 @@ def test_heroku_model_profile_routes_thinking_capable_families():
     assert fallback.get('supports_thinking') is None
 
 
+@pytest.mark.parametrize('model_name', ['glm-4-7', 'glm-4-7-flash'])
+def test_heroku_glm_routes_to_zai_profile(model_name: str):
+    provider = HerokuProvider(api_key='api-key')
+
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_thinking') is True
+    assert profile.get('ignore_streamed_leading_whitespace') is None
+
+
 @pytest.mark.parametrize('model_name', ['kimi-k2-5', 'kimi-k2-thinking'])
 def test_heroku_kimi_reasoning_models_support_thinking(model_name: str):
     provider = HerokuProvider(api_key='api-key')
