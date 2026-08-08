@@ -1,0 +1,237 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '475'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: How warm is it in Utrecht? Use the tool, then answer.
+          type: text
+        role: user
+      model: claude-sonnet-4-5
+      stream: true
+      thinking:
+        budget_tokens: 1024
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_temperature
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CdoUewPGfNCZ2HiDjJzBP","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":597,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available"}}             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}            }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user wants to know the temperature in"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" Utrecht. I have a tool called \"get_temperature\" that takes a city parameter. I should use this tool with \"Utrecht\" as the city parameter."}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EqsDCpQBCBAYAipALuXGgP6l1QabSDWWAZc410nWLu9LyT4p7JAW9nWaioEZ+XZ8fZ4uCjDHgpEAiJsOwFAoDyT1FybLywxT/xiabzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJGYwMjI0OGY4LWNlYmEtNGU2Yy1iZTcwLTIwZmQ3MjllYzhhMRIMELnQUeQ34DKlTZPDGgyKLFoiOWPIhXeWjUAiMMaUfXC3n+toNR8dzKlBqj1KcwQprsDjy0W402l7JbZNAvi/GZvQqOEI3Z7EdQbiYyrDATaclMnhOZwN9aoHRYIAHoG23b779FdJ3YOGsNjdOvNAX5doVtKXTX+Xkq9dEoTEjFbAs5cxkTKEjuAdRqClgWsd3R9j4RuzrdP0DtEfoTwSj56nNMZ+6skEAnFJvlhG7XaUl7tiZe4CVYIAxFaAYceQdAWy0rt0cwAZhlZrwtblHLfeZfdGYj6kgyJYRuHIuRUsW8nz5ZSiXjQQ+gJwep3qtUFRjs9d53/vOjolYpMajR5ZiNJPzYO99MZIVLA5VHuqHxgB"}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01TUGHRCfso8VSw9ekt21nAR","name":"get_temperature","input":{},"caller":{"type":"direct"}}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\": \"U"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"trecht\"}"}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1            }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":597,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":101,"output_tokens_details":{"thinking_tokens":45}}            }
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-length:
+      - '3131'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=991
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-dcb6dcf11db281c5cf5e66931da6c27a-90677f00557b5afd-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1620'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: How warm is it in Utrecht? Use the tool, then answer.
+          type: text
+        role: user
+      - content:
+        - signature: EqsDCpQBCBAYAipALuXGgP6l1QabSDWWAZc410nWLu9LyT4p7JAW9nWaioEZ+XZ8fZ4uCjDHgpEAiJsOwFAoDyT1FybLywxT/xiabzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJGYwMjI0OGY4LWNlYmEtNGU2Yy1iZTcwLTIwZmQ3MjllYzhhMRIMELnQUeQ34DKlTZPDGgyKLFoiOWPIhXeWjUAiMMaUfXC3n+toNR8dzKlBqj1KcwQprsDjy0W402l7JbZNAvi/GZvQqOEI3Z7EdQbiYyrDATaclMnhOZwN9aoHRYIAHoG23b779FdJ3YOGsNjdOvNAX5doVtKXTX+Xkq9dEoTEjFbAs5cxkTKEjuAdRqClgWsd3R9j4RuzrdP0DtEfoTwSj56nNMZ+6skEAnFJvlhG7XaUl7tiZe4CVYIAxFaAYceQdAWy0rt0cwAZhlZrwtblHLfeZfdGYj6kgyJYRuHIuRUsW8nz5ZSiXjQQ+gJwep3qtUFRjs9d53/vOjolYpMajR5ZiNJPzYO99MZIVLA5VHuqHxgB
+          thinking: The user wants to know the temperature in Utrecht. I have a tool called "get_temperature" that takes a
+            city parameter. I should use this tool with "Utrecht" as the city parameter.
+          type: thinking
+        - id: toolu_01TUGHRCfso8VSw9ekt21nAR
+          input:
+            city: Utrecht
+          name: get_temperature
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: 18°C
+            type: text
+          is_error: false
+          tool_use_id: toolu_01TUGHRCfso8VSw9ekt21nAR
+          type: tool_result
+        role: user
+      model: claude-sonnet-4-5
+      stream: true
+      thinking:
+        budget_tokens: 1024
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - description: ''
+        input_schema:
+          additionalProperties: false
+          properties:
+            city:
+              type: string
+          required:
+          - city
+          type: object
+        name: get_temperature
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CdoUf6Nm9H7bPpPJehyoY","type":"message","role":"assistant","content":[],"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":713,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"}}              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}         }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"It"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" currently"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 18°C ("}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"64°F) in Utrecht. That"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s a pleasant, mild temperature!"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null},"usage":{"input_tokens":713,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":26,"output_tokens_details":{"thinking_tokens":0}}           }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-length:
+      - '1911'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-e317947db68604518d3ac9fb9654ef36-b4048b9f82412644-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    status:
+      code: 200
+      message: OK
+version: 1
+...
