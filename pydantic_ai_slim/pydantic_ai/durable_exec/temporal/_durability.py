@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, ClassVar, TypeAlias, cast
+from typing import Any, ClassVar, Generic, TypeAlias, cast
 
 from pydantic import ConfigDict, with_config
 from pydantic_core import PydanticSerializationError
@@ -90,6 +90,58 @@ class _EventStreamHandlerParams:
 _StreamedActivityPayload: TypeAlias = StreamedActivityResult | ModelResponse
 
 
+ContinueAsNewArgs: TypeAlias = 'Callable[[RunContext[AgentDepsT]], Mapping[str, Any]]'
+"""Callable that builds the keyword arguments for `temporalio.workflow.continue_as_new()`.
+
+It receives the run's [`RunContext`][pydantic_ai.tools.RunContext] — including the current
+`messages`, `usage`, and `usage_limits` — and returns the kwargs passed to
+`workflow.continue_as_new(**kwargs)`.
+"""
+
+ContinueAsNewCondition: TypeAlias = 'Callable[[RunContext[AgentDepsT]], bool]'
+"""Callable that decides whether to continue the workflow as new before the next model request.
+
+It receives the run's [`RunContext`][pydantic_ai.tools.RunContext] and returns whether
+`ContinueAsNewCallbacks.args` should be called and `workflow.continue_as_new()` invoked.
+`None` (the default) falls back to `workflow.info().is_continue_as_new_suggested()`.
+"""
+
+
+@dataclass(kw_only=True)
+class ContinueAsNewCallbacks(Generic[AgentDepsT]):
+    """Callbacks that opt [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] into continuing its workflow as new.
+
+    Pass an instance to `TemporalDurability(continue_as_new=...)`. Just before each model
+    request — the one point in the agent graph with zero in-flight activities, since the
+    previous turn's tool results are already folded into `ctx.messages` — the capability
+    decides whether to act (`when`, or Temporal's own suggestion by default) and, if so,
+    calls `args` and passes its return value to `workflow.continue_as_new(**kwargs)`, which
+    never returns.
+    """
+
+    args: ContinueAsNewArgs[AgentDepsT]
+    """Callable that builds the `workflow.continue_as_new()` kwargs.
+
+    `workflow.continue_as_new()` takes the new run's positional arguments via its own
+    `args` parameter (a sequence), not as arbitrary keywords matching your `@workflow.run`
+    method's parameter names — so the returned mapping's keys must be `continue_as_new`'s
+    own parameters (`args`, `task_queue`, `memo`, `retry_policy`, etc.), e.g.
+    `{'args': [prompt, history_bytes, usage]}`, not `{'prompt': ..., 'history': ...}`.
+    """
+
+    when: ContinueAsNewCondition[AgentDepsT] | None = None
+    """Callable that decides whether to continue as new now.
+
+    `None` (the default) falls back to `workflow.info().is_continue_as_new_suggested()` —
+    Temporal's own heuristic, based on the current history size. That's a conservative
+    lower bound tuned for the general case, not necessarily for yours: if `args` carries
+    expensive state to rebuild, or you'd rather batch several turns per workflow run, use
+    this to trigger less often. It fully replaces Temporal's suggestion — call
+    `workflow.info().is_continue_as_new_suggested()` yourself inside it if you still want
+    to factor that in (e.g. alongside your own turn counter).
+    """
+
+
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
 """Default `heartbeat_timeout` for the model-request activities.
 
@@ -162,6 +214,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     activity_config: ActivityConfig
     """Base Temporal activity config used for all activities."""
 
+    continue_as_new: ContinueAsNewCallbacks[AgentDepsT] | None
+    """Callbacks that opt this agent into continuing its workflow as new, or `None` to never do so."""
+
     def __init__(
         self,
         *,
@@ -174,6 +229,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         event_stream_handler_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
         run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
+        continue_as_new: ContinueAsNewCallbacks[AgentDepsT] | None = None,
     ):
         """Create a TemporalDurability capability.
 
@@ -213,6 +269,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 merged on top of the base config.
             run_context_type: The `TemporalRunContext` subclass for run context
                 serialization/deserialization.
+            continue_as_new: Optional [`ContinueAsNewCallbacks`][pydantic_ai.durable_exec.temporal.ContinueAsNewCallbacks]
+                that opts this agent into ending its Temporal workflow task and starting a
+                fresh one — via `workflow.continue_as_new()` — just before a model request,
+                once its history grows large enough. See `ContinueAsNewCallbacks` for
+                details. `None` (the default) never continues as new.
 
         Note:
             Per-tool activity config (custom timeouts, retry policies, or disabling
@@ -229,6 +290,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self.run_context_type = run_context_type
+        self.continue_as_new = continue_as_new
         self._deps_type = deps_type
 
         # An unknown key, or a value Temporal's own types don't accept, would only fail when the
@@ -489,6 +551,35 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 'Attach all capabilities at agent construction time so `TemporalDurability.for_agent()` '
                 'can register their activities.'
             )
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[AgentDepsT],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        """Continue the workflow as new when due, if `continue_as_new` callbacks are set.
+
+        Just before a model request is the only point in the agent graph with zero
+        in-flight activities — the previous turn's tool results are already folded
+        into `ctx.messages` — so `workflow.continue_as_new()` can safely end the
+        workflow task here. It never returns, so nothing escapes to user code.
+
+        Whether it's due is decided by `continue_as_new.when` if set, or by
+        `workflow.info().is_continue_as_new_suggested()` otherwise.
+        """
+        if not self.in_durable_context or self.continue_as_new is None:
+            return request_context
+
+        should_continue_as_new = (
+            self.continue_as_new.when(ctx)
+            if self.continue_as_new.when is not None
+            else workflow.info().is_continue_as_new_suggested()
+        )
+        if not should_continue_as_new:
+            return request_context
+
+        kwargs = self.continue_as_new.args(ctx)
+        workflow.continue_as_new(**kwargs)
 
     async def wrap_model_request(
         self,
