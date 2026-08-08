@@ -1617,6 +1617,43 @@ async def test_tool_call_start_args_are_emitted_raw():
     )
 
 
+async def test_tool_call_delta_dict_args_are_serialized_compactly():
+    """Exercise the UI serialization boundary directly.
+
+    Current provider streams do not reliably produce non-JSON-native dictionary deltas such as
+    `datetime`, so a VCR test would not prove this failure mode.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=ToolCallPart(tool_name='search', args='', tool_call_id='call_1'))
+        yield PartDeltaEvent(
+            index=0,
+            delta=ToolCallPartDelta(
+                args_delta={
+                    'type': 'search',
+                    'query': 'weather',
+                    'when': datetime(2025, 1, 1, tzinfo=timezone.utc),
+                },
+                tool_call_id='call_1',
+            ),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Search the weather')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    chunks = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        if '[DONE]' not in event
+    ]
+
+    assert [chunk['inputTextDelta'] for chunk in chunks if chunk['type'] == 'tool-input-delta'] == [
+        '{"type":"search","query":"weather","when":"2025-01-01T00:00:00Z"}'
+    ]
+
+
 async def test_event_stream_thinking_end_with_full_metadata():
     """Test handle_thinking_end with all metadata fields (signature, provider_name, provider_details, id)."""
 
