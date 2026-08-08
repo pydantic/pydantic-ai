@@ -7358,6 +7358,49 @@ class TestUnavailableCapabilityToolsAreNotCallable:
         with pytest.raises(UnexpectedModelBehavior, match="Tool 'secret_op' exceeded max retries"):
             await stubborn.run('hello')
 
+    async def test_an_availability_refusal_does_not_spend_the_budget_a_real_failure_needs(self):
+        """A refusal must not leave the tool with nothing left when it is later called properly.
+
+        The refusal says the run isn't in a state where the tool can be called. Charging it to
+        `retries` would mean a tool refused once, then loaded and called correctly, aborts on its
+        *first* genuine failure with no retry at all — the budget spent on a state problem rather
+        than on the mistake it exists for.
+        """
+        kinds: list[str] = []
+
+        def load_then_fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            parts = [part for message in messages for part in message.parts]
+            loaded = any(
+                isinstance(part, ToolReturnPart) and part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in parts
+            )
+            kinds[:] = [
+                'availability' if 'is not available yet' in str(part.content) else 'real'
+                for part in iter_message_parts(messages, ModelRequest, RetryPromptPart)
+            ]
+            if not loaded and not kinds:
+                # Call before loading: refused for availability.
+                return ModelResponse(parts=[ToolCallPart(tool_name='failing_op', args={}, tool_call_id='early')])
+            if not loaded:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'guarded'}, tool_call_id='l')]
+                )
+            if 'real' in kinds:
+                return make_text_response('the real retry survived')
+            return ModelResponse(parts=[ToolCallPart(tool_name='failing_op', args={}, tool_call_id='real')])
+
+        def failing_op() -> str:
+            raise ModelRetry('give me better arguments')
+
+        toolset = FunctionToolset[Any]([failing_op])
+        capability = Capability[Any](id='guarded', description='Guarded.', toolsets=[toolset], defer_loading=True)
+
+        agent = Agent(FunctionModel(load_then_fail), capabilities=[capability])
+        result = await agent.run('hello')
+
+        assert result.output == snapshot('the real retry survived')
+        # The availability refusal came first and cost nothing; the genuine failure still got its retry.
+        assert kinds == snapshot(['availability', 'real'])
+
     async def test_an_availability_refusal_is_charged_against_the_tools_own_budget(self):
         """A tool's configured `max_retries` governs its refusals, not the manager's default.
 

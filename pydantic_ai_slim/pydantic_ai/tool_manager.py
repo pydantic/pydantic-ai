@@ -91,7 +91,7 @@ class ValidatedToolCall(Generic[AgentDepsT]):
 class _ToolUnavailable(ModelRetry):
     """A `ModelRetry` refusing a call because the tool is not available yet.
 
-    A distinct type only so `_make_validation_failure` can widen the retry budget for it. It
+    A distinct type only so `_make_validation_failure` can recognise it. It
     reaches the model as an ordinary retry prompt, exactly like the `ModelRetry` it replaced.
 
     Carries the tool it refused: the refusal is raised while resolving, before the caller has
@@ -150,6 +150,14 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that failed in this run step."""
     succeeded_tools: set[str] = field(default_factory=set[str])
     """Names of tools that succeeded in this run step."""
+    availability_refused: set[str] = field(default_factory=set[str])
+    """Names of tools that have already spent their one free availability refusal this run.
+
+    Kept apart from `retries` so a refusal — which is about the state of the run, not about the
+    call's arguments — cannot consume the budget the tool needs for a real failure later. Spans
+    the whole run rather than a step: the correction a refusal asks for takes at least one more
+    step to carry out, so a per-step set would refill before it was ever read.
+    """
     default_max_retries: int = 1
     """Default number of times to retry a tool"""
 
@@ -197,6 +205,7 @@ class ToolManager(Generic[AgentDepsT]):
             ctx=ctx,
             tools=await toolset.get_tools(ctx),
             default_max_retries=self.default_max_retries,
+            availability_refused=self.availability_refused,
         )
         # Make the prepared ToolManager accessible from RunContext so that
         # wrapper toolsets (e.g. CodeModeToolset) can dispatch tool calls
@@ -238,17 +247,12 @@ class ToolManager(Generic[AgentDepsT]):
         tool = self.tools.get(name)
         return tool.tool_def if tool is not None else None
 
-    def _check_max_retries(self, name: str, max_retries: int, error: Exception, *, extra: int = 0) -> None:
-        """Raise UnexpectedModelBehavior if the tool has exceeded its max retries.
-
-        `extra` widens the budget for this failure only, without touching the stored count — the
-        offset belongs here rather than in `retries`, which is user-visible through `ctx.retry`
-        and `ctx.last_attempt` and would carry a sentinel into every tool and hook.
-        """
+    def _check_max_retries(self, name: str, max_retries: int, error: Exception) -> None:
+        """Raise UnexpectedModelBehavior if the tool has exceeded its max retries."""
         assert self.ctx is not None
         # `>=` rather than `==` so a negative budget raises immediately instead of looping forever
         # (the count starts at 0 and only ever grows, so it would never equal a negative target).
-        if self.ctx.retries.get(name, 0) >= max_retries + extra:
+        if self.ctx.retries.get(name, 0) >= max_retries:
             raise UnexpectedModelBehavior(
                 f'Tool {name!r} exceeded max retries count of {max_retries}. Consider raising the retry '
                 'limit, or see the docs on tool retries: https://ai.pydantic.dev/tools-advanced/#tool-retries'
@@ -574,12 +578,17 @@ class ToolManager(Generic[AgentDepsT]):
             error.__cause__ if isinstance(error, ToolRetryError) and isinstance(error.__cause__, Exception) else error
         )
         # An availability refusal is not a mistake about *this* tool's arguments — it says the run
-        # is not in a state where the tool can be called, and names the step that fixes it. Charging
-        # it like a validation error makes a single act of model disobedience fatal on the default
-        # budget of 1, which defeats a message written to be acted on. One extra attempt is enough
-        # for the model to search or load and come back, and keeps the ceiling finite.
-        self._check_max_retries(name, max_retries, cause, extra=1 if isinstance(error, _ToolUnavailable) else 0)
-        self.failed_tools.add(name)
+        # is not in a state where the tool can be called, and names the step that fixes it. The
+        # first one per tool is free: charging it would make a single act of model disobedience
+        # fatal on the default budget of 1, defeating a message written to be acted on, and would
+        # leave the tool with nothing left when it is later called properly and fails for real.
+        # Later refusals of the same tool charge normally, so a model that never takes the
+        # correction still ends the run.
+        if isinstance(error, _ToolUnavailable) and name not in self.availability_refused:
+            self.availability_refused.add(name)
+        else:
+            self._check_max_retries(name, max_retries, cause)
+            self.failed_tools.add(name)
         validation_error = error if isinstance(error, ToolRetryError) else self._wrap_error_as_retry(name, call, error)
         return ValidatedToolCall(
             call=call,
