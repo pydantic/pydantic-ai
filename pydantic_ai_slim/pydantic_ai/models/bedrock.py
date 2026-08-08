@@ -134,6 +134,8 @@ def _map_api_errors(model_name: str) -> Generator[None]:
                 headers=metadata.get('HTTPHeaders'),
             ) from e
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except BotoCoreError as e:
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
 
 class _BotocoreRequestParams(TypedDict):
