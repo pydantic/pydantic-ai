@@ -20,7 +20,8 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import HistoryProcessor, ProcessHistory, ReinjectSystemPrompt
+from pydantic_ai import HistoryProcessor
+from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
@@ -54,7 +55,7 @@ def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
 
 
 async def test_history_processor_public_type(function_model: FunctionModel) -> None:
-    """`HistoryProcessor` is publicly importable so consumers can type their own processors."""
+    """`HistoryProcessor` is importable from the package root for consumer type annotations."""
 
     def drop_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
         return [

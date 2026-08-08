@@ -15,6 +15,7 @@ from .agent import (
 )
 from .agent.spec import AgentSpec
 from .capabilities import AgentCapability, CapabilityFunc
+from ._history_processor import HistoryProcessor
 from .concurrency import (
     AbstractConcurrencyLimiter,
     AnyConcurrencyLimit,
@@ -337,6 +338,7 @@ __all__ = (
     # capabilities
     'AgentCapability',
     'CapabilityFunc',
+    'HistoryProcessor',
     # output
     'ToolOutput',
     'NativeOutput',
