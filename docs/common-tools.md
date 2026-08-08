@@ -118,6 +118,9 @@ print(result.output)
     [`WebFetch`][pydantic_ai.capabilities.WebFetch] capability automatically uses it
     as a local fallback when the model doesn't support native URL fetching.
 
+By default the tool caps returned text at 50,000 characters (`max_content_length`) and caps the
+downloaded response body at 50 MiB (`max_download_bytes`). Pass `None` for either to disable that limit.
+
 ## Tavily Search Tool
 
 !!! info
