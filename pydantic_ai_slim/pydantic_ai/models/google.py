@@ -15,7 +15,7 @@ from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import ContextWindowExceeded, ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
     BinaryContent,
     CachePoint,
@@ -391,7 +391,8 @@ def _map_api_error(e: errors.APIError, model_name: str) -> ModelAPIError:
     """Map a `google.genai` API error to the pydantic-ai exception to raise in its place."""
     if (status_code := e.code) >= 400:
         headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        return ModelHTTPError(
+        error_type = ContextWindowExceeded if _is_context_window_error(e, status_code) else ModelHTTPError
+        return error_type(
             status_code=status_code,
             model_name=model_name,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
@@ -423,6 +424,22 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
             'X-Vertex-AI-LLM-Shared-Request-Type': 'priority',
         }
     assert_never(service_tier)  # pragma: no cover
+
+
+# Gemini reports an overflow as `The input token count (N) exceeds the maximum number of tokens
+# allowed (M)`; the file-upload variant drops the leading clause, so both halves are matched.
+# Generic phrases like `exceeds the maximum` or `token limit` also appear in unrelated
+# INVALID_ARGUMENT 400s (tool-count and output-token limits), so they're deliberately excluded.
+_CONTEXT_WINDOW_ERROR_PATTERNS = (
+    'input token count',
+    'number of tokens allowed',
+)
+
+
+def _is_context_window_error(e: errors.APIError, status_code: int) -> bool:
+    """Whether the error reports the input exceeding the model's context window."""
+    message = str(e).lower()
+    return status_code == 400 and any(p in message for p in _CONTEXT_WINDOW_ERROR_PATTERNS)
 
 
 @dataclass(init=False)

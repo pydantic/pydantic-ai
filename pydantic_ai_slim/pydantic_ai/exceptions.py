@@ -43,6 +43,7 @@ __all__ = (
     'ConcurrencyLimitExceeded',
     'ModelAPIError',
     'ModelHTTPError',
+    'ContextWindowExceeded',
     'ContentFilterError',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
@@ -589,6 +590,17 @@ class ModelHTTPError(ModelAPIError):
             return max(0.0, wait)
         except (ValueError, TypeError, AssertionError):
             return None
+
+
+class ContextWindowExceeded(ModelHTTPError):
+    """Raised when the input exceeds the model's context window.
+
+    A subclass of [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], so code that already
+    catches that keeps working; catch this instead to compact or truncate the message history and retry.
+
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] does not advance to the next model
+    on this error by default, because the overflow is a property of the input rather than the provider.
+    """
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):

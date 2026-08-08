@@ -15,6 +15,7 @@ from pydantic_ai.exceptions import (
     CallDeferred,
     ConcurrencyLimitExceeded,
     ContentFilterError,
+    ContextWindowExceeded,
     IncompleteToolCall,
     ModelAPIError,
     ModelHTTPError,
@@ -57,6 +58,7 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         lambda: UsageLimitExceeded('test'),
         lambda: ModelAPIError('model', 'test message'),
         lambda: ModelHTTPError(500, 'model'),
+        lambda: ContextWindowExceeded(400, 'model'),
         lambda: IncompleteToolCall('test'),
         lambda: ToolRetryError(RetryPromptPart(content='test', tool_name='test')),
     ],
@@ -71,6 +73,7 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         'UsageLimitExceeded',
         'ModelAPIError',
         'ModelHTTPError',
+        'ContextWindowExceeded',
         'IncompleteToolCall',
         'ToolRetryError',
     ],
@@ -134,6 +137,19 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
             },
         ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
+        (
+            lambda: ContextWindowExceeded(400, 'gpt-4o'),
+            {'status_code': 400, 'model_name': 'gpt-4o', 'body': None, 'headers': None},
+        ),
+        (
+            lambda: ContextWindowExceeded(400, 'gpt-4o', 'error body', headers={'Retry-After': '30'}),
+            {
+                'status_code': 400,
+                'model_name': 'gpt-4o',
+                'body': 'error body',
+                'headers': {'retry-after': '30'},
+            },
+        ),
     ],
     ids=[
         'ModelRetry',
@@ -154,6 +170,8 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-with-body',
         'ModelHTTPError-with-headers',
         'IncompleteToolCall',
+        'ContextWindowExceeded-no-body',
+        'ContextWindowExceeded-with-headers',
     ],
 )
 def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], check_attrs: dict[str, Any]):

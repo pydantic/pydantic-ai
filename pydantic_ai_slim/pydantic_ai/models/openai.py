@@ -38,7 +38,7 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
-from ..exceptions import SuspendedResponseExpired, UserError
+from ..exceptions import ContextWindowExceeded, SuspendedResponseExpired, UserError
 from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     AudioUrl,
@@ -205,7 +205,8 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         yield
     except APIStatusError as e:
         if (status_code := e.status_code) >= 400:
-            raise ModelHTTPError(
+            error_type = ContextWindowExceeded if _is_context_window_error(e, status_code) else ModelHTTPError
+            raise error_type(
                 status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.response.headers)
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
@@ -539,6 +540,17 @@ def _drop_unsupported_params(profile: OpenAIModelProfile, model_settings: OpenAI
     """
     for setting in profile.get('openai_unsupported_model_settings', ()):
         model_settings.pop(setting, None)
+
+
+def _is_context_window_error(e: APIStatusError, status_code: int) -> bool:
+    """Whether the error reports the input exceeding the model's context window."""
+    if status_code != 400:
+        return False
+    if _is_str_dict(body := e.body):
+        if body.get('code') == 'context_length_exceeded':
+            return True
+        return _is_str_dict(error := body.get('error')) and error.get('code') == 'context_length_exceeded'
+    return False
 
 
 @dataclass

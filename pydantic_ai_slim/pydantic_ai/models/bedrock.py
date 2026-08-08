@@ -60,7 +60,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import ContextWindowExceeded, ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai.models import (
     Model,
@@ -127,7 +127,8 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         metadata = e.response.get('ResponseMetadata', {})
         status_code = metadata.get('HTTPStatusCode')
         if isinstance(status_code, int):
-            raise ModelHTTPError(
+            error_type = ContextWindowExceeded if _is_context_window_error(e, status_code) else ModelHTTPError
+            raise error_type(
                 status_code=status_code,
                 model_name=model_name,
                 body=e.response,
@@ -553,6 +554,24 @@ class BedrockModelSettings(ModelSettings, total=False):
     as `model_name` for detecting model capabilities and token counting, while routing requests through an inference profile
     for cost tracking or cross-region inference.
     """
+
+
+_CONTEXT_WINDOW_ERROR_PATTERNS = (
+    'input is too long',
+    'input tokens exceeded',
+    'maximum context length',
+    'token limit',
+)
+
+
+def _is_context_window_error(e: ClientError, status_code: int) -> bool:
+    """Whether the error reports the input exceeding the model's context window."""
+    message = e.response.get('Error', {}).get('Message', '')
+    return (
+        status_code == 400
+        and isinstance(message, str)
+        and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS)
+    )
 
 
 @dataclass(init=False)

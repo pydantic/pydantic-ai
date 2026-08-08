@@ -20,7 +20,7 @@ from .._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ..exceptions import ModelAPIError
+from ..exceptions import ContextWindowExceeded, ModelAPIError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -118,7 +118,8 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         yield
     except SDKError as e:
         if (status_code := e.status_code) >= 400:
-            raise ModelHTTPError(
+            error_type = ContextWindowExceeded if _is_context_window_error(e, status_code) else ModelHTTPError
+            raise error_type(
                 status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.headers)
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
@@ -144,6 +145,28 @@ _FINISH_REASON_MAP: dict[MistralFinishReason, FinishReason] = {
     'error': 'error',
     'tool_calls': 'tool_call',
 }
+
+_CONTEXT_WINDOW_ERROR_PATTERNS = (
+    'too large for model',
+    'maximum context length',
+)
+
+
+def _is_context_window_error(e: SDKError, status_code: int) -> bool:
+    """Whether the error reports the input exceeding the model's context window."""
+    if status_code != 400:
+        return False
+    try:
+        parsed = pydantic_core.from_json(e.body)
+    except (ValueError, TypeError):
+        return False
+    if _utils.is_str_dict(body := parsed):
+        if body.get('code') == '3051' or body.get('code') == 3051:
+            return True
+        message = body.get('message', '')
+        return isinstance(message, str) and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS)
+    return False
+
 
 _MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {
     True: 'high',
