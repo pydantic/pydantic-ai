@@ -77,7 +77,9 @@ interruption note to the prepared request without modifying stored history.
 Disable automatic detection with `turn_detection=False` on models whose profile declares
 `supports_manual_turn_control`. Stream audio, call
 [`commit_audio()`][pydantic_ai.realtime.RealtimeSession.commit_audio] to end the user turn, then
-[`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response]. Use
+[`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response]. The explicit
+`create_response()` call is needed because with turn detection off, committing the buffer only
+finalizes the user's input; nothing triggers a reply until you ask for one. Use
 [`clear_audio()`][pydantic_ai.realtime.RealtimeSession.clear_audio] to discard uncommitted input.
 
 ```python
@@ -102,8 +104,9 @@ Gemini does not expose manual turn verbs through Pydantic AI; `turn_detection=Fa
 
 ## Checking what the model supports
 
-These are *model profile* flags describing what a provider connection can do — not to be confused
-with [capabilities](../capabilities/overview.md), which add behavior to an agent. Branch on
+These are [*model profile*](../models/overview.md#inspecting-a-models-profile) flags describing
+what a provider connection can do — not to be confused with
+[capabilities](../capabilities/overview.md), which add behavior to an agent. Branch on
 [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] rather than provider names:
 
 | Profile flag | Gates |

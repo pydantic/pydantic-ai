@@ -3,21 +3,23 @@
 Realtime audio bills by the second in both directions, so knowing what a session cost — and capping
 it — matters even more than for a text run. Realtime sessions accumulate standard
 [`RunUsage`][pydantic_ai.usage.RunUsage], enforce standard
-[`UsageLimits`][pydantic_ai.usage.UsageLimits], and emit OpenTelemetry spans through Pydantic AI's
-normal instrumentation. This lets voice and follow-up text runs share one usage budget and trace.
+[`UsageLimits`][pydantic_ai.usage.UsageLimits], and emit OpenTelemetry spans — viewable in
+[Pydantic Logfire](../logfire.md) — through Pydantic AI's normal instrumentation. This lets voice
+and follow-up text runs share one usage budget and trace.
 
 ## Usage and limits
 
 Read cumulative usage from
 [`RealtimeSession.usage`][pydantic_ai.realtime.RealtimeSession.usage]. It includes input/output
 tokens, provider audio and cache breakdowns where available, and tool-call counts. Usage updates are
-not emitted as session events. Pass `usage=` to accumulate into a shared object — for example one
-carried across a voice call and its follow-up text runs — and `usage_limits=` to cap a session:
+not emitted as session events. As with a standard run's
+[usage limits](../agent.md#usage-limits), pass `usage=` to accumulate into a shared object — for
+example one carried across a voice call and its follow-up text runs — and `usage_limits=` to cap a
+session:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.realtime import RealtimeTurnCompleteEvent
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 agent = Agent()
@@ -26,7 +28,7 @@ shared = RunUsage()
 
 async def main():
     async with agent.realtime(
-        OpenAIRealtimeModel('gpt-realtime'),
+        'openai:gpt-realtime',
         usage=shared,
         usage_limits=UsageLimits(total_tokens_limit=100_000),
     ).session() as session:
@@ -96,7 +98,8 @@ See [Debugging and monitoring](../logfire.md) for Logfire setup and privacy cont
 
 ## Gateway trace propagation
 
-Gateway routing is provider configuration, documented on the
+Routing through the [Pydantic AI Gateway](../gateway.md) — e.g.
+`agent.realtime('gateway/openai:gpt-realtime')` — is provider configuration, documented on the
 [OpenAI](openai.md#gateway) and [Gemini](gemini.md#gateway) pages. When a span is active during the
 WebSocket handshake, Pydantic AI propagates
 [W3C trace context](https://www.w3.org/TR/trace-context/) so gateway spans can join the trace.
@@ -108,14 +111,13 @@ session context in an outer span when the handshake itself must be included:
 import logfire
 
 from pydantic_ai import Agent
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 agent = Agent()
 
 
 async def main():
     with logfire.span('voice call'):
-        async with agent.realtime(OpenAIRealtimeModel('gpt-realtime')).session() as session:
+        async with agent.realtime('openai:gpt-realtime').session() as session:
             await session.send('Say hello.')
 ```
 

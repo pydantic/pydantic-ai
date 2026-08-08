@@ -1,8 +1,9 @@
 # History and handoff
 
 A realtime session builds the same [`ModelMessage`][pydantic_ai.messages.ModelMessage] history as a
-standard agent run. Voice conversations can start from earlier text or voice history, continue in a
-new realtime session, or hand off to a text model for summarization, extraction, and follow-up.
+standard agent run — see [Messages and chat history](../message-history.md). Voice conversations
+can start from earlier text or voice history, continue in a new realtime session, or hand off to a
+text model for summarization, extraction, and follow-up.
 
 Spoken turns use [`SpeechPart`][pydantic_ai.messages.SpeechPart]; text, images, and tools retain the
 ordinary [`ModelRequest`][pydantic_ai.messages.ModelRequest] and
@@ -21,17 +22,18 @@ The session exposes copy-on-read snapshots:
 
 Pass `message_history=` to seed a new session. Replayable text, speech transcripts, thinking text,
 tool rounds, and supported images are projected into provider conversation items.
+[History processors](../message-history.md#processing-message-history) do not run at seeding; see
+[Capabilities and hooks](capabilities.md#seeded-history-is-not-processed).
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 voice = Agent(instructions='You are a helpful voice assistant.')
 
 
 async def main(prior_history=()):
     async with voice.realtime(
-        OpenAIRealtimeModel('gpt-realtime'),
+        'openai:gpt-realtime',
         message_history=prior_history,
     ).session() as session:
         await session.send('Continue where we left off.')
@@ -50,8 +52,9 @@ Speech transcripts are preferred over retained audio. OpenAI and Azure OpenAI ca
 user audio when no transcript exists; Gemini and xAI cannot. Assistant speech always needs a
 transcript for seeding. Check `supports_session_seeding`, `supports_seeding_images`, and
 `supports_seeding_audio` on the
-[`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] before constructing portable
-flows.
+[`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] (see
+[Provider support](overview.md#provider-support) for how profiles resolve) before constructing
+portable flows.
 
 ## Handing off to a text agent
 
@@ -60,14 +63,13 @@ Pass the session snapshot directly to [`Agent.run()`][pydantic_ai.agent.Abstract
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.realtime import RealtimeTurnCompleteEvent
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 voice = Agent(instructions='You are a helpful voice assistant.')
 notetaker = Agent('openai:gpt-5', instructions='Summarize the conversation as bullet points.')
 
 
 async def main():
-    async with voice.realtime(OpenAIRealtimeModel('gpt-realtime')).session() as session:
+    async with voice.realtime('openai:gpt-realtime').session() as session:
         await session.send('Please remind me to book a train tomorrow.')
         async for event in session:
             if isinstance(event, RealtimeTurnCompleteEvent):
@@ -88,7 +90,7 @@ request.
 For structured work that must finish while the call remains open, expose a delegated text agent as
 a [realtime function tool](tools.md#delegating-work-during-a-call).
 
-## Audio retention
+## Retaining audio
 
 By default, only transcripts are retained and `SpeechPart.audio` is `None`. Pass `audio_retention=`
 to [`session()`][pydantic_ai.agent.AgentRealtime.session] to retain finalized WAV audio in history:
@@ -117,13 +119,12 @@ history:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 agent = Agent()
 
 
 async def main():
-    async with agent.realtime(OpenAIRealtimeModel('gpt-realtime')).session(
+    async with agent.realtime('openai:gpt-realtime').session(
         retain_images_every_n=10, retain_images_max=25
     ):
         ...
@@ -134,8 +135,9 @@ Images sent through [`send()`][pydantic_ai.realtime.RealtimeSession.send] are re
 every frame. `retain_images_max` defaults to `100` and evicts the oldest retained image when the cap
 is reached. Set it to `0` to retain none or `None` to remove the bound.
 
-Sampling controls history growth rate; the maximum provides the actual memory bound. For camera and
-screen streams, use both deliberately.
+Sampling controls history growth rate; the maximum provides the actual memory bound. Streaming
+images continuously approximates live video — the [camera example](../examples/realtime-camera.md)
+sends one frame per second — so for camera and screen streams, use both deliberately.
 
 ## Transcription and history edge cases
 

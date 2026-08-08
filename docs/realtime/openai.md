@@ -6,15 +6,21 @@ the [text-to-audio example](../examples/realtime-text-to-audio.md).
 
 ## Setup
 
+To use OpenAI realtime models, install `pydantic-ai-slim` with the `openai-realtime` optional
+group, which bundles the `openai` package together with the realtime WebSocket transport:
+
 ```bash
-pip install "pydantic-ai-slim[realtime,openai]"
+pip/uv-add "pydantic-ai-slim[openai-realtime]"
 ```
 
-Set `OPENAI_API_KEY`. Authentication and base URL come from `provider`, mirroring
+Set `OPENAI_API_KEY` as described in the [OpenAI model documentation](../models/openai.md#configuration).
+Authentication and base URL come from `provider`, mirroring
 [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. The default `provider='openai'`
 reads the environment; pass an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] for a
 custom key or base URL. The realtime WebSocket opens separately, so a custom provider `httpx` client
-is not used for it.
+is not used for it. Sessions run over a server-side WebSocket; browser-direct WebRTC transport is
+coming in [#6676](https://github.com/pydantic/pydantic-ai/pull/6676) (see
+[Connecting a frontend](deployment.md)).
 
 ## Model names
 
@@ -26,9 +32,10 @@ canonical model list.
 
 ## Settings
 
-[`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] extends the
-[shared settings](overview.md#shared-settings) with voice, noise reduction, output speed, exact turn
-detection, and truncation:
+[`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings] — the
+realtime counterpart of [model run settings](../agent.md#model-run-settings) — extends the
+[shared settings](overview.md#shared-settings) with voice, noise reduction, output speed, exact
+[turn detection](turns.md), and truncation:
 
 ```python
 from pydantic_ai.realtime import TurnDetection
@@ -51,7 +58,8 @@ model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
 ```
 
 `openai_turn_detection` accepts [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] or
-[`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] and overrides shared `turn_detection`.
+[`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] and overrides shared
+[`turn_detection`](turns.md#automatic-turn-detection).
 `openai_truncation` also accepts `'auto'` or `'disabled'`; retention ratio preserves a stable,
 cacheable prefix as the session grows. `openai_voice` selects the provider voice. OpenAI realtime
 does not expose `temperature` through Pydantic AI.
@@ -61,12 +69,14 @@ Input transcription defaults to `'auto'`; set a supported transcription model ID
 
 ### Reasoning
 
-The shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting applies to
-models whose profile reports `supports_thinking`, including the `gpt-realtime-2` family. `True` uses
-the provider default and an effort string selects a level. `False` omits `reasoning`, because OpenAI
-realtime does not accept a disabled effort. The GA `gpt-realtime` ignores the setting.
+The shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting (see
+[Thinking](../capabilities/thinking.md)) applies to models whose profile reports
+`supports_thinking`, including the `gpt-realtime-2` family. `True` uses the provider default and an
+effort string selects a level. `False` omits `reasoning`, because OpenAI realtime does not accept a
+disabled effort. The GA `gpt-realtime` ignores the setting.
 
-Reasoning traces are not surfaced as `ThinkingPart`s; the API exposes effort as input only.
+Reasoning traces are not surfaced as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s; the API
+exposes effort as input only.
 
 ## Feature support and limitations
 
@@ -74,25 +84,26 @@ Reasoning traces are not surfaced as `ThinkingPart`s; the API exposes effort as 
 | --- | --- | --- |
 | Audio format | Full feature support | Mono PCM16, 24 kHz input and output |
 | Text output | Full feature support | Select with `output_modality='text'` |
-| Image input | Full feature support | Images provide context for the next turn |
-| Manual turns | Full feature support | `turn_detection=False` plus commit/create verbs |
-| Interruption/truncation | Full feature support | `interrupt(played_ms=...)` records the heard cutoff |
-| Input transcription | Full feature support | Dedicated model; `'auto'` by default |
-| Native tools | Unsupported | Configure local fallbacks for web capabilities |
+| Image input | Full feature support | [Images](audio.md#images) provide context for the next turn |
+| Manual turns | Full feature support | `turn_detection=False` plus [commit/create verbs](turns.md#push-to-talk) |
+| Interruption/truncation | Full feature support | [`interrupt(played_ms=...)`](turns.md#barge-in) records the heard cutoff |
+| Input transcription | Full feature support | [Dedicated model](audio.md#input-transcription); `'auto'` by default |
+| Native tools | Unsupported | Configure [local fallbacks](tools.md#native-tools) for web capabilities |
 | Usage | Full feature support | Token, audio, and cache breakdowns |
-| Reconnection | Full feature support | Pydantic AI replays completed local history; in-flight media is lost |
+| Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration); in-flight media is lost |
 
-See [Turns and interruptions](turns.md), [Tools and capabilities](tools.md), and
-[Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.
+See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.md),
+[Tools](tools.md), and [Connection lifecycle](lifecycle.md) for the provider-agnostic workflows.
 
 ## Gateway
 
-Use `provider='gateway/openai'` or a gateway-prefixed identifier:
+To route through the [Pydantic AI Gateway](../gateway.md), use a `gateway/`-prefixed model string:
 
 ```python
-from pydantic_ai.realtime import infer_realtime_model
+from pydantic_ai import Agent
 
-model = infer_realtime_model('gateway/openai:gpt-realtime')
+agent = Agent(instructions='You are a helpful voice assistant.')
+realtime = agent.realtime('gateway/openai:gpt-realtime')
 ```
 
 Credentials come from
@@ -103,4 +114,4 @@ that expose the realtime protocol can also be supplied through an `OpenAIProvide
 ## Provider-specific quirks
 
 - The provider connection has no resumable server handle. Automatic reconnect restores completed
-  history by replaying local messages into a new session.
+  history by [replaying local messages](lifecycle.md#state-restoration) into a new session.

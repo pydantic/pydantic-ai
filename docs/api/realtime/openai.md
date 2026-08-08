@@ -8,7 +8,8 @@ the session, including shared turn-taking via [`TurnDetection`][pydantic_ai.real
 (or `False` for push-to-talk). For finer control, `openai_turn_detection` accepts
 [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD] or
 [`SemanticVAD`][pydantic_ai.realtime.openai.SemanticVAD] and fully overrides the shared setting.
-Resilience comes from [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] on
-[`OpenAIRealtimeModel`][pydantic_ai.realtime.openai.OpenAIRealtimeModel].
+Resilience comes from the `reconnect` setting: a
+[`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] in
+[`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings].
 
 ::: pydantic_ai.realtime.openai

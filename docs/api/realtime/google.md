@@ -13,6 +13,7 @@ control via [`AutomaticVAD`][pydantic_ai.realtime.google.AutomaticVAD] in `googl
 `google_activity_handling`/`google_turn_coverage`, voice via `google_voice` or a
 [`MultiSpeaker`][pydantic_ai.realtime.google.MultiSpeaker] in `google_multi_speaker`,
 and long-session [`ContextCompression`][pydantic_ai.realtime.google.ContextCompression] — with
-resilience via session resumption + [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] on the model.
+resilience via session resumption + a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] in the
+`reconnect` setting.
 
 ::: pydantic_ai.realtime.google
