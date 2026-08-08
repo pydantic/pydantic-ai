@@ -5,7 +5,7 @@ camera frame per second into a provider-agnostic realtime session, then plays mo
 transcripts. The server reads both PCM sample rates from the selected model profile, so Gemini's
 16 kHz input and OpenAI/Azure's 24 kHz input are handled correctly.
 
-The launch demo also keeps its complete feature set:
+Around that core, the example layers a set of demo features:
 
 - **Watch** periodically prompts an idle model to narrate visual changes.
 - **Web search** grounds current answers and displays HTTP(S) citation chips when the selected model
@@ -14,30 +14,28 @@ The launch demo also keeps its complete feature set:
   is displayed in a sandboxed, network-blocked iframe and can be exported as PNG.
 - The **settings panel** includes the model picker, voice, modality, VAD, and Gemini-specific options.
 
-xAI realtime is not offered because it does not support camera image input.
-
 ## Run locally
 
 Set credentials for the provider you intend to select (`GOOGLE_API_KEY`, `OPENAI_API_KEY`, or
 `AZURE_OPENAI_*`) in a `.env` at the repository root, then run:
 
 ```bash
-uv run --all-packages uvicorn pydantic_ai_examples.realtime_camera.app:app
+uv run -m pydantic_ai_examples.realtime_camera.app
 ```
 
 Open <http://localhost:8000>, select **Start**, and allow camera and microphone access. `localhost`
 is a browser secure context.
 
-The picker accepts only the models in `ALLOWED_MODELS` in `app.py`. To use a different deployment,
-set `CAMERA_REALTIME_MODEL` before starting the server; that configured value is added to the
-allowlist and becomes the default.
+The model defaults to `google:gemini-3.1-flash-live-preview`; set `CAMERA_REALTIME_MODEL` to change
+it, or use the picker to switch to any Google, OpenAI, or Azure OpenAI `provider:model` per session
+(xAI realtime doesn't support camera image input).
 
 Useful environment settings:
 
 ```bash
 export CAMERA_REALTIME_MODEL=openai:gpt-realtime-2.1
 export CAMERA_REALTIME_VOICE=marin
-export CAMERA_DRAW_MODEL=gateway/anthropic:claude-sonnet-5
+export CAMERA_DRAW_MODEL=anthropic:claude-haiku-4-5
 export CAMERA_DRAW=true
 export CAMERA_WEB_SEARCH=true
 export CAMERA_PROACTIVE=false
@@ -64,7 +62,10 @@ selected realtime model profile supports it. Grounding sources are rendered as c
 
 `CAMERA_DRAW=true` registers the regular `redraw_diagram` function tool. The realtime model passes a
 detailed text description to a separate [`Agent`][pydantic_ai.Agent], which returns a self-contained
-HTML diagram. Drawing and search can coexist when the selected realtime model supports both.
+HTML diagram. The drawing model defaults to `google:gemini-3.5-flash` — a fast small model, since
+the user is waiting on a live call, that reuses the `GOOGLE_API_KEY` the default realtime model
+already needs; set `CAMERA_DRAW_MODEL` to any `provider:model` your credentials cover. Drawing and
+search can coexist when the selected realtime model supports both.
 
 For Vertex AI, use Application Default Credentials:
 
@@ -77,9 +78,9 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 
 ## Security boundary
 
-This is a local development example, not an internet-facing service. It checks that WebSocket
-`Origin` matches `Host`, allowlists model IDs, limits concurrent sessions to 8, and caps audio and
-JSON messages. These controls reduce accidental exposure; they do not provide authentication,
+This is a local development example, not an internet-facing service. It checks that the WebSocket
+`Origin` matches `Host` (or `X-Forwarded-Host` / `CAMERA_ALLOWED_ORIGINS` behind a proxy) so that
+other websites can't open sessions that spend your API credits, but it has no authentication,
 per-user quotas, or production abuse protection.
 
 Do not publish it with a Cloudflare quick tunnel, ngrok, or a public reverse proxy. To use it from

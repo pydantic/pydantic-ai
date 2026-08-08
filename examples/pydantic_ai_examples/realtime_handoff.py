@@ -32,7 +32,6 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.realtime import PartEndEvent, RealtimeTurnCompleteEvent, SpeechPart
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -70,9 +69,7 @@ CALLER_TURNS = [
 
 
 async def main() -> None:
-    async with voice_agent.realtime(
-        OpenAIRealtimeModel('gpt-realtime')
-    ).session() as session:
+    async with voice_agent.realtime('openai:gpt-realtime').session() as session:
         # A session is consumed with a single event loop. We drive the caller's turns from inside it:
         # send the first line, then send the next one each time the model finishes a turn.
         remaining_turns = iter(CALLER_TURNS)
@@ -80,7 +77,6 @@ async def main() -> None:
         print(f'caller: {first_turn}')
         # Sending text into an OpenAI realtime session asks the model to respond right away.
         await session.send(first_turn)
-        call_complete = False
 
         async for event in session:
             match event:
@@ -91,14 +87,13 @@ async def main() -> None:
                 case RealtimeTurnCompleteEvent():
                     next_turn = next(remaining_turns, None)
                     if next_turn is None:
-                        call_complete = True
                         break  # The caller has said everything; end the call.
                     print(f'caller: {next_turn}')
                     await session.send(next_turn)
                 case _:
                     pass
-
-        if not call_complete:
+        else:
+            # The event stream ended without the `break` above, i.e. before the call completed.
             raise RuntimeError(
                 'The realtime session ended before the support call completed'
             )

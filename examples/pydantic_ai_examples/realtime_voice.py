@@ -37,7 +37,6 @@ from pydantic_ai.realtime import (
     SpeechPart,
     SpeechPartDelta,
 )
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel
 
 try:
     import sounddevice
@@ -100,7 +99,6 @@ class PlaybackBuffer:
         self._carry = bytearray()
         self._buffered_bytes = 0
         self._played_bytes = 0
-        self._turn_active = False
         self._lock = threading.Lock()
 
     def start_turn(self) -> None:
@@ -109,13 +107,13 @@ class PlaybackBuffer:
             self._carry.clear()
             self._buffered_bytes = 0
             self._played_bytes = 0
-            self._turn_active = True
 
     def add(self, chunk: bytes) -> None:
         with self._lock:
             # If the speaker falls far enough behind that the model is seconds ahead of what the
             # caller hears, drop the oldest audio rather than raise: a glitch is recoverable, and
-            # ending a live call because one machine stuttered is not.
+            # ending a live call because one machine stuttered is not. (After a drop the
+            # played-duration accounting is approximate, which is fine for a glitch.)
             # A chunk longer than the whole window keeps its tail.
             chunk = chunk[-self._max_bytes :]
             while (over := self._buffered_bytes + len(chunk) - self._max_bytes) > 0:
@@ -142,16 +140,20 @@ class PlaybackBuffer:
             self._played_bytes += played
 
     def interrupt(self) -> int | None:
-        """Drop unheard audio; return milliseconds played, or `None` if nothing was playing."""
+        """Drop unheard audio; return milliseconds played, or `None` if nothing was left unheard.
+
+        A turn the user heard in full needs no truncation — reporting one anyway would only make
+        the provider discard part of a completed turn — so an interruption is only reported when
+        unplayed audio was actually dropped.
+        """
         with self._lock:
-            if not self._turn_active:
+            if not self._chunks and not self._carry:
                 return None
             self._chunks.clear()
             self._carry.clear()
             self._buffered_bytes = 0
             played_ms = self._played_bytes * 1000 // (SAMPLE_RATE * CHANNELS * 2)
             self._played_bytes = 0
-            self._turn_active = False
             return played_ms
 
 
@@ -173,7 +175,8 @@ async def handle_event(
             # The provider stops the model on its own when the user speaks; what it can't know is how
             # much of its audio actually reached the speaker. Drop what didn't, and report the rest so
             # the provider doesn't record a turn the user never heard. The event fires whenever the
-            # user starts speaking, including when nothing is playing, so only interrupt if it was.
+            # user starts speaking — including when nothing is playing — so only interrupt when
+            # unheard audio was actually dropped.
             if (played_ms := playback.interrupt()) is not None:
                 await session.interrupt(played_ms=played_ms)
         case PartStartEvent(part=SpeechPart(speaker='assistant')):
@@ -217,10 +220,10 @@ async def main():
         callback=partial(fill_speaker, playback), **stream_kwargs
     )
 
-    with mic, speaker:
-        async with agent.realtime(
-            OpenAIRealtimeModel('gpt-realtime')
-        ).session() as session:
+    # The session opens before the microphone starts capturing, so no audio from before the
+    # conversation began is queued up and sent to the model as stale input.
+    async with agent.realtime('openai:gpt-realtime').session() as session:
+        with mic, speaker:
             pump = asyncio.create_task(stream_mic(session, mic_queue))
             print('Listening — start talking (Ctrl-C to quit).')
             try:

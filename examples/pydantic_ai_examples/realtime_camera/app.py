@@ -1,58 +1,24 @@
-"""Realtime camera + voice assistant.
+"""Realtime camera + voice assistant: a browser bridged to a provider-agnostic realtime session.
 
-The reference implementation's spine is the WebSocket bridge in `_run_session`: browser audio,
-camera frames, and text go into one realtime session while model audio and typed events stream back.
-The model profile tells the browser which PCM sample rates to use.
+The browser streams microphone PCM, one camera frame per second, and typed text over a WebSocket;
+the server forwards them into a [realtime session](https://ai.pydantic.dev/realtime/overview/) and
+streams model audio, transcripts, and tool results back. The spine is the two pumps in
+`_run_session`; everything else is configuration and optional demo features: **Watch** (proactive
+narration of scene changes), **web search** with citation chips, and **sketch redrawing** through a
+second agent.
 
-Set the credentials for the selected provider: `GOOGLE_API_KEY` for Gemini, `OPENAI_API_KEY` for
-OpenAI, or the `AZURE_OPENAI_*` variables for Azure OpenAI. Where org policy disallows Google API
-keys, set `GOOGLE_GENAI_USE_VERTEXAI=true` (+ `GOOGLE_CLOUD_PROJECT` /
-`GOOGLE_CLOUD_LOCATION` and `gcloud auth application-default login`) to use Vertex AI instead. Put
-the config in a `.env` at the repo root, then:
+Set the API key for the model you want to talk to — `GOOGLE_API_KEY` for the default Gemini model,
+`OPENAI_API_KEY` for OpenAI, or the `AZURE_OPENAI_*` variables for Azure OpenAI — in a `.env` at the
+repo root, then run:
 
-    uv run --all-packages uvicorn pydantic_ai_examples.realtime_camera.app:app
+    uv run -m pydantic_ai_examples.realtime_camera.app
 
-Open http://localhost:8000 on the same machine. Do not expose this development example directly to
-the internet: it has basic origin, model, connection, and message-size limits, but no authentication.
-Behind a reverse proxy that rewrites `Host` without forwarding `X-Forwarded-Host` (some dev tunnels),
-set `CAMERA_ALLOWED_ORIGINS` to the browser-facing origin(s), comma-separated.
+and open http://localhost:8000 on the same machine. `CAMERA_REALTIME_MODEL` sets the default model
+(the UI's model picker takes any `provider:model` per session); see README.md for the other
+`CAMERA_*` settings, Vertex AI credentials, and how the bridge works.
 
-`CAMERA_REALTIME_MODEL` (default `google:gemini-3.1-flash-live-preview`) and
-`CAMERA_REALTIME_VOICE` (default: the provider's own default voice) set the fallback defaults. Model
-IDs must be one of `ALLOWED_MODELS` below; set `CAMERA_REALTIME_MODEL` to add a configured deployment
-to that list. The UI maps its voice setting to each provider's own setting; model and output modality
-settings work across providers.
-Language, turn coverage, start/end VAD sensitivity, proactive audio, and affective dialog are
-Gemini-only; OpenAI/Azure map either sensitivity control to cross-provider turn detection instead.
-
-The camera assistant keeps every video frame in context (`turn_coverage='all_input'`) so it has the
-live scene to reason about. The browser's **Watch** toggle drives proactive narration: while on, it
-periodically nudges the model to report what changed. Set `CAMERA_PROACTIVE=true` (native-audio models
-only) so the model stays silent when nothing changed instead of replying to every nudge;
-`CAMERA_AFFECTIVE=true` enables emotion-aware delivery.
-
-`CAMERA_TURN_COVERAGE` defaults to `all_input` (works on both the Gemini Developer API and Vertex AI).
-The newer `all_video` value keeps *all* video but only audio during speech — but it isn't accepted on
-Vertex's `v1beta1` API yet, so it's not the default.
-
-The app is instrumented with Logfire: set `LOGFIRE_TOKEN` (e.g. in the same `.env`) to see the
-realtime session, model turns, and tool calls as traces; without a token nothing is sent.
-
-Web search (the `WebSearch` capability) is **on by default** so the assistant can answer with current
-facts and cite its sources as chips in the UI. It's enabled per session only when the selected model
-supports web search natively (checked through the model's profile), so it stays available alongside the
-drawing tool on a model that supports both (e.g. Gemini 3.1) and simply drops on a model that doesn't
-(e.g. an OpenAI realtime model). Set `CAMERA_WEB_SEARCH=false` to turn it off entirely.
-
-**Redraw a sketch.** Show the camera a hand-drawn diagram (a system design, flow chart, wireframe)
-and ask the assistant to clean it up: it calls the `redraw_diagram` tool with a detailed text
-description of what it drew (the realtime model already has the live camera in context, so it
-describes the diagram rather than re-sending a photo — which keeps the tool fast and captures the
-moment the user meant). A separate drawing agent (Claude Haiku 4.5 through the gateway by default) turns
-that description into a clean, self-contained HTML diagram; the browser renders it in an overlay and
-can export it to PNG client-side. Set `CAMERA_DRAW=false` to disable, or `CAMERA_DRAW_MODEL` to any
-`provider:model`. Proactive audio lets a Gemini native-audio model decide when to speak and stay
-silent; affective dialog enables emotion-aware delivery. Both settings are Gemini native-audio only.
+This is a development example: the WebSocket checks browser origins so other sites can't drive your
+session, but there is no authentication — don't expose the server to the internet.
 """
 
 from __future__ import annotations
@@ -62,10 +28,11 @@ import json
 import os
 import re
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal, TypeGuard, cast
+from typing import cast
 from urllib.parse import urlsplit
 
 import anyio
@@ -79,7 +46,6 @@ from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import NativeToolReturnPart, TextPartDelta
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 from pydantic_ai.realtime import (
     PartDeltaEvent,
     PartEndEvent,
@@ -119,48 +85,31 @@ def _truthy(value: str | None) -> bool:
     return (value or '').lower() in ('1', 'true', 'yes', 'on')
 
 
-# Use Vertex AI (ADC) instead of a Gemini API key when `GOOGLE_GENAI_USE_VERTEXAI` is truthy — handy
-# where org policy disallows API keys. Needs `gcloud auth application-default login` + project/location.
-USE_VERTEX = _truthy(os.environ.get('GOOGLE_GENAI_USE_VERTEXAI'))
 MODEL = os.environ.get('CAMERA_REALTIME_MODEL', 'google:gemini-3.1-flash-live-preview')
-ALLOWED_MODELS = frozenset(
-    {
-        MODEL,
-        'google:gemini-3.1-flash-live-preview',
-        'google:gemini-2.5-flash-native-audio-latest',
-        'openai:gpt-realtime-2.1',
-        'openai:gpt-realtime-2.1-mini',
-        'openai:gpt-realtime',
-        'azure:gpt-realtime',
-    }
-)
 # Empty by default so each provider picks its own default voice — no need to change it when switching
 # between Gemini and OpenAI, whose voice names differ (Gemini rejects `alloy`, OpenAI rejects `Puck`).
 VOICE = os.environ.get('CAMERA_REALTIME_VOICE', '')
-GCP_PROJECT = os.environ.get('GOOGLE_CLOUD_PROJECT')
-GCP_LOCATION = os.environ.get('GOOGLE_CLOUD_LOCATION')
-# `all_input` keeps every camera frame in the model's context and works on both the Developer API and
-# Vertex; `all_video` is newer and not yet accepted on Vertex. Proactive/affective audio are
-# native-audio-only knobs, off by default so the standard model still connects.
-TURN_COVERAGE = cast(
-    "Literal['activity_only', 'all_input', 'all_video']",
-    os.environ.get('CAMERA_TURN_COVERAGE', 'all_input'),
-)
+# Use Vertex AI (Application Default Credentials) instead of a Gemini API key — handy where org
+# policy disallows API keys. Needs `gcloud auth application-default login` + `GOOGLE_CLOUD_PROJECT`.
+USE_VERTEX = _truthy(os.environ.get('GOOGLE_GENAI_USE_VERTEXAI'))
+# `all_input` keeps every camera frame in the model's context — the live scene the assistant reasons
+# about — and works on both the Gemini Developer API and Vertex AI (the newer `all_video` doesn't yet).
+TURN_COVERAGE = os.environ.get('CAMERA_TURN_COVERAGE', 'all_input')
+# Gemini native-audio-only knobs, off by default so the default model still connects: proactive audio
+# lets the model stay silent when a Watch nudge finds nothing new; affective dialog adapts delivery
+# to emotion in the conversation.
 PROACTIVE = _truthy(os.environ.get('CAMERA_PROACTIVE'))
 AFFECTIVE = _truthy(os.environ.get('CAMERA_AFFECTIVE'))
-# Sketch-to-diagram: a `redraw_diagram` tool passes the realtime model's text description of the
-# sketch to a separate drawing agent that renders it as clean HTML. On by default; the drawing model
-# defaults to Claude Haiku 4.5 through the Pydantic AI Gateway (`PYDANTIC_AI_GATEWAY_API_KEY`):
-# the user is waiting on a live call, and Haiku turns a description into a lean page in seconds
-# where larger models spend most of the wait thinking. `CAMERA_DRAW_MODEL` takes any
-# `provider:model` string to use another model (e.g. `google:gemini-3.5-flash` to reuse the live
-# session's `GOOGLE_API_KEY`).
+# Sketch-to-diagram: the `redraw_diagram` tool passes the realtime model's text description of a
+# sketch to a separate drawing agent that renders it as clean HTML. The default drawing model reuses
+# the `GOOGLE_API_KEY` the default realtime model already needs, and is a fast small model because
+# the user is waiting on a live call: output tokens dominate the redraw's latency, and a larger
+# model mostly adds thinking time. `CAMERA_DRAW_MODEL` takes any `provider:model` string.
 DRAW = _truthy(os.environ.get('CAMERA_DRAW', 'true'))
-DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'gateway/anthropic:claude-haiku-4-5')
-# Web search (the `WebSearch` capability) — on by default. It's only enabled for a session when the
-# selected model supports web search natively, checked per connection through the model's profile (see
-# `_web_search_supported`), so it and the drawing tool can be active together on a model that supports
-# both (e.g. Gemini 3.1). Set `CAMERA_WEB_SEARCH=false` to turn it off entirely.
+DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'google:gemini-3.5-flash')
+# Web search (the `WebSearch` capability) — on by default, but only enabled for a session when the
+# selected model supports web search natively (see `_web_search_supported`), so switching models
+# drops the capability instead of failing the session.
 WEB_SEARCH = _truthy(os.environ.get('CAMERA_WEB_SEARCH', 'true'))
 WATCH_PROMPT = os.environ.get(
     'CAMERA_WATCH_PROMPT',
@@ -168,48 +117,24 @@ WATCH_PROMPT = os.environ.get(
     'if nothing notable changed, stay silent.',
 )
 _INDEX_PATH = Path(__file__).parent / 'index.html'
-MAX_CONNECTIONS = 8
-MAX_AUDIO_MESSAGE_BYTES = 64 * 1024
-MAX_JSON_MESSAGE_BYTES = 1024 * 1024
-_connection_slots = anyio.Semaphore(MAX_CONNECTIONS)
-
-
-def _is_output_modality(value: str) -> TypeGuard[Literal['audio', 'text']]:
-    return value in ('audio', 'text')
-
-
-def _is_message_data(value: object) -> TypeGuard[dict[str, object]]:
-    if not isinstance(value, dict):
-        return False
-    # JSON object keys are strings; this cast exposes the unchecked runtime shape for validation.
-    return all(isinstance(key, str) for key in cast('dict[object, object]', value))
 
 
 def _same_origin(socket: WebSocket) -> bool:
     """Accept browser WebSockets only from the origin serving this development example.
 
-    Cross-site WebSocket hijacking protection: a page on another site can open a WebSocket straight
-    to this server, so the browser-reported `Origin` must match the host the request was addressed
-    to. Three ways in:
-
-    - a loopback origin matching `Host` — direct local use. Loopback-only on this branch because a
-      DNS-rebinding page (an attacker domain resolving to `127.0.0.1`) carries its own non-loopback
-      origin, which matches `Host` too and must not pass.
-    - an origin matching `X-Forwarded-Host` — a reverse proxy (Codespaces, Coder, a dev tunnel) that
-      rewrote `Host`. Trustworthy because a browser cannot send that header: the WebSocket API
-      forwards no custom headers, so its presence proves a real proxy hop.
-    - an origin listed in `CAMERA_ALLOWED_ORIGINS` (comma-separated `scheme://host[:port]` values) —
-      proxies that forward neither.
+    Any web page can open a WebSocket to this server (which spends your API credits), so the
+    browser-reported `Origin` must match the host the request was addressed to. Three ways in: a
+    loopback origin matching `Host` (direct local use); an origin matching `X-Forwarded-Host` (a
+    reverse proxy such as Codespaces or a dev tunnel — trustworthy because the browser WebSocket API
+    cannot send custom headers, so its presence proves a real proxy hop); or an origin listed in
+    `CAMERA_ALLOWED_ORIGINS` (comma-separated `scheme://host[:port]`, for proxies that forward
+    neither).
     """
     origin = socket.headers.get('origin')
     if not origin:
         return False
-    allowed = {
-        value.strip()
-        for value in os.environ.get('CAMERA_ALLOWED_ORIGINS', '').split(',')
-        if value.strip()
-    }
-    if origin in allowed:
+    allowed = os.environ.get('CAMERA_ALLOWED_ORIGINS', '')
+    if origin in {value.strip() for value in allowed.split(',') if value.strip()}:
         return True
     parsed = urlsplit(origin)
     if parsed.scheme not in ('http', 'https'):
@@ -226,8 +151,8 @@ def _same_origin(socket: WebSocket) -> bool:
 def _instructions(*, web_search: bool) -> str:
     """The assistant's instructions, built per connection.
 
-    The web-search guidance is included only when web search is actually enabled for the selected model
-    (see `_web_search_supported`), so the model isn't told about a tool it doesn't have.
+    The web-search guidance is included only when web search is actually enabled for the selected
+    model (see `_web_search_supported`), so the model isn't told about a tool it doesn't have.
     """
     return (
         'You are a friendly, concise voice assistant. The user is talking to you and may show you things '
@@ -347,21 +272,16 @@ async def redraw_diagram(ctx: RunContext[CameraDeps], instructions: str) -> str:
 
 
 def _web_search_supported(model: RealtimeModel) -> bool:
-    """Whether `model` supports web search natively, read from its realtime profile.
-
-    Web search is enabled per connection only when this is true, so switching the model in the UI to one
-    without native web search (e.g. an OpenAI realtime model) simply drops the capability instead of
-    failing the session.
-    """
+    """Whether `model` supports web search natively, read from its realtime profile."""
     return WebSearchTool in model.profile.get('supported_native_tools', frozenset())
 
 
 def _build_agent(*, web_search: bool) -> Agent[CameraDeps, str]:
     """Build the camera assistant for one connection.
 
-    The agent is per connection because whether web search is available depends on the selected model
-    (see `_web_search_supported`), so its capabilities and instructions vary. The `redraw_diagram` tool
-    is registered whenever drawing is enabled, independently of web search — the two can be active at once.
+    The agent is per connection because whether web search is available depends on the selected
+    model, so its capabilities and instructions vary. The `redraw_diagram` tool is registered
+    whenever drawing is enabled, independently of web search — the two can be active at once.
     """
     agent = Agent(
         # Named so Logfire tells this run apart from the drawing agent's.
@@ -378,6 +298,7 @@ def _build_agent(*, web_search: bool) -> Agent[CameraDeps, str]:
 @app.get('/')
 async def index() -> HTMLResponse:
     # Seed the settings panel with the server's env-configured defaults so the UI mirrors them.
+    # Angle brackets are JSON-escaped so env-supplied values can't break out of the script tag.
     defaults = (
         json.dumps(
             {
@@ -388,8 +309,8 @@ async def index() -> HTMLResponse:
                 'affective': AFFECTIVE,
             }
         )
-        .replace('<', r'\u003c')
-        .replace('>', r'\u003e')
+        .replace('<', '\\u003c')
+        .replace('>', '\\u003e')
     )
     return HTMLResponse(
         _INDEX_PATH.read_text(encoding='utf-8').replace('__DEFAULTS__', defaults)
@@ -399,29 +320,19 @@ async def index() -> HTMLResponse:
 def _build_model(params: Mapping[str, str]) -> RealtimeModel:
     """Build the selected realtime model with provider-appropriate UI settings."""
     model_id = params.get('model') or MODEL
-    # A `gateway/` routing prefix doesn't change which model runs, so an allowed model stays
-    # allowed when routed through the Pydantic AI Gateway.
-    if (
-        model_id not in ALLOWED_MODELS
-        and model_id.removeprefix('gateway/') not in ALLOWED_MODELS
-    ):
-        raise ValueError(
-            f'Realtime model {model_id!r} is not available in this example'
-        )
     if USE_VERTEX and model_id.startswith('google:'):
         model = GoogleRealtimeModel(
-            model_id.removeprefix('google:'),
-            provider=GoogleCloudProvider(project=GCP_PROJECT, location=GCP_LOCATION),
+            model_id.removeprefix('google:'), provider='google-cloud'
         )
     else:
         model = infer_realtime_model(model_id)
 
-    start, end = params.get('start_sensitivity'), params.get('end_sensitivity')
     modality = params.get('modality', 'audio')
-    if not _is_output_modality(modality):
+    if modality not in ('audio', 'text'):
         raise ValueError(f'Output modality {modality!r} must be "audio" or "text"')
     common_settings = RealtimeModelSettings(output_modality=modality)
     voice = params.get('voice') or VOICE
+    start, end = params.get('start_sensitivity'), params.get('end_sensitivity')
     if isinstance(model, GoogleRealtimeModel):
         settings = GoogleRealtimeModelSettings(
             **common_settings,
@@ -451,9 +362,9 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
         settings = OpenAIRealtimeModelSettings(**common_settings)
         if voice:
             settings['openai_voice'] = voice
-        if sensitivity := start or end:
-            if sensitivity in ('high', 'low'):
-                settings['turn_detection'] = TurnDetection(sensitivity=sensitivity)
+        # OpenAI has one shared turn-detection sensitivity, so either UI VAD control maps onto it.
+        if (sensitivity := start or end) in ('high', 'low'):
+            settings['turn_detection'] = TurnDetection(sensitivity=sensitivity)
         model.settings = settings
         model.reconnect = ReconnectPolicy(max_attempts=5)
     else:
@@ -466,9 +377,8 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
 def _grounding_sources(content: object) -> list[dict[str, object]]:
     """Extract `{url, title}` source chips from a grounding `NativeToolReturnPart.content`.
 
-    Google Search grounding returns cited pages as a list of provider-shaped chunks; keep
-    the ones with a usable URL. Typed defensively (the content is provider-shaped) so an unexpected
-    shape degrades to no chips rather than an error.
+    Google Search grounding returns cited pages as a list of provider-shaped chunks; keep the ones
+    with a usable URL, and degrade to no chips on an unexpected shape rather than an error.
     """
     if not isinstance(content, list):
         return []
@@ -491,9 +401,8 @@ def _json_message(event: RealtimeEvent) -> dict[str, object] | None:
     match event:
         case RealtimeInputSpeechStartEvent() | RealtimeResponseInterruptedEvent():
             # A barge-in: the user started talking over the model, or the provider reported the
-            # response interrupted — Gemini signals only the latter, without an `RealtimeInputSpeechStartEvent`.
-            # The browser flushes buffered audio either way. (The realtime session records the
-            # barge-in in its telemetry.)
+            # response interrupted — Gemini signals only the latter, without an
+            # `RealtimeInputSpeechStartEvent`. The browser flushes buffered audio either way.
             return {'type': 'speech_started'}
         case PartEndEvent(part=NativeToolReturnPart(content=content)):
             # Google Search grounding finished; surface its cited sources as chips.
@@ -516,10 +425,11 @@ async def _dispatch_text(session: RealtimeSession, text: str) -> None:
     try:
         # Decode and validate the message. A malformed frame is ignored here, but a genuine send
         # failure must surface, so `session.send()` stays outside this guard.
-        raw_data: object = json.loads(text)
-        if not _is_message_data(raw_data):
+        raw: object = json.loads(text)
+        if not isinstance(raw, dict):
             return
-        data = raw_data
+        # JSON object keys are strings.
+        data = cast('dict[str, object]', raw)
         match data.get('type'):
             case 'image':
                 image_data = data.get('data')
@@ -540,31 +450,10 @@ async def _dispatch_text(session: RealtimeSession, text: str) -> None:
                 content = WATCH_PROMPT
             case _:
                 return
-    except (ValueError, AttributeError, KeyError, TypeError):
+    except ValueError:
         logfire.exception('Ignoring malformed browser message')
         return
     await session.send(content)
-
-
-async def _forward_browser_message(
-    session: RealtimeSession, socket: WebSocket, message: Mapping[str, object]
-) -> bool:
-    """Forward one size-limited browser message; return whether the pump should continue."""
-    if (chunk := message.get('bytes')) is not None:
-        if not isinstance(chunk, bytes):
-            return True
-        if len(chunk) > MAX_AUDIO_MESSAGE_BYTES:
-            await socket.close(code=1009, reason='Audio message is too large')
-            return False
-        await session.send_audio(chunk)
-    elif (text := message.get('text')) is not None:
-        if not isinstance(text, str):
-            return True
-        if len(text.encode()) > MAX_JSON_MESSAGE_BYTES:
-            await socket.close(code=1009, reason='JSON message is too large')
-            return False
-        await _dispatch_text(session, text)
-    return True
 
 
 async def _run_session(
@@ -622,29 +511,34 @@ async def _run_session(
                                 await emit(message)
             except Exception as exc:
                 logfire.exception('Realtime event pump failed')
-                await emit(
-                    {'type': 'error', 'message': f'Realtime provider failed: {exc}'}
-                )
+                # Best effort: the socket itself may be what failed.
+                with suppress(Exception):
+                    await emit(
+                        {'type': 'error', 'message': f'Realtime provider failed: {exc}'}
+                    )
             finally:
                 tg.cancel_scope.cancel()
 
         async def pump_inbound() -> None:
             try:
                 while True:
-                    message = await socket.receive()
+                    message: Mapping[str, object] = await socket.receive()
                     if message.get('type') == 'websocket.disconnect':
                         break
-                    if not await _forward_browser_message(session, socket, message):
-                        break
+                    if isinstance(chunk := message.get('bytes'), bytes):
+                        await session.send_audio(chunk)
+                    elif isinstance(text := message.get('text'), str):
+                        await _dispatch_text(session, text)
             except WebSocketDisconnect:
                 pass
             except RealtimeError as exc:
                 # Send-side recovery is not reconnect-aware yet; a provider drop ends this session and
                 # lets the browser reconnect. See https://github.com/pydantic/pydantic-ai/issues/6703.
                 logfire.exception('Realtime inbound pump failed')
-                await emit(
-                    {'type': 'error', 'message': f'Realtime provider failed: {exc}'}
-                )
+                with suppress(Exception):
+                    await emit(
+                        {'type': 'error', 'message': f'Realtime provider failed: {exc}'}
+                    )
             finally:
                 tg.cancel_scope.cancel()
 
@@ -665,17 +559,7 @@ async def ws(socket: WebSocket) -> None:
         )
         await socket.close(code=1008, reason='WebSocket origin does not match Host')
         return
-    try:
-        _connection_slots.acquire_nowait()
-    except anyio.WouldBlock:
-        await socket.close(code=1013, reason='Too many active camera sessions')
-        return
-
-    try:
-        await socket.accept()
-    except BaseException:
-        _connection_slots.release()
-        raise
+    await socket.accept()
 
     # A lock serializes WebSocket sends, since a tool's `emit` can race the event pump.
     send_lock = anyio.Lock()
@@ -685,38 +569,30 @@ async def ws(socket: WebSocket) -> None:
             await socket.send_json(message)
 
     try:
-        try:
-            model = _build_model(socket.query_params)
-        except (UserError, ValueError) as exc:
-            logfire.exception('Could not build realtime model')
-            await emit({'type': 'error', 'message': str(exc)})
-            return
+        model = _build_model(socket.query_params)
+    except (UserError, ValueError) as exc:
+        logfire.exception('Could not build realtime model')
+        await emit({'type': 'error', 'message': str(exc)})
+        return
 
-        # This handshake must precede mic capture: raw PCM does not carry its sample rate.
-        await emit(
-            {
-                'type': 'session_config',
-                'input_sample_rate': model.profile.get(
-                    'audio_input_sample_rate', 24_000
-                ),
-                'output_sample_rate': model.profile.get(
-                    'audio_output_sample_rate', 24_000
-                ),
-            }
-        )
+    # This handshake must precede mic capture: raw PCM does not carry its sample rate.
+    await emit(
+        {
+            'type': 'session_config',
+            'input_sample_rate': model.profile.get('audio_input_sample_rate', 24_000),
+            'output_sample_rate': model.profile.get('audio_output_sample_rate', 24_000),
+        }
+    )
 
-        # Optional demo features are configured around, but do not obscure, `_run_session`.
-        agent = _build_agent(web_search=WEB_SEARCH and _web_search_supported(model))
-        try:
-            async with agent.realtime(
-                model, deps=CameraDeps(emit=emit)
-            ).session() as session:
-                await _run_session(session, socket, emit, send_lock)
-        except ModelAPIError as exc:
-            logfire.exception('Realtime session failed to connect')
-            await emit({'type': 'error', 'message': str(exc)})
-    finally:
-        _connection_slots.release()
+    agent = _build_agent(web_search=WEB_SEARCH and _web_search_supported(model))
+    try:
+        async with agent.realtime(
+            model, deps=CameraDeps(emit=emit)
+        ).session() as session:
+            await _run_session(session, socket, emit, send_lock)
+    except ModelAPIError as exc:
+        logfire.exception('Realtime session failed to connect')
+        await emit({'type': 'error', 'message': str(exc)})
 
 
 if __name__ == '__main__':

@@ -14,7 +14,7 @@ The example demonstrates:
   [`WebSearch`][pydantic_ai.capabilities.WebSearch] and clickable citations
 - a model picker and provider-aware voice, modality, VAD, and Gemini settings
 
-## Run the example
+## Running the Example
 
 Add credentials for a picker model to the repository-root `.env`, for example:
 
@@ -22,30 +22,30 @@ Add credentials for a picker model to the repository-root `.env`, for example:
 GOOGLE_API_KEY=your-google-api-key
 ```
 
-The sketch-redraw tool delegates to a separate drawing agent —
-`gateway/anthropic:claude-haiku-4-5` by default, which needs `PYDANTIC_AI_GATEWAY_API_KEY`. Without
-it, set `CAMERA_DRAW_MODEL` to a model your credentials cover (any `provider:model`), or
-`CAMERA_DRAW=false` to disable drawing; the rest of the assistant works either way.
+The sketch-redraw tool delegates to a separate drawing agent — `google:gemini-3.5-flash` by
+default, which reuses the same `GOOGLE_API_KEY`. Set `CAMERA_DRAW_MODEL` to any other
+`provider:model` your credentials cover, or `CAMERA_DRAW=false` to disable drawing; the rest of the
+assistant works either way.
 
-With [dependencies installed](./setup.md#usage), start the local server:
+With [dependencies installed and environment variables set](./setup.md#usage), start the local
+server:
 
 ```bash
-uv run --all-packages uvicorn pydantic_ai_examples.realtime_camera.app:app
+python/uv-run -m pydantic_ai_examples.realtime_camera.app
 ```
 
 Open <http://localhost:8000>, select **Start**, and allow camera and microphone access.
 
-The picker accepts only the models listed in `ALLOWED_MODELS` in the example; `gateway/`-prefixed
-variants of those IDs are also accepted, since the [gateway](../realtime/observability.md#gateway-trace-propagation)
-routes to the same model. Set `CAMERA_REALTIME_MODEL` before starting the server to add a different
-configured deployment to that allowlist and make it the default. Note that the gateway serves Gemini
-Live through Vertex AI, which hosts a different set of Live models than the Gemini Developer API. The selected model's realtime profile supplies the browser's PCM
-input and output sample rates: Gemini input uses 16 kHz, while OpenAI and Azure input uses 24 kHz.
+The model defaults to `google:gemini-3.1-flash-live-preview`; set `CAMERA_REALTIME_MODEL` to change
+it, or use the picker to switch to any Google, OpenAI, or Azure OpenAI `provider:model` per session
+(xAI realtime doesn't support camera image input). The selected model's realtime profile supplies
+the browser's PCM input and output sample rates: Gemini input uses 16 kHz, while OpenAI and Azure
+input uses 24 kHz.
 
 !!! warning "Keep the example local"
     The WebSocket uses provider credentials from the server and has no user authentication. The
-    example checks same-host origins, allowlists model IDs, limits concurrent connections, and caps
-    message sizes, but these are development safeguards rather than production access control.
+    example checks that the browser's origin matches the host it's served from, but that is a
+    development safeguard rather than production access control.
 
     Do not expose the server through a Cloudflare quick tunnel, ngrok, or a public reverse proxy.
     For another device, deploy behind authentication and TLS on a network you control, with
@@ -86,7 +86,7 @@ is dominated by HTML output tokens, so a larger model mostly adds thinking time,
 Configure the drawing model independently:
 
 ```bash
-export CAMERA_DRAW_MODEL=gateway/anthropic:claude-sonnet-5
+export CAMERA_DRAW_MODEL=anthropic:claude-haiku-4-5
 ```
 
 Drawing and web search remain enabled together when the selected realtime model supports both.
@@ -114,12 +114,12 @@ browser ◀── PCM16 + JSON events ──────────────
 ```
 
 Before microphone capture begins, the server sends `session_config` over the JSON channel with the
-profile-derived audio rates. The inbound pump then forwards size-limited PCM, image, text, and Watch
+profile-derived audio rates. The inbound pump then forwards PCM, image, text, and Watch
 messages. The event pump returns audio, transcripts, barge-in notifications, grounding citations,
 drawing updates, and turn completion. Either side ending cancels the other pump and closes the
 session cleanly.
 
-## Example code
+## Example Code
 
 The server contains the realtime bridge and the subordinate Watch, grounding, and drawing helpers:
 
