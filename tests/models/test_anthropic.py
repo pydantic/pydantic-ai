@@ -2398,7 +2398,9 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
     )
 
 
-async def test_multiple_parallel_tool_calls(allow_model_requests: None, request_capture: RequestCapture):
+async def test_multiple_parallel_tool_calls(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
     async def retrieve_entity_info(name: str) -> str:
         """Get the knowledge about the given entity."""
         data = {
@@ -2416,13 +2418,8 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None, request_
     Think step by step and then provide a single most probable concise answer.
     """
 
-    # If we don't provide some value for the API key, the anthropic SDK will raise an error.
-    # However, we do want to use the environment variable if present when rewriting VCR cassettes.
-    api_key = os.getenv('ANTHROPIC_API_KEY', 'mock-value')
     agent = Agent(
-        AnthropicModel(
-            'claude-haiku-4-5', provider=AnthropicProvider(api_key=api_key, http_client=request_capture.client)
-        ),
+        anthropic_model('claude-haiku-4-5', capture=True),
         system_prompt=system_prompt,
         tools=[retrieve_entity_info],
     )
