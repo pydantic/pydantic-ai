@@ -211,6 +211,13 @@ class OpenAIModelProfile(ModelProfile, total=False):
     exactly one initial system message; consecutive system messages at the start will be merged into one
     (joined with two newlines) before being sent."""
 
+    openai_chat_streaming_requires_finish_reason: bool
+    """Whether a streamed Chat Completions response must include a non-null `finish_reason`. Default: `False`.
+
+    When enabled, reaching clean EOF before any chunk supplies a `finish_reason` raises
+    [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]. This defaults to `False` because
+    OpenAI-compatible APIs do not consistently guarantee the field."""
+
     openai_chat_supports_web_search: bool
     """Whether the model supports web search in Chat Completions API. Default: `False`."""
 
