@@ -187,10 +187,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """IDs of the deferred capabilities the model has explicitly loaded via the `load_capability` tool.
 
     The capability-side mirror of `discovered_tool_names`: the runtime-revealed subset.
-    Seeded during run preparation from message history (`parse_loaded_capabilities`); the
-    `load_capability` tool body adds to it for in-step loads. Use `available_capability_ids`
-    for the full set of currently-active capabilities (auto/always-on plus these).
-    Managed by the framework: safe to read, but don't mutate it directly.
+    Derived from message history (`parse_loaded_capabilities`) before each request, so a capability
+    loaded during a step appears from the *next* one — the same step that first carries its
+    instructions to the model, and therefore the first on which its tools can be called. Use
+    `available_capability_ids` for the full set of currently-active capabilities (auto/always-on
+    plus these). Managed by the framework: safe to read, but don't mutate it directly.
     """
 
     capability_loaded: bool | None = None
@@ -200,13 +201,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
 
     discovered_tool_names: set[str] = field(default_factory=set[str])
-    """Names of deferred function tools revealed by durable message history.
+    """Names of deferred function tools named by durable message history.
 
-    Includes names revealed by tool-search returns and `ToolAvailabilityDeltaPart`s, including
-    deltas from any tool's `ToolReturn.tools` and `load_capability`. Read by
-    `is_tool_available` and the reveal builders. Populated during run preparation from message
-    history. Use `available_tool_names` for the full set of currently-callable tools
-    (always-visible plus these).
+    Raw evidence, not a verdict: it collects every name tool-search returns and
+    `ToolAvailabilityDeltaPart`s mention — including deltas from any tool's `ToolReturn.tools` and
+    from `load_capability` — without checking that the tool still exists or that its owner is
+    loaded. Read by `is_tool_available` and the reveal builders, which apply those checks.
+    Populated during run preparation from message history. Use `available_tool_names` for the full
+    set of currently-callable tools (always-visible plus these).
     Managed by the framework: safe to read, but don't mutate it directly.
     """
 
@@ -300,12 +302,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # definition can be observed before tool search stamps `with_native='tool-search'` on it.
         if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading:
             return True
-        if tool_def.name in self.discovered_tool_names:
-            # Deliberately not gated on capability state: a fabricated history part could equally
-            # fabricate the full `load_capability` exchange, so a gate here adds no trust boundary.
-            # History integrity is the deployment's job (authenticated endpoints, server-side history).
-            return True
-        return False
+        if tool_def.name not in self.discovered_tool_names:
+            return False
+        # A run holds to load, then reveal, then call. `discovered_tool_names` is raw history
+        # evidence and only answers the middle step, so it can name a tool whose capability was
+        # never loaded — a history no real run produces, and one that would skip the instructions
+        # written to be read first. Checking the owner here keeps this predicate in step with what
+        # `ToolManager` will run, so "available" means one thing everywhere it is asked.
+        capability_id = tool_def.capability_id
+        return capability_id is None or capability_id in self.available_capability_ids
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:

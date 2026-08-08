@@ -37,7 +37,7 @@ from pydantic_ai.capabilities._ordering import collect_leaves
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.capability import Capability
 from pydantic_ai.capabilities.combined import CombinedCapability
-from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CompactionPart,
@@ -52,6 +52,7 @@ from pydantic_ai.messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     PartStartEvent,
+    RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
@@ -1457,13 +1458,12 @@ async def test_tool_manager_with_tool_search_toolset_marks_corpus():
     assert 'get_weather' in local_names
     assert 'search_tools' in local_names
 
-    # Undiscovered deferred tools are still dispatchable through the toolset under their
-    # real name — the wire-side filtering in `prepare_request` decides whether the
-    # model can see them, but `ToolManager` doesn't gatekeep dispatch on that.
-    result = await run_step_toolset.handle_call(
-        ToolCallPart(tool_name='calculate_mortgage', args={'principal': 100.0, 'rate': 5.0, 'years': 30})
-    )
-    assert 'Mortgage calculated' in str(result)
+    # An undiscovered deferred tool is in the dispatch dict but not callable: `ToolManager`
+    # gates on availability, so the model is told to search rather than that it doesn't exist.
+    with pytest.raises(ToolRetryError, match='is not available yet'):
+        await run_step_toolset.handle_call(
+            ToolCallPart(tool_name='calculate_mortgage', args={'principal': 100.0, 'rate': 5.0, 'years': 30})
+        )
 
     # The local search_tools function is also dispatchable.
     result = await run_step_toolset.handle_call(ToolCallPart(tool_name='search_tools', args={'queries': ['mortgage']}))
@@ -1721,11 +1721,11 @@ async def test_tool_search_toolset_marks_corpus_with_native():
 
 
 async def test_tool_search_toolset_dispatches_by_plain_name_via_tool_manager():
-    """The provider calls a deferred tool by its plain name and `ToolManager`
+    """Once discovered, the provider calls a deferred tool by its plain name and `ToolManager`
     dispatches directly via the dict key (also the plain name)."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
-    ctx = _build_run_context(None)
+    ctx = _build_run_context(None, discovered_tool_names={'calculate_mortgage'})
 
     tool_manager = ToolManager(searchable)
     run_step_toolset = await tool_manager.for_run_step(ctx)
@@ -7665,8 +7665,8 @@ class _HookObservingCapability(Capability[None]):
     async def before_tool_execute(
         self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
     ) -> dict[str, Any]:
-        self.hook_log.append(f'before:{call.tool_name}:loaded={ctx.capability_loaded}')
-        return args
+        self.hook_log.append(f'before:{call.tool_name}:loaded={ctx.capability_loaded}')  # pragma: no cover
+        return args  # pragma: no cover
 
     async def wrap_tool_execute(
         self,
@@ -7677,56 +7677,66 @@ class _HookObservingCapability(Capability[None]):
         args: dict[str, Any],
         handler: Callable[[dict[str, Any]], Awaitable[Any]],
     ) -> Any:
-        self.hook_log.append(f'wrap:{call.tool_name}')
-        return await handler(args)
+        self.hook_log.append(f'wrap:{call.tool_name}')  # pragma: no cover
+        return await handler(args)  # pragma: no cover
 
 
-async def _call_capability_tool_directly(history: list[ModelMessage]) -> tuple[_HookObservingCapability, list[str]]:
-    """Run an agent whose model calls the capability-owned tool directly, with no (re)load."""
+async def _call_capability_tool_directly(
+    history: list[ModelMessage],
+) -> tuple[_HookObservingCapability, list[str], list[str]]:
+    """Run an agent whose model calls the capability-owned tool directly, with no (re)load.
+
+    The model gives up once it is told the tool is unavailable, as a real one would after reading
+    the retry — otherwise it would just exhaust the retry budget.
+    """
     capability = _HookObservingCapability()
     executed: list[str] = []
+    refusals: list[str] = []
 
     @capability.tool_plain
     def issue_refund() -> str:
-        executed.append('issue_refund')
-        return 'refunded'
+        executed.append('issue_refund')  # pragma: no cover
+        return 'refunded'  # pragma: no cover
 
-    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        if not executed:
-            return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
-        return ModelResponse(parts=[TextPart('done')])
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+            refusals.append(part.content if isinstance(part.content, str) else str(part.content))
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
 
     agent: Agent[None, str] = Agent(FunctionModel(model_fn), capabilities=[capability], deps_type=type(None))
     await agent.run('refund now', message_history=history)
-    return capability, executed
+    return capability, executed, refusals
 
 
-async def test_capability_tool_called_after_compaction_still_runs_owner_hooks() -> None:
-    """The boundary reset must not double as a hook bypass: a capability-owned tool called
-    post-compaction (its load pair is pre-boundary) still runs its owner's execute hooks,
-    with `capability_loaded` truthfully `False`."""
+async def test_capability_tool_called_after_compaction_is_refused_until_reloaded() -> None:
+    """The boundary reset revokes availability, not just the schema: a capability-owned tool whose
+    load pair sits pre-boundary is refused, so the model reloads and the post-compaction history
+    ends up carrying the load exchange that justifies the call."""
     history: list[ModelMessage] = [
         ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='old-load')]),
         ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='old-load')]),
         ModelResponse(parts=[CompactionPart(content='Summary: refund tooling exists.', provider_name='anthropic')]),
     ]
-    capability, executed = await _call_capability_tool_directly(history)
+    capability, executed, refusals = await _call_capability_tool_directly(history)
 
-    assert executed == ['issue_refund']
-    assert capability.hook_log == ['before:issue_refund:loaded=False', 'wrap:issue_refund']
+    assert executed == []
+    assert capability.hook_log == []
+    assert refusals and 'is not available yet' in refusals[0]
 
 
-async def test_capability_tool_called_without_any_load_still_runs_owner_hooks() -> None:
-    """The same guarantee for the fabricated-history residual: reveal evidence with no
-    load pair at all keeps the tool callable, so its owner's hooks must run there too."""
+async def test_capability_tool_called_without_any_load_is_refused() -> None:
+    """The same for the fabricated-history residual: reveal evidence with no load pair does not
+    make a capability's tool callable, because a reveal cannot stand in for loading the bundle."""
     history: list[ModelMessage] = [
         ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['issue_refund'])]),
         ModelResponse(parts=[TextPart('ok')]),
     ]
-    capability, executed = await _call_capability_tool_directly(history)
+    capability, executed, refusals = await _call_capability_tool_directly(history)
 
-    assert executed == ['issue_refund']
-    assert capability.hook_log == ['before:issue_refund:loaded=False', 'wrap:issue_refund']
+    assert executed == []
+    assert capability.hook_log == []
+    assert refusals and 'is not available yet' in refusals[0]
 
 
 async def test_searchable_corpus_survives_discovery_and_compaction() -> None:
@@ -7778,16 +7788,17 @@ async def test_searchable_corpus_survives_discovery_and_compaction() -> None:
     assert executed == ['a']
 
 
-async def test_pre_compaction_tool_stays_callable_without_rediscovery() -> None:
-    """A model that still remembers a pre-compaction tool (e.g. from the summary) can call
-    it directly: the boundary reset hides the schema again but never revokes execution."""
+async def test_pre_compaction_tool_is_refused_until_rediscovered() -> None:
+    """A model that remembers a pre-compaction tool from the summary is asked to search again
+    rather than allowed to call it, so the search exchange that justifies the call is regenerated
+    on the near side of the boundary."""
     toolset = FunctionToolset()
     executed: list[str] = []
 
     @toolset.tool_plain(defer_loading=True)
     def issue_refund() -> str:
-        executed.append('issue_refund')
-        return 'refunded'
+        executed.append('issue_refund')  # pragma: no cover
+        return 'refunded'  # pragma: no cover
 
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='discover tools')]),
@@ -7803,25 +7814,29 @@ async def test_pre_compaction_tool_stays_callable_without_rediscovery() -> None:
         ),
     ]
 
-    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        if not executed:
-            return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
-        return ModelResponse(parts=[TextPart('done')])
+    refusals: list[str] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+            refusals.append(part.content if isinstance(part.content, str) else str(part.content))
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
 
     agent: Agent[None, str] = Agent(
         NoNativeToolSearchModel(model_fn), toolsets=[toolset], capabilities=[ToolSearch()], deps_type=type(None)
     )
     await agent.run('refund now', message_history=history)
 
-    assert executed == ['issue_refund']
+    assert executed == []
+    assert refusals and 'search for it first' in refusals[0]
 
 
-async def test_delta_in_history_reveals_a_capability_tool_without_a_load(allow_model_requests: None):
-    """A delta part in history reveals a capability-owned tool with no `load_capability` — deliberately.
+async def test_delta_in_history_does_not_reveal_a_capability_tool_without_a_load(allow_model_requests: None):
+    """A delta naming a capability-owned tool is dropped unless the history also loads its capability.
 
-    History is the trust boundary: whoever can fabricate this part can equally fabricate the whole
-    `load_capability` call/return exchange and activate the capability outright, so gating the
-    discovered-names arm on capability state would add a check without adding a boundary.
+    A reveal says a schema may go to the model; it cannot stand in for loading the bundle the tool
+    belongs to. Honouring it would advertise a tool `ToolManager` then refuses to run — visible and
+    uncallable — so the name is filtered out of the request's reveal state instead.
     Deployments accepting client-supplied history get integrity from authenticated endpoints and
     server-persisted history (the UI docs' trust model), not from reveal-state derivation. This test
     pins that decision so the asymmetry isn't mistaken for an oversight.
@@ -7848,7 +7863,7 @@ async def test_delta_in_history_reveals_a_capability_tool_without_a_load(allow_m
 
     assert result.output == 'done'
     [params] = captured
-    assert 'issue_refund' in params.revealed_tool_names
+    assert 'issue_refund' not in params.revealed_tool_names
 
 
 def test_tool_availability_delta_falls_back_to_a_system_instruction():

@@ -4507,6 +4507,39 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
         getattr(reconstructed, 'not_a_field')
 
 
+async def test_is_tool_available_answers_for_a_capability_owned_tool_inside_an_activity():
+    """The definition form must answer, not raise, for a tool a capability contributed.
+
+    `is_tool_available` consults `available_capability_ids` for any tool carrying a
+    `capability_id`, and the `capabilities` registry deliberately doesn't cross the boundary. The
+    docs send toolset authors to the definition form precisely because it works inside `get_tools`,
+    which under Temporal runs in an activity — so the ids travel as a snapshot.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+        capabilities={'guarded': Capability[Any](id='guarded', description='Guarded.', defer_loading=True)},
+        loaded_capability_ids={'guarded'},
+        discovered_tool_names={'secret_op'},
+    )
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+
+    assert reconstructed.available_capability_ids == {'guarded'}
+    loaded = ToolDefinition(name='secret_op', defer_loading=True, capability_id='guarded')
+    assert reconstructed.is_tool_available(loaded) is True
+
+    unloaded = ToolDefinition(name='other_op', defer_loading=True, capability_id='not_loaded')
+    assert reconstructed.is_tool_available(unloaded) is False
+
+    # The registry itself still doesn't cross — only the ids it resolves to.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed.capabilities
+
+
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
     """A user subclass with its own field set."""
 
@@ -4551,6 +4584,11 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     assert reconstructed.usage == ctx.usage
     assert reconstructed.discovered_tool_names == {'searched_tool'}
     assert reconstructed.available_tool_names == {'searched_tool'}
+    # No capability snapshot in this subclass's field set, so the property falls back to the base
+    # one, which reads the registry — and that is guarded, so it raises rather than quietly
+    # reporting no capabilities are active.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed.available_capability_ids
     assert reconstructed.__dict__['custom'] == 'from-subclass'
     for name in ('prompt', 'conversation_id', 'instrumentation_version'):
         with pytest.raises(UserError, match=f'{name!r} is not available on {LegacyFieldsRunContext.__name__!r}'):
