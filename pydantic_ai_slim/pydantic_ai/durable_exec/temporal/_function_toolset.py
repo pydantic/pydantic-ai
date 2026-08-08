@@ -19,7 +19,13 @@ from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
-from ._toolset import CallToolParams, call_tool_in_activity, heartbeating, resolve_tool_activity_config
+from ._toolset import (
+    CallToolParams,
+    call_tool_in_activity,
+    heartbeating,
+    resolve_tool_activity_config,
+    tool_result_payload_errors,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -85,22 +91,23 @@ def temporalize_function_toolset(
                 **config,
             },
         )
-        result = await execute_activity(
-            activity=registered_activity,
-            args=[
-                CallToolParams(
-                    name=name,
-                    tool_args=tool_args,
-                    serialized_run_context=run_context_type.serialize_run_context(ctx),
-                    tool_def=tool.tool_def,
-                    # A `prepare` function can expose a tool under a different name than the toolset
-                    # holds it under; the activity needs the latter to find the function to call.
-                    original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
-                ),
-                ctx.deps,
-            ],
-            **merged_config,
-        )
+        with tool_result_payload_errors(name):
+            result = await execute_activity(
+                activity=registered_activity,
+                args=[
+                    CallToolParams(
+                        name=name,
+                        tool_args=tool_args,
+                        serialized_run_context=run_context_type.serialize_run_context(ctx),
+                        tool_def=tool.tool_def,
+                        # A `prepare` function can expose a tool under a different name than the toolset
+                        # holds it under; the activity needs the latter to find the function to call.
+                        original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
+                    ),
+                    ctx.deps,
+                ],
+                **merged_config,
+            )
         return unwrap_tool_call_result(result)
 
     return DurableFunctionToolset(
