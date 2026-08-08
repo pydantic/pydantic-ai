@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 import re
+from collections.abc import Callable
 from typing import overload
 
 import httpx
@@ -68,17 +69,24 @@ class SnowflakeProvider(Provider[AsyncOpenAI]):
     def model_profile(model_name: str) -> ModelProfile | None:
         model_name = model_name.lower()
 
+        # Cortex serves bare model names without a provider-prefix delimiter, so match each model to
+        # its family by prefix. `snowflake-llama-*` is Meta's Llama fine-tuned by Snowflake, and
+        # `openai-*` names carry an `openai-` prefix the OpenAI profile doesn't expect.
+        prefix_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
+            'claude': anthropic_model_profile,
+            'openai-': lambda name: openai_model_profile(name.removeprefix('openai-')),
+            'snowflake-llama': meta_model_profile,
+            'llama': meta_model_profile,
+            'mistral': mistral_model_profile,
+            'mixtral': mistral_model_profile,
+            'deepseek': deepseek_model_profile,
+        }
+
         family_profile: ModelProfile | None = None
-        if model_name.startswith('claude'):
-            family_profile = anthropic_model_profile(model_name)
-        elif model_name.startswith('openai-'):
-            family_profile = openai_model_profile(model_name.removeprefix('openai-'))
-        elif 'llama' in model_name:
-            family_profile = meta_model_profile(model_name)
-        elif model_name.startswith(('mistral', 'mixtral')):
-            family_profile = mistral_model_profile(model_name)
-        elif model_name.startswith('deepseek'):
-            family_profile = deepseek_model_profile(model_name)
+        for prefix, profile_func in prefix_to_profile.items():
+            if model_name.startswith(prefix):
+                family_profile = profile_func(model_name)
+                break
 
         # Cortex does not document `strict` on tool definitions, so we don't send it.
         cortex_profile = OpenAIModelProfile(openai_supports_strict_tool_definition=False)
