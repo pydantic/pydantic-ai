@@ -285,14 +285,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._event_stream_handler_activity_config.get('retry_policy')
         )
         self._toolset_activity_config = toolset_activity_config or {}
-        # Validate eagerly like the activity configs above, so an unknown key or bad value fails at
-        # construction time instead of wedging the workflow task once splatted into
-        # `workflow.start_child_workflow()`.
         if child_workflow_config is not None:
             child_workflow_config = validate_child_workflow_config(child_workflow_config, '`child_workflow_config`')
-        # Normalize the child workflow config on a copy, like the activity configs above: the
-        # `retry_policy` of a tool's child workflow governs retrying the entire child workflow
-        # execution, the direct analog of an `ActivityConfig`'s policy one level up.
         if child_workflow_config is not None and 'retry_policy' in child_workflow_config:
             child_workflow_config = child_workflow_config.copy()
             child_workflow_config['retry_policy'] = with_non_retryable_errors(child_workflow_config.get('retry_policy'))
@@ -423,9 +417,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         for wrapped in self._toolsets_by_id.values():
             activities.extend(toolset_temporal_activities(wrapped))
             for wf in toolset_temporal_workflows(wrapped):
-                # `_ToolCallWorkflow` (`_function_toolset.py`) is one shared class every toolset
-                # using `child_workflow` lists unconditionally — dedupe by identity so it's only
-                # registered with the worker once, regardless of how many toolsets need it.
                 if wf not in workflows:
                     workflows.append(wf)
 

@@ -287,9 +287,7 @@ def validate_activity_config(config: ActivityConfig, source: str) -> ActivityCon
 
 _ValidatedChildWorkflowConfig = with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(
     TypedDict(
-        '_ValidatedChildWorkflowConfig',
-        # The functional syntax is intentionally dynamic so new Temporal keys are included, mirroring
-        # `_ValidatedActivityConfig` above.
+        '_ValidatedChildWorkflowConfig',        
         get_type_hints(ChildWorkflowConfig, include_extras=True),  # pyright: ignore[reportArgumentType]
         total=ChildWorkflowConfig.__total__,
     )

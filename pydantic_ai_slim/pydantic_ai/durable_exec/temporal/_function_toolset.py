@@ -38,8 +38,8 @@ _ChildWorkflowHandler = Callable[[CallToolParams, Any], Awaitable[CallToolResult
 _child_workflow_handlers: dict[str, _ChildWorkflowHandler] = {}
 """Per-toolset child-workflow handlers, keyed by `CallToolParams.handler_key`.
 
-Populated by `temporalize_function_toolset` at capability-bind time — always before any workflow
-polls, since `TemporalDurability` must bind before the worker starts (`_check_bindable`). Module-level
+Populated by `temporalize_function_toolset` at capability-bind time (always before any workflow
+polls), since `TemporalDurability` must bind before the worker starts (`_check_bindable`). Module-level
 because `_ToolCallWorkflow` has to be one shared class (see its docstring for why), so it can't close
 over a specific toolset the way each toolset's own `call_tool_activity` closure does.
 """
@@ -219,6 +219,9 @@ def temporalize_function_toolset(
                     # per-tool metadata always wins, same merge convention as the activity branch.
                     merged: ChildWorkflowConfig = {
                         'id': default_id,
+                        # Default label for the Temporal UI, mirroring the activity branch's `summary`
+                        # default below; always overridable via `child_workflow_config` or per-tool metadata.
+                        'static_summary': f'call tool: {toolset.id}:{name}',
                         **(child_workflow_config or {}),
                         **cast('ChildWorkflowConfig', per_tool_config),
                     }
