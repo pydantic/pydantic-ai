@@ -403,6 +403,7 @@ def _insert_cache_point_before_trailing_documents(
     cache_point: ContentBlockUnionTypeDef,
     *,
     raise_if_cannot_insert: bool = False,
+    replace_existing: bool = False,
 ) -> bool:
     """Insert a cache point before trailing document/video content.
 
@@ -415,6 +416,8 @@ def _insert_cache_point_before_trailing_documents(
         cache_point: The cache point block to insert.
         raise_if_cannot_insert: If True, raises UserError when cache point cannot be inserted
             (e.g., when the message contains only documents/videos). If False, silently skips.
+        replace_existing: If True, an existing cache point at the insertion position is
+            replaced (the latest marker wins). If False, it is kept and the new one skipped.
 
     Returns:
         True if a cache point was inserted, False otherwise.
@@ -432,9 +435,11 @@ def _insert_cache_point_before_trailing_documents(
             break
 
     if trailing_start is not None and trailing_start > 0:
-        # Skip if there's already a cache point at the insertion position
         prev_block = content[trailing_start - 1]
         if isinstance(prev_block, dict) and 'cachePoint' in prev_block:
+            if replace_existing:
+                content[trailing_start - 1] = cache_point
+                return True
             return False
         content.insert(trailing_start, cache_point)
         return True
@@ -450,7 +455,7 @@ def _insert_cache_point_before_trailing_documents(
                 'due to Bedrock API restrictions. '
                 'Add text content before or after your document or video to enable caching.'
             )
-        return False  # pragma: no cover
+        return False
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -1172,6 +1177,7 @@ class BedrockConverseModel(Model[BaseClient]):
                                 part,
                                 document_count,
                                 supports_prompt_caching=profile.get('bedrock_supports_prompt_caching', False),
+                                prior_messages=bedrock_messages,
                             )
                         )
                     elif isinstance(part, ToolReturnPart):
@@ -1349,6 +1355,7 @@ class BedrockConverseModel(Model[BaseClient]):
         # Llama and Mistral reject anything sharing the turn (the `toolResult` must be alone). When the
         # combined content isn't co-locatable (per `colocatable_content`), split the turns instead of
         # merging. See https://github.com/pydantic/pydantic-ai/issues/6081 and `bedrock_tool_result_colocatable_content`.
+        # `cachePoint` blocks are cache markers, not content, so they never force a split.
         processed_messages: list[MessageUnionTypeDef] = []
         last_message: dict[str, Any] | None = None
         for current_message in bedrock_messages:
@@ -1360,7 +1367,9 @@ class BedrockConverseModel(Model[BaseClient]):
                 merged_content = [*last_message['content'], *current_message['content']]
                 has_tool_result = any('toolResult' in block for block in merged_content)
                 has_non_colocatable = any(
-                    'toolResult' not in block and next(iter(block)) not in colocatable_content
+                    'toolResult' not in block
+                    and 'cachePoint' not in block
+                    and next(iter(block)) not in colocatable_content
                     for block in merged_content
                 )
                 if has_tool_result and has_non_colocatable:
@@ -1452,6 +1461,38 @@ class BedrockConverseModel(Model[BaseClient]):
         return content
 
     @staticmethod
+    def _attach_cache_point_to_last_user_message(
+        messages: list[MessageUnionTypeDef], cache_point: ContentBlockUnionTypeDef
+    ) -> None:
+        """Attach a cache point to the end of the last user message in `messages`.
+
+        A `CachePoint` leading a user prompt part marks a cache boundary right before that
+        part, i.e. at the end of the preceding user content. If that content already ends
+        with a cache point, the latest marker wins, matching the Anthropic mapper.
+
+        Raises:
+            UserError: If the conversation contains no prior user message.
+        """
+        content: list[Any] | None = next(
+            (
+                message['content']
+                for message in reversed(messages)
+                if message['role'] == 'user' and isinstance(message['content'], list) and message['content']
+            ),
+            None,
+        )
+        if content is None:
+            raise UserError(
+                'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
+                'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
+            )
+        last_block = content[-1]
+        if isinstance(last_block, dict) and 'cachePoint' in last_block:
+            content[-1] = cache_point
+        else:
+            _insert_cache_point_before_trailing_documents(content, cache_point, replace_existing=True)
+
+    @staticmethod
     async def _map_file_to_content_block(
         file: ImageUrl | DocumentUrl | VideoUrl | BinaryContent,
         document_count: Iterator[int],
@@ -1494,6 +1535,7 @@ class BedrockConverseModel(Model[BaseClient]):
         document_count: Iterator[int],
         *,
         supports_prompt_caching: bool,
+        prior_messages: list[MessageUnionTypeDef],
     ) -> list[MessageUnionTypeDef]:
         content: list[ContentBlockUnionTypeDef] = []
         if isinstance(part.content, str):
@@ -1532,10 +1574,17 @@ class BedrockConverseModel(Model[BaseClient]):
                     if not supports_prompt_caching:
                         # Silently skip CachePoint for models that don't support prompt caching
                         continue
-                    if not content or 'cachePoint' in content[-1]:
+                    if not content:
+                        # A leading CachePoint marks a cache boundary right before this part, i.e. at
+                        # the end of the preceding user content, so attach it there. Each part maps to
+                        # its own message on Bedrock, so parts injected behind a cache boundary would
+                        # otherwise present the marker as the first block and fail.
+                        # See https://github.com/pydantic/pydantic-ai/issues/7004.
+                        self._attach_cache_point_to_last_user_message(prior_messages, self._get_cache_point(item.ttl))
+                        continue
+                    if 'cachePoint' in content[-1]:
                         raise UserError(
-                            'CachePoint cannot be the first content in a user message - there must be previous content to cache when using Bedrock. '
-                            'To cache system instructions or tool definitions, use the `bedrock_cache_instructions` or `bedrock_cache_tool_definitions` settings instead.'
+                            'CachePoint cannot be preceded by another CachePoint - there must be content between cache points when using Bedrock.'
                         )
                     _insert_cache_point_before_trailing_documents(
                         content,
@@ -1550,7 +1599,8 @@ class BedrockConverseModel(Model[BaseClient]):
         has_text = any('text' in block for block in content)
         if has_document and not has_text:
             content.insert(0, {'text': 'See attached document(s).'})
-        return [{'role': 'user', 'content': content}]
+        # A part holding only a leading CachePoint maps to no content of its own.
+        return [{'role': 'user', 'content': content}] if content else []
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
