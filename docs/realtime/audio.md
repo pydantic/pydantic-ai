@@ -55,8 +55,9 @@ async def main():
         async for event in session:
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
-        await session.close()
-        await asyncio.gather(audio_task, transcript_task)
+
+    # Leaving the `async with` block closes the session, which ends every live view.
+    await asyncio.gather(audio_task, transcript_task)
 ```
 
 Each view is independently bounded; a slow consumer drops its oldest item rather than stalling
