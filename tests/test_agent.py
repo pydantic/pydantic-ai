@@ -9365,6 +9365,49 @@ def test_override_toolsets():
     assert result.output == snapshot('{"baz":"Hello from baz"}')
 
 
+def test_registered_toolsets_ignores_overrides():
+    """`_registered_toolsets` reports what the agent was built with, not later additions.
+
+    Durable execution reads it to tell construction-time toolsets — wrapped in activities/steps/tasks
+    when the capability bound — from ones that arrive later and were never wrapped. `toolsets`
+    can't serve that purpose because it includes decorator registrations and returns the *overridden*
+    list while an override is in scope.
+    Not reachable through the public API: the distinction only shows up inside a workflow or flow,
+    where `test_temporal.py`/`test_dbos.py`/`test_prefect.py` cover it end to end.
+    """
+    registered = FunctionToolset(id='registered')
+    agent = Agent('test', toolsets=[registered])
+    overriding = FunctionToolset(id='overriding')
+
+    with agent.override(toolsets=[overriding], tools=[lambda: 'hi']):
+        # The agent's own function toolset leads both lists; only the user toolsets differ.
+        assert list(agent.toolsets)[1:] == [overriding]
+        assert list(agent._registered_toolsets)[1:] == [registered]  # pyright: ignore[reportPrivateUsage]
+        assert agent.toolsets[0] is not agent._registered_toolsets[0]  # pyright: ignore[reportPrivateUsage]
+
+    assert list(agent._registered_toolsets) == list(agent.toolsets)  # pyright: ignore[reportPrivateUsage]
+
+    @agent.toolset(id='decorated')
+    def decorated_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+        return FunctionToolset()
+
+    assert isinstance(decorated_toolset(RunContext(deps=None, model=TestModel(), usage=RunUsage())), FunctionToolset)
+    assert [toolset.id for toolset in agent.toolsets] == ['<agent>', 'registered', 'decorated']
+    assert [toolset.id for toolset in agent._registered_toolsets] == [  # pyright: ignore[reportPrivateUsage]
+        '<agent>',
+        'registered',
+    ]
+
+    # A wrapper reports its wrapped agent's construction-time toolsets, even during an override.
+    wrapper = WrapperAgent(agent)
+    with agent.override(toolsets=[overriding]):
+        assert list(wrapper.toolsets)[1:] == [overriding]
+        assert list(wrapper._registered_toolsets)[1:] == [registered]  # pyright: ignore[reportPrivateUsage]
+
+    # The `AbstractAgent` default remains appropriate for subclasses whose `toolsets` never includes later additions.
+    assert list(super(WrapperAgent, wrapper)._registered_toolsets) == list(wrapper.toolsets)  # pyright: ignore[reportPrivateUsage]
+
+
 def test_override_tools():
     def foo() -> str:
         return 'Hello from foo'

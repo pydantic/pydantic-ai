@@ -494,6 +494,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             for toolset in agent_toolsets
             if not isinstance(toolset, AbstractToolset)
         ]
+        self._constructor_dynamic_toolset_count = len(self._dynamic_toolsets)
         self._user_toolsets = [toolset for toolset in agent_toolsets if isinstance(toolset, AbstractToolset)]
 
         # Populated by durable-execution subclasses; base agents use the run-level kwarg.
@@ -2717,8 +2718,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Args:
             func: The toolset function to register.
             per_run_step: Whether to re-evaluate the toolset for each run step. Defaults to True.
-            id: An optional unique ID for the dynamic toolset. Required for use with durable execution
-                environments like Temporal, where the ID identifies the toolset's activities within the workflow.
+            id: An optional unique ID for the dynamic toolset. Under durable execution, construct a
+                [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] with this ID and pass it to
+                `Agent(toolsets=[...])` instead; decorator registrations cannot be used inside a
+                workflow or flow because they happen after durable units are created.
         """
 
         def toolset_decorator(func_: ToolsetFunc[AgentDepsT]) -> ToolsetFunc[AgentDepsT]:
@@ -2969,14 +2972,26 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """
         return self._build_toolset_list()
 
+    @property
+    def _registered_toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        return self._build_toolset_list(ignore_overrides=True)
+
     def _build_toolset_list(
         self,
         cap_toolsets: Sequence[AgentToolset[AgentDepsT]] | None = None,
+        *,
+        ignore_overrides: bool = False,
     ) -> list[AbstractToolset[AgentDepsT]]:
-        """Build the list of toolsets, optionally with per-run capability toolsets."""
+        """Build the list of toolsets, optionally with per-run capability toolsets.
+
+        With `ignore_overrides`, active `override(tools=...)`/`override(toolsets=...)` values and
+        dynamic toolsets added with `@agent.toolset` after construction are skipped, so the result
+        is what the agent was built with. See
+        [`_registered_toolsets`][pydantic_ai.agent.AbstractAgent._registered_toolsets].
+        """
         toolsets: list[AbstractToolset[AgentDepsT]] = []
 
-        if some_tools := self._override_tools.get():
+        if not ignore_overrides and (some_tools := self._override_tools.get()):
             # `max_retries=None` for the same reason as the agent's own function toolset: the
             # tool-retry default rides `ToolManager.default_max_retries` rather than being baked here.
             function_toolset = _AgentFunctionToolset(
@@ -2989,11 +3004,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             function_toolset = self._function_toolset
         toolsets.append(function_toolset)
 
-        if some_user_toolsets := self._override_toolsets.get():
+        if not ignore_overrides and (some_user_toolsets := self._override_toolsets.get()):
             toolsets.extend(some_user_toolsets.value)
         else:
             toolsets.extend(self._user_toolsets)
-            toolsets.extend(self._dynamic_toolsets)
+            dynamic_toolsets = (
+                self._dynamic_toolsets[: self._constructor_dynamic_toolset_count]
+                if ignore_overrides
+                else self._dynamic_toolsets
+            )
+            toolsets.extend(dynamic_toolsets)
             for cap_ts in cap_toolsets if cap_toolsets is not None else self._cap_toolsets:
                 if isinstance(cap_ts, AbstractToolset):
                     toolsets.append(cap_ts)  # pyright: ignore[reportUnknownArgumentType]
