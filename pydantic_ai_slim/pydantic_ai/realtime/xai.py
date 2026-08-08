@@ -257,23 +257,20 @@ class XaiRealtimeModel(RealtimeModel):
             pinned version like `grok-voice-think-fast-1.0`. The `model` query parameter is required by
             the server, which otherwise falls back to a default silently.
         provider: The provider to use for authentication and the base URL. Defaults to `'xai'`.
+        settings: [Model settings][pydantic_ai.realtime.RealtimeModelSettings] used as defaults for
+            realtime sessions. A [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect]
+            policy enables xAI's native session resumption: prior turns are restored when reconnecting
+            within xAI's resumption window (reportedly ~30 minutes).
         profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
             merged over the provider's — a partial dict, or a callable taking the resolved profile and
             returning the one to use. Mirrors `profile=` on a standard
             [`Model`][pydantic_ai.models.Model], and is the escape hatch when a model name doesn't
             identify the model (e.g. an Azure deployment named something other than its model).
-        reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
-            recover from a dropped connection. Setting a policy enables xAI's native session resumption;
-            prior turns are restored when reconnecting within xAI's resumption window (reportedly ~30
-            minutes). With no policy, the low-level connection reports a non-recoverable session error;
-            `RealtimeSession` raises
-            [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from iteration.
     """
 
     model: str = 'grok-voice-latest'
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
-    reconnect: ReconnectPolicy | None = None
     _provider: XaiProvider = field(init=False, repr=False)
     _api_key: str = field(init=False, repr=False)
 
@@ -287,11 +284,9 @@ class XaiRealtimeModel(RealtimeModel):
         provider: XaiProvider | str = 'xai',
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
-        reconnect: ReconnectPolicy | None = None,
     ) -> None:
         self.model = model
         self.settings = settings
-        self.reconnect = reconnect
         self._profile = profile
         if isinstance(provider, str):
             provider = cast('XaiProvider', infer_provider(provider))
@@ -367,7 +362,7 @@ class XaiRealtimeModel(RealtimeModel):
             # Grok Voice exposes only enabled-at-high and disabled, so every enabled unified effort
             # maps to its sole enabled value.
             config['reasoning'] = {'effort': 'high' if thinking is not False else 'none'}
-        if self.reconnect is not None:
+        if model_settings.get('reconnect') is not None:
             config['resumption'] = {'enabled': True}
         return config
 
@@ -385,6 +380,7 @@ class XaiRealtimeModel(RealtimeModel):
         # Propagate trace context over the handshake (see the OpenAI provider for the rationale).
         inject_trace_context(headers)
         settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
+        reconnect = settings.get('reconnect')
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages, model_request_parameters) or ''
         session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
@@ -422,7 +418,7 @@ class XaiRealtimeModel(RealtimeModel):
             model = session.model if isinstance(session, RealtimeSessionCreateRequest) else None
             if isinstance(model, str) and model:
                 server_model = model
-            if self.reconnect is not None:
+            if reconnect is not None:
                 conversation = map_conversation_event(
                     await expect_event(ws, 'conversation.created', timeout=handshake_timeout)
                 )
@@ -462,7 +458,7 @@ class XaiRealtimeModel(RealtimeModel):
             connection = XaiRealtimeConnection(
                 ws,
                 dial=dial,
-                reconnect=self.reconnect,
+                reconnect=reconnect,
                 input_transcription_enabled=transcription_enabled,
                 model_name=server_model,
                 # A re-dial's `session.created` updates `server_model`, so read it through the closure

@@ -50,6 +50,7 @@ from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, Web
 from pydantic_ai.realtime import (
     AudioInput,
     RealtimeModelProfile,
+    RealtimeModelSettings,
     RealtimeResponseInterruptedEvent,
     RealtimeSession,
     RealtimeSessionReconnectEvent,
@@ -118,10 +119,11 @@ def _connect(
     instructions: str,
     *,
     messages: Sequence[ModelMessage] | None = None,
+    model_settings: RealtimeModelSettings | None = None,
 ) -> AbstractAsyncContextManager[GoogleRealtimeConnection]:
     return model.connect(
         messages=[*(messages or ()), ModelRequest(parts=[], instructions=instructions)],
-        model_settings=None,
+        model_settings=model_settings,
         model_request_parameters=ModelRequestParameters(),
     )
 
@@ -1769,19 +1771,56 @@ async def test_connect_seed_skips_compaction_parts() -> None:
     assert [part.text for turn in turns for part in turn.parts] == ['the answer']
 
 
-async def test_connect_wires_reconnect_only_with_resumption() -> None:
-    # reconnect + session resumption → the connection can re-dial.
+async def test_connect_reconnect_auto_enables_session_resumption() -> None:
+    # A `reconnect` policy alone (here a model-level default via `settings=`) is enough: session
+    # resumption is requested automatically, so the server restores state when the connection re-dials.
+    captured: dict[str, Any] = {}
     on = _model(
         _RecordingSession([[_turn('hi')]]),
-        reconnect=ReconnectPolicy(),
-        settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True),
+        captured,
+        settings=GoogleRealtimeModelSettings(reconnect=ReconnectPolicy()),
     )
     async with _connect(on, 'x') as conn:
         assert conn._dial is not None and conn._reconnect is not None  # pyright: ignore[reportPrivateUsage]
-    # reconnect without resumption would lose state → not wired.
-    off = _model(_RecordingSession([[_turn('hi')]]), reconnect=ReconnectPolicy())
-    async with _connect(off, 'x') as conn:
+    assert captured['config'].session_resumption == genai_types.SessionResumptionConfig(handle=None)
+
+    # An explicit `google_enable_session_resumption=True` without a policy still just requests
+    # handles; nothing re-dials.
+    captured = {}
+    handles_only = _model(
+        _RecordingSession([[_turn('hi')]]),
+        captured,
+        settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True),
+    )
+    async with _connect(handles_only, 'x') as conn:
         assert conn._dial is None and conn._reconnect is None  # pyright: ignore[reportPrivateUsage]
+    assert captured['config'].session_resumption == genai_types.SessionResumptionConfig(handle=None)
+
+
+async def test_connect_reconnect_from_session_model_settings() -> None:
+    # A per-session policy (via `model_settings=`) enables reconnect + resumption on a model with no
+    # defaults, following the standard model-settings layering.
+    captured: dict[str, Any] = {}
+    model = _model(_RecordingSession([[_turn('hi')]]), captured)
+    async with _connect(model, 'x', model_settings={'reconnect': ReconnectPolicy()}) as conn:
+        assert conn._dial is not None and conn._reconnect is not None  # pyright: ignore[reportPrivateUsage]
+    assert captured['config'].session_resumption == genai_types.SessionResumptionConfig(handle=None)
+
+
+async def test_connect_rejects_reconnect_with_resumption_disabled() -> None:
+    # An explicit `google_enable_session_resumption=False` can't be combined with a `reconnect`
+    # policy: a re-dial without resumption would lose the conversation, so `connect` fails loudly
+    # before dialing rather than silently reconnecting into a model that remembers nothing.
+    captured: dict[str, Any] = {}
+    model = _model(
+        _RecordingSession(),
+        captured,
+        settings=GoogleRealtimeModelSettings(reconnect=ReconnectPolicy(), google_enable_session_resumption=False),
+    )
+    with pytest.raises(UserError, match='requires Gemini session resumption'):
+        async with _connect(model, 'x'):
+            pass  # pragma: no cover
+    assert 'config' not in captured  # no socket was dialed
 
 
 async def test_iter_ends_on_api_error_close() -> None:
@@ -2247,8 +2286,7 @@ async def test_connect_reconnect_closes_previous_session() -> None:
 
     model = GoogleRealtimeModel(
         provider=GoogleProvider(client=cast('Client', _Client())),
-        settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True),
-        reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False),
+        settings=GoogleRealtimeModelSettings(reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)),
     )
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]

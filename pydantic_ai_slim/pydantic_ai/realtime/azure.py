@@ -11,7 +11,7 @@ from openai import AsyncOpenAI
 from ..exceptions import UserError
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
-from ._base import RealtimeModelProfileSpec, RealtimeModelSettings, ReconnectPolicy
+from ._base import RealtimeModelProfileSpec, RealtimeModelSettings
 from .openai import OpenAIRealtimeConnection, OpenAIRealtimeModel
 
 __all__ = ('AzureRealtimeModel', 'AzureRealtimeConnection')
@@ -47,7 +47,6 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         provider: Provider[AsyncOpenAI] | str = 'azure',
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
-        reconnect: ReconnectPolicy | None = None,
     ) -> None:
         """Create an Azure OpenAI realtime model.
 
@@ -56,14 +55,13 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
                 use. Azure deployments are conventionally named after their model; when yours isn't,
                 `profile` is how to correct the facts inferred from the name.
             provider: The provider supplying the resource endpoint and API key. Defaults to `'azure'`.
-            settings: Model settings used as defaults for realtime sessions.
+            settings: [Model settings][pydantic_ai.realtime.RealtimeModelSettings] used as defaults
+                for realtime sessions.
             profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
                 merged over the provider's — a partial dict, or a callable taking the resolved profile
                 and returning the one to use.
-            reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to
-                transparently recover from a dropped connection.
         """
-        super().__init__(model, provider=provider, settings=settings, profile=profile, reconnect=reconnect)
+        super().__init__(model, provider=provider, settings=settings, profile=profile)
 
     @staticmethod
     def _resolve_provider(provider: Provider[AsyncOpenAI] | str) -> AzureProvider:

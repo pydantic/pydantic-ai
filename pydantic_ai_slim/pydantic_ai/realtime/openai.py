@@ -817,15 +817,13 @@ class OpenAIRealtimeModel(RealtimeModel):
         model: The model name, e.g. `gpt-realtime` or `gpt-realtime-2.1-mini`.
         provider: The provider to use for authentication and the base URL. Defaults to `'openai'`.
             Azure OpenAI is not supported (its realtime endpoint uses a different URL and auth scheme).
+        settings: [Model settings][pydantic_ai.realtime.RealtimeModelSettings] used as defaults for
+            realtime sessions.
         profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
             merged over the provider's — a partial dict, or a callable taking the resolved profile and
             returning the one to use. Mirrors `profile=` on a standard
             [`Model`][pydantic_ai.models.Model], and is the escape hatch when a model name doesn't
             identify the model (e.g. an Azure deployment named something other than its model).
-        reconnect: Optional [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently
-            recover from a dropped connection. With no policy, the low-level connection reports a
-            non-recoverable session error; `RealtimeSession` raises
-            [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from iteration.
     """
 
     # The connection class `connect` yields; a protocol clone (Azure) overrides it to correct the
@@ -835,7 +833,6 @@ class OpenAIRealtimeModel(RealtimeModel):
     model: str = 'gpt-realtime'
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
-    reconnect: ReconnectPolicy | None = None
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
 
     # Written out rather than generated because `profile` has to be an init argument while
@@ -848,11 +845,9 @@ class OpenAIRealtimeModel(RealtimeModel):
         provider: Provider[AsyncOpenAI] | str = 'openai',
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
-        reconnect: ReconnectPolicy | None = None,
     ) -> None:
         self.model = model
         self.settings = settings
-        self.reconnect = reconnect
         self._profile = profile
         self._provider = self._resolve_provider(provider)
 
@@ -1027,7 +1022,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             connection = self._connection_type(
                 ws,
                 dial=dial,
-                reconnect=self.reconnect,
+                reconnect=settings.get('reconnect'),
                 input_transcription_enabled=transcription_enabled,
                 model_name=server_model,
                 model_name_getter=lambda: server_model,

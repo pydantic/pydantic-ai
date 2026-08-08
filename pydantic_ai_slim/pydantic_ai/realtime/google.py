@@ -203,7 +203,15 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Raw values merged last into the Google `LiveConnectConfig`."""
 
     google_enable_session_resumption: bool
-    """Whether to request session-resumption handles. Defaults to `False`."""
+    """Whether to request session-resumption handles, which let a re-dial restore the server-side
+    conversation.
+
+    When absent, handles are requested exactly when a
+    [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy is set. An explicit
+    `False` cannot be combined with a `reconnect` policy: a re-dial without resumption would lose the
+    conversation, so `connect` raises [`UserError`][pydantic_ai.exceptions.UserError] rather than
+    silently reconnecting into a model that remembers nothing.
+    """
 
     google_async_tool_calls: bool
     """Whether tool calls may run without pausing the model's speech. Defaults to `False`.
@@ -776,16 +784,11 @@ class GoogleRealtimeModel(RealtimeModel):
             returning the one to use. Mirrors `profile=` on a standard
             [`Model`][pydantic_ai.models.Model], and is the escape hatch when a model name doesn't
             identify the model (e.g. an Azure deployment named something other than its model).
-        reconnect: Backoff policy for transparently re-dialing a dropped session; requires
-            `google_enable_session_resumption=True`. With no policy, the low-level connection reports
-            a non-recoverable session error; `RealtimeSession` raises
-            [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from iteration.
     """
 
     model: str = 'gemini-2.5-flash-native-audio-latest'
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
-    reconnect: ReconnectPolicy | None = None
     _provider: Provider[Client] = field(init=False, repr=False)
     _gateway: bool = field(init=False, default=False, repr=False)
 
@@ -799,11 +802,9 @@ class GoogleRealtimeModel(RealtimeModel):
         provider: Provider[Client] | str = 'google',
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
-        reconnect: ReconnectPolicy | None = None,
     ) -> None:
         self.model = model
         self.settings = settings
-        self.reconnect = reconnect
         self._profile = profile
         if isinstance(provider, str):
             provider = cast('Provider[Client]', infer_provider(provider))
@@ -889,6 +890,16 @@ class GoogleRealtimeModel(RealtimeModel):
         if 'input_transcription_model' in settings and settings['input_transcription_model'] is None:
             return False
         return True
+
+    def _session_resumption_enabled(self, settings: GoogleRealtimeModelSettings) -> bool:
+        """Whether to request session-resumption handles.
+
+        An explicit `google_enable_session_resumption` wins; when absent, a `reconnect` policy implies
+        resumption, since a re-dial without a handle would lose the conversation.
+        """
+        if (enabled := settings.get('google_enable_session_resumption')) is not None:
+            return enabled
+        return settings.get('reconnect') is not None
 
     def _realtime_input_config(
         self, model_settings: GoogleRealtimeModelSettings
@@ -998,7 +1009,7 @@ class GoogleRealtimeModel(RealtimeModel):
                 trigger_tokens=context_compression.trigger_tokens,
                 sliding_window=genai_types.SlidingWindow(target_tokens=context_compression.target_tokens),
             )
-        if settings.get('google_enable_session_resumption', False):
+        if self._session_resumption_enabled(settings):
             config.session_resumption = genai_types.SessionResumptionConfig(handle=resumption_handle)
         # Typed as `list[Any]` because `LiveConnectConfig.tools` is a broad union (Tool | Callable |
         # MCP types); a precisely-typed `list[Tool]` isn't assignable to it (list invariance).
@@ -1035,9 +1046,18 @@ class GoogleRealtimeModel(RealtimeModel):
         client = self._provider.client
         settings = cast('GoogleRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         instructions = get_instructions(messages, model_request_parameters) or ''
-        # Transparent reconnect needs both a backoff policy and session resumption (so the server
-        # restores state on re-dial). Without resumption a re-dial would lose the conversation.
-        reconnectable = self.reconnect is not None and settings.get('google_enable_session_resumption', False)
+        # Transparent reconnect needs session resumption, so the server restores state on re-dial;
+        # a `reconnect` policy requests it automatically (see `_session_resumption_enabled`). An
+        # explicit opt-out alongside a policy would silently reconnect into a model that remembers
+        # nothing, so it fails loudly instead.
+        reconnect = settings.get('reconnect')
+        if reconnect is not None and settings.get('google_enable_session_resumption') is False:
+            raise UserError(
+                'A `reconnect` policy requires Gemini session resumption, but '
+                '`google_enable_session_resumption=False` explicitly disables it. Remove the '
+                '`reconnect` policy, or leave `google_enable_session_resumption` unset so the '
+                'policy enables resumption.'
+            )
         # The live connection's context manager. A reconnect closes the previous one before opening
         # the next (so they don't accumulate), and teardown closes whatever is current.
         cm: AbstractAsyncContextManager[AsyncSession] | None = None
@@ -1113,8 +1133,8 @@ class GoogleRealtimeModel(RealtimeModel):
                 profile=self.profile,
                 provider_name=self._provider.name,
                 provider_url=self._provider.base_url,
-                dial=dial if reconnectable else None,
-                reconnect=self.reconnect if reconnectable else None,
+                dial=dial if reconnect is not None else None,
+                reconnect=reconnect,
                 input_transcription_enabled=self._input_transcription(settings),
                 async_tool_calls=self._async_tool_calls(settings),
             )

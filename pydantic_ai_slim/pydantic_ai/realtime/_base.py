@@ -229,6 +229,22 @@ class RealtimeModelSettings(TypedDict, total=False):
     Supported by: OpenAI, Azure OpenAI, and xAI.
     """
 
+    reconnect: ReconnectPolicy
+    """[`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] to transparently recover from a
+    dropped connection. Without a policy, an unexpectedly closed connection is fatal: the low-level
+    connection reports a non-recoverable session error and `RealtimeSession` raises
+    [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from iteration.
+
+    What server-side state survives a reconnect depends on the provider (see
+    [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]). Setting a policy enables native
+    session resumption on the providers that offer it: xAI always, and Gemini unless
+    `google_enable_session_resumption=False` is set explicitly — that combination raises
+    [`UserError`][pydantic_ai.exceptions.UserError] at connect time, since a re-dial without
+    resumption would lose the conversation.
+
+    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
+    """
+
 
 def resolve_advertised_tools(
     tools: list[ToolDefinition] | None, tool_choice: ToolChoice
@@ -974,13 +990,17 @@ class RealtimeModel(AbstractModel):
 class ReconnectPolicy:
     """How to recover when a realtime connection drops mid-session.
 
+    Set as the `reconnect` key of [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings],
+    either as a model-level default (`settings=`) or per session (`model_settings=`).
+
     On a dropped connection the session is re-dialed and its configuration (instructions, tools,
     voice, ...) re-applied, emitting a
     [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] event. What server-side state
     survives depends on the provider: OpenAI Realtime and Azure OpenAI start a fresh turn (the audio
-    buffer and prior turns are lost), while Gemini Live and xAI restore prior turns. Gemini requires
-    `google_enable_session_resumption=True`; xAI enables native resumption automatically whenever a
-    reconnect policy is set.
+    buffer and prior turns are lost), while Gemini Live and xAI restore prior turns through native
+    session resumption, enabled automatically whenever a reconnect policy is set (Gemini honors an
+    explicit `google_enable_session_resumption=False` opt-out by refusing the combination with a
+    [`UserError`][pydantic_ai.exceptions.UserError]).
     """
 
     max_attempts: int = 3

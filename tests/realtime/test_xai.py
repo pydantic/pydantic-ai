@@ -272,8 +272,12 @@ def test_session_config_shape() -> None:
 
 def test_session_config_resumption_follows_reconnect_policy() -> None:
     assert 'resumption' not in _model()._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
-    config = _model(reconnect=rt_xai.ReconnectPolicy())._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
-    assert config['resumption'] == {'enabled': True}
+    # A model-level default policy (via `settings=`) enables native resumption...
+    model_level = _model(rt_xai.XaiRealtimeModelSettings(reconnect=rt_xai.ReconnectPolicy()))
+    assert model_level._session_config('hi', None, None)['resumption'] == {'enabled': True}  # pyright: ignore[reportPrivateUsage]
+    # ...and so does a per-session policy on a model with no defaults.
+    per_session = rt_xai.XaiRealtimeModelSettings(reconnect=rt_xai.ReconnectPolicy())
+    assert _model()._session_config('hi', None, per_session)['resumption'] == {'enabled': True}  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize(
@@ -712,7 +716,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     connect = _RecordingConnect([dropped, good])
     monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
 
-    model = _model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0, max_attempts=1))
+    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0, max_attempts=1)))
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
@@ -785,7 +789,7 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
     monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([dropped, resumed]))
 
     agent = Agent()
-    model = _model(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0, max_attempts=1))
+    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0, max_attempts=1)))
     async with agent.realtime(model).session() as session:
         await session.send('Hello.')
         events = await collect_session_events(session)
@@ -842,7 +846,9 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
 
     connect = _DropThenFail()
     monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
-    model = _model(reconnect=rt_xai.ReconnectPolicy(max_attempts=1, base_delay=0.0, jitter=False))
+    model = _model(
+        rt_xai.XaiRealtimeModelSettings(reconnect=rt_xai.ReconnectPolicy(max_attempts=1, base_delay=0.0, jitter=False))
+    )
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
 
@@ -893,7 +899,7 @@ async def test_connect_rejects_conversation_created_without_id(monkeypatch: pyte
     monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
 
     with pytest.raises(RuntimeError, match=r'did not include a `conversation\.id`'):
-        async with _connect(_model(reconnect=rt_xai.ReconnectPolicy()), 'x'):
+        async with _connect(_model(rt_xai.XaiRealtimeModelSettings(reconnect=rt_xai.ReconnectPolicy())), 'x'):
             pass  # pragma: no cover
 
 

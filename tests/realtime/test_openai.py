@@ -2640,12 +2640,31 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     connect = _RecordingConnect([dropped, good])
     monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
 
-    model = OpenAIRealtimeModel('gpt-realtime', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1))
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', settings={'reconnect': rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1)}
+    )
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
     assert events == [RealtimeSessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
     assert connect.closed == [dropped, good]
+
+
+@pytest.mark.anyio
+async def test_reconnect_policy_follows_model_settings_layering(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`reconnect` layers like any other model setting: the model-level default applies to every
+    session, and a per-session policy overrides it."""
+    default_policy = rt_openai.ReconnectPolicy(max_attempts=1)
+    session_policy = rt_openai.ReconnectPolicy(max_attempts=2)
+    model = OpenAIRealtimeModel('gpt-realtime', settings={'reconnect': default_policy})
+
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(FakeWebSocket([_created(), _updated()])))
+    async with _connect(model, 'x') as conn:
+        assert conn._reconnect is default_policy  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(FakeWebSocket([_created(), _updated()])))
+    async with _connect(model, 'x', model_settings={'reconnect': session_policy}) as conn:
+        assert conn._reconnect is session_policy  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.anyio
@@ -2655,7 +2674,9 @@ async def test_reconnect_updates_server_reported_model(monkeypatch: pytest.Monke
     dropped = _DropAfterHandshake([initial_created, _updated()])
     good = FakeWebSocket([reconnected_created, _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', _RecordingConnect([dropped, good]))
-    model = OpenAIRealtimeModel('requested-model', reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1))
+    model = OpenAIRealtimeModel(
+        'requested-model', settings={'reconnect': rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1)}
+    )
 
     async with _connect(model, 'x') as conn:
         await collect_codec_events(conn)
@@ -2687,7 +2708,7 @@ async def test_reconnect_refreshes_async_api_key(monkeypatch: pytest.MonkeyPatch
     model = OpenAIRealtimeModel(
         'gpt-realtime',
         provider=OpenAIProvider(openai_client=AsyncOpenAI(api_key=provide_key)),
-        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+        settings={'reconnect': rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1)},
     )
 
     async with _connect(model, 'x') as conn:
@@ -3412,7 +3433,7 @@ async def test_reconnect_replays_the_conversation(monkeypatch: pytest.MonkeyPatc
     model = OpenAIRealtimeModel(
         'gpt-realtime',
         provider=OpenAIProvider(api_key='k'),
-        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+        settings={'reconnect': rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1)},
     )
     # What a session would offer, with every kind of media a call accumulates: retained audio on both
     # sides, and a video frame sent alongside text. All of it is left behind; the words come back.
@@ -3502,7 +3523,7 @@ async def test_reconnect_without_a_session_does_not_replay(monkeypatch: pytest.M
     model = OpenAIRealtimeModel(
         'gpt-realtime',
         provider=OpenAIProvider(api_key='k'),
-        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+        settings={'reconnect': rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1)},
     )
     async with _connect(model, 'be brief') as conn:
         events = await collect_codec_events(conn)
