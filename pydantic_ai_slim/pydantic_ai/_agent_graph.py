@@ -1544,16 +1544,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.deps.resumed_request_index = shifted if shifted >= 0 else None
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = messages
-
-        # History processing can add or remove `load_capability` evidence, and the request's reveals
-        # are re-derived from the processed history below. Re-derive the run-level set from the same
-        # messages so the wire and the gate cannot disagree: without this, a processor that injects a
-        # complete load exchange gets the capability's tools advertised but `ToolManager` refuses the
-        # calls against the pre-processing snapshot. Nothing between here and tool dispatch can change
-        # the answer — the only message appended is the response, and a `load_capability` call needs a
-        # matching return to count, which only its execution can produce.
-        _refresh_loaded_capability_ids(ctx)
-
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index = _first_new_message_index(
             messages,
