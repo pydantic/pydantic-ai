@@ -26,7 +26,7 @@ from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
 from ...messages import ModelMessagesTypeAdapter
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
-from ._durability import TemporalDurability
+from ._durability import ContinueAsNewCallbacks, TemporalDurability
 from ._logfire import LogfirePlugin
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
@@ -35,6 +35,7 @@ from ._workflow import PydanticAIWorkflow
 __all__ = [
     'TemporalAgent',
     'TemporalDurability',
+    'ContinueAsNewCallbacks',
     'PydanticAIPlugin',
     'LogfirePlugin',
     'AgentPlugin',

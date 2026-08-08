@@ -78,7 +78,7 @@ from pydantic_ai.capabilities import (
     Toolset,
     WrapperCapability,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
@@ -141,6 +141,7 @@ try:
     from pydantic_ai.durable_exec._utils import StreamedActivityResult
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        ContinueAsNewCallbacks,
         LogfirePlugin,
         PydanticAIPlugin,
         PydanticAIWorkflow,
@@ -6722,13 +6723,18 @@ class _SentinelContinueAsNew(BaseException):
 class _SkipRequestAfterDurability(AbstractCapability[None]):
     """Short-circuit the run before `wrap_model_request` would try to schedule an activity.
 
-    `TemporalDurability` is pinned to the `innermost` ordering tier, so its own
-    `before_model_request` always fires *after* this capability's regardless of list
-    order; the `SkipModelRequest` it raises here keeps the run from ever reaching the
+    `TemporalDurability` is pinned to the `innermost` ordering tier, and this
+    capability joins that tier via `get_ordering()` below, `wrapped_by` it — so
+    `TemporalDurability.before_model_request` fires first, gets a real chance to
+    check its guards (and either continue as new or pass through), and only then
+    does the `SkipModelRequest` raised here keep the run from ever reaching the
     activity-routing `wrap_model_request`, which only works inside a real workflow.
     Only useful for the passthrough cases below — the "invokes user callable" test
     doesn't need it, since its own `continue_as_new` mock raises first.
     """
+
+    def get_ordering(self) -> CapabilityOrdering | None:
+        return CapabilityOrdering(position='innermost', wrapped_by=[TemporalDurability])
 
     async def before_model_request(
         self, ctx: RunContext[None], request_context: ModelRequestContext
@@ -6736,8 +6742,8 @@ class _SkipRequestAfterDurability(AbstractCapability[None]):
         raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
 
 
-async def test_durability_continue_as_new_args_none_is_passthrough():
-    """With no `continue_as_new_args`, nothing changes even when continue-as-new is suggested."""
+async def test_durability_continue_as_new_none_is_passthrough():
+    """With no `continue_as_new` callbacks, nothing changes even when continue-as-new is suggested."""
     agent = Agent(
         TestModel(),
         name='can_none_passthrough',
@@ -6760,9 +6766,9 @@ async def test_durability_continue_as_new_args_none_is_passthrough():
 
 
 async def test_durability_continue_as_new_invokes_user_callable():
-    """When suggested, the hook calls the user's callable with the run context and continues as new with its kwargs."""
+    """When suggested, the hook calls the user's `args` callable with the run context and continues as new with its kwargs."""
     received_contexts: list[RunContext[None]] = []
-    can_kwargs: dict[str, Any] = {'prompt': 'original prompt', 'usage': RunUsage(requests=1)}
+    can_kwargs: dict[str, Any] = {'args': ['original prompt', RunUsage(requests=1)]}
 
     def continue_as_new_args(ctx: RunContext[None]) -> dict[str, Any]:
         received_contexts.append(ctx)
@@ -6772,7 +6778,7 @@ async def test_durability_continue_as_new_invokes_user_callable():
         TestModel(),
         name='can_invoked',
         deps_type=type(None),
-        capabilities=[TemporalDurability(continue_as_new_args=continue_as_new_args)],
+        capabilities=[TemporalDurability(continue_as_new=ContinueAsNewCallbacks(args=continue_as_new_args))],
     )
 
     with (
@@ -6783,6 +6789,7 @@ async def test_durability_continue_as_new_invokes_user_callable():
         ),
         patch(
             'pydantic_ai.durable_exec.temporal._durability.workflow.continue_as_new',
+            autospec=True,
             side_effect=_SentinelContinueAsNew,
         ) as continue_as_new_mock,
     ):
@@ -6798,19 +6805,19 @@ async def test_durability_continue_as_new_invokes_user_callable():
 
 
 async def test_durability_continue_as_new_outside_workflow_is_passthrough():
-    """Outside a workflow, the hook does nothing even with `continue_as_new_args` set."""
+    """Outside a workflow, the hook does nothing even with `continue_as_new` callbacks set."""
     received_contexts: list[RunContext[None]] = []
 
-    def continue_as_new_args(ctx: RunContext[None]) -> dict[str, Any]:
+    def continue_as_new_args(ctx: RunContext[None]) -> dict[str, Any]:  # pragma: no cover
         received_contexts.append(ctx)
-        return {}  # pragma: no cover
+        return {}
 
     agent = Agent(
         TestModel(),
         name='can_outside_workflow',
         deps_type=type(None),
         capabilities=[
-            TemporalDurability(continue_as_new_args=continue_as_new_args),
+            TemporalDurability(continue_as_new=ContinueAsNewCallbacks(args=continue_as_new_args)),
             _SkipRequestAfterDurability(),
         ],
     )
@@ -6824,19 +6831,19 @@ async def test_durability_continue_as_new_outside_workflow_is_passthrough():
 
 
 async def test_durability_continue_as_new_not_suggested_is_passthrough():
-    """With `continue_as_new_args` set but no suggestion from Temporal, the hook does nothing."""
+    """With `continue_as_new` callbacks set but no suggestion from Temporal, the hook does nothing."""
     received_contexts: list[RunContext[None]] = []
 
-    def continue_as_new_args(ctx: RunContext[None]) -> dict[str, Any]:
+    def continue_as_new_args(ctx: RunContext[None]) -> dict[str, Any]:  # pragma: no cover
         received_contexts.append(ctx)
-        return {}  # pragma: no cover
+        return {}
 
     agent = Agent(
         TestModel(),
         name='can_not_suggested',
         deps_type=type(None),
         capabilities=[
-            TemporalDurability(continue_as_new_args=continue_as_new_args),
+            TemporalDurability(continue_as_new=ContinueAsNewCallbacks(args=continue_as_new_args)),
             _SkipRequestAfterDurability(),
         ],
     )
@@ -6854,6 +6861,77 @@ async def test_durability_continue_as_new_not_suggested_is_passthrough():
     assert result.output == 'skipped'
     continue_as_new_mock.assert_not_called()
     assert received_contexts == []
+
+
+async def test_durability_continue_as_new_when_overrides_suggestion():
+    """`when` fully replaces `is_continue_as_new_suggested()`, not just gates it.
+
+    `workflow.info()` isn't patched here on purpose: if the hook fell back to it despite
+    `when` being set, the call would blow up outside a real workflow and the test would
+    fail loudly, instead of silently passing for the wrong reason.
+    """
+    received_contexts: list[RunContext[None]] = []
+    can_kwargs: dict[str, Any] = {'args': ['original prompt']}
+
+    def continue_as_new_args(ctx: RunContext[None]) -> dict[str, Any]:
+        received_contexts.append(ctx)
+        return can_kwargs
+
+    agent = Agent(
+        TestModel(),
+        name='can_when_overrides',
+        deps_type=type(None),
+        capabilities=[
+            TemporalDurability(
+                continue_as_new=ContinueAsNewCallbacks(args=continue_as_new_args, when=lambda ctx: True),
+            ),
+        ],
+    )
+
+    with (
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        patch(
+            'pydantic_ai.durable_exec.temporal._durability.workflow.continue_as_new',
+            autospec=True,
+            side_effect=_SentinelContinueAsNew,
+        ) as continue_as_new_mock,
+    ):
+        with pytest.raises(_SentinelContinueAsNew):
+            await agent.run('hello')
+
+    continue_as_new_mock.assert_called_once_with(**can_kwargs)
+    assert len(received_contexts) == 1
+
+
+async def test_durability_continue_as_new_when_false_skips_suggestion():
+    """`when` returning `False` skips continuation without consulting Temporal's suggestion.
+
+    `workflow.info()` isn't patched here either, for the same reason as above.
+    """
+
+    def continue_as_new_args(ctx: RunContext[None]) -> dict[str, Any]:  # pragma: no cover
+        return {}
+
+    agent = Agent(
+        TestModel(),
+        name='can_when_false',
+        deps_type=type(None),
+        capabilities=[
+            TemporalDurability(
+                continue_as_new=ContinueAsNewCallbacks(args=continue_as_new_args, when=lambda ctx: False),
+            ),
+            _SkipRequestAfterDurability(),
+        ],
+    )
+
+    with (
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.continue_as_new') as continue_as_new_mock,
+    ):
+        result = await agent.run('hello')
+
+    assert result.output == 'skipped'
+    continue_as_new_mock.assert_not_called()
 
 
 # --- get_serialization_name returns None ---
