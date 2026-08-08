@@ -22,6 +22,7 @@ from pydantic_ai import Agent, UserError
 from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
+    await_maybe,
     check_object_json_schema,
     dataclasses_no_defaults_repr,
     format_inlined_text_file,
@@ -41,6 +42,16 @@ from .conftest import undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 
 pytestmark = pytest.mark.anyio
+
+
+async def test_await_maybe():
+    async def _coro() -> int:
+        return 1
+
+    # A plain (non-awaitable) value is returned unchanged.
+    assert await await_maybe(1) == 1
+    # A coroutine (however it was produced — e.g. a plain `def` returning one) is awaited.
+    assert await await_maybe(_coro()) == 1
 
 
 def test_get_first_param_type_annotation_type_error():

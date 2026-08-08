@@ -160,7 +160,8 @@ class FunctionModel(Model):
         if inspect.iscoroutinefunction(self.function):
             response = await self.function(messages, agent_info)
         else:
-            response_ = await _utils.run_in_executor(self.function, messages, agent_info)
+            # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
+            response_ = await _utils.await_maybe(await _utils.run_in_executor(self.function, messages, agent_info))
             assert isinstance(response_, ModelResponse), response_
             response = response_
         response.model_name = self._model_name
