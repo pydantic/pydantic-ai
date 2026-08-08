@@ -343,9 +343,6 @@ By default, "due to continue as new" means `workflow.info().is_continue_as_new_s
 !!! warning "`continue_as_new` arguments share Temporal's per-payload size limit"
     Just like activity and workflow inputs, arguments passed to `continue_as_new` are individually capped at Temporal's payload size limit (2MB by default) — carrying the *entire* message history through unconditionally will eventually fail for a long-lived conversation, which is exactly the case this feature targets. Bound what you carry (e.g. only the most recent messages) or compact it first with a history-processing capability like [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] before building the payload in `args`.
 
-!!! tip "Offloading state instead of carrying it"
-    If bounding and compacting still isn't enough — or you'd rather not grow every future run's history with a large blob at all — write the state to external storage (blob storage, a database) from inside `args` and pass back only a reference (a key, a URL) as one of the arguments, instead of the state itself. This is Temporal's [claim check pattern](https://docs.temporal.io/ai-cookbook/claim-check-pattern-python). Do the actual write and, on the other side, the read from a Temporal activity, not from `args` or your `@workflow.run` method directly — workflow code can't perform I/O itself, which is exactly why `TemporalDurability` already routes model requests and tool calls through activities.
-
 ```python {title="temporal_continue_as_new.py" test="skip"}
 from typing import Any
 
