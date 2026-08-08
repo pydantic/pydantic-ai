@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 import yaml
-from vcr.record_mode import RecordMode
+from cassetter import RecordMode
 
 from .cassette_utils import (
     canonical_prefix_blocks,
@@ -95,7 +95,7 @@ def test_cache_prefix_fixture_skips_uncheckable_cassettes(call_report: Any, cass
     """Failed tests and missing cassette files must not produce a second teardown failure."""
     node = SimpleNamespace(rep_setup=SimpleNamespace(skipped=False, failed=False), rep_call=call_report)
     request = SimpleNamespace(node=node)
-    vcr = SimpleNamespace(record_mode=RecordMode.NONE, _path=cassette_path)
+    vcr = SimpleNamespace(record_mode=RecordMode.NONE, path=cassette_path)
     fixture = cast(Callable[[Any, Any], Iterator[None]], getattr(fail_cache_prefix_violations, '__wrapped__'))
     iterator = fixture(cast(Any, request), cast(Any, vcr))
 

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel

@@ -20,7 +20,7 @@ from typing import Any, Literal, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl
 from pydantic_ai.exceptions import UserError
@@ -718,7 +718,7 @@ _STABLE_PREFIX = 'Reference catalogue for the prompt cache test corpus.\n' + '\n
 
 
 def _request_body(cassette: Cassette, index: int) -> dict[str, Any]:
-    body = cast('Any', cassette.requests)[index].body  # pyright: ignore[reportUnknownMemberType]
+    body = cast('Any', cassette.requests)[index].body
     return cast('dict[str, Any]', json.loads(body))
 
 
