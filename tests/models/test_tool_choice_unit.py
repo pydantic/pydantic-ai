@@ -715,7 +715,7 @@ def test_google_auto_tuple_filters_tool_defs():
 
 @skip_if_no_google
 def test_google_allowed_function_names_ignore_unavailable_tools():
-    m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(client=MagicMock()))
+    m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(client=MagicMock(vertexai=False)))
     params = ModelRequestParameters(function_tools=[make_tool('get_time')], allow_text_output=False)
 
     with pytest.warns(UserWarning, match='not currently available'):
@@ -770,7 +770,9 @@ def test_google_native_tool_only_omits_function_calling_config(case: dict[str, A
     Asserted on the request shape directly rather than via VCR: a cassette replay can't catch a
     malformed request, since it replays a recorded response without re-validating against the API.
     """
-    m = GoogleModel(case['model'], provider=GoogleProvider(client=MagicMock()))
+    # `vertexai=False` pins the mock to the Gemini API: a bare MagicMock's `vertexai` is truthy,
+    # which would spuriously route the model to Google Cloud (Vertex)
+    m = GoogleModel(case['model'], provider=GoogleProvider(client=MagicMock(vertexai=False)))
 
     _, tool_config, _ = m._get_tool_config(case['request_parameters'], {})  # pyright: ignore[reportPrivateUsage]
 

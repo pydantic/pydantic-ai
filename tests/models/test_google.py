@@ -3899,14 +3899,6 @@ async def test_google_image_generation_auto_size_raises_error(google_provider: G
         model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.fixture
-def vertex_client_google_provider() -> GoogleProvider:
-    """The construction from https://github.com/pydantic/pydantic-ai/issues/6792: a Vertex-backed
-    `genai.Client` wrapped in `GoogleProvider`, so `system` stays `'google'` while the transport
-    is Google Cloud (Vertex)."""
-    return GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1'))
-
-
 async def test_google_image_generation_tool_output_format(vertex_client_google_provider: GoogleProvider) -> None:
     """Test that ImageGenerationTool.output_format is mapped to ImageConfigDict.output_mime_type on Vertex AI."""
     model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
@@ -4035,7 +4027,7 @@ def test_google_vertex_skips_include_server_side_tool_invocations(
 ) -> None:
     """Vertex rejects `include_server_side_tool_invocations`, so it must not be set on Gemini 3+ via Vertex.
 
-    The model is built the way https://github.com/pydantic/pydantic-ai/issues/6792 reports: a
+    The model is built the way #6792 reports: a
     Vertex-backed `genai.Client` wrapped in `GoogleProvider`, whose `system` stays `'google'` —
     the transport, not the provider name, must drive the skip.
 
@@ -4071,7 +4063,7 @@ async def test_google_vertex_client_in_google_provider_uses_cloud_service_tier_h
     allow_model_requests: None, vertex_client_google_provider: GoogleProvider
 ) -> None:
     """A Vertex-backed `genai.Client` wrapped in `GoogleProvider` gets Google Cloud service-tier
-    handling even though `system` stays `'google'` (https://github.com/pydantic/pydantic-ai/issues/6792).
+    handling even though `system` stays `'google'` (#6792).
 
     Not a VCR test: the cassette matchers don't inspect request headers, so a recording would stay
     green if the routing regressed.
@@ -4094,7 +4086,7 @@ def test_google_vertex_client_in_google_provider_validates_uploaded_files_as_clo
 ) -> None:
     """`UploadedFile` handling for a Vertex-backed `GoogleProvider` follows the Google Cloud rules:
     GCS URIs are required, and files recorded against the provider's own name or the Google Cloud
-    provider names are accepted (https://github.com/pydantic/pydantic-ai/issues/6792).
+    provider names are accepted (#6792).
 
     Not a VCR test: validation raises before any request is sent.
     """
