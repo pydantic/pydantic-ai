@@ -93,19 +93,30 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     _: KW_ONLY
 
     thread_id: str = field(default_factory=lambda: str(uuid7()))
-    """The thread ID to report on `RUN_STARTED` and `RUN_FINISHED`.
+    """The AG-UI thread ID to report on `RUN_STARTED` and `RUN_FINISHED`.
 
-    Taken from [`run_input`][pydantic_ai.ui.UIEventStream.run_input] when one is given. Without a
-    run input, set it to the ID the conversation already has in your own transport, or leave it to
-    default to a new UUID.
+    A [`run_input`][pydantic_ai.ui.UIEventStream.run_input] takes precedence: when one is given, its
+    thread ID replaces whatever was passed here. Without a run input, set it to the ID the
+    conversation already has in your own transport, or leave it to default to a new UUID — but note
+    that the default is minted per stream, so a conversation that spans more than one run needs to
+    pass its own.
+
+    This identifies the conversation to the frontend. It is what
+    [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] maps onto the agent's `conversation_id` on the
+    request path, so passing the conversation ID the agent run itself uses keeps the frontend and
+    the agent's traces correlated.
     """
 
     run_id: str = field(default_factory=lambda: str(uuid7()))
-    """The run ID to report on `RUN_STARTED` and `RUN_FINISHED`.
+    """The AG-UI run ID to report on `RUN_STARTED` and `RUN_FINISHED`.
 
-    Taken from [`run_input`][pydantic_ai.ui.UIEventStream.run_input] when one is given. Without a
-    run input, set it to the ID the run already has in your own transport, or leave it to default to
-    a new UUID.
+    A [`run_input`][pydantic_ai.ui.UIEventStream.run_input] takes precedence: when one is given, its
+    run ID replaces whatever was passed here. Without a run input, set it to the ID the run already
+    has in your own transport, or leave it to default to a new UUID.
+
+    This is the protocol's run ID, not the agent run ID that
+    [`UIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream] takes as `run_id`; the two are
+    never wired together.
     """
 
     _use_reasoning: bool = field(default=False, init=False)

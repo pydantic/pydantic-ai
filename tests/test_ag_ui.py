@@ -4297,12 +4297,38 @@ async def test_event_stream_without_run_input_uses_explicit_identity():
     )
 
 
-def test_event_stream_identity_comes_from_run_input():
+async def test_event_stream_identity_comes_from_run_input():
     """The run input the frontend sent stays authoritative for the identity echoed back to it."""
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+
     run_input = create_input(UserMessage(id='msg_1', content='Hello'))
     event_stream = AGUIEventStream(run_input=run_input, thread_id='ignored', run_id='ignored')
 
-    assert (event_stream.thread_id, event_stream.run_id) == (run_input.thread_id, run_input.run_id)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert [event for event in events if event['type'] in ('RUN_STARTED', 'RUN_FINISHED')] == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': run_input.thread_id,
+                'runId': run_input.run_id,
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': run_input.thread_id,
+                'runId': run_input.run_id,
+                **run_finished_outcome(),
+            },
+        ]
+    )
 
 
 async def test_file_part_emits_no_ag_ui_event():

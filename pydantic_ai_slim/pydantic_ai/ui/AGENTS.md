@@ -25,6 +25,6 @@ The agent run is not a sink for the leftovers, either: `RunContext.metadata` is 
 
 `UIEventStream.run_input` is optional because a stream is constructible with no request behind it: transports that carry native events out of band — a durable execution workflow, a queue, a websocket fan-out — encode at an API edge the adapter never reaches ([6970](https://github.com/pydantic/pydantic-ai/issues/6970)).
 
-So a value a subclass emits is a field of that subclass, defaulted from `run_input` in `__post_init__` when one is given — that's `AGUIEventStream.thread_id` / `run_id`, which the protocol requires on `RUN_STARTED` and `RUN_FINISHED`. Reading `self.run_input.<field>` at emit time is what makes a stream un-constructible without a request, and it's the reason a `run_input` stub had to be fabricated before.
+So a value a subclass emits is a field of that subclass, overwritten from `run_input` in `__post_init__` when one is given — the request's identity wins over an explicitly passed value, it doesn't merely default it — that's `AGUIEventStream.thread_id` / `run_id`, which the protocol requires on `RUN_STARTED` and `RUN_FINISHED`. Reading `self.run_input.<field>` at emit time is what makes a stream un-constructible without a request, and it's the reason a `run_input` stub had to be fabricated before.
 
 This is the opposite case from the adapter-property rule above, not an exception to it: the field exists because the stream *emits* it, not to forward a protocol object's contents to the caller. An unread `run_input` field still earns nothing.

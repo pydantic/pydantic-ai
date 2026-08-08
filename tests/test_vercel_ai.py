@@ -1641,7 +1641,7 @@ async def test_event_stream_without_run_input():
         [
             {'type': 'start'},
             {'type': 'start-step'},
-            {'type': 'text-start', 'id': (text_id := IsStr())},
+            {'type': 'text-start', 'id': (text_id := IsSameStr())},
             {'type': 'text-delta', 'id': text_id, 'delta': 'Hello'},
             {'type': 'text-end', 'id': text_id},
             {'type': 'finish-step'},
