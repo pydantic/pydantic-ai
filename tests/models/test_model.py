@@ -289,6 +289,11 @@ def test_infer_model_with_provider():
             id='provider-typo',
         ),
         pytest.param(
+            'unknown:claude-sonnet-5',
+            "Unknown model: unknown:claude-sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            id='known-model-name',
+        ),
+        pytest.param(
             'anthropic-claude-sonnet-5',
             "Unknown model: anthropic-claude-sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
             id='missing-colon',
