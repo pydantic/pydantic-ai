@@ -60,7 +60,13 @@ from pydantic_ai.capabilities import (
     XSearch,
 )
 from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import (
+    AbstractCapability,
+    AgentNode,
+    NodeResult,
+    WrapModelRequestHandler,
+    WrapNodeRunHandler,
+)
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.capabilities.native_tool import NativeTool as NativeToolCap
@@ -5210,6 +5216,72 @@ class _NoopCap(AbstractCapability):
     pass
 
 
+@dataclass
+class _NodeModelHookCap(AbstractCapability[Any]):
+    log: list[str] = field(default_factory=lambda: [])
+
+    async def wrap_node_run(
+        self, ctx: RunContext[Any], *, node: AgentNode[Any], handler: WrapNodeRunHandler[Any]
+    ) -> NodeResult[Any]:
+        self.log.append('wrap_node_run')
+        return await handler(node)
+
+    async def on_node_run_error(
+        self, ctx: RunContext[Any], *, node: AgentNode[Any], error: Exception
+    ) -> NodeResult[Any]:
+        self.log.append('on_node_run_error')
+        raise error
+
+    async def wrap_model_request(
+        self,
+        ctx: RunContext[Any],
+        *,
+        request_context: ModelRequestContext,
+        handler: WrapModelRequestHandler,
+    ) -> ModelResponse:
+        self.log.append('wrap_model_request')
+        return await handler(request_context)
+
+    async def on_model_request_error(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        self.log.append('on_model_request_error')
+        raise error
+
+
+async def test_default_node_and_model_hooks_remain_directly_callable() -> None:
+    ctx = _build_run_context()
+    node = _agent_graph.UserPromptNode[Any, Any](user_prompt='test')
+    request_context = ModelRequestContext(
+        model=TestModel(),
+        messages=[],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    )
+    response = ModelResponse(parts=[])
+
+    async def node_handler(node: AgentNode[Any]) -> NodeResult[Any]:
+        return node
+
+    async def model_handler(_request_context: ModelRequestContext) -> ModelResponse:
+        return response
+
+    for capability in (_NoopCap(), Hooks()):
+        assert await capability.wrap_node_run(ctx, node=node, handler=node_handler) is node
+        assert (
+            await capability.wrap_model_request(ctx, request_context=request_context, handler=model_handler) is response
+        )
+
+    error = RuntimeError('provider failure')
+    with pytest.raises(RuntimeError, match='provider failure') as node_exc_info:
+        await _NoopCap().on_node_run_error(ctx, node=node, error=error)
+    assert node_exc_info.value is error
+
+    with pytest.raises(RuntimeError, match='provider failure') as model_exc_info:
+        await _NoopCap().on_model_request_error(ctx, request_context=request_context, error=error)
+    assert model_exc_info.value is error
+
+
 async def test_inherited_noop_capability_hooks_are_absent_from_traceback() -> None:
     before_run_called = False
 
@@ -5242,6 +5314,37 @@ async def test_inherited_noop_capability_hooks_are_absent_from_traceback() -> No
         and frame.name in noop_hook_names
         for frame in frames
     )
+
+
+async def test_implemented_nested_capability_hooks_are_preserved() -> None:
+    async def fail(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('provider failure')
+
+    capability = _NodeModelHookCap()
+    wrapped = WrapperCapability(wrapped=CombinedCapability([capability]))
+
+    with pytest.raises(RuntimeError, match='provider failure'):
+        await Agent(FunctionModel(fail), capabilities=[wrapped]).run('test')
+
+    assert capability.log == [
+        'wrap_node_run',
+        'wrap_node_run',
+        'wrap_model_request',
+        'on_model_request_error',
+        'on_node_run_error',
+    ]
+
+
+async def test_unloaded_deferred_error_hooks_are_skipped() -> None:
+    async def fail(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('provider failure')
+
+    capability = _NodeModelHookCap(id='deferred', defer_loading=True)
+
+    with pytest.raises(RuntimeError, match='provider failure'):
+        await Agent(FunctionModel(fail), capabilities=[capability]).run('test')
+
+    assert capability.log == []
 
 
 def _output_context() -> OutputContext:
