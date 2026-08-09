@@ -854,6 +854,18 @@ class Hooks(AbstractCapability[AgentDepsT]):
         return bool(self._get('wrap_node_run'))
 
     @property
+    def _has_on_node_run_error(self) -> bool:
+        return bool(self._get('on_node_run_error'))
+
+    @property
+    def _has_wrap_model_request(self) -> bool:
+        return bool(self._get('wrap_model_request'))
+
+    @property
+    def _has_on_model_request_error(self) -> bool:
+        return bool(self._get('on_model_request_error'))
+
+    @property
     def has_wrap_run_event_stream(self) -> bool:
         return bool(self._get('wrap_run_event_stream') or self._get('_on_event'))
 
