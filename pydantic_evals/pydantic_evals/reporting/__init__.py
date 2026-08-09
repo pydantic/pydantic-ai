@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from io import StringIO
 from typing import Any, Generic, Literal, Protocol
 
@@ -480,9 +481,8 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         """Print this report to the console, optionally comparing it to a baseline report.
 
         On a console `rich` reports as ASCII-only — a non-UTF-8 stream, as Windows produces when stdout is
-        redirected to a file or a pipe — `v`, `x` and `->` stand in for the `✔`, `✗` and `→` glyphs. The `µs`
-        unit sub-millisecond durations render with is not covered yet, so a stream that can't encode `µ` can
-        still raise: see [#7291](https://github.com/pydantic/pydantic-ai/issues/7291).
+        redirected to a file or a pipe — `v`, `x`, `->` and `us` stand in for the `✔`, `✗`, `→` and `µs`
+        glyphs and units.
 
         If you want more control over the output, use `console_table` instead and pass it to `rich.Console.print`,
         forwarding `ascii_only=console.options.ascii_only` from the console you print to.
@@ -569,9 +569,10 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         If a baseline is provided, returns a diff between this report and the baseline report.
         Optionally include input and output details.
 
-        `ascii_only` renders `v`, `x` and `->` in place of the `✔`, `✗` and `→` glyphs, for a console whose
-        stream can't encode them. Only the caller holding that console can answer this, so it defaults to
-        `False`; pass `ascii_only=console.options.ascii_only` from the console you print the table to.
+        `ascii_only` renders `v`, `x`, `->` and `us` in place of the `✔`, `✗`, `→` and `µs` glyphs and units,
+        for a console whose stream can't encode them. Only the caller holding that console can answer this, so
+        it defaults to `False`; pass `ascii_only=console.options.ascii_only` from the console you print the
+        table to.
         """
         renderer = EvaluationRenderer(
             include_input=include_input,
@@ -893,11 +894,21 @@ class _NumberRenderer:
     ) -> _NumberRenderer:
         value_formatter = config.get('value_formatter', UNSET)
         if isinstance(value_formatter, Unset):
-            value_formatter = default_render_number
+            value_formatter = (
+                partial(default_render_duration, ascii_only=ascii_only) if kind == 'duration' else default_render_number
+            )
+        elif value_formatter is default_render_duration:
+            value_formatter = partial(default_render_duration, ascii_only=ascii_only)
 
         diff_formatter = config.get('diff_formatter', UNSET)
         if isinstance(diff_formatter, Unset):
-            diff_formatter = default_render_number_diff
+            diff_formatter = (
+                partial(default_render_duration_diff, ascii_only=ascii_only)
+                if kind == 'duration'
+                else default_render_number_diff
+            )
+        elif diff_formatter is default_render_duration_diff:
+            diff_formatter = partial(default_render_duration_diff, ascii_only=ascii_only)
 
         diff_atol = config.get('diff_atol', UNSET)
         if isinstance(diff_atol, Unset):

@@ -1375,17 +1375,19 @@ async def test_evaluation_renderer_diff_with_no_metadata(sample_report_case: Rep
 """)
 
 
-def render_to_non_utf8_console(report: EvaluationReport, baseline: EvaluationReport | None = None) -> str:
-    """Print a report to a console whose stream can only encode cp1252, and return what was written.
+def render_to_non_utf8_console(
+    report: EvaluationReport, baseline: EvaluationReport | None = None, *, encoding: str = 'cp1252'
+) -> str:
+    """Print a report to a console whose stream cannot encode all Unicode, and return what was written.
 
     This is Windows with stdout redirected to a file or a pipe: Python uses UTF-8 for the console
     itself, but falls back to the ANSI code page for a redirected stream.
     """
     buffer = BytesIO()
-    stream = TextIOWrapper(buffer, encoding='cp1252', errors='strict', newline='')
+    stream = TextIOWrapper(buffer, encoding=encoding, errors='strict', newline='')
     report.print(baseline=baseline, console=Console(file=stream, width=150))
     stream.flush()
-    return trim_trailing_whitespace(buffer.getvalue().decode('cp1252'))
+    return trim_trailing_whitespace(buffer.getvalue().decode(encoding))
 
 
 async def test_print_falls_back_to_ascii_glyphs_on_non_utf8_console(
@@ -1511,3 +1513,15 @@ async def test_console_table_renders_ascii_glyphs_when_asked(
 | Averages  | score1: 2.50 | label1: {'hello': 1.0} | accuracy: 0.950 | 50.0% v    |  100.0ms |
 +---------------------------------------------------------------------------------------------+
 """)
+
+
+async def test_print_falls_back_to_ascii_microseconds_on_non_utf8_console(sample_report_case: ReportCase):
+    report = EvaluationReport(
+        cases=[replace(sample_report_case, task_duration=0.0000005, total_duration=0.0000005)],
+        name='test_report',
+    )
+
+    rendered = render_to_non_utf8_console(report, encoding='cp932')
+
+    assert '0.5us' in rendered
+    assert 'µ' not in rendered
