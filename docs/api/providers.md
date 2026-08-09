@@ -54,6 +54,8 @@
 
 ::: pydantic_ai.providers.nebius.NebiusProvider
 
+::: pydantic_ai.providers.deepinfra.DeepInfraProvider
+
 ::: pydantic_ai.providers.ovhcloud.OVHcloudProvider
 
 ::: pydantic_ai.providers.alibaba.AlibabaProvider

@@ -231,6 +231,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .nebius import NebiusProvider
 
         return NebiusProvider
+    elif provider == 'deepinfra':
+        from .deepinfra import DeepInfraProvider
+
+        return DeepInfraProvider
     elif provider == 'ovhcloud':
         from .ovhcloud import OVHcloudProvider
 

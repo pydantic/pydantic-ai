@@ -973,6 +973,38 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
+### DeepInfra
+
+Go to [DeepInfra](https://deepinfra.com/) and create an API key.
+
+You can set the `DEEPINFRA_API_KEY` environment variable and use [`DeepInfraProvider`][pydantic_ai.providers.deepinfra.DeepInfraProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('deepinfra:deepseek-ai/DeepSeek-V3')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+Or initialise the model and provider directly:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.deepinfra import DeepInfraProvider
+
+model = OpenAIChatModel(
+    'deepseek-ai/DeepSeek-V3',
+    provider=DeepInfraProvider(api_key='your-deepinfra-api-key'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
 ### OVHcloud AI Endpoints
 
 To use OVHcloud AI Endpoints, you need to create a new API key. To do so, go to the [OVHcloud manager](https://ovh.com/manager), then in Public Cloud > AI Endpoints > API keys. Click on `Create a new API key` and copy your new key.
