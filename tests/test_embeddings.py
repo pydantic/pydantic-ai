@@ -76,7 +76,7 @@ with try_import() as google_imports_successful:
         GoogleEmbeddingSettings,
         LatestGoogleGLAEmbeddingModelNames,
         LatestGoogleVertexEmbeddingModelNames,
-        _map_usage,
+        _map_usage,  # type: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
@@ -2261,6 +2261,7 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
         ]
     )
 
+
 @pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
 class TestGoogleUsageMapping:
     """`_map_usage` maps Google embedding responses to RequestUsage.
@@ -2277,13 +2278,9 @@ class TestGoogleUsageMapping:
 
         response = SimpleNamespace(
             embeddings=[],
-            sdk_http_response=SimpleNamespace(
-                body='{"usageMetadata": {"promptTokenCount": 7}}'
-            ),
+            sdk_http_response=SimpleNamespace(body='{"usageMetadata": {"promptTokenCount": 7}}'),
         )
-        usage = _map_usage(
-            response, 'google', 'https://generativelanguage.googleapis.com', 'gemini-embedding-001'
-        )
+        usage = _map_usage(response, 'google', 'https://generativelanguage.googleapis.com', 'gemini-embedding-001')  # type: ignore[reportArgumentType]
         assert usage.input_tokens == 7
 
     def test_gemini_api_usage_metadata_missing(self):
@@ -2294,9 +2291,7 @@ class TestGoogleUsageMapping:
             embeddings=[],
             sdk_http_response=SimpleNamespace(body='{}'),
         )
-        usage = _map_usage(
-            response, 'google', 'https://generativelanguage.googleapis.com', 'gemini-embedding-001'
-        )
+        usage = _map_usage(response, 'google', 'https://generativelanguage.googleapis.com', 'gemini-embedding-001')  # type: ignore[reportArgumentType]
         assert usage.input_tokens == 0
 
     def test_no_sdk_http_response(self):
@@ -2304,7 +2299,5 @@ class TestGoogleUsageMapping:
 
         # Vertex-style response with no body: no usage is inferred.
         response = SimpleNamespace(embeddings=[], sdk_http_response=None)
-        usage = _map_usage(
-            response, 'google', 'https://generativelanguage.googleapis.com', 'gemini-embedding-001'
-        )
+        usage = _map_usage(response, 'google', 'https://generativelanguage.googleapis.com', 'gemini-embedding-001')  # type: ignore[reportArgumentType]
         assert usage.input_tokens == 0
