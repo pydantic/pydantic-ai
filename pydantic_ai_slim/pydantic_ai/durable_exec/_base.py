@@ -118,6 +118,29 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(f'Multiple {cls.__name__} capabilities are attached to this agent; attach at most one.')
         return found[0] if found else None
 
+    @classmethod
+    def reject_spec_capability_override(cls, agent: AbstractAgent[Any, Any]) -> None:
+        """Reject `override(spec=...)` with capabilities that would drop durability in a durable container.
+
+        A spec's `capabilities` list replaces the agent's root capability for the duration of the
+        override. Durability capabilities are not spec-serializable
+        ([`get_serialization_name`][pydantic_ai.durable_exec._base.BaseDurabilityCapability.get_serialization_name]
+        returns `None`), so the replacement always drops them — and inside a workflow/flow that
+        silently turns a durable run into a plain one. Outside a durable container the capability
+        is transparent, so the override is allowed.
+        """
+        durability = cls.from_agent(agent)
+        if durability is None or not durability.in_durable_context:
+            return
+        raise UserError(
+            f'`override(spec=...)` with capabilities cannot be used inside a {durability.engine_name} '
+            f'{durability._durable_container_noun} when the agent has a {type(durability).__name__} '
+            f'capability. A spec replaces the agent\'s root capability for the duration of the override, '
+            f'and durability capabilities are not spec-serializable, so the override would silently drop '
+            f'durable {durability._durable_unit_noun} wrapping. Construct the agent with the intended '
+            f'capabilities, or call `override(spec=...)` outside the {durability._durable_container_noun}.'
+        )
+
     def _reject_runtime_toolsets(self, toolset: AbstractToolset[AgentDepsT]) -> None:
         """Reject executing toolsets added per-run inside a durable workflow or flow.
 

@@ -2375,6 +2375,45 @@ async def test_prefect_durability_rejects_per_run_capability_toolset() -> None:
         await run_agent()
 
 
+async def test_prefect_durability_rejects_spec_capability_override_in_flow() -> None:
+    """`override(spec=...)` with capabilities must not silently drop PrefectDurability inside a flow.
+
+    Spec capabilities replace the root capability, and durability is not spec-serializable, so the
+    override would turn a durable run into a plain one with no task wrapping.
+    """
+    agent = Agent(TestModel(), name='spec_override_reject', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_override() -> None:
+        with agent.override(spec={'capabilities': [{'Instrumentation': {}}]}):
+            pass  # pragma: no cover
+
+    with pytest.raises(
+        UserError,
+        match=r"override\(spec=\.\.\.\).*capabilities.*Prefect flow.*PrefectDurability",
+    ):
+        await run_override()
+
+
+async def test_prefect_durability_allows_spec_capability_override_outside_flow() -> None:
+    """Outside a flow, PrefectDurability is transparent, so a spec capability override is fine."""
+    agent = Agent(TestModel(), name='spec_override_outside', capabilities=[PrefectDurability()])
+    with agent.override(spec={'capabilities': [{'Instrumentation': {}}]}):
+        pass
+
+
+async def test_prefect_durability_allows_spec_without_capabilities_in_flow() -> None:
+    """A spec that does not replace capabilities leaves durability attached inside a flow."""
+    agent = Agent(TestModel(), name='spec_override_no_caps', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_override() -> None:
+        with agent.override(spec={'instructions': 'from spec'}):
+            pass
+
+    await run_override()
+
+
 def test_prefect_durability_rejects_duplicate_toolset_id() -> None:
     """Two distinct toolsets under one `id` are rejected at binding time.
 

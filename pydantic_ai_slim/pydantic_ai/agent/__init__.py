@@ -2008,7 +2008,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             spec: Optional agent spec providing defaults for override. Explicit params take precedence
                 over spec values. When the spec includes `capabilities`, they replace (not merge with)
                 the agent's existing capabilities. To add capabilities without replacing, pass `spec`
-                to `run()` or `iter()` instead.
+                to `run()` or `iter()` instead. Inside a durable workflow/flow, `override(spec=...)`
+                with capabilities raises [`UserError`][pydantic_ai.exceptions.UserError] when the agent
+                has a durability capability: that capability is not spec-serializable, so the
+                replacement would silently drop durable wrapping.
         """
         # A bare `int` overrides both budgets; a partial `retries={'tools': ...}` / `{'output': ...}`
         # dict overrides only the named budget, so an unset budget still falls through to the run
@@ -2029,6 +2032,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # override. Build it before resolving an overridden model so custom model IDs can
         # be preserved for that capability's async, deps-aware resolver.
         if resolved is not None and resolved.capability is not None:
+            # Durability capabilities are not spec-serializable, so this replacement would
+            # silently drop them inside a workflow/flow — reject instead (see #6911).
+            from ..durable_exec._base import BaseDurabilityCapability
+
+            BaseDurabilityCapability.reject_spec_capability_override(self)
             override_caps = list(resolved.capability.capabilities)
             _inject_auto_capabilities(override_caps)
             override_capability: CombinedCapability[AgentDepsT] | None = CombinedCapability(override_caps).for_agent(
