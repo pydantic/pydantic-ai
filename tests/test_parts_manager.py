@@ -376,10 +376,27 @@ def test_handle_text_deltas_with_think_tags_vendor_part_id_none():
 
 
 def test_append_embedded_thinking_content_errors_without_thinking_part():
-    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    """Guards in `_append_embedded_thinking_content` for a missing `ThinkingPart`.
 
+    Unit-tested rather than driven through the public API because every caller is gated on
+    `_is_in_embedded_thinking()`, which already excludes all three of these cases, so no model
+    output can reach them. They are pinned so the guards survive that gate being changed.
+    """
+    # Unknown vendor part id.
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
     with pytest.raises(UnexpectedModelBehavior, match='Cannot append embedded thinking content'):
-        list(manager._append_embedded_thinking_content('content', 'thinking', None, None))
+        list(manager._append_embedded_thinking_content('content', 'thinking', None, None))  # pyright: ignore[reportPrivateUsage]
+
+    # Known vendor part id, but the part is not a `ThinkingPart`.
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    list(manager.handle_text_delta(vendor_part_id='text', content='hello'))
+    with pytest.raises(UnexpectedModelBehavior, match='Cannot append embedded thinking content'):
+        list(manager._append_embedded_thinking_content('text', 'thinking', None, None))  # pyright: ignore[reportPrivateUsage]
+
+    # No vendor part id, and no latest `ThinkingPart` to append to.
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    with pytest.raises(UnexpectedModelBehavior, match='Cannot append embedded thinking content'):
+        list(manager._append_embedded_thinking_content(None, 'thinking', None, None))  # pyright: ignore[reportPrivateUsage]
 
     manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
 
