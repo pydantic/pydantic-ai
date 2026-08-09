@@ -5639,6 +5639,9 @@ async def test_google_api_non_http_error(
         await agent.run('This prompt will trigger the mocked error.')
 
     assert exc_info.value.model_name == 'gemini-1.5-flash'
+    assert exc_info.value.__cause__ is mocked_error
+    assert exc_info.value.__suppress_context__ is True
+    assert ''.join(format_exception(exc_info.value)).count('Traceback (most recent call last):') == 2
 
 
 @pytest.mark.parametrize(
@@ -5755,9 +5758,11 @@ async def test_google_stream_api_non_http_error_is_wrapped(
         response_id='resp_1',
     )
 
+    mocked_error = errors.APIError(302, {'error': {'code': 302, 'message': 'Redirect', 'status': 'REDIRECT'}})
+
     async def failing_stream():
         yield first_chunk
-        raise errors.APIError(302, {'error': {'code': 302, 'message': 'Redirect', 'status': 'REDIRECT'}})
+        raise mocked_error
 
     mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=failing_stream())
 
@@ -5769,6 +5774,9 @@ async def test_google_stream_api_non_http_error_is_wrapped(
                 pass
 
     assert exc_info.value.model_name == model_name
+    assert exc_info.value.__cause__ is mocked_error
+    assert exc_info.value.__suppress_context__ is True
+    assert ''.join(format_exception(exc_info.value)).count('Traceback (most recent call last):') == 2
 
 
 async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model_requests: None):

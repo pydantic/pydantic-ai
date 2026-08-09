@@ -272,12 +272,15 @@ class GoogleEmbeddingModel(EmbeddingModel):
             )
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
+                mapped_error = ModelHTTPError(
                     status_code=status_code,
                     model_name=self._model_name,
                     body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
                     headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                ) from e
+                )
+                if isinstance(e, (errors.ClientError, errors.ServerError)):
+                    raise mapped_error from None
+                raise mapped_error from e
             raise
 
         embeddings: list[list[float]] = [emb.values for emb in (response.embeddings or []) if emb.values is not None]
@@ -303,12 +306,15 @@ class GoogleEmbeddingModel(EmbeddingModel):
             )
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
+                mapped_error = ModelHTTPError(
                     status_code=status_code,
                     model_name=self._model_name,
                     body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
                     headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                ) from e
+                )
+                if isinstance(e, (errors.ClientError, errors.ServerError)):
+                    raise mapped_error from None
+                raise mapped_error from e
             raise
 
         if response.total_tokens is None:
