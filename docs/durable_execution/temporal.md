@@ -508,7 +508,7 @@ agent = Agent(
 )
 ```
 
-1. The nested agent needs its own [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability for its model and tool calls to become activities — without it, its whole run just executes as ordinary (undurable) workflow code.
+1. The nested agent needs its own [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability for its model and tool calls to become activities — without it, its whole run just executes as ordinary (undurable) workflow code. `delegate_agent` also needs to be registered with the worker just like `agent` (for example, by listing it alongside `agent` in the workflow's `__pydantic_ai_agents__`) — otherwise the worker has no plugin for its activities and the delegated run can never complete.
 2. `execution_timeout` is a hard, server-side timeout — the recommended way to bound a delegated run. Prefer it over `parent_close_policy` for cancellation: cancelling an in-flight nested agent run cooperatively (rather than letting Temporal terminate it via `execution_timeout`) can deadlock the parent workflow's event loop under this SDK's async runtime.
 3. The tool's own code runs directly as workflow code — no `workflow.execute_activity` involved for the tool call itself. Delegating to a nested durable agent run here is what makes that safe.
 

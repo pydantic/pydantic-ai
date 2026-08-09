@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -128,21 +129,24 @@ def temporalize_function_toolset(
         # would violate the workflow sandbox, the same constraint `metadata={'temporal': False}`
         # already imposes today.
         nonlocal deps_type_adapter
-        if deps_type_adapter is None:
-            # Built lazily, on first actual child-workflow call, not at bind time: `deps` can't be
-            # typed to `deps_type` via a wire annotation the way `call_tool_activity`'s is, since
-            # `_ToolCallWorkflow.run`'s signature is shared by every toolset in the process —
-            # Temporal's converter deserializes it generically instead, so this re-validates, the
-            # same idiom `TemporalRunContext` already uses for `usage`/`usage_limits`. Building it
-            # eagerly for every toolset (whether or not any tool uses `child_workflow`) would break
-            # `deps_type`s that Pydantic can't build a schema for but that never actually need to
-            # cross this boundary.
-            deps_type_adapter = TypeAdapter(deps_type)
-        deps = deps_type_adapter.validate_python(raw_deps)
-        ctx = deserialize_run_context(
-            run_context_type, params.serialized_run_context, deps=deps, agent=agent, unit_noun='child workflow'
-        )
         try:
+            if deps_type_adapter is None:
+                # Built lazily, on first actual child-workflow call, not at bind time: `deps` can't be
+                # typed to `deps_type` via a wire annotation the way `call_tool_activity`'s is, since
+                # `_ToolCallWorkflow.run`'s signature is shared by every toolset in the process —
+                # Temporal's converter deserializes it generically instead, so this re-validates, the
+                # same idiom `TemporalRunContext` already uses for `usage`/`usage_limits`. Building it
+                # eagerly for every toolset (whether or not any tool uses `child_workflow`) would break
+                # `deps_type`s that Pydantic can't build a schema for but that never actually need to
+                # cross this boundary.
+                deps_type_adapter = TypeAdapter(deps_type)
+            # Rehydration (deps validation, run context deserialization) lives inside the `try` too:
+            # a malformed payload here is exactly as capable of wedging the child workflow as a failure
+            # from the tool call itself, so it needs the same `ApplicationError` conversion below.
+            deps = deps_type_adapter.validate_python(raw_deps)
+            ctx = deserialize_run_context(
+                run_context_type, params.serialized_run_context, deps=deps, agent=agent, unit_noun='child workflow'
+            )
             tool = await _tool_for_call(toolset, params, ctx)
             args = tool.args_validator.validate_python(params.tool_args)
             return await wrap_tool_call_result(toolset.call_tool(params.name, args, ctx, tool))
@@ -150,6 +154,13 @@ def temporalize_function_toolset(
             # Already a proper Temporal failure (e.g. an `ActivityError`/`ChildWorkflowError` bubbling
             # up from a nested durable agent run inside this tool) — propagate as-is so this workflow
             # execution fails cleanly.
+            raise
+        except asyncio.CancelledError:
+            # Cancellation of this child workflow (or of a nested durable call inside the tool) surfaces
+            # here as `asyncio.CancelledError`. It must keep propagating as-is, not get converted to an
+            # `ApplicationError` below: Temporal recognizes a workflow execution as *cancelled* (rather
+            # than *failed*) only if this exception reaches the top uncaught, which is also why
+            # `execute_child_workflow` re-raises it rather than swallowing it.
             raise
         except BaseException as exc:
             # An exception that escapes workflow code without being a Temporal failure (and isn't
