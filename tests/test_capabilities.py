@@ -12,6 +12,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from importlib.util import find_spec
 from pathlib import Path
+from traceback import extract_tb
 from types import NoneType
 from typing import Any, cast
 from uuid import UUID
@@ -5207,6 +5208,24 @@ class _FailIfDispatchedDeferredCap(AbstractCapability):
 @dataclass
 class _NoopCap(AbstractCapability):
     pass
+
+
+async def test_inherited_noop_capability_hooks_are_absent_from_traceback() -> None:
+    async def fail(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('provider failure')
+
+    agent = Agent(FunctionModel(fail), capabilities=[_NoopCap(), WrapperCapability(wrapped=_NoopCap())])
+
+    with pytest.raises(RuntimeError, match='provider failure') as exc_info:
+        await agent.run('test')
+
+    frames = extract_tb(exc_info.value.__traceback__)
+    noop_hook_names = {'wrap_node_run', 'on_node_run_error', 'wrap_model_request', 'on_model_request_error'}
+    assert not any(
+        frame.filename.endswith(('pydantic_ai/capabilities/abstract.py', 'pydantic_ai/capabilities/wrapper.py'))
+        and frame.name in noop_hook_names
+        for frame in frames
+    )
 
 
 def _output_context() -> OutputContext:

@@ -50,6 +50,7 @@ from .exceptions import (
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
+    install_model_error_handler,
 )
 from .format_prompt import format_as_xml
 from .messages import (
@@ -212,6 +213,7 @@ __all__ = (
     'ToolFailed',
     'ModelAPIError',
     'ModelHTTPError',
+    'install_model_error_handler',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
     'RunCancelled',

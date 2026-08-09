@@ -203,6 +203,22 @@ When a provider returns a 4xx or 5xx response, Pydantic AI raises a
 attribute (a `dict[str, str]` with lowercase keys, or `None` for providers that don't
 surface headers, such as gRPC-based providers).
 
+For main-thread scripts that leave model API errors to `sys.excepthook`, install the model error
+handler to keep terminal output focused on application code and the provider error:
+
+```python {title="compact_model_errors.py" test="skip"}
+from pydantic_ai import Agent, install_model_error_handler
+
+install_model_error_handler()
+
+agent = Agent('openai:gpt-5.2')
+agent.run_sync('What is the capital of France?')
+```
+
+The handler only changes how uncaught [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]
+exceptions are displayed. It does not modify exceptions received by `except` blocks or debuggers.
+Pass `full_traceback=True` to show the complete provider, agent, and graph traceback instead.
+
 The motivating use case is propagating the `Retry-After` header from a 429 response to a
 caller's own HTTP client.  A convenience property
 [`retry_after`][pydantic_ai.exceptions.ModelHTTPError.retry_after] parses that header and

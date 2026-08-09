@@ -2,13 +2,19 @@ from __future__ import annotations as _annotations
 
 import json
 import sys
-from collections.abc import Mapping, Sequence
+import traceback
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from pathlib import Path
+from types import TracebackType
 from typing import TYPE_CHECKING, Any
+from weakref import WeakKeyDictionary
 
 import pydantic_core
 from pydantic_core import core_schema
+
+import pydantic_graph
 
 from ._warnings import (
     CostCalculationFailedWarning as CostCalculationFailedWarning,
@@ -43,6 +49,7 @@ __all__ = (
     'ConcurrencyLimitExceeded',
     'ModelAPIError',
     'ModelHTTPError',
+    'install_model_error_handler',
     'ContentFilterError',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
@@ -52,6 +59,10 @@ __all__ = (
     'FallbackExceptionGroup',
     'ToolFailed',
 )
+
+
+_ExceptionHook = Callable[[type[BaseException], BaseException, TracebackType | None], None]
+_model_error_hook_delegates: WeakKeyDictionary[_ExceptionHook, _ExceptionHook] = WeakKeyDictionary()
 
 
 class ModelRetry(Exception):
@@ -589,6 +600,60 @@ class ModelHTTPError(ModelAPIError):
             return max(0.0, wait)
         except (ValueError, TypeError, AssertionError):
             return None
+
+
+def install_model_error_handler(*, full_traceback: bool = False) -> _ExceptionHook:
+    """Install concise rendering for uncaught model API errors.
+
+    The handler removes Pydantic AI, Pydantic Graph, and provider SDK frames from the displayed
+    traceback while preserving application frames and the provider cause's type and message.
+    It does not modify the exception or traceback received by `except` blocks or debuggers.
+
+    Args:
+        full_traceback: Delegate model API errors to the existing exception hook unchanged.
+
+    Returns:
+        The previously installed exception hook, which can be assigned back to `sys.excepthook`
+        to restore it.
+    """
+    current_hook = sys.excepthook
+    try:
+        previous_hook = _model_error_hook_delegates.get(current_hook, current_hook)
+    except TypeError:
+        previous_hook = current_hook
+    assert pydantic_graph.__file__ is not None
+    internal_roots = (Path(__file__).resolve().parent, Path(pydantic_graph.__file__).resolve().parent)
+
+    def model_error_hook(
+        exception_type: type[BaseException], exception: BaseException, traceback_: TracebackType | None
+    ) -> None:
+        if full_traceback or not isinstance(exception, ModelAPIError):
+            previous_hook(exception_type, exception, traceback_)
+            return
+
+        try:
+            rendered = traceback.TracebackException(exception_type, exception, traceback_)
+            rendered.stack = traceback.StackSummary.from_list(
+                [
+                    frame
+                    for frame in rendered.stack
+                    if not any(Path(frame.filename).resolve().is_relative_to(root) for root in internal_roots)
+                ]
+            )
+            chained = rendered.__cause__ or rendered.__context__
+            while chained is not None:
+                chained.stack = traceback.StackSummary.from_list([])
+                chained = chained.__cause__ or chained.__context__
+            sys.stderr.writelines(rendered.format(chain=True))
+            sys.stderr.write(
+                'Hint: call `install_model_error_handler(full_traceback=True)` to show the complete traceback.\n'
+            )
+        except Exception:
+            previous_hook(exception_type, exception, traceback_)
+
+    sys.excepthook = model_error_hook
+    _model_error_hook_delegates[model_error_hook] = previous_hook
+    return current_hook
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):

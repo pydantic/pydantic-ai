@@ -16,6 +16,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, 
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from difflib import get_close_matches
 from functools import cache, cached_property, wraps
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
@@ -1594,6 +1595,22 @@ def parse_model_id(model: str) -> tuple[str | None, str]:
     return None, model
 
 
+def _suggest_known_model_name(model: str, model_name: str) -> str | None:
+    known_ids = sorted(known_model_names(), key=lambda name: (name.startswith('gateway/'), name))
+    normalized_ids: list[str] = [known_id.replace(':', '-', 1) for known_id in known_ids if ':' in known_id]
+    normalized_model = model.replace(':', '-', 1)
+    if matches := get_close_matches(normalized_model, normalized_ids, n=1, cutoff=0.9):
+        return next(known_id for known_id in known_ids if known_id.replace(':', '-', 1) == matches[0])
+
+    known_names: list[str] = [known_id.split(':', maxsplit=1)[1] for known_id in known_ids if ':' in known_id]
+    matches = get_close_matches(model_name, known_names, n=1, cutoff=0.8)
+    if not matches:
+        matches = get_close_matches(normalized_model, known_names, n=1, cutoff=0.7)
+    if matches:
+        return next(known_id for known_id in known_ids if known_id.endswith(f':{matches[0]}'))
+    return None
+
+
 def infer_model_profile(model: str) -> ModelProfile:
     """Infer the model profile from a model id string without constructing a provider.
 
@@ -1647,9 +1664,20 @@ def infer_model(  # noqa: C901
 
     provider_name, model_name = parse_model_id(model)
     if provider_name is None:
-        raise UserError(f'Unknown model: {model}')
+        message = f'Unknown model: {model}'
+        if suggested_name := _suggest_known_model_name(model, model_name):
+            message += f". Did you mean '{suggested_name}'?"
+        raise UserError(message)
 
-    provider = provider_factory(provider_name)
+    try:
+        provider = provider_factory(provider_name)
+    except ValueError:
+        if provider_factory is not infer_provider:
+            raise
+        message = f'Unknown model: {model}'
+        if suggested_name := _suggest_known_model_name(model, model_name):
+            message += f". Did you mean '{suggested_name}'?"
+        raise UserError(message) from None
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):

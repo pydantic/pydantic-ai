@@ -1,6 +1,7 @@
 """Tests for exception classes."""
 
 import pickle
+import sys
 from collections.abc import Callable
 from typing import Any
 
@@ -8,7 +9,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
-from pydantic_ai import ModelRetry, ToolFailed
+from pydantic_ai import Agent, ModelRetry, ToolFailed, install_model_error_handler
 from pydantic_ai.exceptions import (
     AgentRunError,
     ApprovalRequired,
@@ -24,7 +25,121 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
     UserError,
 )
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+async def _raise_model_http_error(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    try:
+        raise RuntimeError('provider cause')
+    except RuntimeError as error:
+        raise ModelHTTPError(403, 'test-model', {'error': 'permission denied'}) from error
+
+
+def test_install_model_error_handler_renders_without_mutating_exception(capsys: pytest.CaptureFixture[str]) -> None:
+    original_hook = sys.excepthook
+    previous_calls: list[tuple[type[BaseException], BaseException, object]] = []
+
+    def previous_hook(exception_type: type[BaseException], exception: BaseException, traceback_: object) -> None:
+        previous_calls.append((exception_type, exception, traceback_))
+
+    sys.excepthook = previous_hook
+    previous = install_model_error_handler()
+    try:
+        with pytest.raises(ModelHTTPError) as exc_info:
+            Agent(FunctionModel(_raise_model_http_error)).run_sync('test')
+
+        error = exc_info.value
+        original_traceback = error.__traceback__
+        original_cause = error.__cause__
+        sys.excepthook(type(error), error, original_traceback)
+
+        output = capsys.readouterr().err
+        assert 'RuntimeError: provider cause' in output
+        assert 'The above exception was the direct cause' in output
+        assert 'pydantic_ai.exceptions.ModelHTTPError: status_code: 403' in output
+        assert 'tests/test_exceptions.py' in output
+        assert 'pydantic_ai_slim/pydantic_ai/' not in output
+        assert 'pydantic_graph/pydantic_graph/' not in output
+        assert 'Hint: call `install_model_error_handler(full_traceback=True)` to show the complete traceback.' in output
+        assert error.__traceback__ is original_traceback
+        assert error.__cause__ is original_cause
+        assert previous is previous_hook
+        assert previous_calls == []
+
+        try:
+            try:
+                raise RuntimeError('implicit cause')
+            except RuntimeError:
+                raise ModelAPIError('test-model', 'implicit model error')
+        except ModelAPIError as implicit_error:
+            sys.excepthook(type(implicit_error), implicit_error, implicit_error.__traceback__)
+        implicit_output = capsys.readouterr().err
+        assert 'RuntimeError: implicit cause' in implicit_output
+        assert "raise RuntimeError('implicit cause')" not in implicit_output
+        assert 'During handling of the above exception' in implicit_output
+
+        compact_hook = sys.excepthook
+        previous_on_reinstall = install_model_error_handler(full_traceback=True)
+        assert previous_on_reinstall is compact_hook
+        full_error = ModelHTTPError(500, 'test-model')
+        sys.excepthook(type(full_error), full_error, full_error.__traceback__)
+        assert previous_calls == [(type(full_error), full_error, full_error.__traceback__)]
+
+        sys.excepthook = previous_on_reinstall
+        previous_after_restore = install_model_error_handler(full_traceback=True)
+        assert previous_after_restore is compact_hook
+        sys.excepthook(type(full_error), full_error, full_error.__traceback__)
+        assert previous_calls == [
+            (type(full_error), full_error, full_error.__traceback__),
+            (type(full_error), full_error, full_error.__traceback__),
+        ]
+    finally:
+        sys.excepthook = original_hook
+
+
+@pytest.mark.parametrize('full_traceback', [False, True])
+def test_model_error_handler_delegates(full_traceback: bool) -> None:
+    original_hook = sys.excepthook
+    calls: list[tuple[type[BaseException], BaseException, object]] = []
+
+    def previous_hook(exception_type: type[BaseException], exception: BaseException, traceback_: object) -> None:
+        calls.append((exception_type, exception, traceback_))
+
+    sys.excepthook = previous_hook
+    install_model_error_handler(full_traceback=full_traceback)
+    try:
+        error: BaseException
+        if full_traceback:
+            error = ModelHTTPError(500, 'test-model')
+        else:
+            error = RuntimeError('programmer error')
+        sys.excepthook(type(error), error, error.__traceback__)
+        assert calls == [(type(error), error, error.__traceback__)]
+    finally:
+        sys.excepthook = original_hook
+
+
+def test_model_error_handler_preserves_non_weak_referenceable_hook() -> None:
+    original_hook = sys.excepthook
+    calls: list[tuple[type[BaseException], BaseException, object]] = []
+
+    class PreviousHook:
+        __slots__ = ()
+
+        def __call__(self, exception_type: type[BaseException], exception: BaseException, traceback_: object) -> None:
+            calls.append((exception_type, exception, traceback_))
+
+    previous_hook = PreviousHook()
+    sys.excepthook = previous_hook
+    previous = install_model_error_handler()
+    try:
+        error = RuntimeError('programmer error')
+        sys.excepthook(type(error), error, error.__traceback__)
+        assert previous is previous_hook
+        assert calls == [(type(error), error, error.__traceback__)]
+    finally:
+        sys.excepthook = original_hook
 
 
 def test_tool_failed_pydantic_schema_accepts_instance() -> None:
