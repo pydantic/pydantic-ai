@@ -1330,6 +1330,55 @@ def test_output_tool_return_content_no_tool():
         result.all_messages(output_tool_return_content='foobar')
 
 
+async def test_agent_run_all_messages_json_forwards_output_tool_return_content():
+    """`AgentRun.all_messages_json` must forward `output_tool_return_content`.
+
+    Regression for the asymmetry where `AgentRunResult.all_messages_json`
+    honours the param but `AgentRun.all_messages_json` silently ignored it.
+    """
+    call_index = 0
+
+    def return_int(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_index
+        assert info.output_tools is not None
+        call_index += 1
+        if call_index == 1:
+            return ModelResponse(parts=[TextPart(content='unknown')])
+        args_json = '{"response": 42}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_int), output_type=ToolOutput(int))
+
+    async with agent.iter('Hello') as agent_run:
+        async for _ in agent_run:
+            pass
+
+    # The raw JSON still carries the default acknowledgement.
+    raw = agent_run.all_messages_json()
+    assert b'Final result processed.' in raw
+    assert b'CUSTOM OUTPUT ACK' not in raw
+
+    # Forwarding the param must replace that acknowledgement before encoding.
+    adjusted = agent_run.all_messages_json(output_tool_return_content='CUSTOM OUTPUT ACK')
+    assert b'CUSTOM OUTPUT ACK' in adjusted
+    assert b'Final result processed.' not in adjusted
+    assert agent_run.all_messages(output_tool_return_content='CUSTOM OUTPUT ACK')[-1] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='final_result',
+                    content='CUSTOM OUTPUT ACK',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ],
+            timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
 def test_response_tuple():
     m = TestModel()
 

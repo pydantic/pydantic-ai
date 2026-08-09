@@ -160,20 +160,54 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             self._traceparent(required=False),
         )
 
-    def all_messages(self) -> list[_messages.ModelMessage]:
+    def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return all messages for the run so far.
 
         Messages from older runs are included.
+
+        Args:
+            output_tool_return_content: The return content of the tool call to set in the last message.
+                This provides a convenient way to modify the content of the output tool call if you want to continue
+                the conversation and want to set the response to the output tool call. If `None`, the last message will
+                not be modified.
         """
+        if output_tool_return_content is not None:
+            return self._set_output_tool_return(output_tool_return_content)
         return self.ctx.state.message_history
 
     def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes:
         """Return all messages from [`all_messages`][pydantic_ai.agent.AgentRun.all_messages] as JSON bytes.
 
+        Args:
+            output_tool_return_content: The return content of the tool call to set in the last message.
+                See [`all_messages`][pydantic_ai.agent.AgentRun.all_messages].
+
         Returns:
             JSON bytes representing the messages.
         """
-        return _messages.ModelMessagesTypeAdapter.dump_json(self.all_messages())
+        return _messages.ModelMessagesTypeAdapter.dump_json(
+            self.all_messages(output_tool_return_content=output_tool_return_content)
+        )
+
+    def _set_output_tool_return(self, return_content: str) -> list[_messages.ModelMessage]:
+        """Set the output tool's return content on the last message, returning a copy."""
+        graph_run_output = self._graph_run.output
+        output_tool_name = graph_run_output.tool_name if graph_run_output is not None else None
+        if not output_tool_name:
+            raise ValueError('Cannot set output tool return content when the return type is `str`.')
+
+        messages = self._graph_run.state.message_history
+        last_message = messages[-1]
+        for idx, part in enumerate(last_message.parts):
+            if isinstance(part, _messages.ToolReturnPart) and part.tool_name == output_tool_name:
+                # Only do deepcopy when we have to modify
+                copied_messages = list(messages)
+                copied_last = deepcopy(last_message)
+                copied_last.parts[idx].content = return_content  # type: ignore[misc]
+                copied_messages[-1] = copied_last
+                return copied_messages
+
+        raise LookupError(f'No tool call found with tool name {output_tool_name!r}.')
 
     def new_messages(self) -> list[_messages.ModelMessage]:
         """Return the messages produced during this run so far.
