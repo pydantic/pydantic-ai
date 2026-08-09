@@ -2306,3 +2306,41 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
             }
         ]
     )
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_embedding_model_preserves_batch_order_by_index():
+    """Regression test for https://github.com/pydantic/pydantic-ai/issues/7284
+
+    OpenAI embeddings responses carry a per-item index because batch response
+    order is not guaranteed to match input order. embed() must re-sort by index
+    so vectors line up with their inputs.
+    """
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    mock_client = AsyncMock()
+    # Response order differs from input order (indices 2, 0, 1 for inputs a, b, c)
+    items = []
+    for index, vec in ((2, [0.3, 0.3, 0.3]), (0, [0.1, 0.1, 0.1]), (1, [0.2, 0.2, 0.2])):
+        item = MagicMock()
+        item.index = index
+        item.embedding = vec
+        items.append(item)
+
+    mock_response = MagicMock()
+    mock_response.data = items
+    mock_response.usage = None
+    mock_response.model = 'test-model'
+
+    mock_client.embeddings.create.return_value = mock_response
+
+    provider = OpenAIProvider(openai_client=mock_client)
+    model = OpenAIEmbeddingModel('test-model', provider=provider)
+
+    result = await model.embed(['a', 'b', 'c'], input_type='query')
+
+    assert result.embeddings == [
+        [0.1, 0.1, 0.1],
+        [0.2, 0.2, 0.2],
+        [0.3, 0.3, 0.3],
+    ]
