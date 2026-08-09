@@ -24,11 +24,11 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
-from ...messages import ModelMessagesTypeAdapter
+from ...messages import ModelMessage, ModelMessagesTypeAdapter
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import ContinueAsNewCallbacks, TemporalDurability
 from ._logfire import LogfirePlugin
-from ._payload_converter import PydanticAIPayloadConverter
+from ._payload_converter import PydanticAIPayloadConverter, _type_adapter  # pyright: ignore[reportPrivateUsage]
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
 from ._workflow import PydanticAIWorkflow
@@ -64,6 +64,16 @@ except ImportError:
 # `continue_as_new` boundary never pays that compile cost inside sandboxed workflow compute
 # (where it would count against Temporal's deadlock-detection timeout).
 ModelMessagesTypeAdapter.dump_json([])
+
+# This is a *separate* `TypeAdapter` from the one above: `PydanticAIPayloadConverter` builds and
+# memoizes its own adapter per type hint (see `_payload_converter.py`), so warming
+# `ModelMessagesTypeAdapter` doesn't touch it — verified empirically, not assumed: a fresh
+# `TypeAdapter(list[ModelMessage])` pays its own ~40ms build even right after the warm-up above.
+# `list[ModelMessage]` crosses a Temporal payload boundary twice in this package — as the `messages`
+# field of every model-request activity's params, and optionally as a `continue_as_new` argument —
+# so warm this cache entry too, for the same reason as above: the first of those calls in a worker's
+# life would otherwise pay the build cost wherever it happens to land, activity or workflow sandbox.
+_type_adapter(list[ModelMessage])
 
 
 def _data_converter(converter: DataConverter | None) -> DataConverter:
