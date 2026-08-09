@@ -278,8 +278,11 @@ class HerokuModel(TypedDict):
     type: list[str]
 
 
+MODEL_LIST_HTTP_TIMEOUT = 10
+
+
 def get_heroku_model_names():
-    response = httpx.get('https://us.inference.heroku.com/available-models')
+    response = httpx.get('https://us.inference.heroku.com/available-models', timeout=MODEL_LIST_HTTP_TIMEOUT)
 
     if response.status_code != 200:
         pytest.skip(f'Heroku AI returned status code {response.status_code}')  # pragma: lax no cover
@@ -306,6 +309,7 @@ def get_cerebras_model_names():  # pragma: lax no cover
     response = httpx.get(
         'https://api.cerebras.ai/v1/models',
         headers={'Authorization': f'Bearer {api_key}', 'Accept': 'application/json', 'Accept-Encoding': 'identity'},
+        timeout=MODEL_LIST_HTTP_TIMEOUT,
     )
 
     if response.status_code != 200:
