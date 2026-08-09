@@ -41,6 +41,8 @@ pytestmark = [
     pytest.mark.vcr,
 ]
 
+_LIVE_MODEL_LIST_TIMEOUT = 10  # seconds — bounds live model-list HTTP lookups in tests
+
 
 def modify_response(response: dict[str, Any], filter_headers: list[str]) -> dict[str, Any]:  # pragma: lax no cover
     for header in response['headers'].copy():
@@ -279,7 +281,7 @@ class HerokuModel(TypedDict):
 
 
 def get_heroku_model_names():
-    response = httpx.get('https://us.inference.heroku.com/available-models')
+    response = httpx.get('https://us.inference.heroku.com/available-models', timeout=_LIVE_MODEL_LIST_TIMEOUT)
 
     if response.status_code != 200:
         pytest.skip(f'Heroku AI returned status code {response.status_code}')  # pragma: lax no cover
@@ -306,6 +308,7 @@ def get_cerebras_model_names():  # pragma: lax no cover
     response = httpx.get(
         'https://api.cerebras.ai/v1/models',
         headers={'Authorization': f'Bearer {api_key}', 'Accept': 'application/json', 'Accept-Encoding': 'identity'},
+        timeout=_LIVE_MODEL_LIST_TIMEOUT,
     )
 
     if response.status_code != 200:
