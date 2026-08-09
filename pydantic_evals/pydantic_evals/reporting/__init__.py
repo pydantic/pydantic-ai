@@ -894,19 +894,13 @@ class _NumberRenderer:
     ) -> _NumberRenderer:
         value_formatter = config.get('value_formatter', UNSET)
         if isinstance(value_formatter, Unset):
-            value_formatter = (
-                partial(default_render_duration, ascii_only=ascii_only) if kind == 'duration' else default_render_number
-            )
+            value_formatter = default_render_number
         elif value_formatter is default_render_duration:
             value_formatter = partial(default_render_duration, ascii_only=ascii_only)
 
         diff_formatter = config.get('diff_formatter', UNSET)
         if isinstance(diff_formatter, Unset):
-            diff_formatter = (
-                partial(default_render_duration_diff, ascii_only=ascii_only)
-                if kind == 'duration'
-                else default_render_number_diff
-            )
+            diff_formatter = default_render_number_diff
         elif diff_formatter is default_render_duration_diff:
             diff_formatter = partial(default_render_duration_diff, ascii_only=ascii_only)
 
