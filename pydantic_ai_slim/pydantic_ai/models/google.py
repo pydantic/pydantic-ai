@@ -821,7 +821,7 @@ class GoogleModel(Model[Client]):
         try:
             return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
         except errors.APIError as e:
-            raise _map_api_error(e, self._model_name) from e
+            raise _map_api_error(e, self._model_name) from None
 
     def _translate_thinking(
         self,
@@ -1039,7 +1039,7 @@ class GoogleModel(Model[Client]):
         try:
             first_chunk = await peekable_response.peek()
         except errors.APIError as e:
-            raise _map_api_error(e, self._model_name) from e
+            raise _map_api_error(e, self._model_name) from None
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
@@ -1551,7 +1551,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             self._pending_file_search_returns = []
         except errors.APIError as e:
-            raise _map_api_error(e, self._model_name) from e
+            raise _map_api_error(e, self._model_name) from None
 
     def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None
