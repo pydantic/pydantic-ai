@@ -3048,7 +3048,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {'x': {'type': 'string', 'description': 'minLength=1, format=uri'}},
+                    'properties': {'x': {'description': 'format=uri', 'minLength': 1, 'type': 'string'}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -3419,12 +3419,12 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                        'x': {'items': {'type': 'integer'}, 'maxItems': 1, 'minItems': 1, 'type': 'array'},
                         'y': {
                             'default': ['abc'],
+                            'items': {'type': 'string'},
                             'maxItems': 1,
                             'minItems': 1,
-                            'prefixItems': [{'type': 'string'}],
                             'type': 'array',
                         },
                     },
@@ -3441,8 +3441,8 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
-                        'y': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'string'}], 'type': 'array'},
+                        'x': {'items': {'type': 'integer'}, 'maxItems': 1, 'minItems': 1, 'type': 'array'},
+                        'y': {'items': {'type': 'string'}, 'maxItems': 1, 'minItems': 1, 'type': 'array'},
                     },
                     'required': ['x', 'y'],
                     'type': 'object',
@@ -3538,9 +3538,9 @@ def test_strict_schema():
                         },
                         'my_recursive': {'anyOf': [{'$ref': '#'}, {'type': 'null'}]},
                         'my_tuple': {
+                            'items': {'type': 'integer'},
                             'maxItems': 1,
                             'minItems': 1,
-                            'prefixItems': [{'type': 'integer'}],
                             'type': 'array',
                         },
                     },
@@ -3557,7 +3557,7 @@ def test_strict_schema():
                     'properties': {},
                     'required': [],
                 },
-                'my_tuple': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                'my_tuple': {'items': {'type': 'integer'}, 'maxItems': 1, 'minItems': 1, 'type': 'array'},
                 'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                 'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
             },
@@ -6140,6 +6140,89 @@ def test_transformer_adds_properties_to_object_schemas():
     result = OpenAIJsonSchemaTransformer(schema, strict=None).walk()
 
     assert result['properties'] == {}
+
+
+def test_transformer_length_constraints_are_strict_compatible():
+    """OpenAI preserves string length constraints in strict mode."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'value': {'type': 'string', 'minLength': 1, 'maxLength': 10}},
+        'required': ['value'],
+    }
+
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+
+    assert result['properties']['value'] == {'type': 'string', 'minLength': 1, 'maxLength': 10}
+    assert transformer.is_strict_compatible is True
+
+
+def test_transformer_homogeneous_tuple_is_strict_compatible():
+    """A fixed-length homogeneous tuple can be represented by OpenAI's typed `items` form."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {
+            'value': {
+                'type': 'array',
+                'prefixItems': [{'type': 'integer'}, {'type': 'integer'}],
+                'minItems': 2,
+                'maxItems': 2,
+            }
+        },
+        'required': ['value'],
+    }
+
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+
+    assert result['properties']['value'] == {
+        'type': 'array',
+        'items': {'type': 'integer'},
+        'minItems': 2,
+        'maxItems': 2,
+    }
+    assert transformer.is_strict_compatible is True
+
+
+def test_transformer_heterogeneous_tuple_is_not_strict_compatible():
+    """A heterogeneous tuple has no lossless representation in OpenAI strict mode."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {
+            'value': {
+                'type': 'array',
+                'prefixItems': [{'type': 'integer'}, {'type': 'string'}],
+                'minItems': 2,
+                'maxItems': 2,
+            }
+        },
+        'required': ['value'],
+    }
+
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+
+    assert result['properties']['value']['prefixItems'] == [{'type': 'integer'}, {'type': 'string'}]
+    assert transformer.is_strict_compatible is False
+
+
+def test_transformer_heterogeneous_tuple_explicit_strict_raises():
+    """Explicit strict mode rejects heterogeneous tuples instead of sending an invalid schema."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {
+            'value': {
+                'type': 'array',
+                'prefixItems': [{'type': 'integer'}, {'type': 'string'}],
+                'minItems': 2,
+                'maxItems': 2,
+            }
+        },
+        'required': ['value'],
+    }
+
+    with pytest.raises(UserError, match='cannot represent this `prefixItems` schema'):
+        OpenAIJsonSchemaTransformer(schema, strict=True).walk()
 
 
 @pytest.mark.parametrize(

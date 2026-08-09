@@ -395,8 +395,6 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
 
 _STRICT_INCOMPATIBLE_KEYS = [
-    'minLength',
-    'maxLength',
     'patternProperties',
     'unevaluatedProperties',
     'propertyNames',
@@ -407,6 +405,7 @@ _STRICT_INCOMPATIBLE_KEYS = [
     'minContains',
     'maxContains',
     'uniqueItems',
+    'prefixItems',
 ]
 
 _STRICT_COMPATIBLE_STRING_FORMATS = [
@@ -498,6 +497,22 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 # So if there is a "description" field or any other extra info, we move the "$ref" into an "anyOf":
                 schema['anyOf'] = [{'$ref': schema.pop('$ref')}]
 
+        schema_type = schema.get('type')
+        if schema_type == 'array' and self.strict is not False:
+            prefix_items = schema.get('prefixItems')
+            if prefix_items and 'items' not in schema:
+                fixed_length = schema.get('minItems') == len(prefix_items) and schema.get('maxItems') == len(
+                    prefix_items
+                )
+                if fixed_length and all(item == prefix_items[0] for item in prefix_items[1:]):
+                    # A fixed-length homogeneous tuple is equivalent to an array with a typed `items` schema.
+                    schema['items'] = prefix_items[0]
+                    schema.pop('prefixItems')
+                elif self.strict is True:
+                    raise UserError(
+                        'OpenAI strict mode cannot represent this `prefixItems` schema without changing its meaning'
+                    )
+
         # Track strict-incompatible keys
         incompatible_values: dict[str, Any] = {}
         for key in _STRICT_INCOMPATIBLE_KEYS:
@@ -522,7 +537,6 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
             elif self.strict is None:  # pragma: no branch
                 self.is_strict_compatible = False
 
-        schema_type = schema.get('type')
         if 'oneOf' in schema:
             # OpenAI does not support oneOf in strict mode
             if self.strict is True:
@@ -558,8 +572,9 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                             self.is_strict_compatible = False
 
         if schema_type == 'array':
-            # OpenAI strict mode requires an array to describe its elements' type, via either `items`
-            # (list types) or `prefixItems` (tuple types). A bare `list` produces an empty `items: {}`,
+            # OpenAI strict mode requires an array to describe its elements' type via `items`.
+            # Homogeneous fixed-length tuples are converted to this form above. A bare `list` produces an empty
+            # `items: {}`,
             # `list[Any]` a boolean `items: true`, and a schema may omit `items` entirely; none of these
             # give the element a type, so they're rejected by the API in strict mode and there's no way
             # to repair them without inventing an element type. `items` only types its elements when it's
@@ -568,7 +583,7 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
             # See https://github.com/pydantic/pydantic-ai/issues/4425
             items = schema.get('items')
             has_typed_items = isinstance(items, dict) and any(key in items for key in _TYPE_BEARING_KEYS)
-            if not has_typed_items and not schema.get('prefixItems'):
+            if not has_typed_items:
                 if self.strict is True:
                     raise UserError(
                         'OpenAI strict mode requires array items to have a type, but got an untyped array '
