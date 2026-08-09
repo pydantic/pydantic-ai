@@ -480,9 +480,8 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         """Print this report to the console, optionally comparing it to a baseline report.
 
         On a console `rich` reports as ASCII-only — a non-UTF-8 stream, as Windows produces when stdout is
-        redirected to a file or a pipe — `v`, `x` and `->` stand in for the `✔`, `✗` and `→` glyphs. The `µs`
-        unit sub-millisecond durations render with is not covered yet, so a stream that can't encode `µ` can
-        still raise: see [#7291](https://github.com/pydantic/pydantic-ai/issues/7291).
+        redirected to a file or a pipe — `v`, `x` and `->` stand in for the `✔`, `✗` and `→` glyphs, and default
+        sub-millisecond duration formatters use `us` instead of `µs`.
 
         If you want more control over the output, use `console_table` instead and pass it to `rich.Console.print`,
         forwarding `ascii_only=console.options.ascii_only` from the console you print to.
@@ -569,10 +568,21 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         If a baseline is provided, returns a diff between this report and the baseline report.
         Optionally include input and output details.
 
-        `ascii_only` renders `v`, `x` and `->` in place of the `✔`, `✗` and `→` glyphs, for a console whose
-        stream can't encode them. Only the caller holding that console can answer this, so it defaults to
-        `False`; pass `ascii_only=console.options.ascii_only` from the console you print the table to.
+        `ascii_only` renders `v`, `x` and `->` in place of the `✔`, `✗` and `→` glyphs, and uses `us` instead of
+        `µs` from the default sub-millisecond duration formatters. Only the caller holding that console can answer
+        this, so it defaults to `False`; pass `ascii_only=console.options.ascii_only` from the console you print the
+        table to.
         """
+        if ascii_only and duration_config is None:
+            duration_config = {
+                **_DEFAULT_DURATION_CONFIG,
+                'value_formatter': lambda value: default_render_duration(value).replace('µs', 'us'),
+                'diff_formatter': lambda old, new: (
+                    rendered.replace('µs', 'us')
+                    if (rendered := default_render_duration_diff(old, new)) is not None
+                    else None
+                ),
+            }
         renderer = EvaluationRenderer(
             include_input=include_input,
             include_metadata=include_metadata,
