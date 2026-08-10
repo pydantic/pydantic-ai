@@ -134,6 +134,7 @@ jobs:
           UV_NO_SYNC: "1"
 
       - run: uv build --all-packages
+      - run: uv run python .github/scripts/check_http_dependencies.py
       - run: ls -lh dist/
 
   # mypy and lint are a bit slower than other jobs, so we run them separately

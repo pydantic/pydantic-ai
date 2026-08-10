@@ -7,7 +7,9 @@ import re
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
+import httpx2
 
+from pydantic_ai._http import create_httpx2_client
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 
@@ -29,7 +31,7 @@ def gateway_provider(
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    http_client: httpx.AsyncClient | None = None,
+    http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None,
 ) -> Provider[AsyncOpenAI]: ...
 
 
@@ -122,7 +124,7 @@ def gateway_provider(
     api_key: str | None = None,
     base_url: str | None = None,
     # OpenAI, Groq, Anthropic & Gemini - Only Bedrock doesn't have an HTTPX client.
-    http_client: httpx.AsyncClient | None = None,
+    http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None,
 ) -> Provider[Any]:
     """Create a new Gateway provider.
 
@@ -164,6 +166,27 @@ def gateway_provider(
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
 
+    if canonical in ('openai', 'openai-chat', 'openai-responses'):
+        from .openai import OpenAIProvider
+
+        own_http_client = http_client is None
+        openai_http_client = http_client or create_httpx2_client()
+        _add_request_hook(openai_http_client, _GatewayRequestHook(api_key))
+
+        def _openai_http_client_factory() -> httpx2.AsyncClient:
+            client = create_httpx2_client()
+            _add_request_hook(client, _GatewayRequestHook(api_key))
+            return client
+
+        provider = OpenAIProvider(api_key=api_key, base_url=base_url, http_client=openai_http_client)
+        if own_http_client:
+            provider._own_http_client = openai_http_client  # pyright: ignore[reportPrivateUsage]
+            provider._http_client_factory = _openai_http_client_factory  # pyright: ignore[reportPrivateUsage]
+        return provider
+
+    if isinstance(http_client, httpx2.AsyncClient):
+        raise UserError('`httpx2.AsyncClient` is only supported for OpenAI Gateway routes.')
+
     own_http_client = http_client is None
     http_client = http_client or create_async_http_client()
     _add_request_hook(http_client, _GatewayRequestHook(api_key))
@@ -179,11 +202,7 @@ def gateway_provider(
             provider._http_client_factory = _http_client_factory  # pyright: ignore[reportPrivateUsage]
         return provider
 
-    if canonical in ('openai', 'openai-chat', 'openai-responses'):
-        from .openai import OpenAIProvider
-
-        return _with_http_client(OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client))
-    elif canonical == 'groq':
+    if canonical == 'groq':
         from .groq import GroqProvider
 
         return _with_http_client(GroqProvider(api_key=api_key, base_url=base_url, http_client=http_client))
@@ -219,7 +238,13 @@ class _GatewayRequestHook:
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
 
-    async def __call__(self, request: httpx.Request) -> httpx.Request:
+    @overload
+    async def __call__(self, request: httpx.Request) -> httpx.Request: ...
+
+    @overload
+    async def __call__(self, request: httpx2.Request) -> httpx2.Request: ...
+
+    async def __call__(self, request: httpx.Request | httpx2.Request) -> httpx.Request | httpx2.Request:
         from opentelemetry.propagate import inject
 
         headers: dict[str, Any] = {}
@@ -232,7 +257,7 @@ class _GatewayRequestHook:
         return request
 
 
-def _add_request_hook(http_client: httpx.AsyncClient, hook: _GatewayRequestHook) -> None:
+def _add_request_hook(http_client: httpx.AsyncClient | httpx2.AsyncClient, hook: _GatewayRequestHook) -> None:
     """Add a request hook without replacing caller-provided HTTPX hooks."""
     request_hooks = [
         existing_hook

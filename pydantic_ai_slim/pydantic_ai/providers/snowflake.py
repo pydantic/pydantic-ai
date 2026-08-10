@@ -5,18 +5,16 @@ import re
 from collections.abc import Callable
 from typing import overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
-from pydantic_ai.providers import Provider
+
+from .openai import _OpenAICompatibleProvider, _OpenAIHTTPClient  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -44,7 +42,7 @@ class SnowflakeModelProfile(OpenAIModelProfile, total=False):
     """
 
 
-class SnowflakeProvider(Provider[AsyncOpenAI]):
+class SnowflakeProvider(_OpenAICompatibleProvider):
     """Provider for [Snowflake Cortex](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api).
 
     Routes requests through Snowflake's OpenAI-compatible Chat Completions API at
@@ -134,7 +132,7 @@ class SnowflakeProvider(Provider[AsyncOpenAI]):
         token: str | None = None,
         base_url: str | None = None,
         openai_client: None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -144,7 +142,7 @@ class SnowflakeProvider(Provider[AsyncOpenAI]):
         token: str | None = None,
         base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Create a new Snowflake provider.
 
@@ -160,7 +158,7 @@ class SnowflakeProvider(Provider[AsyncOpenAI]):
             openai_client: An existing `AsyncOpenAI` client to use. Its `base_url` must already
                 point at the Cortex REST API. If provided, `account`, `token`, `base_url`, and
                 `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
         if openai_client is not None:
             assert account is None, 'Cannot provide both `openai_client` and `account`'
@@ -199,13 +197,4 @@ class SnowflakeProvider(Provider[AsyncOpenAI]):
                 ' to use the Snowflake provider.'
             )
 
-        if http_client is not None:
-            self._client = AsyncOpenAI(base_url=base_url, api_key=token, http_client=http_client)
-        else:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=base_url, api_key=token, http_client=http_client)
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+        self._client = self._create_openai_client(base_url=base_url, api_key=token, http_client=http_client)

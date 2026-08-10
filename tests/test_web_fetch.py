@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from pydantic_ai.common_tools.web_fetch import (
@@ -316,8 +316,6 @@ class TestWebFetchLocalTool:
 
     async def test_http_error_raises_model_retry(self):
         """HTTP errors are converted to ModelRetry."""
-        import httpx
-
         from pydantic_ai.exceptions import ModelRetry
 
         request = httpx.Request('GET', 'https://example.com')
@@ -503,7 +501,7 @@ class TestWebFetchLocalTool:
             def create_http_client(*, timeout: int) -> httpx.AsyncClient:
                 return client
 
-            monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+            monkeypatch.setattr('pydantic_ai._ssrf.create_httpx2_client', create_http_client)
 
         return serve
 

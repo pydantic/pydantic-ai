@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
-from httpx import Timeout
 from typing_extensions import TypedDict
+
+if TYPE_CHECKING:
+    from httpx import Timeout
+else:
+    try:
+        from httpx import Timeout
+    except ImportError:
+        Timeout = float
 
 ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh']
 """The string effort levels for thinking/reasoning configuration."""

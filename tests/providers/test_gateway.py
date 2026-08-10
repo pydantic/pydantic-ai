@@ -4,7 +4,7 @@ from typing import Any, Literal
 from unittest.mock import patch
 from urllib.parse import urlparse
 
-import httpx
+import httpx2
 import pytest
 
 from pydantic_ai import Agent, UserError
@@ -53,6 +53,7 @@ def test_init_with_base_url(
     assert isinstance(provider, provider_cls)
     assert provider.base_url == f'https://example.com/{route}/'
     assert provider.client.api_key == 'foobar'
+    assert isinstance(provider.client._client, httpx2.AsyncClient)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_init_gateway_without_api_key_raises_error(env: TestEnv):
@@ -67,7 +68,7 @@ def test_init_gateway_without_api_key_raises_error(env: TestEnv):
 
 
 async def test_init_with_http_client():
-    async with httpx.AsyncClient() as http_client:
+    async with httpx2.AsyncClient() as http_client:
         provider = gateway_provider('openai', http_client=http_client, api_key='foobar', base_url=GATEWAY_BASE_URL)
         assert provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
 
@@ -75,13 +76,13 @@ async def test_init_with_http_client():
 async def test_init_with_http_client_preserves_existing_event_hooks():
     # Unit (not VCR): this checks local HTTPX hook merging by inspecting and invoking event hooks directly;
     # cassette playback would not exercise hook ordering or preservation.
-    async def existing_request_hook(request: httpx.Request) -> None:
+    async def existing_request_hook(request: httpx2.Request) -> None:
         request.headers['X-Existing-Request-Hook'] = 'kept'
 
-    async def existing_response_hook(response: httpx.Response) -> None:
+    async def existing_response_hook(response: httpx2.Response) -> None:
         response.headers['X-Existing-Response-Hook'] = 'kept'
 
-    async with httpx.AsyncClient(
+    async with httpx2.AsyncClient(
         event_hooks={'request': [existing_request_hook], 'response': [existing_response_hook]}
     ) as http_client:
         provider = gateway_provider('openai', http_client=http_client, api_key='foobar', base_url=GATEWAY_BASE_URL)
@@ -89,14 +90,14 @@ async def test_init_with_http_client_preserves_existing_event_hooks():
         assert existing_request_hook in http_client.event_hooks['request']
         assert existing_response_hook in http_client.event_hooks['response']
 
-        request = httpx.Request('GET', provider.base_url)
+        request = httpx2.Request('GET', provider.base_url)
         for hook in http_client.event_hooks['request']:
             await hook(request)
 
         assert request.headers['X-Existing-Request-Hook'] == 'kept'
         assert request.headers['Authorization'] == 'Bearer foobar'
 
-        response = httpx.Response(200, request=request)
+        response = httpx2.Response(200, request=request)
         for hook in http_client.event_hooks['response']:
             await hook(response)
 
@@ -106,10 +107,10 @@ async def test_init_with_http_client_preserves_existing_event_hooks():
 async def test_init_with_http_client_replaces_existing_gateway_hook():
     # Unit (not VCR): this checks local HTTPX hook replacement by inspecting and invoking event hooks directly;
     # cassette playback would not exercise Gateway hook deduplication.
-    async def existing_request_hook(request: httpx.Request) -> None:
+    async def existing_request_hook(request: httpx2.Request) -> None:
         request.headers['X-Existing-Request-Hook'] = 'kept'
 
-    async with httpx.AsyncClient(event_hooks={'request': [existing_request_hook]}) as http_client:
+    async with httpx2.AsyncClient(event_hooks={'request': [existing_request_hook]}) as http_client:
         first_provider = gateway_provider('openai', http_client=http_client, api_key='first', base_url=GATEWAY_BASE_URL)
         second_provider = gateway_provider(
             'openai', http_client=http_client, api_key='second', base_url=GATEWAY_BASE_URL
@@ -120,7 +121,7 @@ async def test_init_with_http_client_replaces_existing_gateway_hook():
         assert http_client.event_hooks['request'][0] == existing_request_hook
         assert len(http_client.event_hooks['request']) == 2
 
-        request = httpx.Request('GET', second_provider.base_url)
+        request = httpx2.Request('GET', second_provider.base_url)
         for hook in http_client.event_hooks['request']:
             await hook(request)
 

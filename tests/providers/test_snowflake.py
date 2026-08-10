@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import re
 
-import httpx
+import httpx2
 import pytest
 
 from pydantic_ai.exceptions import UserError
@@ -94,7 +94,7 @@ def test_snowflake_provider_base_url_override(env: TestEnv) -> None:
 
 
 def test_snowflake_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
+    http_client = httpx2.AsyncClient()
     provider = SnowflakeProvider(account='myorg-myaccount', token='pat', http_client=http_client)
     assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 

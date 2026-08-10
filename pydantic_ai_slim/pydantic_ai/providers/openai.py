@@ -1,12 +1,16 @@
 from __future__ import annotations as _annotations
 
 import os
+import warnings
+from collections.abc import Callable, Mapping
 from typing import overload
 
 import httpx
+import httpx2
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.models import create_async_http_client
+from pydantic_ai._http import create_httpx2_client
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
@@ -20,7 +24,54 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
-class OpenAIProvider(Provider[AsyncOpenAI]):
+_OpenAIHTTPClient = httpx.AsyncClient | httpx2.AsyncClient
+
+
+class _OpenAICompatibleProvider(Provider[AsyncOpenAI]):
+    """Shared HTTP client lifecycle for providers backed by the OpenAI SDK."""
+
+    _own_http_client: _OpenAIHTTPClient | None = None
+    _http_client_factory: Callable[[], _OpenAIHTTPClient] | None = None
+
+    def _get_http_client(
+        self, http_client: _OpenAIHTTPClient | None, *, warning_stacklevel: int = 3
+    ) -> _OpenAIHTTPClient:
+        if http_client is None:
+            http_client = create_httpx2_client()
+            self._own_http_client = http_client  # pyright: ignore[reportIncompatibleVariableOverride]
+            self._http_client_factory = create_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
+        elif isinstance(http_client, httpx.AsyncClient):
+            warnings.warn(
+                '`httpx.AsyncClient` support for OpenAI-compatible providers is deprecated and will be removed in v3; '
+                'use `httpx2.AsyncClient` instead.',
+                PydanticAIDeprecationWarning,
+                stacklevel=warning_stacklevel,
+            )
+        return http_client
+
+    def _create_openai_client(
+        self,
+        *,
+        base_url: str | None,
+        api_key: str | None,
+        http_client: _OpenAIHTTPClient | None,
+        default_headers: Mapping[str, str] | None = None,
+    ) -> AsyncOpenAI:
+        http_client = self._get_http_client(http_client, warning_stacklevel=4)
+        # openai-python >=2.47 accepts an httpx2 client, but its type annotations still name legacy httpx.
+        return AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key,
+            http_client=http_client,  # pyright: ignore[reportArgumentType]
+            default_headers=default_headers,
+        )
+
+    # The generic Provider currently only knows the legacy HTTPX client type.
+    def _set_http_client(self, http_client: _OpenAIHTTPClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+
+
+class OpenAIProvider(_OpenAICompatibleProvider):
     """Provider for OpenAI API."""
 
     @property
@@ -62,7 +113,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -70,7 +121,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
         base_url: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Create a new OpenAI provider.
 
@@ -82,7 +133,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             openai_client: An existing
                 [`AsyncOpenAI`](https://github.com/openai/openai-python?tab=readme-ov-file#async-usage)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
         if api_key is None and 'OPENAI_API_KEY' not in os.environ and openai_client is None:
             if base_url is None and 'OPENAI_BASE_URL' not in os.environ:
@@ -103,13 +154,5 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+            self._client = self._create_openai_client(base_url=base_url, api_key=api_key, http_client=http_client)

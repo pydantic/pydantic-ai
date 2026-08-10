@@ -20,7 +20,7 @@ from functools import cache, cached_property, wraps
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
 
-import httpx
+import httpx2
 from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
@@ -80,16 +80,20 @@ from ..profiles import (
 )
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
-
-if TYPE_CHECKING:
-    from ..agent.abstract import AbstractAgent
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._known_model_names import KnownModelName as KnownModelName
 
 if TYPE_CHECKING:
+    from httpx import AsyncClient
+
     from ..agent.abstract import AbstractAgent
     from ..usage import RunUsage
+else:
+    try:
+        from httpx import AsyncClient
+    except ImportError:
+        AsyncClient = object
 
 DEFAULT_HTTP_TIMEOUT: int = 600
 """Default HTTP timeout in seconds for API requests.
@@ -1247,7 +1251,12 @@ class StreamedResponse(ABC):
         propagate from chunk reads. Model classes that use other transports
         (for example gRPC or botocore) should override this method.
         """
-        return (httpx.StreamError, httpx.TransportError)
+        try:
+            import httpx
+        except ImportError:
+            return (httpx2.StreamError, httpx2.TransportError)
+
+        return (httpx2.StreamError, httpx2.TransportError, httpx.StreamError, httpx.TransportError)
 
     async def close_stream(self) -> None:
         """Close the underlying HTTP/gRPC connection.
@@ -1735,7 +1744,7 @@ def infer_model(  # noqa: C901
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
 
-def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx.AsyncClient:
+def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> AsyncClient:
     """Create an HTTPX async client.
 
     Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
@@ -1744,6 +1753,8 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
+    import httpx
+
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},

@@ -13,10 +13,15 @@ import zlib
 from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
-import httpx
+import httpx2
 
+try:
+    import httpx as _legacy_httpx
+except ImportError:  # pragma: no cover
+    _legacy_httpx = None
+
+from ._http import create_httpx2_client
 from ._utils import run_in_executor
-from .models import create_async_http_client
 
 __all__ = ['safe_download']
 
@@ -126,6 +131,35 @@ _CLOUD_METADATA_IPV6: frozenset[ipaddress.IPv6Address] = frozenset(
 _MAX_REDIRECTS = 10
 _DEFAULT_TIMEOUT = 30  # seconds
 _SENSITIVE_HEADERS = frozenset(('authorization', 'cookie', 'proxy-authorization'))
+
+
+def _compatible_request_error_init(self: Exception, message: str, *, request: httpx2.Request | None = None) -> None:
+    Exception.__init__(self, message)
+    self.__dict__['_request'] = request
+
+
+def _compatible_http_status_error_init(
+    self: Exception, message: str, *, request: httpx2.Request, response: httpx2.Response
+) -> None:
+    Exception.__init__(self, message)
+    self.__dict__['_request'] = request
+    self.__dict__['response'] = response
+
+
+if _legacy_httpx is not None:
+    _CompatibleRequestError = type(
+        '_CompatibleRequestError',
+        (httpx2.RequestError, _legacy_httpx.RequestError),
+        {'__init__': _compatible_request_error_init},
+    )
+    _CompatibleHTTPStatusError = type(
+        '_CompatibleHTTPStatusError',
+        (httpx2.HTTPStatusError, _legacy_httpx.HTTPStatusError),
+        {'__init__': _compatible_http_status_error_init},
+    )
+else:
+    _CompatibleRequestError = httpx2.RequestError
+    _CompatibleHTTPStatusError = httpx2.HTTPStatusError
 
 
 @dataclass
@@ -483,7 +517,7 @@ async def safe_download(
     allowed_domains: list[str] | None = None,
     blocked_domains: list[str] | None = None,
     max_bytes: int | None = None,
-) -> httpx.Response:
+) -> httpx2.Response:
     """Download content from a URL with SSRF protection.
 
     This function:
@@ -516,12 +550,13 @@ async def safe_download(
                 Checked on every hop including redirects.
 
     Returns:
-        The httpx.Response object.
+        The httpx2.Response object.
 
     Raises:
         ValueError: If the URL fails SSRF validation, domain validation,
                 or too many redirects occur.
-        httpx.HTTPStatusError: If the response has an error status code.
+        httpx2.HTTPStatusError: If the response has an error status code. When legacy
+            `httpx` is installed, this also matches `httpx.HTTPStatusError` handlers.
     """
     if max_bytes is not None and max_bytes < 0:
         raise ValueError('max_bytes must be non-negative')
@@ -530,7 +565,7 @@ async def safe_download(
     redirects_followed = 0
     effective_headers: dict[str, str] = dict(headers) if headers else {}
 
-    async with create_async_http_client(timeout=timeout) as client:
+    async with create_httpx2_client(timeout=timeout) as client:
         while True:
             # Validate and resolve the current URL
             resolved = await validate_and_resolve_url(current_url, allow_local)
@@ -554,16 +589,19 @@ async def safe_download(
 
             # Make request with Host header set to original hostname. Keep the existing
             # buffered path for callers without a body limit.
-            if max_bytes is None:
-                response = await client.get(
-                    request_url,
-                    headers=request_headers,
-                    extensions=extensions,
-                    follow_redirects=False,
-                )
-            else:
-                request = client.build_request('GET', request_url, headers=request_headers, extensions=extensions)
-                response = await client.send(request, follow_redirects=False, stream=True)
+            try:
+                if max_bytes is None:
+                    response = await client.get(
+                        request_url,
+                        headers=request_headers,
+                        extensions=extensions,
+                        follow_redirects=False,
+                    )
+                else:
+                    request = client.build_request('GET', request_url, headers=request_headers, extensions=extensions)
+                    response = await client.send(request, follow_redirects=False, stream=True)
+            except httpx2.RequestError as e:
+                raise _CompatibleRequestError(str(e), request=e.request) from e
 
             # Check if we need to follow a redirect
             if response.is_redirect:
@@ -591,19 +629,22 @@ async def safe_download(
 
             # Not a redirect, we're done
             try:
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except httpx2.HTTPStatusError as e:
+                    raise _CompatibleHTTPStatusError(str(e), request=e.request, response=e.response) from e
                 if max_bytes is not None:
                     content = await _read_capped_body(response, max_bytes)
                     # Body is already decoded, so the reconstructed response must not carry
-                    # the content coding, or `httpx.Response` would run it through the decoder
+                    # the content coding, or `httpx2.Response` would run it through the decoder
                     # again. `content-length` described the encoded body and no longer applies;
-                    # httpx recomputes it from `content`.
+                    # httpx2 recomputes it from `content`.
                     decoded_headers = [
                         (key, value)
                         for key, value in response.headers.multi_items()
                         if key.lower() not in ('content-encoding', 'content-length')
                     ]
-                    return httpx.Response(
+                    return httpx2.Response(
                         response.status_code,
                         headers=decoded_headers,
                         content=content,
@@ -621,7 +662,7 @@ def _download_exceeds(max_bytes: int) -> ValueError:
     return ValueError(_DOWNLOAD_EXCEEDS_TEMPLATE.format(max_bytes=max_bytes))
 
 
-async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
+async def _read_capped_body(response: httpx2.Response, max_bytes: int) -> bytes:
     """Read a streamed response body without buffering more than `max_bytes` of decoded data.
 
     Streams the *encoded* body via `aiter_raw` so oversized wire traffic is rejected as it
@@ -632,7 +673,7 @@ async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
     size-limited while streaming are rejected; callers with `max_bytes` also send
     `Accept-Encoding: identity, gzip` so servers are not invited to use them.
 
-    Some transports (e.g. httpx mock responses built from an in-memory `content=` bytes object)
+    Some transports (e.g. httpx2 mock responses built from an in-memory `content=` bytes object)
     preload the body and mark the stream consumed; in that case the decoded body is already in
     `response.content` and we only enforce the size cap on it.
     """
@@ -659,7 +700,7 @@ async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
     )
 
 
-async def _read_capped_identity(response: httpx.Response, max_bytes: int) -> bytes:
+async def _read_capped_identity(response: httpx2.Response, max_bytes: int) -> bytes:
     content = bytearray()
     async for raw in response.aiter_raw():
         if len(content) + len(raw) > max_bytes:
@@ -668,7 +709,7 @@ async def _read_capped_identity(response: httpx.Response, max_bytes: int) -> byt
     return bytes(content)
 
 
-async def _read_capped_gzip(response: httpx.Response, max_bytes: int) -> bytes:
+async def _read_capped_gzip(response: httpx2.Response, max_bytes: int) -> bytes:
     content = bytearray()
     encoded_total = 0
     decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)

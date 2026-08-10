@@ -1,7 +1,7 @@
 import re
 from unittest.mock import patch
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 from pydantic_ai import AudioUrl, DocumentUrl, ImageUrl, VideoUrl
@@ -76,7 +76,7 @@ async def test_download_item_rejects_oversized_body(
     def create_http_client(*, timeout: int) -> httpx.AsyncClient:
         return http_client
 
-    monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+    monkeypatch.setattr('pydantic_ai._ssrf.create_httpx2_client', create_http_client)
 
     with (
         patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 512),

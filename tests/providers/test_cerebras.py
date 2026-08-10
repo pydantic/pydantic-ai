@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import re
 
-import httpx
+import httpx2
 import pytest
 from pytest_mock import MockerFixture
 
@@ -47,7 +47,7 @@ def test_cerebras_provider_need_api_key(env: TestEnv) -> None:
 
 
 def test_cerebras_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
+    http_client = httpx2.AsyncClient()
     provider = CerebrasProvider(http_client=http_client, api_key='api-key')
     assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 

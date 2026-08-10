@@ -4,12 +4,10 @@ import os
 from typing import overload
 from urllib.parse import urlparse
 
-import httpx
 from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
@@ -17,7 +15,8 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
-from pydantic_ai.providers import Provider
+
+from .openai import _OpenAICompatibleProvider, _OpenAIHTTPClient  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncAzureOpenAI
@@ -28,7 +27,7 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
-class AzureProvider(Provider[AsyncOpenAI]):
+class AzureProvider(_OpenAICompatibleProvider):
     """Provider for Azure OpenAI API.
 
     See <https://azure.microsoft.com/en-us/products/ai-foundry> for more information.
@@ -102,7 +101,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
         azure_endpoint: str | None = None,
         api_version: str | None = None,
         api_key: str | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
 
     def __init__(
@@ -112,7 +111,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
         api_version: str | None = None,
         api_key: str | None = None,
         openai_client: AsyncAzureOpenAI | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
         """Create a new Azure provider.
 
@@ -130,7 +129,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
             openai_client: An existing
                 [`AsyncAzureOpenAI`](https://github.com/openai/openai-python#microsoft-azure-openai)
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
-            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
         if openai_client is not None:
             assert azure_endpoint is None, 'Cannot provide both `openai_client` and `azure_endpoint`'
@@ -150,10 +149,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     'Must provide one of the `api_key` argument or the `AZURE_OPENAI_API_KEY` environment variable'
                 )
 
-            if http_client is None:
-                http_client = create_async_http_client()
-                self._own_http_client = http_client
-                self._http_client_factory = create_async_http_client
+            http_client = self._get_http_client(http_client)
 
             # The Azure OpenAI v1 GA API and Azure AI Foundry serverless model
             # endpoints expose an OpenAI-compatible `/v1` API that rejects the
@@ -168,7 +164,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 self._client = AsyncOpenAI(
                     base_url=v1_base_url,
                     api_key=api_key or os.getenv('AZURE_OPENAI_API_KEY'),
-                    http_client=http_client,
+                    http_client=http_client,  # pyright: ignore[reportArgumentType]
                 )
                 self._base_url = str(self._client.base_url)
             else:
@@ -181,12 +177,9 @@ class AzureProvider(Provider[AsyncOpenAI]):
                     azure_endpoint=azure_endpoint,
                     api_key=api_key,
                     api_version=api_version,
-                    http_client=http_client,
+                    http_client=http_client,  # pyright: ignore[reportArgumentType]
                 )
                 self._base_url = str(self._client.base_url)
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
 
 
 def _openai_compatible_v1_base_url(endpoint: str) -> str | None:

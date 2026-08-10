@@ -49,7 +49,7 @@ requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,anthropic,google,cli,mcp,evals,web,retries,logfire]=={{ version }}",
+    "pydantic-ai-slim[openai,anthropic,google,cli,mcp,evals,web,logfire]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -76,6 +76,7 @@ duckduckgo = ["pydantic-ai-slim[duckduckgo]=={{ version }}"]
 tavily = ["pydantic-ai-slim[tavily]=={{ version }}"]
 exa = ["pydantic-ai-slim[exa]=={{ version }}"]
 web-fetch = ["pydantic-ai-slim[web-fetch]=={{ version }}"]
+retries = ["pydantic-ai-slim[retries]=={{ version }}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
 spec = ["pydantic-ai-slim[spec]=={{ version }}"]
 
@@ -157,6 +158,7 @@ logfire-api = false
 [dependency-groups]
 dev = [
     "anyio>=4.7.0",
+    "httpx>=0.27",
     "asgi-lifespan>=2.1.0",
     "devtools>=0.12.2",
     "coverage[toml]>=7.10.7",
@@ -356,6 +358,9 @@ filterwarnings = [
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
+    # mistralai constrains opentelemetry-semantic-conventions<0.61, while HTTPX2 instrumentation requires
+    # opentelemetry-instrumentation-httpx>=0.65b0. Logfire continues without HTTPX2 request spans.
+    "ignore:`httpx2` will not be instrumented because it requires `opentelemetry-instrumentation-httpx>=0.65b0`:UserWarning",
     # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
     "ignore: Core Pydantic V1 functionality:UserWarning",
     # prefect has a Pydantic v2 compatibility issue in RRuleSchedule

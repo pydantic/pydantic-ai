@@ -19,6 +19,7 @@ from types import TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
+import httpx2
 import pytest
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
@@ -6371,6 +6372,44 @@ async def test_run_stream_cancel_guard_suppresses_transport_error():
             ),
         ]
     )
+
+
+async def test_stream_cancel_guard_suppresses_httpx2_transport_error():
+    @dataclass
+    class _HTTPX2Stream(models.StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[Any]:
+            for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
+                yield event
+            if self.cancelled:
+                raise httpx2.StreamClosed()
+
+        async def close_stream(self) -> None:
+            pass
+
+        @property
+        def model_name(self) -> str:
+            return 'httpx2'
+
+        @property
+        def provider_name(self) -> str:
+            return 'httpx2'
+
+        @property
+        def provider_url(self) -> str | None:
+            return None
+
+        @property
+        def timestamp(self) -> _datetime:
+            return _datetime.now(tz=timezone.utc)
+
+    stream = _HTTPX2Stream(models.ModelRequestParameters())
+    iterator = stream.__aiter__()
+    await iterator.__anext__()
+    await stream.cancel()
+    async for _ in iterator:
+        pass
+
+    assert stream.get().state == 'interrupted'
 
 
 async def test_run_stream_cancel_after_complete():

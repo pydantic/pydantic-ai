@@ -110,7 +110,7 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
 As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)
 (bear with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
 
-To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs (except for [Bedrock](models/bedrock.md)) use the [HTTPX](https://www.python-httpx.org/) library internally:
+To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/). Provider SDKs use either HTTPX or [HTTPX2](https://httpx2.pydantic.dev/) internally, except for [Bedrock](models/bedrock.md), which uses boto3:
 
 
 ```py {title="with_logfire_instrument_httpx.py" hl_lines="7"}
@@ -128,7 +128,9 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
+1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] for more details. `capture_all=True` means both headers and body are captured for both the request and response.
+
+    HTTPX2 instrumentation requires `opentelemetry-instrumentation-httpx>=0.65b0`. If another installed SDK constrains an older OpenTelemetry version, Logfire emits a warning and continues tracing Pydantic AI model calls without the lower-level HTTPX2 spans.
 
 ![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
 

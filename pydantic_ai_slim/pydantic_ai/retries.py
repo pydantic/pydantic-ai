@@ -6,15 +6,17 @@ used with HTTP clients that support custom transports (such as httpx), while the
 strategies can be used with any tenacity retry decorator.
 
 The module includes:
-- TenacityTransport: Synchronous HTTP transport with retry capabilities
-- AsyncTenacityTransport: Asynchronous HTTP transport with retry capabilities
+- HTTPX2TenacityTransport: Synchronous HTTPX2 transport with retry capabilities
+- AsyncHTTPX2TenacityTransport: Asynchronous HTTPX2 transport with retry capabilities
 - wait_retry_after: Wait strategy that respects HTTP Retry-After headers
 """
 
 from __future__ import annotations
 
+import warnings
 from types import TracebackType
 
+import httpx2
 from httpx import (
     AsyncBaseTransport,
     AsyncHTTPTransport,
@@ -40,13 +42,22 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypedDict
 
+from ._warnings import PydanticAIDeprecationWarning
+
 if TYPE_CHECKING:
     from tenacity.asyncio.retry import RetryBaseT
     from tenacity.retry import RetryBaseT as SyncRetryBaseT
     from tenacity.stop import StopBaseT
     from tenacity.wait import WaitBaseT
 
-__all__ = ['RetryConfig', 'TenacityTransport', 'AsyncTenacityTransport', 'wait_retry_after']
+__all__ = [
+    'RetryConfig',
+    'HTTPX2TenacityTransport',
+    'AsyncHTTPX2TenacityTransport',
+    'TenacityTransport',
+    'AsyncTenacityTransport',
+    'wait_retry_after',
+]
 
 
 class RetryConfig(TypedDict, total=False):
@@ -114,8 +125,96 @@ class RetryConfig(TypedDict, total=False):
     Tenacity's default for this argument is `None`."""
 
 
+class HTTPX2TenacityTransport(httpx2.BaseTransport):
+    """Synchronous HTTPX2 transport with Tenacity-based retry functionality."""
+
+    def __init__(
+        self,
+        config: RetryConfig,
+        wrapped: httpx2.BaseTransport | None = None,
+        validate_response: Callable[[httpx2.Response], object] | None = None,
+    ):
+        self.config = config
+        self.wrapped = wrapped or httpx2.HTTPTransport()
+        self.validate_response = validate_response
+
+    def handle_request(self, request: httpx2.Request) -> httpx2.Response:
+        @retry(**self.config)
+        def handle_request(req: httpx2.Request) -> httpx2.Response:
+            response = self.wrapped.handle_request(req)
+            response.request = req
+            if self.validate_response:
+                try:
+                    self.validate_response(response)
+                except Exception:
+                    response.close()
+                    raise
+            return response
+
+        return handle_request(request)
+
+    def __enter__(self) -> HTTPX2TenacityTransport:
+        self.wrapped.__enter__()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None = None,
+        exc_value: BaseException | None = None,
+        traceback: TracebackType | None = None,
+    ) -> None:
+        self.wrapped.__exit__(exc_type, exc_value, traceback)
+
+    def close(self) -> None:
+        self.wrapped.close()
+
+
+class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
+    """Asynchronous HTTPX2 transport with Tenacity-based retry functionality."""
+
+    def __init__(
+        self,
+        config: RetryConfig,
+        wrapped: httpx2.AsyncBaseTransport | None = None,
+        validate_response: Callable[[httpx2.Response], object] | None = None,
+    ):
+        self.config = config
+        self.wrapped = wrapped or httpx2.AsyncHTTPTransport()
+        self.validate_response = validate_response
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        @retry(**self.config)
+        async def handle_async_request(req: httpx2.Request) -> httpx2.Response:
+            response = await self.wrapped.handle_async_request(req)
+            response.request = req
+            if self.validate_response:
+                try:
+                    self.validate_response(response)
+                except Exception:
+                    await response.aclose()
+                    raise
+            return response
+
+        return await handle_async_request(request)
+
+    async def __aenter__(self) -> AsyncHTTPX2TenacityTransport:
+        await self.wrapped.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None = None,
+        exc_value: BaseException | None = None,
+        traceback: TracebackType | None = None,
+    ) -> None:
+        await self.wrapped.__aexit__(exc_type, exc_value, traceback)
+
+    async def aclose(self) -> None:
+        await self.wrapped.aclose()
+
+
 class TenacityTransport(BaseTransport):
-    """Synchronous HTTP transport with tenacity-based retry functionality.
+    """Deprecated synchronous HTTPX transport with Tenacity-based retry functionality.
 
     This transport wraps another BaseTransport and adds retry capabilities using the tenacity library.
     It can be configured to retry requests based on various conditions such as specific exception types,
@@ -161,6 +260,12 @@ class TenacityTransport(BaseTransport):
         wrapped: BaseTransport | None = None,
         validate_response: Callable[[Response], Any] | None = None,
     ):
+        warnings.warn(
+            '`TenacityTransport` is deprecated and will be removed in v3; use `HTTPX2TenacityTransport` '
+            'with `httpx2.Client` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
         self.config = config
         self.wrapped = wrapped or HTTPTransport()
         self.validate_response = validate_response
@@ -213,7 +318,7 @@ class TenacityTransport(BaseTransport):
 
 
 class AsyncTenacityTransport(AsyncBaseTransport):
-    """Asynchronous HTTP transport with tenacity-based retry functionality.
+    """Deprecated asynchronous HTTPX transport with Tenacity-based retry functionality.
 
     This transport wraps another AsyncBaseTransport and adds retry capabilities using the tenacity library.
     It can be configured to retry requests based on various conditions such as specific exception types,
@@ -258,6 +363,12 @@ class AsyncTenacityTransport(AsyncBaseTransport):
         wrapped: AsyncBaseTransport | None = None,
         validate_response: Callable[[Response], Any] | None = None,
     ):
+        warnings.warn(
+            '`AsyncTenacityTransport` is deprecated and will be removed in v3; use `AsyncHTTPX2TenacityTransport` '
+            'with `httpx2.AsyncClient` instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
         self.config = config
         self.wrapped = wrapped or AsyncHTTPTransport()
         self.validate_response = validate_response
@@ -314,8 +425,8 @@ def wait_retry_after(
 ) -> Callable[[RetryCallState], float]:
     """Create a tenacity-compatible wait strategy that respects HTTP Retry-After headers.
 
-    This wait strategy checks if the exception contains an HTTPStatusError with a
-    Retry-After header, and if so, waits for the time specified in the header.
+    This wait strategy checks if the exception contains an HTTPX or HTTPX2 HTTPStatusError
+    with a Retry-After header, and if so, waits for the time specified in the header.
     If no header is present or parsing fails, it falls back to the provided strategy.
 
     The Retry-After header can be in two formats:
@@ -333,12 +444,12 @@ def wait_retry_after(
 
     Example:
         ```python
-        from httpx import AsyncClient, HTTPStatusError
+        from httpx2 import AsyncClient, HTTPStatusError
         from tenacity import retry_if_exception_type, stop_after_attempt
 
-        from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
+        from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig, wait_retry_after
 
-        transport = AsyncTenacityTransport(
+        transport = AsyncHTTPX2TenacityTransport(
             RetryConfig(
                 retry=retry_if_exception_type(HTTPStatusError),
                 wait=wait_retry_after(max_wait=120),
@@ -355,7 +466,7 @@ def wait_retry_after(
 
     def wait_func(state: RetryCallState) -> float:
         exc = state.outcome.exception() if state.outcome else None
-        if isinstance(exc, HTTPStatusError):
+        if isinstance(exc, HTTPStatusError | httpx2.HTTPStatusError):
             retry_after = exc.response.headers.get('retry-after')
             if retry_after:
                 try:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-import httpx
+import httpx2
 import pytest
 from inline_snapshot import snapshot
 from typing_extensions import assert_never
@@ -117,7 +117,7 @@ def test_bedrock_mantle_model_uses_interface_client() -> None:
 
 
 def test_bedrock_mantle_accepts_http_client() -> None:
-    http_client = httpx.AsyncClient()
+    http_client = httpx2.AsyncClient()
     provider = BedrockMantleProvider(http_client=http_client)
 
     assert provider.client._client is http_client  # pyright: ignore[reportPrivateUsage]

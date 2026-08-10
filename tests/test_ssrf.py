@@ -7,8 +7,13 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-import httpx
+import httpx2 as httpx
 import pytest
+
+try:
+    import httpx as legacy_httpx
+except ImportError:  # pragma: no cover
+    legacy_httpx = None
 
 from pydantic_ai import _ssrf
 from pydantic_ai._ssrf import (
@@ -52,7 +57,7 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         client.__aenter__.return_value = client
         return client
 
-    monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', factory_wrapper)
+    monkeypatch.setattr('pydantic_ai._ssrf.create_httpx2_client', factory_wrapper)
     return mock
 
 
@@ -636,6 +641,40 @@ class TestSafeDownload:
         assert call_args[1]['headers']['Host'] == 'example.com'
         assert call_args[1]['extensions'] == {'sni_hostname': 'example.com'}
 
+    @pytest.mark.skipif(legacy_httpx is None, reason='legacy httpx is not installed')
+    async def test_request_errors_remain_compatible_with_legacy_httpx(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """Public download errors keep matching legacy httpx request handlers when available."""
+        assert legacy_httpx is not None
+        request = httpx.Request('GET', 'https://93.184.215.14/file.txt')
+        client = AsyncMock()
+        client.get.side_effect = httpx.ConnectError('Connection failed', request=request)
+        mock_ssrf_client.return_value = client
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        with pytest.raises(legacy_httpx.RequestError) as exc_info:
+            await safe_download('https://example.com/file.txt')
+
+        assert isinstance(exc_info.value, httpx.RequestError)
+
+    @pytest.mark.skipif(legacy_httpx is None, reason='legacy httpx is not installed')
+    async def test_status_errors_remain_compatible_with_legacy_httpx(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    ) -> None:
+        """Public download errors keep matching legacy httpx status handlers when available."""
+        assert legacy_httpx is not None
+        request = httpx.Request('GET', 'https://93.184.215.14/file.txt')
+        client = AsyncMock()
+        client.get.return_value = httpx.Response(404, request=request)
+        mock_ssrf_client.return_value = client
+        mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
+
+        with pytest.raises(legacy_httpx.HTTPStatusError) as exc_info:
+            await safe_download('https://example.com/file.txt')
+
+        assert isinstance(exc_info.value, httpx.HTTPStatusError)
+
     @pytest.fixture
     def serve_requests(self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> Callable[[RequestHandler], None]:
         """Serves canned responses to `safe_download` through an `httpx.MockTransport`.
@@ -650,7 +689,7 @@ class TestSafeDownload:
             def create_http_client(*, timeout: int) -> httpx.AsyncClient:
                 return client
 
-            monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', create_http_client)
+            monkeypatch.setattr('pydantic_ai._ssrf.create_httpx2_client', create_http_client)
 
         return serve
 
@@ -1072,7 +1111,7 @@ class TestSafeDownload:
 
         Without proper cleanup, each call to `safe_download` leaks an unclosed
         `httpx.AsyncClient`. After switching from cached_async_http_client (which
-        reused a global) to `create_async_http_client` (new client per call),
+        reused a global) to `create_httpx2_client` (new client per call),
         the client must be explicitly closed.
 
         Regression test for PR #4421 auto-review feedback.
@@ -1093,7 +1132,7 @@ class TestSafeDownload:
             created_clients.append(client)
             return client
 
-        monkeypatch.setattr('pydantic_ai._ssrf.create_async_http_client', tracking_create)
+        monkeypatch.setattr('pydantic_ai._ssrf.create_httpx2_client', tracking_create)
 
         response = await safe_download('https://example.com/file.txt')
         assert response.content == b'test content'
