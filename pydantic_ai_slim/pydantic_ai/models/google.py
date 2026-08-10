@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
-from typing import Any, Literal, NoReturn, cast, get_args, overload
+from typing import Any, Literal, cast, get_args, overload
 from uuid import uuid4
 
 from typing_extensions import assert_never
@@ -398,13 +398,6 @@ def _map_api_error(e: errors.APIError, model_name: str) -> ModelAPIError:
             headers=headers,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
-
-
-def _raise_mapped_api_error(e: errors.APIError, model_name: str) -> NoReturn:
-    mapped_error = _map_api_error(e, model_name)
-    if isinstance(e, (errors.ClientError, errors.ServerError)):
-        raise mapped_error from None
-    raise mapped_error from e
 
 
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:
@@ -828,7 +821,7 @@ class GoogleModel(Model[Client]):
         try:
             return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
         except errors.APIError as e:
-            _raise_mapped_api_error(e, self._model_name)
+            raise _map_api_error(e, self._model_name) from e
 
     def _translate_thinking(
         self,
@@ -1046,7 +1039,7 @@ class GoogleModel(Model[Client]):
         try:
             first_chunk = await peekable_response.peek()
         except errors.APIError as e:
-            _raise_mapped_api_error(e, self._model_name)
+            raise _map_api_error(e, self._model_name) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
@@ -1558,7 +1551,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             self._pending_file_search_returns = []
         except errors.APIError as e:
-            _raise_mapped_api_error(e, self._model_name)
+            raise _map_api_error(e, self._model_name) from e
 
     def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None

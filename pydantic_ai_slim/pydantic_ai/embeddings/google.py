@@ -1,7 +1,7 @@
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal, NoReturn, cast
+from typing import Literal, cast
 
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.models import check_allow_model_requests
@@ -47,18 +47,6 @@ LatestGoogleEmbeddingModelNames = LatestGoogleGLAEmbeddingModelNames | LatestGoo
 
 GoogleEmbeddingModelName = str | LatestGoogleEmbeddingModelNames
 """Possible Google embeddings model names."""
-
-
-def _raise_mapped_http_error(e: errors.APIError, model_name: str) -> NoReturn:
-    mapped_error = ModelHTTPError(
-        status_code=e.code,
-        model_name=model_name,
-        body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
-        headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    )
-    if isinstance(e, (errors.ClientError, errors.ServerError)):
-        raise mapped_error from None
-    raise mapped_error from e
 
 
 GoogleEmbeddingTask = Literal[
@@ -283,8 +271,13 @@ class GoogleEmbeddingModel(EmbeddingModel):
                 config=config,
             )
         except errors.APIError as e:
-            if e.code >= 400:
-                _raise_mapped_http_error(e, self._model_name)
+            if (status_code := e.code) >= 400:
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self._model_name,
+                    body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
+                    headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                ) from e
             raise
 
         embeddings: list[list[float]] = [emb.values for emb in (response.embeddings or []) if emb.values is not None]
@@ -309,8 +302,13 @@ class GoogleEmbeddingModel(EmbeddingModel):
                 contents=text,
             )
         except errors.APIError as e:
-            if e.code >= 400:
-                _raise_mapped_http_error(e, self._model_name)
+            if (status_code := e.code) >= 400:
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self._model_name,
+                    body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
+                    headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                ) from e
             raise
 
         if response.total_tokens is None:

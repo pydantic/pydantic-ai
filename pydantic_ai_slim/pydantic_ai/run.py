@@ -338,8 +338,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self.ctx.deps.cancellation.bind()
         cap = self.ctx.deps.root_capability
         try:
-            result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+            if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
+                result = await cap.wrap_node_run(run_context, node=node, handler=step_fn)
+            else:
+                result = await step_fn(node)
         except Exception as e:
+            if not cap._has_on_node_run_error:  # pyright: ignore[reportPrivateUsage]
+                raise
             result = await cap.on_node_run_error(run_context, node=node, error=e)
             # on_node_run_error recovered by returning a result.
             # The graph runner is in ErrorMarker state; update it to match.

@@ -5307,6 +5307,7 @@ async def test_inherited_noop_capability_hooks_are_absent_from_traceback() -> No
         frame.filename.endswith(
             (
                 'pydantic_ai/capabilities/abstract.py',
+                'pydantic_ai/capabilities/combined.py',
                 'pydantic_ai/capabilities/hooks.py',
                 'pydantic_ai/capabilities/wrapper.py',
             )

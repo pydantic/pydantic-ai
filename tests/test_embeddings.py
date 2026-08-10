@@ -7,7 +7,6 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from traceback import format_exception
 from typing import Any, Literal, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlparse
@@ -72,8 +71,6 @@ with try_import() as bedrock_imports_successful:
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as google_imports_successful:
-    from google.genai import errors as google_errors
-
     from pydantic_ai.embeddings.google import (
         GoogleEmbeddingModel,
         GoogleEmbeddingSettings,
@@ -1733,11 +1730,14 @@ class TestGoogle:
     async def test_embed_error_no_http_response(self, gemini_api_key: str, mocker: MockerFixture):
         """An APIError with response=None (no HTTP response object) yields headers=None on ModelHTTPError.
 
-        This exercises the defensive `e.response is not None else None` branch for cases where
-        the SDK has structured HTTP error details but no attached response object.
+        This exercises the defensive `e.response is not None else None` branch in the embed
+        path of GoogleEmbeddingModel — the branch that handles non-HTTP errors where the SDK
+        raises an APIError without attaching an httpx.Response.
         """
+        from google.genai import errors
+
         model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
-        error_without_response = google_errors.ServerError(503, {'error': {'code': 503, 'message': 'Unavailable'}})
+        error_without_response = errors.APIError(503, {'error': {'code': 503, 'message': 'Unavailable'}})
         mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=error_without_response)  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(ModelHTTPError) as exc_info:
@@ -1745,14 +1745,13 @@ class TestGoogle:
 
         assert exc_info.value.status_code == 503
         assert exc_info.value.headers is None
-        assert exc_info.value.__cause__ is None
-        assert exc_info.value.__context__ is error_without_response
-        assert ''.join(format_exception(exc_info.value)).count('Traceback (most recent call last):') == 1
 
     async def test_count_tokens_error_no_http_response(self, gemini_api_key: str, mocker: MockerFixture):
         """Same as above for the count_tokens path."""
+        from google.genai import errors
+
         model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
-        error_without_response = google_errors.ServerError(503, {'error': {'code': 503, 'message': 'Unavailable'}})
+        error_without_response = errors.APIError(503, {'error': {'code': 503, 'message': 'Unavailable'}})
         mocker.patch.object(model._client.aio.models, 'count_tokens', side_effect=error_without_response)  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(ModelHTTPError) as exc_info:
@@ -1760,20 +1759,6 @@ class TestGoogle:
 
         assert exc_info.value.status_code == 503
         assert exc_info.value.headers is None
-        assert exc_info.value.__cause__ is None
-        assert exc_info.value.__context__ is error_without_response
-        assert ''.join(format_exception(exc_info.value)).count('Traceback (most recent call last):') == 1
-
-    async def test_count_tokens_generic_api_error_preserves_cause(self, gemini_api_key: str, mocker: MockerFixture):
-        model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
-        api_error = google_errors.APIError(503, {'error': {'code': 503, 'message': 'Unavailable'}})
-        mocker.patch.object(model._client.aio.models, 'count_tokens', side_effect=api_error)  # pyright: ignore[reportPrivateUsage]
-
-        with pytest.raises(ModelHTTPError) as exc_info:
-            await model.count_tokens('test')
-
-        assert exc_info.value.__cause__ is api_error
-        assert ''.join(format_exception(exc_info.value)).count('Traceback (most recent call last):') == 2
 
     async def test_embed_error_with_http_response(self, gemini_api_key: str, mocker: MockerFixture):
         """An APIError with a real httpx.Response propagates its headers to ModelHTTPError.
@@ -1783,10 +1768,13 @@ class TestGoogle:
         ModelHTTPError.headers so a wrong-attribute regression (e.g. swapping response for None)
         would be caught.
         """
+        import httpx
+        from google.genai import errors
+
         model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
         req = httpx.Request('POST', 'https://generativelanguage.googleapis.com/v1beta/models')
         resp = httpx.Response(429, headers={'retry-after': '10', 'x-goog-request-id': 'rid-1'}, request=req)
-        error_with_response = google_errors.APIError(429, {'error': {'code': 429, 'message': 'Rate limited'}})
+        error_with_response = errors.APIError(429, {'error': {'code': 429, 'message': 'Rate limited'}})
         error_with_response.response = resp
         mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=error_with_response)  # pyright: ignore[reportPrivateUsage]
 
@@ -1806,22 +1794,26 @@ class TestGoogle:
         400 is a non-HTTP-error signal from the SDK; the original exception propagates.
         This covers the `raise` (else) branch of `if (status_code := e.code) >= 400`.
         """
+        from google.genai import errors
+
         model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
-        low_code_error = google_errors.APIError(0, {'error': {'code': 0, 'message': 'Unknown'}})
+        low_code_error = errors.APIError(0, {'error': {'code': 0, 'message': 'Unknown'}})
         mocker.patch.object(model._client.aio.models, 'embed_content', side_effect=low_code_error)  # pyright: ignore[reportPrivateUsage]
 
-        with pytest.raises(google_errors.APIError) as exc_info:
+        with pytest.raises(errors.APIError) as exc_info:
             await model.embed(['test'], input_type='query')
 
         assert exc_info.value is low_code_error
 
     async def test_count_tokens_error_low_status_code(self, gemini_api_key: str, mocker: MockerFixture):
         """Same as test_embed_error_low_status_code for the count_tokens path."""
+        from google.genai import errors
+
         model = GoogleEmbeddingModel('gemini-embedding-2-preview', provider=GoogleProvider(api_key=gemini_api_key))
-        low_code_error = google_errors.APIError(0, {'error': {'code': 0, 'message': 'Unknown'}})
+        low_code_error = errors.APIError(0, {'error': {'code': 0, 'message': 'Unknown'}})
         mocker.patch.object(model._client.aio.models, 'count_tokens', side_effect=low_code_error)  # pyright: ignore[reportPrivateUsage]
 
-        with pytest.raises(google_errors.APIError) as exc_info:
+        with pytest.raises(errors.APIError) as exc_info:
             await model.count_tokens('test')
 
         assert exc_info.value is low_code_error
