@@ -173,8 +173,10 @@ def _instructions(*, web_search: bool) -> str:
             "seconds) — don't leave them waiting in silence — THEN call the tool. The drawing tool "
             'cannot see the camera, so pass it a thorough text description as `instructions`: every box '
             'and its label, every arrow and what it connects, groupings, and the overall layout, plus '
-            'what the user asked you to change. Be specific — it can only draw what you describe. Once '
-            'the diagram appears, briefly describe what you drew.'
+            'what the user asked you to change. Be specific — it can only draw what you describe. '
+            'After calling the tool, stop talking until its result arrives — never say the redraw is '
+            'done in the same breath as calling it, because the drawing takes several seconds. Once '
+            'the result arrives, briefly describe what you drew.'
             if DRAW
             else ''
         )
