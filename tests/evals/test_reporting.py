@@ -1,9 +1,11 @@
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass
+import io
+from dataclasses import dataclass, replace
 
 import pytest
 from pydantic import BaseModel
+from rich.console import Console
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
@@ -1369,4 +1371,42 @@ async def test_evaluation_renderer_diff_with_no_metadata(sample_report_case: Rep
 ┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
 │ test_case │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │  100.0ms │
 └───────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+""")
+
+
+async def test_evaluation_renderer_non_utf8_stream(
+    sample_report_case: ReportCase, mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata]
+):
+    """Test printing a diff report to a console whose output stream can't encode the characters we render."""
+    failed_assertion = EvaluationResult(
+        name='MockEvaluator',
+        value=False,
+        reason=None,
+        source=mock_evaluator.as_spec(),
+    )
+    baseline_report = EvaluationReport(
+        cases=[sample_report_case],
+        name='baseline_report',
+        experiment_metadata={'model': 'gpt-4o'},
+    )
+    new_report = EvaluationReport(
+        cases=[replace(sample_report_case, assertions={'MockEvaluator': failed_assertion}, task_duration=0.0005)],
+        name='new_report',
+        experiment_metadata={'model': 'gpt-5'},
+    )
+
+    buffer = io.BytesIO()
+    console = Console(file=io.TextIOWrapper(buffer, encoding='cp1252', newline=''), width=120)
+    new_report.print(baseline=baseline_report, console=console, include_averages=False)
+    console.file.flush()
+
+    assert buffer.getvalue().decode('cp1252') == snapshot("""\
++- Evaluation Diff: baseline_report > new_report -+
+| model: gpt-4o > gpt-5                           |
++-------------------------------------------------+
++--------------------------------------------------------------------------------------------------------------+
+| Case ID   | Scores       | Labels        | Metrics         | Assertions |                           Duration |
+|-----------+--------------+---------------+-----------------+------------+------------------------------------|
+| test_case | score1: 2.50 | label1: hello | accuracy: 0.950 | v > x      | 100.0ms > 500us (-99.5ms / -99.5%) |
++--------------------------------------------------------------------------------------------------------------+
 """)
