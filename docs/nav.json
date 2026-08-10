@@ -535,6 +535,7 @@
               "api/models/openrouter",
               "api/models/snowflake",
               "api/models/test",
+              "api/models/vercel",
               "api/models/zai",
               "api/models/wrapper"
             ]
