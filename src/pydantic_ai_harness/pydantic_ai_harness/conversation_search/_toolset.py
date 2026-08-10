@@ -14,21 +14,25 @@ import json
 import math
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai import RunContext
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
+    RetryPromptPart,
     SystemPromptPart,
     TextContent,
     TextPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from typing_extensions import assert_never
 
 from pydantic_ai_harness.conversation_search._source import SUMMARY_PREFIX, HistorySource
 
@@ -166,6 +170,45 @@ def _user_prompt_text(part: UserPromptPart) -> str:
     return ' '.join(texts)
 
 
+def _format_request_part(part: ModelRequestPart, *, truncate: bool) -> str | None:
+    """Render one request part to a searchable line, or `None` for non-content parts."""
+    if isinstance(part, UserPromptPart):
+        content = _user_prompt_text(part)
+        if truncate and len(content) > 500:
+            content = content[:500] + '...'
+        return f'User: {content}'
+    if isinstance(part, SystemPromptPart):
+        content = part.content
+        # Defensive for sources that do not filter compaction artifacts;
+        # `SnapshotHistorySource` already excludes them from the corpus.
+        if content.startswith(SUMMARY_PREFIX):
+            return '[Compaction summary]'
+        if truncate:
+            content = content[:200]
+        return f'System: {content}'
+    if isinstance(part, ToolReturnPart):
+        content = str(part.content)
+        if truncate and len(content) > 500:
+            content = content[:500] + '...'
+        return f'Tool [{part.tool_name}]: {content}'
+    if isinstance(part, RetryPromptPart):
+        # A retry or validation-error prompt is worth recalling, so index it in full.
+        return f'Retry [{part.tool_name}]: {part.content}'
+    # Tool-list bookkeeping rather than conversation, so there is no line to contribute.
+    # Redundant against the union as it stands today, but kept explicit so the fallthrough
+    # below stays a real branch at runtime rather than dead code.
+    if isinstance(part, ToolAvailabilityDeltaPart):  # pyright: ignore[reportUnnecessaryIsInstance]
+        return None
+    # A part pydantic-ai added after this was written. Indexing it would mean guessing which
+    # of its fields read as conversation, and a search index is not worth failing a run over,
+    # so it contributes nothing. `assert_never` under `TYPE_CHECKING` keeps the chain
+    # exhaustive at type-check time -- a new upstream part fails `make typecheck` -- without
+    # crashing a user who upgrades pydantic-ai ahead of us.
+    if TYPE_CHECKING:
+        assert_never(part)
+    return None  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
+
+
 def _format_message(message: ModelMessage, *, truncate: bool) -> str:
     """Render one message to text.
 
@@ -176,31 +219,9 @@ def _format_message(message: ModelMessage, *, truncate: bool) -> str:
 
     if isinstance(message, ModelRequest):
         for part in message.parts:
-            if isinstance(part, UserPromptPart):
-                content = _user_prompt_text(part)
-                if truncate and len(content) > 500:
-                    content = content[:500] + '...'
-                lines.append(f'User: {content}')
-            elif isinstance(part, SystemPromptPart):
-                content = part.content
-                # Defensive for sources that do not filter compaction artifacts;
-                # `SnapshotHistorySource` already excludes them from the corpus.
-                if content.startswith(SUMMARY_PREFIX):
-                    lines.append('[Compaction summary]')
-                else:
-                    if truncate:
-                        content = content[:200]
-                    lines.append(f'System: {content}')
-            elif isinstance(part, ToolReturnPart):
-                content = str(part.content)
-                if truncate and len(content) > 500:
-                    content = content[:500] + '...'
-                lines.append(f'Tool [{part.tool_name}]: {content}')
-            else:
-                # The only remaining `ModelRequestPart` is `RetryPromptPart`
-                # (`ToolSearchReturnPart`/`LoadCapabilityReturnPart` subclass `ToolReturnPart`).
-                # A retry or validation-error prompt is worth recalling, so index it in full.
-                lines.append(f'Retry [{part.tool_name}]: {part.content}')
+            line = _format_request_part(part, truncate=truncate)
+            if line is not None:
+                lines.append(line)
     else:
         for part in message.parts:
             if isinstance(part, TextPart):

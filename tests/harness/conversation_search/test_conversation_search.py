@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -606,6 +607,33 @@ class TestSearchScope:
         assert 'Tool [readfile]' in rendered
         assert 'Retry [readfile]: please retry' in rendered  # RetryPromptPart is searchable
         assert '...' in rendered  # truncation applied to the long tool return / args
+
+    async def test_tool_availability_delta_is_not_indexed(self) -> None:
+        """Tool-list bookkeeping is not conversation content, so it contributes no line.
+
+        Built with no arguments deliberately: the indexer rejects the part on its type and
+        never reads the names it carries, and the field holding them was renamed
+        (`added` -> `tools_added`) in pydantic-ai 2.26. Naming it here would pin the test to
+        a release later than the floor the runtime actually needs.
+        """
+        messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='mango question'),
+                    ToolAvailabilityDeltaPart(),
+                ]
+            ),
+            ModelResponse(parts=[TextPart(content='mango answer')]),
+        ]
+        source = _StubSource({'r1': messages})
+
+        rendered = await _search(source, 'mango')
+
+        assert 'User: mango question' in rendered
+        assert 'Assistant: mango answer' in rendered
+        # The delta contributes nothing. Before it was recognized it fell through to the
+        # `RetryPromptPart` branch, which reads `part.tool_name` and raised `AttributeError`.
+        assert 'Retry [' not in rendered
 
     async def test_user_and_text_parts_truncate_but_stay_searchable(self) -> None:
         long_user = 'pomegranate ' * 60 + 'USERTAIL'

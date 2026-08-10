@@ -30,8 +30,13 @@ classifiers = [
 dependencies = [
     "genai-prices>=0.0.71",
     "httpx>=0.28.1",
-    # `CodeMode` reads `ModelRequestParameters.revealed_tool_names`, which lands in 2.22.0.
-    "pydantic-ai-slim>=2.22.0",
+    # The compaction estimator and the conversation-search indexer both have to recognise
+    # `ToolAvailabilityDeltaPart`, which lands in 2.23.0 — it is the one `ModelRequestPart`
+    # that carries no `content`, so code that walks request parts raises `AttributeError`
+    # on it rather than merely ignoring it (#577). Handling it needs the class to import,
+    # so the floor is the version that introduced it, not merely the one we lock.
+    # (`CodeMode` separately reads `ModelRequestParameters.revealed_tool_names`, from 2.22.0.)
+    "pydantic-ai-slim>=2.23.0",
 ]
 
 [project.optional-dependencies]
@@ -174,17 +179,6 @@ filterwarnings = [
     "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning",
     # Experimental capabilities warn on import by design; assert it explicitly where it matters.
     'ignore::pydantic_ai_harness.experimental.HarnessExperimentalWarning',
-    # pydantic-settings 2.15 started warning about models whose annotations hold unresolved
-    # forward references, and `mcp`'s `FastMCP` settings model has one on `lifespan` (it refers
-    # to `FastMCP`, defined later in that module). Neither model is ours, and the field is not a
-    # settings source we read. Transitive, so it reaches the floor job first — `lowest-direct`
-    # pins our direct deps but still resolves pydantic-settings to latest.
-    #
-    # Matched on message rather than `ignore::pydantic_settings.exceptions.IncompleteFieldDefinitionWarning`:
-    # the class doesn't exist before 2.15, and a category filter naming a class pytest can't
-    # import fails collection outright — which would break every job resolving an older
-    # pydantic-settings, including the locked one.
-    "ignore:Field '.*' has an incomplete definition",
 ]
 anyio_mode = 'auto'
 

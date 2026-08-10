@@ -20,16 +20,18 @@ from pydantic_ai.messages import (
     ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
+    RetryPromptPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.tools import RunContext
-from typing_extensions import Self
+from typing_extensions import Self, assert_never
 
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
 from pydantic_ai_harness.compaction._pinning import is_pinned
@@ -73,11 +75,34 @@ def _collect_text(messages: Sequence[ModelMessage]) -> list[str]:
                     segments.append(_user_prompt_text_for_counting(part))
                 elif isinstance(part, SystemPromptPart):
                     segments.append(part.content)
-                else:
-                    # Everything else a request can carry is a retry prompt or a tool return
-                    # of some kind -- the tool-search and capability-load returns subclass
-                    # `ToolReturnPart` -- and all of them are sent.
+                elif isinstance(part, (ToolReturnPart, RetryPromptPart)):
+                    # Both are sent in full. The tool-search and capability-load returns
+                    # subclass `ToolReturnPart`, so they arrive here too.
                     segments.append(str(part.content))
+                # Control bookkeeping rather than message text: it records which tools became
+                # available, and the schemas themselves travel in the request's tool
+                # definitions. Those schemas are not free -- this estimator counts no tool
+                # definitions at all, so revealing tools mid-run costs context it does not see
+                # (tracked separately); skipping the part is not a claim that the reveal was
+                # free. Redundant against the union as it stands today -- every other member is
+                # handled above -- but kept explicit so the `else` stays a real branch at
+                # runtime rather than dead code.
+                elif isinstance(part, ToolAvailabilityDeltaPart):  # pyright: ignore[reportUnnecessaryIsInstance]
+                    pass
+                else:
+                    # A part pydantic-ai added after this was written. Skip rather than guess at
+                    # its payload: this runs on every request to decide whether to compact, so an
+                    # unrecognised part must not take the run down -- which is exactly what the
+                    # old `str(part.content)` fallback did once a part without `content` existed
+                    # (#577).
+                    #
+                    # `assert_never` sits under `TYPE_CHECKING` rather than in the branch body on
+                    # purpose. It still makes the chain exhaustive at type-check time, so a new
+                    # upstream part fails `make typecheck` and becomes a decision we make; but
+                    # unlike the usual runtime form it cannot re-crash a user who upgrades
+                    # pydantic-ai ahead of us, which is the failure this change exists to remove.
+                    if TYPE_CHECKING:
+                        assert_never(part)
         else:
             for part in msg.parts:
                 if isinstance(part, TextPart):
