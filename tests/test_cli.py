@@ -1,8 +1,8 @@
 import sys
 import types
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from io import StringIO
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 import sniffio
@@ -198,19 +198,17 @@ def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
 
 
 def _failing_agent() -> Agent[None, str]:
-    def raise_request_error() -> None:
+    def raise_request_error() -> NoReturn:
         try:
             raise ValueError('provider detail')
         except ValueError as e:
             raise RuntimeError('request failed') from e
 
     async def fail(_messages: list[ModelMessage], _info: Any) -> ModelResponse:
-        raise_request_error()
-        raise AssertionError
+        return raise_request_error()
 
-    async def fail_stream(_messages: list[ModelMessage], _info: Any):
-        raise_request_error()
-        yield ''
+    async def fail_stream(_messages: list[ModelMessage], _info: Any) -> AsyncIterator[str]:
+        yield raise_request_error()
 
     return Agent(FunctionModel(fail, stream_function=fail_stream))
 
@@ -250,10 +248,7 @@ def test_chat_error(
         nonlocal attempts
         attempts += 1
         if attempts == 1:
-            try:
-                raise ValueError('provider detail')
-            except ValueError as e:
-                raise RuntimeError('request failed') from e
+            raise RuntimeError('request failed')
         return ModelResponse(parts=[TextPart(content='recovered')])
 
     create_test_module(agent=Agent(FunctionModel(recover)))
@@ -272,7 +267,7 @@ def test_chat_error(
     output = capfd.readouterr().out
     assert 'RuntimeError: request failed' in output
     assert ('Traceback (most recent call last)' in output) is show_traceback
-    assert ('ValueError: provider detail' in output) is show_traceback
+    assert 'ValueError: provider detail' not in output
     assert 'recovered' in output
     assert attempts == 2
 
