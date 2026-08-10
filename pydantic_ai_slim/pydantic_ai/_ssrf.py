@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import zlib
 from dataclasses import dataclass
 from urllib.parse import urlparse, urlunparse
 
@@ -18,6 +19,14 @@ from ._utils import run_in_executor
 from .models import create_async_http_client
 
 __all__ = ['safe_download']
+
+_DOWNLOAD_EXCEEDS_TEMPLATE = 'Download exceeds the maximum size of {max_bytes} bytes.'
+# Bounded downloads only negotiate encodings we can size-limit while streaming.
+# Brotli/Zstandard can expand a few compressed bytes into multi-MiB output in one
+# decoder step, and `deflate` has to be buffered whole before its zlib-wrapped vs raw
+# framing can be told apart, so all three are excluded from Accept-Encoding and
+# rejected if a server still returns them.
+_BOUNDED_ACCEPT_ENCODING = 'identity, gzip'
 
 # Private IP ranges that should be blocked by default (i.e. unless allow_local=True).
 # IPv6 transition forms (6to4, NAT64, IPv4-mapped/-compatible, ISATAP) are not listed here;
@@ -473,6 +482,7 @@ async def safe_download(
     headers: dict[str, str] | None = None,
     allowed_domains: list[str] | None = None,
     blocked_domains: list[str] | None = None,
+    max_bytes: int | None = None,
 ) -> httpx.Response:
     """Download content from a URL with SSRF protection.
 
@@ -491,6 +501,9 @@ async def safe_download(
                     Cloud metadata endpoints are always blocked regardless.
         max_redirects: Maximum number of redirects to follow (default: 10).
         timeout: Request timeout in seconds (default: 30).
+        max_bytes: Maximum response-body size in bytes. When set, the response body
+            is read as a stream and rejected once either the decoded body or the
+            encoded stream it arrives in exceeds this limit.
         headers: Additional HTTP headers to include in the request.
                 The `Host` header is always set to the original hostname
                 and cannot be overridden. Sensitive headers (`Authorization`,
@@ -510,6 +523,9 @@ async def safe_download(
                 or too many redirects occur.
         httpx.HTTPStatusError: If the response has an error status code.
     """
+    if max_bytes is not None and max_bytes < 0:
+        raise ValueError('max_bytes must be non-negative')
+
     current_url = url
     redirects_followed = 0
     effective_headers: dict[str, str] = dict(headers) if headers else {}
@@ -533,17 +549,25 @@ async def safe_download(
 
             request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
             request_headers['Host'] = resolved.hostname
+            if max_bytes is not None and not any(k.lower() == 'accept-encoding' for k in request_headers):
+                request_headers['Accept-Encoding'] = _BOUNDED_ACCEPT_ENCODING
 
-            # Make request with Host header set to original hostname
-            response = await client.get(
-                request_url,
-                headers=request_headers,
-                extensions=extensions,
-                follow_redirects=False,
-            )
+            # Make request with Host header set to original hostname. Keep the existing
+            # buffered path for callers without a body limit.
+            if max_bytes is None:
+                response = await client.get(
+                    request_url,
+                    headers=request_headers,
+                    extensions=extensions,
+                    follow_redirects=False,
+                )
+            else:
+                request = client.build_request('GET', request_url, headers=request_headers, extensions=extensions)
+                response = await client.send(request, follow_redirects=False, stream=True)
 
             # Check if we need to follow a redirect
             if response.is_redirect:
+                await response.aclose()
                 redirects_followed += 1
                 if redirects_followed > max_redirects:
                     raise ValueError(f'Too many redirects ({redirects_followed}). Maximum allowed: {max_redirects}')
@@ -566,5 +590,101 @@ async def safe_download(
                 continue
 
             # Not a redirect, we're done
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+                if max_bytes is not None:
+                    content = await _read_capped_body(response, max_bytes)
+                    # Body is already decoded, so the reconstructed response must not carry
+                    # the content coding, or `httpx.Response` would run it through the decoder
+                    # again. `content-length` described the encoded body and no longer applies;
+                    # httpx recomputes it from `content`.
+                    decoded_headers = [
+                        (key, value)
+                        for key, value in response.headers.multi_items()
+                        if key.lower() not in ('content-encoding', 'content-length')
+                    ]
+                    return httpx.Response(
+                        response.status_code,
+                        headers=decoded_headers,
+                        content=content,
+                        request=response.request,
+                        history=response.history,
+                        extensions=response.extensions,
+                    )
+            finally:
+                if max_bytes is not None:
+                    await response.aclose()
             return response
+
+
+def _download_exceeds(max_bytes: int) -> ValueError:
+    return ValueError(_DOWNLOAD_EXCEEDS_TEMPLATE.format(max_bytes=max_bytes))
+
+
+async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
+    """Read a streamed response body without buffering more than `max_bytes` of decoded data.
+
+    Streams the *encoded* body via `aiter_raw` so oversized wire traffic is rejected as it
+    arrives, and applies gzip with zlib's output `max_length` so a highly compressible payload
+    cannot expand past `max_bytes` mid-decode.
+
+    Only `identity` and `gzip`/`x-gzip` are supported on this path. Codings that cannot be
+    size-limited while streaming are rejected; callers with `max_bytes` also send
+    `Accept-Encoding: identity, gzip` so servers are not invited to use them.
+
+    Some transports (e.g. httpx mock responses built from an in-memory `content=` bytes object)
+    preload the body and mark the stream consumed; in that case the decoded body is already in
+    `response.content` and we only enforce the size cap on it.
+    """
+    if response.is_stream_consumed:
+        data = response.content
+        if len(data) > max_bytes:
+            raise _download_exceeds(max_bytes)
+        return data
+
+    encodings: list[str] = []
+    for value in response.headers.get_list('content-encoding'):
+        for part in value.split(','):
+            coding = part.strip().lower()
+            if coding and coding != 'identity':
+                encodings.append(coding)
+
+    if not encodings:
+        return await _read_capped_identity(response, max_bytes)
+    if encodings in (['gzip'], ['x-gzip']):
+        return await _read_capped_gzip(response, max_bytes)
+    raise ValueError(
+        f'Unsupported content-encoding for bounded download: {encodings}. '
+        f'Only identity and gzip can be size-limited while streaming.'
+    )
+
+
+async def _read_capped_identity(response: httpx.Response, max_bytes: int) -> bytes:
+    content = bytearray()
+    async for raw in response.aiter_raw():
+        if len(content) + len(raw) > max_bytes:
+            raise _download_exceeds(max_bytes)
+        content.extend(raw)
+    return bytes(content)
+
+
+async def _read_capped_gzip(response: httpx.Response, max_bytes: int) -> bytes:
+    content = bytearray()
+    encoded_total = 0
+    decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
+    async for raw in response.aiter_raw():
+        encoded_total += len(raw)
+        if encoded_total > max_bytes:
+            raise _download_exceeds(max_bytes)
+        while raw:
+            # Decompressing one byte past the cap distinguishes an oversized body from one that
+            # exactly fills it, so a gzip CRC/ISIZE trailer arriving in a later chunk is still
+            # consumed (it produces no output) instead of being rejected.
+            content.extend(decompressor.decompress(raw, max_length=max_bytes + 1 - len(content)))
+            if len(content) > max_bytes:
+                raise _download_exceeds(max_bytes)
+            raw = decompressor.unconsumed_tail
+    content.extend(decompressor.flush())
+    if len(content) > max_bytes:
+        raise _download_exceeds(max_bytes)
+    return bytes(content)

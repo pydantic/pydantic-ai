@@ -93,6 +93,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
@@ -130,12 +131,14 @@ from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetFunc, ToolsetTool, WrapperToolset
-from pydantic_ai.toolsets._capability_owned import resolve_capability_id, tool_defs_for_loaded_capabilities
+from pydantic_ai.toolsets._capability_owned import (
+    resolve_capability_id,
+    tool_defs_from_pre_definition_load_returns,
+)
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
 )
-from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_graph import End
 
@@ -148,6 +151,8 @@ from .capability_models import (
     tool_calling_stream_function,
 )
 from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, message, remove_schema_descriptions
+
+_SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
 pytestmark = [
     pytest.mark.anyio,
@@ -622,6 +627,21 @@ def test_model_json_schema_with_capabilities():
                         'kind': {'default': 'file_search', 'title': 'Kind', 'type': 'string'},
                         'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
                         'file_store_ids': {'items': {'type': 'string'}, 'title': 'File Store Ids', 'type': 'array'},
+                        'max_num_results': {
+                            'anyOf': [{'type': 'integer'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Max Num Results',
+                        },
+                        'instructions': {
+                            'anyOf': [{'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Instructions',
+                        },
+                        'retrieval_mode': {
+                            'anyOf': [{'enum': ['hybrid', 'semantic', 'keyword'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Retrieval Mode',
+                        },
                     },
                     'required': ['file_store_ids'],
                     'title': 'FileSearchTool',
@@ -1274,6 +1294,38 @@ def test_model_json_schema_with_capabilities():
                         'openai:o4-mini-deep-research',
                         'openai:o4-mini-deep-research-2025-06-26',
                         'test',
+                        'snowflake:claude-4-sonnet',
+                        'snowflake:claude-fable-5',
+                        'snowflake:claude-haiku-4-5',
+                        'snowflake:claude-opus-4-5',
+                        'snowflake:claude-opus-4-6',
+                        'snowflake:claude-opus-4-7',
+                        'snowflake:claude-opus-4-8',
+                        'snowflake:claude-opus-5',
+                        'snowflake:claude-sonnet-4-5',
+                        'snowflake:claude-sonnet-4-6',
+                        'snowflake:claude-sonnet-5',
+                        'snowflake:deepseek-r1',
+                        'snowflake:llama3.1-405b',
+                        'snowflake:llama3.1-70b',
+                        'snowflake:llama3.1-8b',
+                        'snowflake:llama4-maverick',
+                        'snowflake:mistral-7b',
+                        'snowflake:mistral-large',
+                        'snowflake:mistral-large2',
+                        'snowflake:openai-gpt-4.1',
+                        'snowflake:openai-gpt-5',
+                        'snowflake:openai-gpt-5-6-luna',
+                        'snowflake:openai-gpt-5-6-sol',
+                        'snowflake:openai-gpt-5-6-terra',
+                        'snowflake:openai-gpt-5-chat',
+                        'snowflake:openai-gpt-5-mini',
+                        'snowflake:openai-gpt-5-nano',
+                        'snowflake:openai-gpt-5.1',
+                        'snowflake:openai-gpt-5.2',
+                        'snowflake:openai-gpt-5.4',
+                        'snowflake:openai-gpt-5.5',
+                        'snowflake:snowflake-llama-3.3-70b',
                         'xai:grok-3',
                         'xai:grok-3-fast',
                         'xai:grok-3-fast-latest',
@@ -2591,10 +2643,125 @@ async def test_abstract_capability_description_field_is_optional_in_deferred_cat
     request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
 
     assert request.instructions == snapshot(
-        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
-        '- account-security: Use for suspicious logins, account takeover, or session revocation.\n'
-        '- refunds'
+        """\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- account-security: Use for suspicious logins, account takeover, or session revocation.
+- refunds\
+"""
     )
+
+
+async def test_deferred_capability_catalog_mentions_search_only_when_search_surface_exists() -> None:
+    """The catalog steers away from tool search only in runs that actually offer a search surface.
+
+    The surface exists exactly when `ToolSearch` (installed explicitly, or auto-injected by a
+    searchable deferred tool) has a non-empty corpus — the run then carries the `search_tools`
+    definition even when a native search surface will replace it on the wire. In a
+    capability-only run there is nothing to search with, so mentioning searching would name an
+    affordance that doesn't exist and invite hallucinated search calls.
+    """
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    refunds = Capability[object](id='refunds', description='Refund tools.', defer_loading=True)
+
+    async def first_request_instructions(agent: Agent[None, str]) -> str | None:
+        result = await agent.run('hi')
+        request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
+        return request.instructions
+
+    assert await first_request_instructions(Agent(FunctionModel(model_fn), capabilities=[refunds])) == snapshot(
+        "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:\n"
+        '- refunds: Refund tools.'
+    )
+
+    searchable_toolset = FunctionToolset()
+
+    @searchable_toolset.tool_plain(defer_loading=True)
+    def weather_forecast() -> str:  # pragma: no cover
+        """Look up a weather forecast."""
+        return 'sunny'
+
+    assert await first_request_instructions(
+        Agent(FunctionModel(model_fn), capabilities=[ToolSearch(), refunds], toolsets=[searchable_toolset])
+    ) == snapshot(
+        "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:\n"
+        '- refunds: Refund tools.'
+    )
+
+    # Without an explicit `ToolSearch`, a searchable deferred tool auto-injects one — the run
+    # still offers a search surface, so the steering variant is still correct.
+    assert await first_request_instructions(
+        Agent(FunctionModel(model_fn), capabilities=[refunds], toolsets=[searchable_toolset])
+    ) == snapshot(
+        "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:\n"
+        '- refunds: Refund tools.'
+    )
+
+    # A named-native strategy registers no local `search_tools` fallback, but the run's search
+    # surface is no less real for going native — the steering variant must still be picked.
+    assert await first_request_instructions(
+        Agent(
+            FunctionModel(model_fn),
+            capabilities=[ToolSearch(strategy='bm25'), refunds],
+            toolsets=[searchable_toolset],
+        )
+    ) == snapshot(
+        "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded — load the capability first rather than searching for its tools:\n"
+        '- refunds: Refund tools.'
+    )
+
+
+async def test_deferred_capability_catalog_bytes_stable_across_turns() -> None:
+    """The catalog instruction is byte-identical on every request within a run.
+
+    This is a multi-request property — a single-request snapshot proves correct variant
+    selection, not stability. The run below searches, loads a capability, and finishes; a
+    catalog that reacted to either event (variant flip, entry annotation) would change the
+    instructions and bust the prompt-cache prefix at its very front.
+    """
+    instructions_seen: list[str | None] = []
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        instructions_seen.append(request.instructions)
+        tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not tool_returns:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=_SEARCH_TOOLS_NAME, args={'queries': ['weather']}, tool_call_id='s1')]
+            )
+        if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='l1')]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy() -> str:  # pragma: no cover
+        """Look up refund policy."""
+        return 'ok'
+
+    searchable_toolset = FunctionToolset()
+
+    @searchable_toolset.tool_plain(defer_loading=True)
+    def weather_forecast() -> str:  # pragma: no cover
+        """Look up a weather forecast."""
+        return 'sunny'
+
+    refunds = Capability[object](
+        id='refunds', description='Refund tools.', toolsets=[refunds_toolset], defer_loading=True
+    )
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds], toolsets=[searchable_toolset])
+    result = await agent.run('search then load')
+
+    assert result.output == 'done'
+    assert len(instructions_seen) == 3
+    assert len(set(instructions_seen)) == 1
+    assert instructions_seen[0] is not None and 'rather than searching' in instructions_seen[0]
 
 
 async def test_capability_description_can_be_dynamic() -> None:
@@ -2613,8 +2780,10 @@ async def test_capability_description_can_be_dynamic() -> None:
     request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
 
     assert request.instructions == snapshot(
-        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
-        '- dynamic-description: Use for billing questions.'
+        """\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- dynamic-description: Use for billing questions.\
+"""
     )
 
 
@@ -3034,8 +3203,10 @@ async def test_deferred_capability_instructions_decorator_resolves_on_load() -> 
     assert load_return.instructions == 'Use account id 123.'
     first_request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
     assert first_request.instructions == snapshot(
-        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
-        '- account: Account-specific guidance.'
+        """\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- account: Account-specific guidance.\
+"""
     )
 
 
@@ -3223,7 +3394,7 @@ async def test_load_capability_invalid_dict_args_recovers_via_retry() -> None:
                 parts=[UserPromptPart(content='hi', timestamp=IsDatetime())],
                 timestamp=IsDatetime(),
                 instructions="""\
-The following capabilities are deferred and can be loaded using the `load_capability` tool:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Refund tools.\
 """,
                 run_id=IsStr(),
@@ -3256,7 +3427,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
-The following capabilities are deferred and can be loaded using the `load_capability` tool:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Refund tools.\
 """,
                 run_id=IsStr(),
@@ -3280,7 +3451,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
-The following capabilities are deferred and can be loaded using the `load_capability` tool:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Refund tools.\
 """,
                 run_id=IsStr(),
@@ -3484,8 +3655,9 @@ async def test_deferred_capability_loads_instructions_and_tools_e2e() -> None:
                 instructions="""\
 Visible billing instructions.
 
-The following capabilities are deferred and can be loaded using the `load_capability` tool:
-- refunds: Refund policy tools.""",
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund policy tools.\
+""",
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3506,27 +3678,25 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ModelRequest(
                 parts=[
                     LoadCapabilityReturnPart(
-                        tool_name='load_capability',
                         content={
-                            'instructions': 'Use the refund policy before answering refund questions.\n\n'
-                            'Load-time account context for run step 1.',
+                            'instructions': """\
+Use the refund policy before answering refund questions.
+
+Load-time account context for run step 1.\
+"""
                         },
                         tool_call_id='load-refunds',
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'], tool_call_id='load-refunds'),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
 Visible billing instructions.
 
-The following capabilities are deferred and can be loaded using the `load_capability` tool:
-- refunds: Refund policy tools.""",
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelRequest(
-                parts=[ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])],
-                timestamp=IsDatetime(),
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund policy tools.\
+""",
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -3536,7 +3706,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                         tool_name='lookup_refund_policy', args={'order_id': 'order-123'}, tool_call_id='lookup-refund'
                     )
                 ],
-                usage=RequestUsage(input_tokens=79, output_tokens=16),
+                usage=RequestUsage(input_tokens=80, output_tokens=10),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3555,7 +3725,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                 instructions="""\
 Visible billing instructions.
 
-The following capabilities are deferred and can be loaded using the `load_capability` tool:
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Refund policy tools.\
 """,
                 run_id=IsStr(),
@@ -3563,7 +3733,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
             ModelResponse(
                 parts=[TextPart(content='final: order-123: refund allowed for 30 days')],
-                usage=RequestUsage(input_tokens=85, output_tokens=23),
+                usage=RequestUsage(input_tokens=86, output_tokens=17),
                 model_name='function:model_fn:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3571,6 +3741,332 @@ The following capabilities are deferred and can be loaded using the `load_capabi
             ),
         ]
     )
+
+
+async def test_tool_return_reveals_deferred_tool_without_capability() -> None:
+    """A user tool can reveal a deferred tool and records the delta beside its return."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        returns = [
+            part
+            for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+            if part.tool_name in {'reveal_weather', 'get_weather'}
+        ]
+        if not returns:
+            assert info.model_request_parameters.revealed_tool_names == set()
+            return ModelResponse(parts=[ToolCallPart(tool_name='reveal_weather', args={}, tool_call_id='reveal')])
+        if len(returns) == 1:
+            assert info.model_request_parameters.revealed_tool_names == {'get_weather'}
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='weather')]
+            )
+        return make_text_response(str(returns[-1].content))
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    def reveal_weather() -> ToolReturn[str]:
+        return ToolReturn(return_value='Weather tools are ready.', tools=['get_weather'])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:
+        return f'Sunny in {city}'
+
+    result = await agent.run('What is the weather?')
+
+    assert result.output == 'Sunny in Paris'
+    reveal_request = next(
+        message
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        and any(isinstance(part, ToolReturnPart) and part.tool_call_id == 'reveal' for part in message.parts)
+    )
+    assert reveal_request.parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='reveal_weather',
+                content='Weather tools are ready.',
+                tool_call_id='reveal',
+                timestamp=IsDatetime(),
+            ),
+            ToolAvailabilityDeltaPart(tools_added=['get_weather'], tool_call_id='reveal'),
+        ]
+    )
+
+
+async def test_processed_history_determines_request_reveal_state() -> None:
+    """Removing a reveal from outgoing history also removes it from request parameters."""
+    seen: list[set[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_request_parameters.revealed_tool_names)
+        assert 'hidden_tool' not in {tool.name for tool in info.function_tools}
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    def strip_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(message, parts=[part for part in message.parts if not isinstance(part, ToolAvailabilityDeltaPart)])
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages
+        ]
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[ProcessHistory(strip_deltas)])
+
+    @agent.tool_plain(defer_loading=True)
+    def hidden_tool() -> str:  # pragma: no cover
+        return 'hidden'
+
+    await agent.run(
+        'continue',
+        message_history=[ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden_tool'])])],
+    )
+
+    assert seen == [set()]
+
+
+async def test_orphaned_reveal_evidence_stripped_by_cleanup_does_not_count_as_revealed() -> None:
+    """Evidence orphaned by a history processor is stripped before reveal derivation.
+
+    A processor that drops the response carrying a `ToolSearchCallPart` leaves an orphaned
+    `ToolSearchReturnPart`; history cleanup removes the orphan before the request ships, so the
+    derived reveal state must not count it — otherwise the request would declare a revealed tool
+    with zero reveal evidence on the outgoing wire.
+    """
+    seen: list[set[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_request_parameters.revealed_tool_names)
+        assert 'hidden_tool' not in {tool.name for tool in info.function_tools}
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    def drop_search_calls(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            message
+            for message in messages
+            if not (
+                isinstance(message, ModelResponse)
+                and any(isinstance(part, ToolSearchCallPart) for part in message.parts)
+            )
+        ]
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[ProcessHistory(drop_search_calls)])
+
+    @agent.tool_plain(defer_loading=True)
+    def hidden_tool() -> str:  # pragma: no cover
+        return 'hidden'
+
+    await agent.run(
+        'continue',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='find tools')]),
+            ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['hidden']}, tool_call_id='search-1')]),
+            ModelRequest(
+                parts=[
+                    ToolSearchReturnPart(
+                        content={'discovered_tools': [{'name': 'hidden_tool'}]},
+                        tool_call_id='search-1',
+                    )
+                ]
+            ),
+        ],
+    )
+
+    assert seen == [set()]
+
+
+async def test_model_calling_a_withheld_tool_executes_without_revealing_it() -> None:
+    """Calling a hidden tool by (guessed) name executes it and authors no reveal.
+
+    Pins the documented no-trust-boundary stance: hiding is prompt engineering, not access
+    control, so execution is accepted — but execution is not discovery, and the tool stays off
+    the wire afterwards.
+    """
+    wire_tools: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        wire_tools.append(sorted(tool.name for tool in info.function_tools))
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='guess')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain(defer_loading=True)
+    def hidden_tool() -> str:
+        return 'secret'
+
+    result = await agent.run('guess the hidden tool')
+
+    assert result.output == 'done'
+    returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
+    assert [(part.tool_name, part.content) for part in returns] == [('hidden_tool', 'secret')]
+    deltas = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+    ]
+    assert deltas == []
+    assert all('hidden_tool' not in tools for tools in wire_tools)
+
+
+async def test_tool_return_deduplicates_new_reveals() -> None:
+    """Duplicate names and repeated reveals author one ordered availability delta.
+
+    A fully repeated reveal drops out entirely; a partial overlap keeps only the genuinely new
+    names, in order.
+    """
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not returns:
+            return ModelResponse(parts=[ToolCallPart('revealer', {}, tool_call_id='first')])
+        if len(returns) == 1:
+            return ModelResponse(parts=[ToolCallPart('revealer', {}, tool_call_id='second')])
+        if len(returns) == 2:
+            return ModelResponse(parts=[ToolCallPart('partial_revealer', {}, tool_call_id='third')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    def revealer() -> ToolReturn[str]:
+        return ToolReturn(return_value='ready', tools=['tool_b', 'tool_a', 'tool_b'])
+
+    @agent.tool_plain
+    def partial_revealer() -> ToolReturn[str]:
+        return ToolReturn(return_value='partially new', tools=['tool_a', 'tool_c'])
+
+    result = await agent.run('reveal')
+    deltas = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+    ]
+    assert deltas == [
+        ToolAvailabilityDeltaPart(tools_added=['tool_b', 'tool_a'], tool_call_id='first'),
+        ToolAvailabilityDeltaPart(tools_added=['tool_c'], tool_call_id='third'),
+    ]
+
+
+@pytest.mark.parametrize(
+    'tools',
+    ['get_weather', 1, [1], [[]]],
+    ids=['bare-string', 'non-sequence', 'non-string-element', 'unhashable-element'],
+)
+async def test_tool_return_rejects_invalid_tools(tools: object) -> None:
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):  # pragma: no cover
+            return make_text_response('done')
+        return ModelResponse(parts=[ToolCallPart(tool_name='reveal_weather', args={}, tool_call_id='reveal')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    def reveal_weather() -> ToolReturn[str]:
+        return ToolReturn(return_value='Weather tools are ready.', tools=cast(Any, tools))
+
+    with pytest.raises(UserError, match=r'`ToolReturn\.tools` must be a list of tool names'):
+        await agent.run('Reveal the weather tool.')
+
+
+async def test_parallel_tool_returns_keep_each_availability_delta_adjacent() -> None:
+    """Parallel execution reorders each return together with its own sibling delta."""
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not returns:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='reveal_b', args={}, tool_call_id='b'),
+                    ToolCallPart(tool_name='reveal_a', args={}, tool_call_id='a'),
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    async def reveal_a() -> ToolReturn[str]:
+        await asyncio.sleep(0)
+        return ToolReturn(return_value='a', tools=['tool_a'])
+
+    @agent.tool_plain
+    async def reveal_b() -> ToolReturn[str]:
+        await asyncio.sleep(0.01)
+        return ToolReturn(return_value='b', tools=['tool_b'])
+
+    result = await agent.run('reveal both')
+    request = next(
+        message
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        and any(isinstance(part, ToolReturnPart) and part.tool_call_id == 'b' for part in message.parts)
+    )
+    assert [(type(part).__name__, getattr(part, 'tool_call_id', None)) for part in request.parts] == snapshot(
+        [
+            ('ToolReturnPart', 'b'),
+            ('ToolAvailabilityDeltaPart', 'b'),
+            ('ToolReturnPart', 'a'),
+            ('ToolAvailabilityDeltaPart', 'a'),
+        ]
+    )
+
+
+async def test_parallel_tool_returns_dedupe_same_reveal_in_history_order() -> None:
+    """When parallel calls reveal the same tool, the first call in emitted history owns the delta.
+
+    Deduplication must not depend on task completion order: the first-emitted call finishes
+    LAST here, and must still be the one that carries the availability delta — otherwise the
+    durable history (and the reveal's wire anchor) would vary with scheduling.
+    """
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not returns:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='slow_first', args={}, tool_call_id='first'),
+                    ToolCallPart(tool_name='fast_second', args={}, tool_call_id='second'),
+                ]
+            )
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    async def slow_first() -> ToolReturn[str]:
+        await asyncio.sleep(0.01)
+        return ToolReturn(return_value='slow', tools=['revealed'])
+
+    @agent.tool_plain
+    async def fast_second() -> ToolReturn[str]:
+        return ToolReturn(return_value='fast', tools=['revealed'])
+
+    events: list[AgentStreamEvent] = []
+    async with agent.iter('reveal in parallel') as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as stream:
+                    events.extend([event async for event in stream])
+
+    assert agent_run.result is not None
+    result = agent_run.result
+    deltas = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+    ]
+    assert deltas == [ToolAvailabilityDeltaPart(tools_added=['revealed'], tool_call_id='first')]
+    assert [event for event in events if isinstance(event, ToolAvailabilityDeltaEvent)] == [
+        ToolAvailabilityDeltaEvent(part=deltas[0])
+    ]
 
 
 async def test_deferred_capability_tool_registered_after_construction_defers_until_load() -> None:
@@ -3613,7 +4109,7 @@ async def test_deferred_capability_tool_registered_after_construction_defers_unt
     result = await agent.run('Can I get a refund?')
 
     assert result.output == snapshot('final: order-1: refund allowed for 30 days')
-    assert defer_flag_by_phase == snapshot({'before_load': True, 'after_load': True})
+    assert defer_flag_by_phase == snapshot({'before_load': None, 'after_load': True})
 
 
 async def test_deferred_capability_tool_stays_available_across_turns() -> None:
@@ -3737,19 +4233,72 @@ async def test_deferred_capability_tool_delta_persists_in_history() -> None:
         return make_text_response('done')
 
     agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
-    result = await agent.run('Can I get a refund?')
+    events: list[AgentStreamEvent] = []
+    async with agent.iter('Can I get a refund?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as stream:
+                    events.extend([event async for event in stream])
+
+    assert agent_run.result is not None
+    result = agent_run.result
 
     def availability_deltas(messages: list[ModelMessage]) -> list[ToolAvailabilityDeltaPart]:
         return [part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)]
 
     messages = result.all_messages()
-    assert availability_deltas(messages) == [ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]
+    assert availability_deltas(messages) == [
+        ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'], tool_call_id='load')
+    ]
+    assert [event for event in events if isinstance(event, ToolAvailabilityDeltaEvent)] == [
+        ToolAvailabilityDeltaEvent(part=availability_deltas(messages)[0])
+    ]
 
     # Idempotence: feeding the resulting history back in does not inject a duplicate pair
     # (the deterministic call_id means it's recognized as already discovered).
     result2 = await agent.run('And another refund?', message_history=messages)
     new_messages = result2.all_messages()[len(messages) :]
     assert availability_deltas(new_messages) == []
+
+
+async def test_capability_load_history_without_delta_is_backfilled() -> None:
+    """An ID-only capability load history gains one delta before the resumed model request."""
+    refunds = Capability[object](id='refunds', defer_loading=True)
+    visibility: list[tuple[bool, set[str]]] = []
+
+    @refunds.tool_plain
+    def lookup_refund_policy() -> str:  # pragma: no cover
+        return 'refund allowed'
+
+    @dataclass
+    class CaptureVisibility(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            visibility.append((ctx.is_tool_available('lookup_refund_policy'), ctx.available_tool_names))
+            return request_context
+
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='old-load')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='old-load')]),
+    ]
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.model_request_parameters.revealed_tool_names == {'lookup_refund_policy'}
+        return make_text_response('done')
+
+    result = await Agent(FunctionModel(model_fn), capabilities=[refunds, CaptureVisibility()]).run(
+        'Continue.', message_history=history
+    )
+
+    assert visibility == [(True, {'load_capability', 'lookup_refund_policy'})]
+    new_deltas = [
+        part
+        for message in result.new_messages()
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+    ]
+    assert new_deltas == [ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'])]
 
 
 class _NoNativeToolSearchModel(FunctionModel):
@@ -3923,7 +4472,7 @@ async def test_deferred_capability_tool_delta_not_duplicated_over_long_trajector
     tool_deltas = [
         part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)
     ]
-    assert tool_deltas == [ToolAvailabilityDeltaPart(added=['lookup_refund_policy'])]
+    assert tool_deltas == [ToolAvailabilityDeltaPart(tools_added=['lookup_refund_policy'], tool_call_id='load')]
 
 
 async def test_deferred_capability_tool_available_on_turn_that_does_not_call_it() -> None:
@@ -4059,8 +4608,10 @@ Use the refund tool with the order id, not the customer id.\
 """)
     first_request = next(message for message in result.all_messages() if isinstance(message, ModelRequest))
     assert first_request.instructions == snapshot(
-        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
-        '- refunds: Refund tools.'
+        """\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+"""
     )
     assert first_request.instructions is not None
     assert 'Use the refund tool' not in first_request.instructions
@@ -4166,8 +4717,8 @@ async def test_unknown_deferred_capability_id_does_not_reveal_hidden_tools() -> 
     assert result.output == snapshot('done')
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('hidden_tool', True)],
-            [('load_capability', False), ('hidden_tool', True)],
+            [('load_capability', False)],
+            [('load_capability', False)],
         ]
     )
     history_parts = [part for message in result.all_messages() for part in message.parts]
@@ -4376,6 +4927,21 @@ def test_run_context_available_tool_names_includes_discovered_before_tool_manage
 
     assert ctx.tools == {}
     assert ctx.available_tool_names == {'discovered_tool'}
+    assert ctx.is_tool_available('discovered_tool')
+    assert not ctx.is_tool_available('unknown_tool')
+
+
+def test_run_context_is_tool_available_falls_back_while_tools_unresolved() -> None:
+    """Mid-`get_tools` the manager exists but its tool set is `None`; the name form must take
+    the same history fallback as `available_tool_names` instead of reporting `False`."""
+    ctx = _build_run_context()
+    ctx.tool_manager = ToolManager(FunctionToolset())
+    ctx.discovered_tool_names = {'discovered_tool'}
+
+    assert ctx.tool_manager.tools is None
+    assert ctx.available_tool_names == {'discovered_tool'}
+    assert ctx.is_tool_available('discovered_tool')
+    assert not ctx.is_tool_available('unknown_tool')
 
 
 async def test_run_context_available_tool_names_unions_discovered_current_tools() -> None:
@@ -4424,13 +4990,13 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
     tool_manager = ToolManager(toolset=toolset, ctx=ctx, tools=tools)
     ctx.tool_manager = tool_manager
 
-    assert ctx.available_tool_names == {'always_tool', 'discovered_tool', 'loaded_capability_tool'}
+    assert ctx.available_tool_names == {'always_tool', 'discovered_tool'}
 
 
 async def test_run_context_is_tool_available() -> None:
     """Exercise the predicate directly across every reveal path and both argument forms.
 
-    Covers always-visible, search-discovered, loaded-capability, still-hidden, and unknown-name
+    Covers always-visible, history-revealed, still-hidden, and unknown-name
     outcomes for both the `str` and `ToolDefinition` forms; the end-to-end fold and stale-resume
     scenarios are covered by the integration tests below.
     """
@@ -4462,7 +5028,7 @@ async def test_run_context_is_tool_available() -> None:
         'unloaded': Capability(id='unloaded', defer_loading=True),
     }
     ctx.loaded_capability_ids = {'loaded'}
-    ctx.discovered_tool_names = {'discovered_tool'}
+    ctx.discovered_tool_names = {'discovered_tool', 'loaded_tool'}
     tools = await toolset.get_tools(ctx)
     for name in ('discovered_tool', 'pending_tool', 'loaded_tool', 'unloaded_tool'):
         tools[name] = replace(
@@ -4500,7 +5066,7 @@ def test_stale_loaded_eager_capability_is_not_revealed() -> None:
     )
 
     assert ctx.is_tool_available(tool_def)
-    assert tool_defs_for_loaded_capabilities(ctx, [tool_def]) == {}
+    assert tool_defs_from_pre_definition_load_returns(ctx, [tool_def]) == {}
 
 
 async def test_is_tool_available_definition_survives_aggregator_fold() -> None:
@@ -12752,7 +13318,7 @@ async def test_wrapper_over_deferred_capability_preserves_deferral_end_to_end() 
     assert result.output == 'done'
     # The deferred capability is surfaced in the catalog under the wrapped capability's id.
     assert first_request_instructions == [
-        'The following capabilities are deferred and can be loaded using the `load_capability` tool:\n'
+        "The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:\n"
         '- refunds: Refund policy tools.'
     ]
 
@@ -12828,7 +13394,7 @@ async def test_prefix_tools_can_be_deferred():
     assert result.output == 'done: order-123: refund allowed'
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('billing_lookup_refund_policy', True)],
+            [('load_capability', False)],
             [('load_capability', False), ('billing_lookup_refund_policy', True)],
             [('load_capability', False), ('billing_lookup_refund_policy', True)],
         ]
@@ -17166,7 +17732,7 @@ async def test_enqueue_tool_availability_delta_part():
 
     @agent.tool
     def announce(ctx: RunContext[object]) -> str:
-        ctx.enqueue(ToolAvailabilityDeltaPart(added=['lookup_exchange_rate']), 'Use it.')
+        ctx.enqueue(ToolAvailabilityDeltaPart(tools_added=['lookup_exchange_rate']), 'Use it.')
         return 'ok'
 
     result = await agent.run('Hello')
@@ -23949,9 +24515,9 @@ async def test_dynamic_capability_returning_deferred_capability() -> None:
     seen_defer_flags: list[bool] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        hidden_def = next(t for t in info.function_tools if t.name == 'hidden_tool')
-        # Authored deferral remains stable after the capability is loaded.
-        seen_defer_flags.append(hidden_def.defer_loading)
+        if hidden_def := next((t for t in info.function_tools if t.name == 'hidden_tool'), None):
+            # Authored deferral remains stable after the capability is loaded.
+            seen_defer_flags.append(hidden_def.defer_loading)
         tool_returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
         if not any(part.tool_name == LOAD_CAPABILITY_TOOL_NAME for part in tool_returns):
             return ModelResponse(
@@ -23964,7 +24530,7 @@ async def test_dynamic_capability_returning_deferred_capability() -> None:
     agent = Agent(FunctionModel(respond), capabilities=[factory])
     result = await agent.run('hi')
     assert result.output == 'done'
-    assert seen_defer_flags == [True, True, True]
+    assert seen_defer_flags == [True, True]
 
 
 async def test_dynamic_capability_hooks_fire() -> None:
@@ -24104,7 +24670,7 @@ async def test_dynamic_deferred_capability_uses_resolved_capability_for_loaded_t
     assert result.output == 'done: order-123: refund allowed'
     assert seen_tool_state == snapshot(
         [
-            [('load_capability', False), ('lookup_refund_policy', True)],
+            [('load_capability', False)],
             [('load_capability', False), ('lookup_refund_policy', True)],
             [('load_capability', False), ('lookup_refund_policy', True)],
         ]
@@ -24373,3 +24939,63 @@ async def test_wrapper_capability_subclass_derived_state_contract() -> None:
     assert rebound.summary == 'wrapping leaf 2', 'computed-on-access state re-derives from the new wrapped'
     assert rebound.cached_summary == 'wrapping leaf 1', 'eagerly cached state is carried over verbatim'
     assert wrapper.summary == 'wrapping leaf 1', 'the original must not be mutated'
+
+
+async def test_tool_return_cannot_reveal_capability_owned_tools_without_loading() -> None:
+    """A bare-name reveal of a capability tool would skip the capability's hooks and instructions.
+
+    `load_capability` activates the whole bundle; `ToolReturn.tools` naming a capability-owned tool
+    while its capability is unloaded is rejected so the tool can never become callable with its
+    capability's `before_tool_validate`/`before_tool_execute` hooks and instructions inactive.
+    """
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain(name='capability_tool')
+    def capability_tool() -> str:  # pragma: no cover
+        return 'refund'
+
+    refunds = Capability[object](id='refunds', toolsets=[refunds_toolset], defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            return ModelResponse(parts=[ToolCallPart(tool_name='reveal_it', args={}, tool_call_id='reveal')])
+        return make_text_response('done')  # pragma: no cover - the run raises before a second model call
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+
+    @agent.tool_plain
+    def reveal_it() -> ToolReturn[str]:
+        return ToolReturn(return_value='revealed', tools=['capability_tool'])
+
+    with pytest.raises(UserError, match=r"belongs to capability 'refunds', which must be loaded"):
+        await agent.run('Reveal the capability tool directly.')
+
+
+async def test_tool_return_can_reveal_capability_owned_tools_once_loaded() -> None:
+    """After `load_capability`, naming a capability tool in `ToolReturn.tools` is a legal no-op-ish reveal."""
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain(name='capability_tool')
+    def capability_tool() -> str:  # pragma: no cover
+        return 'refund'
+
+    refunds = Capability[object](id='refunds', toolsets=[refunds_toolset], defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        returns = list(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        if not returns:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=LOAD_CAPABILITY_TOOL_NAME, args={'id': 'refunds'}, tool_call_id='l1')]
+            )
+        if not any(part.tool_name == 'reveal_it' for part in returns):
+            return ModelResponse(parts=[ToolCallPart(tool_name='reveal_it', args={}, tool_call_id='r1')])
+        return make_text_response('done')
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[refunds])
+
+    @agent.tool_plain
+    def reveal_it() -> ToolReturn[str]:
+        return ToolReturn(return_value='revealed', tools=['capability_tool'])
+
+    result = await agent.run('Load, then reveal by name.')
+    assert result.output == 'done'

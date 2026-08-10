@@ -154,6 +154,14 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
+        # OpenRouter identifies models as `provider/model`.
+        if '/' not in model_name:
+            raise UserError(
+                f'OpenRouter model names must be prefixed with the upstream provider, e.g. '
+                f'{("openai/" + model_name)!r}, not {model_name!r}. '
+                'See https://openrouter.ai/models for the available model names.'
+            )
+
         # OpenRouter exposes latest-model aliases as `~provider/model`; strip the
         # alias marker before using the provider prefix for profile selection.
         provider, model_name = model_name.removeprefix('~').split('/', 1)
@@ -180,6 +188,8 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
         #    accepts `reasoning` universally, so the gate also forces `supports_thinking=True` so the unified `thinking`
         #    setting is always forwarded regardless of the upstream model's own thinking support. OpenRouter only
         #    accepts the older `max_tokens` field, so `openai_chat_supports_max_completion_tokens=False`.
+        #    It also silently transforms mid-conversation system messages rather than handling them natively,
+        #    so `supports_inline_system_prompts=False` selects the deliberate `<system>`-wrapped fallback.
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
@@ -189,6 +199,7 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
                 openai_chat_supports_file_urls=True,
                 openai_chat_supports_web_search=True,
                 openai_chat_supports_max_completion_tokens=False,
+                supports_inline_system_prompts=False,
                 supports_thinking=True,
                 # OpenRouter's native tools (web search plugin, advisor) are gateway features that
                 # work with any underlying model, so the upstream profile's vendor-specific tool

@@ -310,6 +310,9 @@ class GoogleModelSettings(ModelSettings, total=False):
     Mutually exclusive with `google_safety_settings`: Vertex AI rejects a request that sets both,
     since Model Armor replaces the built-in safety filters for that request.
 
+    Note: Model Armor screening — both prompt and response — is only applied for non-streaming
+    requests. Google's API ignores `modelArmorConfig` for streaming requests (`streamGenerateContent`).
+
     See the [Model Armor docs](https://cloud.google.com/security-command-center/docs/model-armor-overview) for use cases and limitations.
     """
 
@@ -711,7 +714,7 @@ class GoogleModel(Model[Client]):
         """
         native_tools, image_config = self._get_native_tools(model_request_parameters)
 
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
@@ -728,8 +731,8 @@ class GoogleModel(Model[Client]):
                 # Breaks caching, but Google doesn't support AUTO mode with allowed_function_names
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             else:
-                # Use ANY mode with allowed_function_names to force one of the specified tools
-                allowed_function_names = list(tool_names)
+                # Ignore names that are not currently available.
+                allowed_function_names = [name for name in tool_defs if name in tool_names]
         else:
             tool_choice_mode = resolved_tool_choice
 

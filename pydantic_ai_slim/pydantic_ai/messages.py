@@ -24,9 +24,9 @@ from typing_extensions import TypeAliasType, TypeVar, assert_never
 from pydantic_ai._cost import calculate_price_for_usage
 
 from . import _otel_messages, _utils
-from ._instrumentation import serialize_any
+from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
-from .exceptions import UnexpectedModelBehavior
+from .exceptions import ModelRetry, UnexpectedModelBehavior
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
@@ -953,6 +953,15 @@ class ToolReturn(Generic[_ToolReturnValueT]):
     metadata: Any = None
     """Additional data accessible by the application but not sent to the LLM."""
 
+    tools: list[str] | None = None
+    """Names of deferred tools made available by this tool call.
+
+    The names are recorded verbatim in message history in a sibling
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], then filtered
+    against the currently served tool definitions at render time. A name that matches no deferred
+    tool, such as a typo or an always-visible tool, is a silent no-op by design.
+    """
+
     kind: Literal['tool-return'] = 'tool-return'
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -1241,6 +1250,12 @@ def parse_tool_kind(value: str) -> ToolPartKind | None:
     return next((kind for kind in _TOOL_PART_KINDS if kind == value), None)
 
 
+INTERRUPTED_TOOL_RETURN_CONTENT = 'The tool call was interrupted before a result was produced.'
+"""Placeholder content for a tool call that was interrupted before producing a result (e.g. by run
+cancellation). Shared between the agent graph's history repair and the UI adapters' stream closeout
+so both synthesize the same `outcome='interrupted'` return."""
+
+
 @dataclass(repr=False)
 class BaseToolReturnPart:
     """Base class for tool return parts."""
@@ -1503,7 +1518,7 @@ class BaseToolReturnPart:
         )
 
         if settings.include_content and self.content is not None:
-            part['result'] = serialize_any(self.content)
+            part['result'] = serialize_any(redact_binary_content(self.content, settings))
 
         return [part]
 
@@ -1619,6 +1634,29 @@ class RetryPromptPart:
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    @classmethod
+    def from_error(
+        cls,
+        error: pydantic_core.ValidationError | ModelRetry,
+        *,
+        tool_name: str | None = None,
+        tool_call_id: str | None = None,
+    ) -> RetryPromptPart:
+        """Build the retry prompt for a failed tool call or output validation.
+
+        This is the exact message the model receives when the error is handled by the agent loop,
+        so anything else presenting the failure (e.g. instrumentation spans) must build it the same way.
+        """
+        content = (
+            error.errors(include_url=False, include_context=False)
+            if isinstance(error, pydantic_core.ValidationError)
+            else error.message
+        )
+        part = cls(content=content, tool_name=tool_name)
+        if tool_call_id:
+            part.tool_call_id = tool_call_id
+        return part
+
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
         if isinstance(self.content, str):
@@ -1718,7 +1756,9 @@ class ToolAvailabilityDeltaPart:
     https://github.com/pydantic/pydantic-ai/issues/6985.
     """
 
-    added: list[str] = field(default_factory=lambda: [])
+    tools_added: Annotated[
+        list[str], pydantic.Field(validation_alias=pydantic.AliasChoices('tools_added', 'added'))
+    ] = field(default_factory=lambda: [])
     """Names of tools that became available."""
 
     tool_call_id: str | None = None
@@ -1734,7 +1774,7 @@ class ToolAvailabilityDeltaPart:
         already visible in the request's tool definitions, and a run where the model suddenly can
         call something is unreadable without them.
         """
-        changes = ', '.join(f'+{name}' for name in self.added)
+        changes = ', '.join(f'+{name}' for name in self.tools_added)
         return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {changes}')]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -1877,6 +1917,15 @@ class ThinkingPart:
         return bool(self.content)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+STANDING_PROMPT_PLANTED_KEY = 'pydantic_ai_standing_prompt_planted'
+"""`CompactionPart.provider_details` key stamped on compaction items minted by our own compact
+call, whose input window explicitly planted the standing prompt. Provenance for
+`_trim_messages_before_compaction`'s `standing_prompt_retained` fast path: only a stamped item is
+trusted to retain the standing prompt; anything else — an externally supplied or spliced history,
+or an item produced by a provider-initiated compaction of an ordinary request window — gets the
+standing prompt re-inserted."""
 
 
 @dataclass(repr=False)
@@ -2031,8 +2080,8 @@ class BaseToolCallPart:
 
         Args:
             raise_if_invalid: If `True`, a `ValueError` or `AssertionError`
-                caused by malformed JSON in `args` will be re-raised.  When
-                `False` (the default), malformed JSON is handled gracefully by
+                caused by malformed or non-object JSON in `args` will be re-raised.  When
+                `False` (the default), such JSON is handled gracefully by
                 returning `{'INVALID_JSON': '<raw args>'}` so that the value
                 can still be sent to a model API (e.g. during a retry flow)
                 without crashing.
@@ -2054,12 +2103,27 @@ class BaseToolCallPart:
         """Return the arguments as a JSON string.
 
         This is just for convenience with models that require JSON strings as input.
+
+        JSON that's malformed or doesn't represent an object is handled gracefully by returning
+        `'{"INVALID_JSON":"<raw args>"}'`, matching [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict],
+        so that the value can still be sent to a model API (e.g. during a retry flow) instead of being rejected
+        by one that requires an object.
+
+        Because of that, this is not the way to render args that are still streaming in: a partial fragment
+        that only becomes valid JSON once the following deltas are concatenated would be degraded to the
+        wrapper. Emit those verbatim instead, as the UI event streams do.
         """
         if not self.args:
             return '{}'
         if isinstance(self.args, str):
-            return self.args
-        return pydantic_core.to_json(self.args).decode()
+            try:
+                if isinstance(pydantic_core.from_json(self.args), dict):
+                    # Returned verbatim rather than re-serialized, as the exact bytes the model produced
+                    # (key order, whitespace) matter for prompt caching.
+                    return self.args
+            except ValueError:
+                pass
+        return pydantic_core.to_json(self.args_as_dict()).decode()
 
     def has_content(self) -> bool:
         """Return `True` if the tool call has content."""
@@ -2514,7 +2578,7 @@ class ModelResponse:
                     builtin=True,
                 )
                 if settings.include_content and part.content is not None:  # pragma: no branch
-                    return_part['result'] = serialize_any(part.content)
+                    return_part['result'] = serialize_any(redact_binary_content(part.content, settings))
 
                 parts.append(return_part)
             elif isinstance(part, CompactionPart):
@@ -2533,6 +2597,46 @@ ModelMessagesTypeAdapter = pydantic.TypeAdapter(
     list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
+
+
+def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """The messages from the latest [`CompactionPart`][pydantic_ai.messages.CompactionPart] onward.
+
+    After compaction, the summary replaces everything before it, so this window is what the model
+    effectively works from — at part-level precision: within the response that carries the
+    compaction part, parts before it are excluded and parts after it are kept. With no compaction
+    part in the history, the whole history is returned (as a new list).
+
+    This is the boundary rule Pydantic AI itself uses when deriving model-visible state from
+    history (discovered tools, loaded capabilities). Capability and toolset authors should apply
+    the same rule to their own derived state — anything the model needs to have *seen*
+    (announcements, disclosures, catalogs) should be recomputed from this window rather than
+    remembered in instance attributes, so it self-heals when compaction replaces the history that
+    carried it.
+
+    Deliberately provider-agnostic, unlike the wire-level trim, which is provider-specific
+    because it must be exact for the one request it renders. This window feeds run-level state
+    (`RunContext.discovered_tool_names`, loaded capabilities) that must stay valid across
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] failover and mid-run model
+    switches — at parse time there is no "current" provider to resolve against, so the boundary
+    has to be the conservative intersection: a compaction part another provider would skip on the
+    wire still counts. The asymmetry makes that safe: treating too little as visible only permits
+    a redundant, idempotent re-disclosure; treating too much as visible hides state the model can
+    no longer see.
+    """
+    for message_index in range(len(messages) - 1, -1, -1):
+        message = messages[message_index]
+        if isinstance(message, ModelResponse):
+            for part_index in range(len(message.parts) - 1, -1, -1):
+                if isinstance(message.parts[part_index], CompactionPart):
+                    # Indexed iteration rather than `messages[message_index + 1:]`: the runtime
+                    # `Sequence` contract only requires integer `__getitem__`, so a minimal
+                    # conforming implementation may reject slices. (`message.parts` is a list.)
+                    return [
+                        replace(message, parts=list(message.parts[part_index:])),
+                        *(messages[i] for i in range(message_index + 1, len(messages))),
+                    ]
+    return list(messages)
 
 
 def _narrow_response_part(part: ModelResponsePart) -> ModelResponsePart:
@@ -2585,10 +2689,36 @@ _FileUrlT = TypeVar('_FileUrlT', bound=FileUrl)
 subclass (`ImageUrl`, `DocumentUrl`, etc.) when sanitizing a file URL."""
 
 
+def _drop_compaction_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """Drop client-supplied compaction parts from untrusted messages that follow trusted history.
+
+    A compaction part is the latest history boundary: provider adapters trim everything before it
+    from the request, and [`post_compaction_window`][pydantic_ai.messages.post_compaction_window]
+    derives model-visible state from it. When trusted server-side history precedes the untrusted
+    messages, honoring a client-supplied boundary would let the client hide that trusted prefix
+    from the model, replacing it with the client's own summary or blob — so only the server's own
+    boundaries are kept. With no server-side history, the client-transmitted messages are the
+    entire conversation, boundaries included, and its compaction parts should be honored. A
+    response left with no parts is dropped entirely. Shared by
+    `sanitize_messages(strip_compaction_parts=True)` and the UI adapters' handling of runs that
+    combine server-side `message_history` with client-submitted messages.
+    """
+    result: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse) and any(isinstance(part, CompactionPart) for part in message.parts):
+            parts = [part for part in message.parts if not isinstance(part, CompactionPart)]
+            if parts:
+                result.append(replace(message, parts=parts))
+        else:
+            result.append(message)
+    return result
+
+
 def sanitize_messages(
     messages: Sequence[ModelMessage],
     *,
     strip_system_prompts: bool = True,
+    strip_compaction_parts: bool = False,
     allowed_file_url_schemes: Collection[str] = ('http', 'https'),
     allowed_file_url_force_download: Collection[ForceDownloadMode] = (),
     allow_uploaded_files: bool = False,
@@ -2626,11 +2756,26 @@ def sanitize_messages(
       [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] in the same response, and the
       agent loop never dispatches them, so they aren't a client-injection risk. If stripping leaves the
       final response with no parts, the response is dropped from history entirely.
+    - The compaction provenance stamp from [`CompactionPart.provider_details`][pydantic_ai.messages.CompactionPart.provider_details].
+      This ensures a client-supplied OpenAI Responses compaction item is never trusted to already
+      carry the leading [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s: they are
+      re-sent to the model even where the provider's own compaction state would normally let them
+      be skipped.
+    - [`CompactionPart`][pydantic_ai.messages.CompactionPart]s, when `strip_compaction_parts=True`
+      (off by default). Everything before a compaction part is hidden from the model, so pass
+      `True` whenever you combine the sanitized history with trusted server-side
+      `message_history` — a client-supplied compaction part would hide that server-side history.
+      The [UI adapters](../ui/overview.md) apply this rule automatically when a run combines
+      server-side `message_history` with client-submitted messages.
 
     Args:
         messages: Messages to sanitize.
         strip_system_prompts: Whether to strip
             [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s.
+        strip_compaction_parts: Whether to drop
+            [`CompactionPart`][pydantic_ai.messages.CompactionPart]s entirely. Off by default, for
+            when the untrusted input is the entire conversation; pass `True` when the sanitized
+            history is combined with trusted server-side history.
         allowed_file_url_schemes: URL schemes allowed for [`FileUrl`][pydantic_ai.messages.FileUrl]
             parts. Defaults to `http` and `https`.
         allowed_file_url_force_download: Additional
@@ -2643,6 +2788,9 @@ def sanitize_messages(
             Use this for human-in-the-loop resumption when matching tool results are being submitted
             with the same request.
     """
+    if strip_compaction_parts:
+        messages = _drop_compaction_parts(messages)
+
     allowed_schemes = {scheme.lower() for scheme in allowed_file_url_schemes}
     allowed_force_download = set(allowed_file_url_force_download)
     resolved_ids = set(resolved_tool_call_ids)
@@ -2972,9 +3120,10 @@ def _sanitize_response_parts(
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
 ) -> list[ModelResponsePart]:
-    """Sanitize the file references nested in an untrusted response's tool return parts.
+    """Sanitize unsafe metadata and file references in an untrusted response's parts.
 
-    Drops non-allowlisted schemes and resets non-allowlisted `force_download` values on
+    Strips compaction provenance stamps from `CompactionPart.provider_details`. Drops
+    non-allowlisted schemes and resets non-allowlisted `force_download` values on
     [`FileUrl`][pydantic_ai.messages.FileUrl]s nested in tool return parts, and drops
     [`UploadedFile`][pydantic_ai.messages.UploadedFile]s nested in tool return parts unless
     `allow_uploaded_files` is set. Unresolved (dangling) tool calls are stripped separately, from
@@ -2986,7 +3135,16 @@ def _sanitize_response_parts(
     """
     new_parts: list[ModelResponsePart] = []
     for part in parts:
-        if isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
+        if (
+            isinstance(part, CompactionPart)
+            and part.provider_details is not None
+            and STANDING_PROMPT_PLANTED_KEY in part.provider_details
+        ):
+            provider_details = {
+                key: value for key, value in part.provider_details.items() if key != STANDING_PROMPT_PLANTED_KEY
+            }
+            new_parts.append(replace(part, provider_details=provider_details))
+        elif isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
             # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
             # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key
             # during sanitization would leave it schema-invalid.
@@ -3526,6 +3684,24 @@ class FunctionToolResultEvent(ToolResultEvent):
     """Event type identifier, used as a discriminator."""
 
 
+@dataclass(repr=False, kw_only=True)
+class ToolAvailabilityDeltaEvent:
+    """An event indicating tools were made available mid-run, carrying the recorded delta part.
+
+    This is request-side because the delta is created while executing a tool, after response-part
+    streaming has finished. It records the post-dedup change, while `ToolReturnPart.tools` preserves
+    the caller's pre-dedup intent, and is emitted for capability loads as well as tool returns.
+    """
+
+    part: ToolAvailabilityDeltaPart
+    """The tool availability delta part that will be recorded in message history."""
+
+    event_kind: Literal['tool_availability_delta'] = 'tool_availability_delta'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False)
 class OutputToolResultEvent(ToolResultEvent):
     """An event indicating the result of an output tool call."""
@@ -3596,6 +3772,7 @@ class DeferredToolResultsEvent:
 HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
+    | ToolAvailabilityDeltaEvent
     | OutputToolCallEvent
     | OutputToolResultEvent
     | DeferredToolRequestsEvent
