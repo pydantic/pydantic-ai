@@ -22,6 +22,7 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -7839,6 +7840,114 @@ def test_tool_availability_delta_ui_round_trip():
     messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='load-1')])]
 
     assert AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages)) == messages
+
+
+def test_compaction_ui_round_trip_and_sanitization():
+    """Compaction data stays faithful on the wire while client provenance is sanitized on ingest."""
+    compaction = CompactionPart(
+        content='Summary of the conversation.',
+        id='cmp-1',
+        provider_name='openai',
+        provider_details={
+            'encrypted_content': 'blob',
+            'pydantic_ai_standing_prompt_planted': True,
+        },
+    )
+    messages = [ModelResponse(parts=[compaction])]
+
+    ag_ui_messages = AGUIAdapter.dump_messages(messages)
+    assert [message.model_dump(exclude_none=True) for message in ag_ui_messages] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'activity',
+                'activity_type': 'pydantic_ai_compaction',
+                'content': {
+                    'content': 'Summary of the conversation.',
+                    'id': 'cmp-1',
+                    'provider_name': 'openai',
+                    'provider_details': {
+                        'encrypted_content': 'blob',
+                        'pydantic_ai_standing_prompt_planted': True,
+                    },
+                },
+            }
+        ]
+    )
+    loaded = AGUIAdapter.load_messages(ag_ui_messages)
+    assert message_part(loaded, CompactionPart) == compaction
+
+    adapter = AGUIAdapter(
+        Agent(TestModel()),
+        create_input(*ag_ui_messages),
+    )
+    sanitized = adapter.sanitize_messages(adapter.messages)
+    assert message_part(sanitized, CompactionPart) == CompactionPart(
+        content='Summary of the conversation.',
+        id='cmp-1',
+        provider_name='openai',
+        provider_details={'encrypted_content': 'blob'},
+    )
+
+
+def test_compaction_malformed_payload_is_skipped():
+    """Malformed compaction activity content is skipped entirely rather than failing the request.
+
+    Skipping — not degrading to an empty part — matters because even an empty `CompactionPart`
+    acts as a `post_compaction_window` visibility boundary, resetting derived state like tool
+    discovery.
+    """
+    activity = ActivityMessage(
+        id='malformed',
+        activity_type='pydantic_ai_compaction',
+        content={'content': 42},
+    )
+
+    loaded = AGUIAdapter.load_messages([activity])
+    assert not any(isinstance(part, CompactionPart) for message in loaded for part in message.parts)
+
+
+async def test_compaction_event_skipped_for_legacy_ag_ui() -> None:
+    """Compaction activity events are omitted when the negotiated AG-UI version predates them."""
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Continue')),
+        ag_ui_version='0.1.10',
+    )
+    events = [
+        event
+        async for event in event_stream.handle_compaction(CompactionPart(content='Summary.', provider_name='anthropic'))
+    ]
+    assert events == []
+
+
+@requires_ag_ui('0.1.19')
+async def test_compaction_stream_matches_dumped_activity_message() -> None:
+    """A streamed compaction uses the same activity type and faithful content as dumped history."""
+    compaction = CompactionPart(
+        content='Summary of the conversation.',
+        id='cmp-1',
+        provider_name='openai',
+        provider_details={'encrypted_content': 'blob'},
+    )
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Continue')),
+        ag_ui_version='0.1.19',
+    )
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=compaction)
+        yield PartEndEvent(index=0, part=compaction)
+
+    events = [
+        json.loads(event_stream.encode_event(event).removeprefix('data: '))
+        async for event in event_stream.transform_stream(event_generator())
+    ]
+    snapshot_event = next(event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT')
+
+    [activity] = AGUIAdapter.dump_messages([ModelResponse(parts=[compaction])])
+    assert isinstance(activity, ActivityMessage)
+    assert snapshot_event['activityType'] == activity.activity_type
+    assert snapshot_event['content'] == activity.content
 
 
 async def test_tool_availability_delta_event_skipped_for_legacy_ag_ui() -> None:

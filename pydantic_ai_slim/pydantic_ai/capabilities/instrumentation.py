@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode
-from pydantic_core import to_json
+from pydantic_core import ValidationError, to_json
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
@@ -30,15 +30,17 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     MessageHistoryMutatedWarning,
+    ModelRetry,
     ToolFailedError,
     ToolRetryError,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
+from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
     AbstractCapability,
     CapabilityOrdering,
+    RawToolArgs,
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapOutputProcessHandler,
@@ -320,6 +322,64 @@ class Instrumentation(AbstractCapability[Any]):
     # ------------------------------------------------------------------
     # wrap_tool_execute — tool execution span
     # ------------------------------------------------------------------
+
+    async def on_tool_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: RawToolArgs,
+        error: ValidationError | ModelRetry,
+    ) -> ValidatedToolArgs:
+        """Emit an error span for a tool call whose argument validation failed.
+
+        Runs only after every other capability has declined to recover the error, so a
+        recovered validation failure produces no span. The span keeps the `execute_tool`
+        operation name so tracing backends group it with other tool spans, and sets
+        `pydantic_ai.tool.failure_stage: 'validation'` to distinguish it from execution
+        failures.
+
+        With content capture enabled, the span records the retry prompt built from the
+        error as the tool result. That is the exact message the model receives when the
+        agent loop handles the failure; raw-mode callers (e.g. sandboxed dispatch via
+        `handle_call(wrap_validation_errors=False)`) surface the raw exception to the
+        calling code instead, and the recorded prompt is just the rendered description
+        of the failure.
+        """
+        names = self._instrumentation_names
+        attributes = self._tool_span_attributes(call)
+        # The tool never ran: keep the `execute_tool` operation name so backends find the
+        # span, but say so in the message and mark the failure stage for querying.
+        attributes['logfire.msg'] = f'invalid tool call: {call.tool_name}'
+        attributes[names.tool_failure_stage_attr] = 'validation'
+        with self.settings.tracer.start_as_current_span(
+            names.get_tool_span_name(call.tool_name),
+            attributes=attributes,
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
+            if self.settings.include_content and span.is_recording():
+                retry = RetryPromptPart.from_error(error, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
+                span.set_attribute(names.tool_result_attr, retry.model_response())
+                span.record_exception(error, escaped=True)
+            else:
+                # Validation errors may contain rejected arguments, so omit their message and
+                # stack trace when content capture is disabled. Execution spans keep their
+                # existing exception recording behavior. The type formatting must match what
+                # the OTel SDK's `Span.record_exception` would have produced for this error.
+                error_type = type(error)
+                type_name = (
+                    f'{error_type.__module__}.{error_type.__qualname__}'
+                    if error_type.__module__ != 'builtins'
+                    else error_type.__qualname__
+                )
+                span.add_event(
+                    'exception',
+                    attributes={'exception.type': type_name, 'exception.escaped': True},
+                )
+            span.set_status(StatusCode.ERROR)
+        raise error
 
     def _tool_span_attributes(self, call: ToolCallPart) -> dict[str, Any]:
         """Build the span attributes shared by `wrap_tool_execute` and `wrap_output_process`.
