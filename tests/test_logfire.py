@@ -1483,11 +1483,7 @@ def test_include_tool_args_span_attributes(
                     'gen_ai.conversation.id': IsStr(),
                     'logfire.span_type': 'span',
                     'gen_ai.agent.name': 'my_agent',
-                    'gen_ai.tool.call.result': """\
-Tool error
-
-Fix the errors and try again.\
-""",
+                    'gen_ai.tool.call.result': 'Tool error',
                     'gen_ai.agent.call.id': IsStr(),
                     'logfire.level_num': 17,
                 }

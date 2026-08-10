@@ -8,18 +8,21 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '379'
+      - '466'
       content-type:
       - application/json
       host:
       - api.mistral.ai
     method: POST
     parsed_body:
+      frequency_penalty: null
       messages:
       - content: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
       model: mistral-medium-latest
       n: 1
+      presence_penalty: null
+      stop: null
       stream: false
       tool_choice: auto
       tools:
@@ -30,6 +33,7 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
+        type: function
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -41,11 +45,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '437'
+      - '508'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019c486c-9d31-7042-b4dd-32e97140bb36
+      - 019fecf6-499a-7e11-8bd6-33fb77722f5f
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -61,17 +65,20 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: Ah0BFgzqX
+            id: noOeusJ7Y
             index: 0
-      created: 1770741603
-      id: 24545ac599b34a11a77813fdfb8dacde
+            type: function
+      created: 1786386991
+      id: 4062ee849f884cb8a44368c02c84edd4
       model: mistral-medium-latest
       object: chat.completion
       usage:
         completion_tokens: 6
-        num_cached_tokens: 0
-        prompt_tokens: 64
-        total_tokens: 70
+        prompt_tokens: 76
+        prompt_tokens_details:
+          cached_tokens: 0
+        service_tier: standard
+        total_tokens: 82
     status:
       code: 200
       message: OK
@@ -84,16 +91,14 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '882'
+      - '785'
       content-type:
       - application/json
-      cookie:
-      - __cf_bm=.rPn0KmNuarLjK9Iaosuq1u0MTFxM_TMl0UcLqBL4Rs-1770741603-1.0.1.1-VpSIC2q_4HrkFpHgxBW2D9_5VNUdCifj.MCobh40X85plmhvbcUGpKzdpv5pN8C.lddHgbsXNPoL6faCkO5zu3d_IK_CC7AVsQ5kKtqa.9w;
-        _cfuvid=a8fQDKPrYQDNyCgVVi3Ykut0Zuh4oUbkA8JglrNn7Ak-1770741603884-0.0.1.1-604800000
       host:
       - api.mistral.ai
     method: POST
     parsed_body:
+      frequency_penalty: null
       messages:
       - content: Use the get_file tool now to retrieve a document file, then describe what you received.
         role: user
@@ -104,25 +109,18 @@ interactions:
         - function:
             arguments: '{}'
             name: get_file
-          id: Ah0BFgzqX
+          id: noOeusJ7Y
           index: 0
           type: function
-      - content: See file 99631f.
-        role: tool
-        tool_call_id: Ah0BFgzqX
       - content:
-        - text: OK
-          type: text
-        prefix: false
-        role: assistant
-      - content:
-        - text: 'This is file 99631f:'
-          type: text
         - document_url: https://pdfobject.com/pdf/sample.pdf
           type: document_url
-        role: user
+        role: tool
+        tool_call_id: noOeusJ7Y
       model: mistral-medium-latest
       n: 1
+      presence_penalty: null
+      stop: null
       stream: false
       tool_choice: auto
       tools:
@@ -133,6 +131,7 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
+        type: function
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -144,11 +143,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1187'
+      - '1056'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019c486c-9f4e-7950-beb3-94ab805b3414
+      - 019fecf6-4ca3-7bf6-be30-fd8d0e5f3e08
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -159,25 +158,27 @@ interactions:
         index: 0
         message:
           content: |-
-            The document you provided, labeled as **file 99631f**, is a simple text-based PDF file. Here's a summary of its contents:
+            I received a **PDF document** from the URL `https://pdfobject.com/pdf/sample.pdf`. The document contains the following:
 
-            1. **Title**: The document starts with a heading, **"Sample PDF"**.
-            2. **Introductory Line**: It includes a short introductory sentence: *"This is a simple PDF file. Fun fun fun."*
-            3. **Placeholder Text**: The majority of the document consists of **Lorem Ipsum** text, which is commonly used as placeholder text in design and publishing. The Lorem Ipsum passage is a mix of Latin-like words and phrases, structured to resemble normal text.
-            4. **Purpose**: The document appears to be a **sample or template** for testing or demonstration purposes, rather than containing meaningful or specific information.
+            1. **Title/Heading**: "Sample PDF" with the line "This is a simple PDF file. Fun fun fun."
+            2. **Content**: Multiple paragraphs of **Lorem Ipsum** placeholder text, which is commonly used in design and publishing to simulate real content. The text is structured into paragraphs with typical Latin-based filler content.
+            3. **Format**: The document is a PDF file, as indicated by the URL and the structure of the content.
 
-            If you'd like further analysis or specific details extracted from the document, let me know!
+            The document appears to be a generic sample PDF, likely used for testing or demonstration purposes.
           role: assistant
           tool_calls: null
-      created: 1770741604
-      id: 638636ab325046c6becee20e1e1bfac6
+      created: 1786386992
+      id: 9df50a5e8c49472e93350e0194355108
       model: mistral-medium-latest
       object: chat.completion
       usage:
-        completion_tokens: 181
-        num_cached_tokens: 0
-        prompt_tokens: 997
-        total_tokens: 1178
+        completion_tokens: 137
+        prompt_tokens: 1001
+        prompt_tokens_details:
+          cached_tokens: 0
+        service_tier: standard
+        total_tokens: 1138
     status:
       code: 200
       message: OK
+version: 1

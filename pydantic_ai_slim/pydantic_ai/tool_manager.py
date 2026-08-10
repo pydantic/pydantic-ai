@@ -13,6 +13,7 @@ from . import messages as _messages
 from ._output import (
     OutputSchema,
     OutputToolset,
+    dump_tool_validation_errors,
     run_output_process_hooks,
     run_output_validate_hooks,
 )
@@ -238,10 +239,10 @@ class ToolManager(Generic[AgentDepsT]):
         """Convert a ValidationError or ModelRetry to a ToolRetryError with a retried `ToolReturnPart`."""
         if isinstance(error, ValidationError):
             # Serialized here so the details travel as structured tool-result content: `ctx` is
-            # dropped by `include_context=False`, and `input` stays so the model sees the arguments
-            # it sent next to the error.
-            content: list[Any] | str = _messages.error_details_ta.dump_python(
-                error.errors(include_url=False, include_context=False), mode='json'
+            # dropped by `include_context=False`, and `input` is kept once per distinct value so the
+            # model sees the arguments it sent without them repeating per error.
+            content: list[Any] | str = dump_tool_validation_errors(
+                error.errors(include_url=False, include_context=False)
             )
         else:
             content = error.message

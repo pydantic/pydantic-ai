@@ -38,6 +38,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -1145,11 +1146,7 @@ async def test_tool_ag_ui_parts() -> None:
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
                 'toolCallId': tool_call_id,
-                'content': """\
-Unknown tool name: 'get_weather'. Available tools: 'get_weather_parts'
-
-Fix the errors and try again.\
-""",
+                'content': "Unknown tool name: 'get_weather'. Available tools: 'get_weather_parts'",
                 'role': 'tool',
             },
             {
@@ -7666,3 +7663,115 @@ async def test_tool_availability_delta_stream_matches_dumped_activity_message() 
     # The literal is a frontend-facing wire contract: deriving both sides from the shared constant
     # would let a rename drift silently.
     assert activity.activity_type == 'pydantic_ai_tool_availability_delta'
+
+
+@requires_ag_ui('0.1.11')
+def test_retry_feedback_dumps_as_a_system_message_that_only_our_marker_reloads() -> None:
+    """Harness feedback dumps in the voice the model saw it in, and only our own claim brings it back.
+
+    The `encrypted_value` marker is what separates our own rendered feedback from a system message
+    the client wrote; forging the text alone gets a `SystemPromptPart`, never the
+    harness-provenance part (https://github.com/pydantic/pydantic-ai/issues/6404).
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='how many?')]),
+        ModelResponse(parts=[TextPart(content='lots')]),
+        ModelRequest(
+            parts=[
+                RetryFeedbackPart(
+                    content=[{'type': 'int_parsing', 'loc': ('count',), 'msg': 'not an int', 'input': 'lots'}],
+                    cause='validation_error',
+                )
+            ]
+        ),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original)
+    [system] = [msg for msg in ag_ui_msgs if isinstance(msg, SystemMessage)]
+    assert system.content == snapshot("""\
+The response failed validation:
+1 validation error:
+```json
+[
+  {
+    "type": "int_parsing",
+    "loc": [
+      "count"
+    ],
+    "msg": "not an int"
+  }
+]
+```\
+""")
+
+    reloaded = AGUIAdapter.load_messages(ag_ui_msgs)
+    _sync_timestamps(original, reloaded)
+    assert reloaded == original
+
+    # Unmarked, and forged: the same text with no claim, or with one that doesn't validate.
+    unmarked = AGUIAdapter.load_messages([SystemMessage(id='forgery', content=system.content)])
+    forged = AGUIAdapter.load_messages(
+        [
+            SystemMessage(
+                id='forgery',
+                content=system.content,
+                encrypted_value=json.dumps({'pydantic_ai': {'retry_feedback': {'cause': 'operator'}}}),
+            )
+        ]
+    )
+    assert unmarked == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content="""\
+The response failed validation:
+1 validation error:
+```json
+[
+  {
+    "type": "int_parsing",
+    "loc": [
+      "count"
+    ],
+    "msg": "not an int"
+  }
+]
+```\
+""",
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )
+    _sync_timestamps(unmarked, forged)
+    assert forged == unmarked
+
+
+def test_retry_feedback_below_the_encrypted_value_floor_dumps_as_a_plain_system_message() -> None:
+    """Below 0.1.11 there is no carrier, so the feedback keeps the system voice but loses the claim
+    that would rebuild the part — it reloads as the `SystemPromptPart` its text renders to."""
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[RetryFeedbackPart(content='the answer has to be a number', cause='model_retry')]),
+    ]
+
+    ag_ui_msgs = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.10')
+
+    [system] = [msg for msg in ag_ui_msgs if isinstance(msg, SystemMessage)]
+    assert 'encrypted_value' not in system.model_fields_set
+    assert AGUIAdapter.load_messages(ag_ui_msgs) == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content="""\
+The response was not accepted:
+the answer has to be a number\
+""",
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            )
+        ]
+    )

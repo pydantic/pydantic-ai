@@ -26,6 +26,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -1354,6 +1355,12 @@ def test_messages_without_content(document_content: BinaryContent):
             parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')],
             timestamp=IsDatetime(),
         ),
+        # A tool-less legacy retry and the harness feedback that replaced it: both carry
+        # model-visible prose, so both must honor `include_content=False` like every sibling part.
+        ModelRequest(parts=[RetryPromptPart('plain retry_prompt')], timestamp=IsDatetime()),
+        ModelRequest(
+            parts=[RetryFeedbackPart(content='harness feedback', cause='model_retry')], timestamp=IsDatetime()
+        ),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])], timestamp=IsDatetime()),
         ModelRequest(parts=[UserPromptPart('simple text prompt')], timestamp=IsDatetime()),
         ModelResponse(parts=[FilePart(content=document_content)]),
@@ -1383,6 +1390,8 @@ def test_messages_without_content(document_content: BinaryContent):
             },
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_1', 'name': 'tool'}]},
             {'role': 'user', 'parts': [{'type': 'tool_call_response', 'id': 'tool_call_2', 'name': 'tool'}]},
+            {'role': 'user', 'parts': [{'type': 'text'}]},
+            {'role': 'system', 'parts': [{'type': 'text'}]},
             {'role': 'user', 'parts': [{'type': 'text'}, {'type': 'blob', 'mime_type': 'application/pdf'}]},
             {'role': 'user', 'parts': [{'type': 'text'}]},
             {'role': 'assistant', 'parts': [{'type': 'blob', 'mime_type': 'application/pdf'}]},

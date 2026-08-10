@@ -38,6 +38,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -871,7 +872,7 @@ The temperature in London on 1st January 2022 was 30°C.\
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content=[
                             {
                                 'type': 'json_invalid',
@@ -884,7 +885,7 @@ The temperature in London on 1st January 2022 was 30°C.\
 """,
                             }
                         ],
-                        tool_call_id=IsStr(),
+                        cause='validation_error',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1065,11 +1066,12 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The country is not supported.',
                         tool_name='get_capital',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     )
                 ],
                 instructions='You are a helpful chatbot.',
@@ -6214,7 +6216,7 @@ async def test_bedrock_mistral_tool_return_image_deferred_to_separate_turn(bedro
             {
                 'role': 'user',
                 'content': [
-                    {'text': 'This is file d003ad:'},
+                    {'text': 'This is file d003ad, returned by the get_photo tool:'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
                 ],
             },
@@ -6270,9 +6272,9 @@ async def test_bedrock_mistral_two_tool_returns_images_grouped_then_deferred(bed
             {
                 'role': 'user',
                 'content': [
-                    {'text': 'This is file d003ad:'},
+                    {'text': 'This is file d003ad, returned by the get_photo tool:'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
-                    {'text': 'This is file d003ad:'},
+                    {'text': 'This is file d003ad, returned by the get_photo tool:'},
                     {'image': {'format': 'jpeg', 'source': {'s3Location': {'uri': 's3://bucket/photo.jpg'}}}},
                 ],
             },
@@ -6318,7 +6320,7 @@ async def test_bedrock_nova_tool_return_media_stays_colocated(bedrock_provider: 
                             'status': 'success',
                         }
                     },
-                    {'text': 'This is file 49d492:'},
+                    {'text': 'This is file 49d492, returned by the get_report tool:'},
                     {
                         'document': {
                             'name': 'Document 1',

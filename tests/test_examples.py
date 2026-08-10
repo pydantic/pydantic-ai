@@ -655,6 +655,14 @@ async def model_logic(  # noqa: C901
     messages: list[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
     m = messages[-1].parts[-1]
+    # The framework now answers a retried tool call with `ToolReturnPart(outcome='retried')` rather
+    # than a `RetryPromptPart`. This mock dispatches on the legacy shape in a dozen places, so map it
+    # back here rather than splitting every tool-return branch below in two.
+    if isinstance(m, ToolReturnPart) and m.outcome == 'retried':
+        m = RetryPromptPart(
+            content=m.model_response_str(wrap_if_error=False), tool_name=m.tool_name, tool_call_id=m.tool_call_id
+        )
+
     # Handle multimodal tool returns (content directly in ToolReturnPart)
     if (
         isinstance(m, ToolReturnPart)

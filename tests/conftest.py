@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -1147,7 +1148,9 @@ def disable_ssrf_protection_for_vcr():
         yield
 
 
-_RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
+_RequestPartT = TypeVar(
+    '_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart | RetryFeedbackPart
+)
 _ResponsePartT = TypeVar(
     '_ResponsePartT',
     bound=TextPart | ToolCallPart | NativeToolCallPart | NativeToolReturnPart | ThinkingPart | FilePart,

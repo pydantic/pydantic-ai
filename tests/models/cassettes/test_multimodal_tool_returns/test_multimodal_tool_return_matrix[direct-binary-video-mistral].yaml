@@ -8,18 +8,21 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '376'
+      - '463'
       content-type:
       - application/json
       host:
       - api.mistral.ai
     method: POST
     parsed_body:
+      frequency_penalty: null
       messages:
       - content: Use the get_file tool now to retrieve a video file, then describe what you received.
         role: user
       model: mistral-medium-latest
       n: 1
+      presence_penalty: null
+      stop: null
       stream: false
       tool_choice: auto
       tools:
@@ -30,6 +33,7 @@ interactions:
             additionalProperties: false
             properties: {}
             type: object
+        type: function
       top_p: 1.0
     uri: https://api.mistral.ai/v1/chat/completions
   response:
@@ -41,11 +45,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '437'
+      - '508'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019c486c-912b-7576-a9b2-347c882a8a70
+      - 019fecf6-3f54-726e-8b89-3cff7e550e91
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -61,17 +65,21 @@ interactions:
           - function:
               arguments: '{}'
               name: get_file
-            id: Jc4AR31Hp
+            id: d8AfwNxMP
             index: 0
-      created: 1770741600
-      id: ff0aa6ed23954cbcb0e5a48ec0e4bf08
+            type: function
+      created: 1786386988
+      id: ee0af8d338334c83ab863537dadcc76f
       model: mistral-medium-latest
       object: chat.completion
       usage:
         completion_tokens: 6
-        num_cached_tokens: 0
-        prompt_tokens: 64
-        total_tokens: 70
+        prompt_tokens: 76
+        prompt_tokens_details:
+          cached_tokens: 0
+        service_tier: standard
+        total_tokens: 82
     status:
       code: 200
       message: OK
+version: 1

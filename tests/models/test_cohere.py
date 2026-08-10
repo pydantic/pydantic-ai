@@ -16,10 +16,10 @@ from pydantic_ai import (
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelRetry,
-    RetryPromptPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -469,11 +469,12 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, please try again',
                         tool_name='get_location',
                         tool_call_id='1',
                         timestamp=IsNow(tz=timezone.utc),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -612,6 +613,34 @@ async def test_multimodal(allow_model_requests: None):
                 ),
             ]
         )
+
+
+async def test_multimodal_tool_return(allow_model_requests: None):
+    """A file returned by a tool fails the same way a file a user attached does.
+
+    Cohere's tool message takes text only, so returned media spills into a trailing user message —
+    where Cohere's own limitation surfaces as an error. It used to be dropped on the floor instead,
+    leaving the model to answer about a file it never received
+    (https://github.com/pydantic/pydantic-ai/issues/6662).
+    """
+    c = completion_message(AssistantMessageResponse(content=[TextAssistantMessageResponseContentItem(text='world')]))
+    mock_client = MockAsyncClientV2.create_mock(c)
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=mock_client))
+
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_photo',
+                    content=ImageUrl(url='https://example.com/kiwi.jpg'),
+                    tool_call_id='call1',
+                )
+            ]
+        )
+    ]
+
+    with pytest.raises(RuntimeError, match=re.escape('Cohere does not yet support multi-modal inputs.')):
+        await m.request(messages, None, ModelRequestParameters())
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
@@ -859,4 +888,4 @@ async def test_cohere_empty_response_skipped_in_history(allow_model_requests: No
     # self-correct.
     second_call_messages = cast(MockAsyncClientV2, mock_client).chat_kwargs[1]['messages']
     assert not any(message.role == 'assistant' for message in second_call_messages)
-    assert [message.role for message in second_call_messages] == snapshot(['user', 'user'])
+    assert [message.role for message in second_call_messages] == snapshot(['user', 'system'])

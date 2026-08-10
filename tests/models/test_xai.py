@@ -45,6 +45,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RequestUsage,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -946,11 +947,12 @@ async def test_xai_request_tool_call(allow_model_requests: None, xai_provider: X
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='Wrong location, I only know about "London".',
                         tool_name='get_location',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     ),
                     ToolReturnPart(
                         tool_name='get_location',
@@ -4161,8 +4163,9 @@ async def test_xai_mcp_server_default_output(allow_model_requests: None) -> None
     )
 
 
-async def test_xai_retry_prompt_as_user_message(allow_model_requests: None):
-    """Test that RetryPromptPart with tool_name=None is sent as a user message."""
+async def test_xai_retry_feedback_as_tagged_user_message(allow_model_requests: None):
+    """A tool-less retry is sent in the harness's voice: xAI takes no mid-conversation system
+    message, so the rendered system prompt degrades to `<system>`-tagged user text."""
     # First response triggers a ModelRetry
     response1 = create_response(content='Invalid')
     # Second response succeeds
@@ -4181,7 +4184,7 @@ async def test_xai_retry_prompt_as_user_message(allow_model_requests: None):
     result = await agent.run('Hello')
     assert result.output == 'Valid response'
 
-    # Verify the kwargs sent to xAI - second call should have RetryPrompt mapped as user message
+    # Verify the kwargs sent to xAI - second call carries the feedback as `<system>`-tagged user text
     assert get_mock_chat_create_kwargs(mock_client) == snapshot(
         [
             {
@@ -4202,10 +4205,8 @@ async def test_xai_retry_prompt_as_user_message(allow_model_requests: None):
                         'content': [
                             {
                                 'text': """\
-Validation feedback:
-Please provide a valid response
-
-Fix the errors and try again.\
+<system>The response was not accepted:
+Please provide a valid response</system>\
 """
                             }
                         ],
@@ -4221,11 +4222,11 @@ Fix the errors and try again.\
         ]
     )
 
-    # Verify the retry prompt was sent as a user message
+    # The history keeps the model-neutral part; only the wire shows the rendering above.
     messages = result.all_messages()
-    assert len(messages) == 4  # UserPrompt, ModelResponse, RetryPrompt, ModelResponse
-    part = message_part(messages, RetryPromptPart, message_index=2)
-    assert part.tool_name is None
+    assert len(messages) == 4  # UserPrompt, ModelResponse, RetryFeedback, ModelResponse
+    part = message_part(messages, RetryFeedbackPart, message_index=2)
+    assert part.cause == 'model_retry'
 
 
 async def test_xai_thinking_part_in_message_history(allow_model_requests: None):

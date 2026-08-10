@@ -41,6 +41,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RetryFeedbackPart,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -492,11 +493,12 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    ToolReturnPart(
                         content='The country is not supported. Use "La France" instead.',
                         tool_name='get_capital',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        outcome='retried',
                     )
                 ],
                 timestamp=IsNow(tz=timezone.utc),
@@ -3685,9 +3687,9 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -5805,9 +5807,9 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
         [
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        cause='no_output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -6515,7 +6517,7 @@ async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google
             {
                 'role': 'user',
                 'parts': [
-                    {'text': 'This is file report:'},
+                    {'text': 'This is file report, returned by the final_result tool:'},
                     {'inline_data': {'data': b'fakeimg', 'mime_type': 'image/png'}},
                 ],
             },
