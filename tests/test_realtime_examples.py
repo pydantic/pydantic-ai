@@ -56,14 +56,25 @@ def test_playback_buffer_new_turn_discards_old_audio() -> None:
     assert output == b'new'
 
 
-def test_playback_buffer_interrupt_tracks_active_turn_during_underrun() -> None:
-    playback = realtime_voice.PlaybackBuffer(max_bytes=8)
-    playback.start_turn()
-    playback.add(b'ab')
-    playback.fill(bytearray(2))
+def test_playback_buffer_interrupt_only_reports_dropped_audio() -> None:
+    """`interrupt()` reports played milliseconds only when it actually drops unheard audio.
 
-    assert playback.interrupt() == 0
+    A turn the user heard in full needs no truncation — reporting one anyway would make the provider
+    discard part of a completed reply — so after everything was played, `interrupt()` is a no-op.
+    """
+    bytes_per_ms = realtime_voice.SAMPLE_RATE * realtime_voice.CHANNELS * 2 // 1000
+    playback = realtime_voice.PlaybackBuffer(max_bytes=8 * bytes_per_ms)
+
+    playback.start_turn()
+    playback.add(b'\x00' * (2 * bytes_per_ms))
+    playback.fill(bytearray(2 * bytes_per_ms))  # the user heard the whole turn
     assert playback.interrupt() is None
+
+    playback.start_turn()
+    playback.add(b'\x00' * (4 * bytes_per_ms))
+    playback.fill(bytearray(3 * bytes_per_ms))  # barge-in with 1 ms still unheard
+    assert playback.interrupt() == 3
+    assert playback.interrupt() is None  # already flushed; nothing further to report
 
 
 def test_camera_websocket_origin_guard(monkeypatch: pytest.MonkeyPatch) -> None:
