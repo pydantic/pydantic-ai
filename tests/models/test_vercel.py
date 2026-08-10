@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse
@@ -61,7 +63,7 @@ async def test_vercel_stream_cost_on_usage_only_chunk(allow_model_requests: None
     stream = [
         ChatCompletionChunk(
             id='chunk-1',
-            choices=[ChunkChoice(index=0, delta=ChoiceDelta(content='4', role='assistant'))],
+            choices=[ChunkChoice(index=0, delta=ChoiceDelta(content='4', role='assistant'), finish_reason='stop')],
             created=1704067200,
             model='deepseek/deepseek-v4-flash',
             object='chat.completion.chunk',
@@ -83,8 +85,13 @@ async def test_vercel_stream_cost_on_usage_only_chunk(allow_model_requests: None
     async with model_request_stream(model, [ModelRequest.user_text_prompt('What is 2+2?')]) as streamed:
         _ = [chunk async for chunk in streamed]
 
-        assert streamed.provider_details is not None
-        assert streamed.provider_details['cost'] == snapshot(1.316e-05)
+        # The cost merges into provider details collected from earlier chunks, and the token
+        # usage on the same chunk still maps through the base implementation.
+        assert streamed.provider_details == snapshot(
+            {'timestamp': datetime(2024, 1, 1, tzinfo=timezone.utc), 'finish_reason': 'stop', 'cost': 1.316e-05}
+        )
+        assert streamed.usage.input_tokens == snapshot(14)
+        assert streamed.usage.output_tokens == snapshot(1)
 
 
 async def test_vercel_no_cost_when_gateway_omits_it(allow_model_requests: None) -> None:

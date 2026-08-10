@@ -20,24 +20,17 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Vercel AI Gateway model, '
-        'you can use the `vercel` optional group — `pip install "pydantic-ai-slim[vercel]"`'
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
 __all__ = ('VercelModel',)
 
 
-class _VercelUsage(completion_usage.CompletionUsage):
-    """Usage payload extended with the gateway's non-standard total-cost field."""
-
-    cost: float | None = None
-    """Total cost of the request in USD, as billed by the gateway."""
-
-
 def _cost_details(usage_data: completion_usage.CompletionUsage | None) -> dict[str, Any]:
-    if usage_data is None:
-        return {}
-    validated = _VercelUsage.model_validate(usage_data.model_dump())
-    return {'cost': validated.cost} if validated.cost is not None else {}
+    # The openai SDK parses responses with `extra='allow'`, so the gateway's non-standard
+    # `cost` field (total billed cost of the request in USD) rides along as an extra attribute.
+    cost = getattr(usage_data, 'cost', None)
+    return {'cost': cost} if isinstance(cost, int | float) else {}
 
 
 @dataclass
@@ -57,10 +50,10 @@ class VercelStreamedResponse(OpenAIStreamedResponse):
 class VercelModel(OpenAIChatModel):
     """Extends `OpenAIChatModel` to surface Vercel AI Gateway metadata.
 
-    The gateway reports the billed cost of every request in its non-standard `usage.cost` field
+    The gateway reports the billed cost of a request in its non-standard `usage.cost` field
     (on streamed responses too, riding the final usage chunk). The generic OpenAI mapping drops
     unknown usage fields, so this model lifts it into `ModelResponse.provider_details['cost']`,
-    matching `OpenRouterModel`'s behavior for the equivalent OpenRouter field.
+    under the same key `OpenRouterModel` uses for the equivalent OpenRouter field.
     """
 
     def __init__(
@@ -75,7 +68,7 @@ class VercelModel(OpenAIChatModel):
 
         Args:
             model_name: The name of the model to use, in `creator/model` format (e.g. `anthropic/claude-sonnet-4-5`).
-            provider: The provider to use for authentication and API access. If not provided, a new provider will be created with the default settings.
+            provider: The provider to use. Defaults to `'vercel'`.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Model-specific settings that will be used as defaults for this model.
         """

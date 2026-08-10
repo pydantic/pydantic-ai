@@ -766,7 +766,7 @@ agent = Agent(model)
 ...
 ```
 
-The gateway reports the billed cost of every request (streaming included); [`VercelModel`][pydantic_ai.models.vercel.VercelModel] exposes it as `ModelResponse.provider_details['cost']`, in USD.
+When the gateway reports the billed cost of a request (it does so for streamed responses too), [`VercelModel`][pydantic_ai.models.vercel.VercelModel] exposes it as `ModelResponse.provider_details['cost']`, in USD.
 
 ### MoonshotAI
 
