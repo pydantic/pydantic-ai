@@ -5603,6 +5603,9 @@ bedrock-mantle = [
     { name = "botocore" },
     { name = "openai" },
 ]
+cerebras = [
+    { name = "openai" },
+]
 cli = [
     { name = "argcomplete" },
     { name = "prompt-toolkit" },
@@ -5722,6 +5725,7 @@ requires-dist = [
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.4.2,!=2.4.6" },
     { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=2.45.0" },
+    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=2.45.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.45.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=2.45.0" },
     { name = "openai", marker = "extra == 'snowflake'", specifier = ">=2.45.0" },
@@ -5750,7 +5754,7 @@ requires-dist = [
     { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.14.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "prefect", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "ui", "voyageai", "web", "web-fetch", "xai", "zai"]
 
 [[package]]
 name = "pydantic-core"
