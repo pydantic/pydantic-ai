@@ -6,10 +6,6 @@ import textwrap
 
 import httpx2
 import pytest
-from anthropic import AsyncAnthropic
-from google.genai import Client as GoogleClient
-from google.genai.types import HttpOptions
-from groq import AsyncGroq
 from pydantic import ValidationError
 
 _HTTPX_FREE_CORE = """
@@ -64,18 +60,28 @@ def test_core_runs_without_httpx() -> None:
 
 
 async def test_anthropic_still_rejects_httpx2_client() -> None:
+    pytest.importorskip('anthropic')
+    from anthropic import AsyncAnthropic
+
     async with httpx2.AsyncClient() as client:
         with pytest.raises(TypeError, match=r'Expected an instance of `httpx\.AsyncClient`'):
             AsyncAnthropic(api_key='test', http_client=client)  # pyright: ignore[reportArgumentType]
 
 
 async def test_groq_still_rejects_httpx2_client() -> None:
+    pytest.importorskip('groq')
+    from groq import AsyncGroq
+
     async with httpx2.AsyncClient() as client:
         with pytest.raises(TypeError, match=r'Expected an instance of `httpx\.AsyncClient`'):
             AsyncGroq(api_key='test', http_client=client)  # pyright: ignore[reportArgumentType]
 
 
 async def test_google_still_rejects_httpx2_client() -> None:
+    pytest.importorskip('google.genai')
+    from google.genai import Client as GoogleClient
+    from google.genai.types import HttpOptions
+
     async with httpx2.AsyncClient() as client:
         with pytest.raises(ValidationError, match='httpx_async_client'):
             GoogleClient(
