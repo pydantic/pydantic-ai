@@ -461,7 +461,7 @@ plugins:
         Examples:
           - examples/*.md
 
-# DON'T PUT REDIRECTS IN THIS FILE! Add them to the `redirects` block in the unified-docs repo (pydantic/unified-docs, astro.config.mjs).
+# DON'T PUT REDIRECTS IN THIS FILE! Unified-docs redirects belong in docs/navigation.yml.
 
 hooks:
   - "docs/.hooks/main.py"
