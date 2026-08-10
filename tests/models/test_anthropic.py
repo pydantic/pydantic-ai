@@ -13750,10 +13750,12 @@ async def test_anthropic_compaction_usage_with_cache(
     )
 
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
-    # `anthropic_cache=True` now places one request-level breakpoint; the cassette still records it
-    # on the first message block, from before #4840 added automatic caching. Pre-existing drift, not
-    # a change made here — but it is the drift most worth watching, since a breakpoint that moves
-    # busts the cache silently.
+    # Request-level `cache_control` with no per-block breakpoint is what `anthropic_cache=True`
+    # sends today: #4840 moved automatic caching onto the top-level parameter, leaving per-block
+    # breakpoints as the Bedrock/Vertex fallback. The cassette predates that and still records the
+    # old per-block shape, so the usage below was recorded under the previous request shape; the
+    # snapshot here pins the current one off the wire, where a breakpoint that moves later — which
+    # busts the cache with no error to notice — shows up as a diff.
     assert cache_breakpoints(request_capture.body()) == snapshot(({'type': 'ephemeral', 'ttl': '5m'}, []))
     assert result.usage == snapshot(
         RunUsage(
@@ -13798,7 +13800,7 @@ async def test_anthropic_compaction_usage_with_cache_streaming(
         async for _ in result.stream_text():
             pass
         usage = result.usage
-    # Same pre-existing breakpoint move as the non-streaming variant; see its comment.
+    # Same cassette-vs-code breakpoint gap as the non-streaming variant; see its comment.
     assert cache_breakpoints(request_capture.body()) == snapshot(({'type': 'ephemeral', 'ttl': '5m'}, []))
     assert usage == snapshot(
         RunUsage(
