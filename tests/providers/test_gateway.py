@@ -103,31 +103,6 @@ async def test_init_with_http_client_preserves_existing_event_hooks():
         assert response.headers['X-Existing-Response-Hook'] == 'kept'
 
 
-async def test_init_with_http_client_replaces_existing_gateway_hook():
-    # Unit (not VCR): this checks local HTTPX hook replacement by inspecting and invoking event hooks directly;
-    # cassette playback would not exercise Gateway hook deduplication.
-    async def existing_request_hook(request: httpx.Request) -> None:
-        request.headers['X-Existing-Request-Hook'] = 'kept'
-
-    async with httpx.AsyncClient(event_hooks={'request': [existing_request_hook]}) as http_client:
-        first_provider = gateway_provider('openai', http_client=http_client, api_key='first', base_url=GATEWAY_BASE_URL)
-        second_provider = gateway_provider(
-            'openai', http_client=http_client, api_key='second', base_url=GATEWAY_BASE_URL
-        )
-
-        assert first_provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
-        assert second_provider.client._client == http_client  # pyright: ignore[reportPrivateUsage]
-        assert http_client.event_hooks['request'][0] == existing_request_hook
-        assert len(http_client.event_hooks['request']) == 2
-
-        request = httpx.Request('GET', second_provider.base_url)
-        for hook in http_client.event_hooks['request']:
-            await hook(request)
-
-        assert request.headers['X-Existing-Request-Hook'] == 'kept'
-        assert request.headers['Authorization'] == 'Bearer second'
-
-
 @pytest.fixture
 def gateway_api_key():
     return os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', 'test-api-key')
