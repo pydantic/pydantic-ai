@@ -327,6 +327,96 @@ This has a few operational implications:
 !!! note
     If you use a custom [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with your own `serialize_run_context`, keep including the `usage` and `usage_limits` fields: tools and capabilities running inside activities read them from the [`RunContext`][pydantic_ai.tools.RunContext], e.g. to adapt to the run's remaining [usage budget](../agent.md#usage-limits).
 
+### Continuing as New for Long-Running Agents
+
+A Temporal workflow's execution history is capped (around 50,000 events or 50MB); an agent run with enough turns — many tool calls, a long-lived conversation — can eventually hit that ceiling. Temporal's answer is [`continue_as_new`](https://docs.temporal.io/develop/python/continue-as-new), which atomically completes the current workflow execution and starts a fresh one with a clean history, carrying forward whatever arguments you pass it.
+
+[`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] can trigger this for you: pass `continue_as_new`, a [`ContinueAsNewCallbacks`][pydantic_ai.durable_exec.temporal.ContinueAsNewCallbacks] bundling the callbacks that opt an agent into this. Its `args` callable receives the run's [`RunContext`][pydantic_ai.tools.RunContext] and returns the keyword arguments for `workflow.continue_as_new()` — any of its own parameters (`args`, `task_queue`, `memo`, `retry_policy`, and so on), not the parameter names of your workflow's `@workflow.run` method. Just before each model request — the one point in the agent graph where every previous turn's tool results are already folded into `ctx.messages` and nothing is in flight — the capability checks whether it's due to continue as new; if so, it calls `args` and immediately continues as new with the returned kwargs. `workflow.continue_as_new()` never returns, so nothing escapes into your workflow code and no new exception type is involved.
+
+`args` is entirely responsible for building the arguments your workflow's `@workflow.run` method needs to resume, including carrying over the conversation itself — `continue_as_new=None` (the default) leaves this feature off, with no change in behavior.
+
+By default, "due to continue as new" means `workflow.info().is_continue_as_new_suggested()`, Temporal's own heuristic, based on the current history size. That's a conservative lower bound tuned for the general case, not necessarily for yours: if `args` carries expensive state to rebuild, or you'd rather batch several turns per workflow run, set `ContinueAsNewCallbacks.when` to a callable with the same `RunContext` signature that returns whether to continue as new now. It fully replaces Temporal's suggestion — call `workflow.info().is_continue_as_new_suggested()` yourself inside it if you still want to factor that in (e.g. alongside your own turn counter).
+
+!!! warning "Don't pass `list[ModelMessage]` directly to `continue_as_new`"
+    `TemporalDurability` uses [`PydanticAIPayloadConverter`][pydantic_ai.durable_exec.temporal.PydanticAIPayloadConverter] by default, which memoizes the [`TypeAdapter`](https://docs.pydantic.dev/latest/api/type_adapter/) it builds per type hint for the life of the worker, unlike the stock `temporalio.contrib.pydantic` converter it's based on ([temporalio/sdk-python#1695](https://github.com/temporalio/sdk-python/issues/1695)) — so the once-expensive rebuild for `list[ModelMessage]`'s wide discriminated union is now a one-time cost, not a per-call one. Even that first build is precompiled at worker startup, so it shouldn't land inside a live activity or workflow.
+
+    What memoization doesn't remove is per-message validation: decoding a `list[ModelMessage]` still walks and validates every message, while a `bytes` argument skips that walk entirely. Measured on an 11MB / 2,000-message history, warm: ~40ms typed as `list[ModelMessage]` vs ~2ms as `bytes` — a real, size-proportional gap, not just a cold-start one. Serialize the history to `bytes` yourself with [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] — already public and built once — before passing it to `continue_as_new`, and deserialize it the same way when the new run starts.
+
+!!! warning "`continue_as_new` arguments share Temporal's per-payload size limit"
+    Just like activity and workflow inputs, arguments passed to `continue_as_new` are individually capped at Temporal's payload size limit (2MB by default) — carrying the *entire* message history through unconditionally will eventually fail for a long-lived conversation, which is exactly the case this feature targets. Bound what you carry (e.g. only the most recent messages) or compact it first with a history-processing capability like [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] before building the payload in `args`.
+
+```python {title="temporal_continue_as_new.py" test="skip"}
+from typing import Any
+
+from temporalio import workflow
+from temporalio.client import Client
+from temporalio.worker import Worker
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import (
+    ContinueAsNewCallbacks,
+    PydanticAIPlugin,
+    PydanticAIWorkflow,
+    TemporalDurability,
+)
+from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.tools import RunContext
+from pydantic_ai.usage import RunUsage, UsageLimits
+
+
+def continue_as_new_args(ctx: RunContext[None]) -> dict[str, Any]:
+    return {
+        'args': [
+            'Continue the investigation.',
+            ModelMessagesTypeAdapter.dump_json(ctx.messages),
+            ctx.usage,
+            ctx.usage_limits,
+        ],
+    }
+
+
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    name='investigator',
+    capabilities=[TemporalDurability(continue_as_new=ContinueAsNewCallbacks(args=continue_as_new_args))],
+)
+
+
+@workflow.defn
+class InvestigatorWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
+    @workflow.run
+    async def run(
+        self,
+        prompt: str,
+        history: bytes | None = None,
+        usage: RunUsage | None = None,
+        usage_limits: UsageLimits | None = None,
+    ) -> str:
+        message_history = ModelMessagesTypeAdapter.validate_json(history) if history else None
+        result = await agent.run(
+            prompt,
+            message_history=message_history,
+            usage=usage,
+            usage_limits=usage_limits,
+        )
+        return result.output
+
+
+async def main():
+    client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
+    async with Worker(client, task_queue='investigator', workflows=[InvestigatorWorkflow]):
+        await client.execute_workflow(
+            InvestigatorWorkflow.run,
+            args=['Start the investigation.'],
+            id='investigator-1',
+            task_queue='investigator',
+        )
+```
+
+Carrying `usage` and `usage_limits` across the boundary keeps [usage limits](../agent.md#usage-limits) like `request_limit` bounding the whole logical run rather than resetting on each continuation. `history`, `usage`, and `usage_limits` are ordinary workflow arguments here, not a feature of `TemporalDurability` itself — the callable and the `@workflow.run` signature that receives them are entirely yours to shape.
+
 ### Model Selection at Runtime
 
 [`Agent.run(model=...)`][pydantic_ai.agent.Agent.run] normally supports both model strings (like `'openai:gpt-5.6-sol'`) and model instances. Under Temporal, a model instance can't be serialized for the replay mechanism, and rebuilding one from its `model_id` string would build a *different* model — the same model name on whatever provider the worker's environment implies, so the request would go to another endpoint with other credentials. An instance that isn't registered ahead of time is therefore rejected with a `UserError`. There are two ways to use a specific instance inside a workflow:

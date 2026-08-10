@@ -24,10 +24,11 @@ from pydantic_graph.exceptions import UnsupportedEventLoopError
 
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
+from ...messages import ModelMessage, ModelMessagesTypeAdapter
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
-from ._durability import TemporalDurability
+from ._durability import ContinueAsNewCallbacks, TemporalDurability
 from ._logfire import LogfirePlugin
-from ._payload_converter import PydanticAIPayloadConverter
+from ._payload_converter import PydanticAIPayloadConverter, _type_adapter  # pyright: ignore[reportPrivateUsage]
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
 from ._workflow import PydanticAIWorkflow
@@ -35,6 +36,7 @@ from ._workflow import PydanticAIWorkflow
 __all__ = [
     'TemporalAgent',
     'TemporalDurability',
+    'ContinueAsNewCallbacks',
     'PydanticAIPlugin',
     'LogfirePlugin',
     'AgentPlugin',
@@ -54,6 +56,24 @@ try:
     import anyio._backends._trio  # pyright: ignore[reportUnusedImport]  # noqa: F401
 except ImportError:
     pass
+
+# Same reasoning as the anyio backends above: `ModelMessagesTypeAdapter` is built with
+# `defer_build=True`, so its pydantic-core schema for the wide `ModelMessage` union is only
+# compiled on the first real `dump_json`/`validate_json` call. Force that build now, during
+# ordinary worker startup, so a workflow that's first to serialize message history across a
+# `continue_as_new` boundary never pays that compile cost inside sandboxed workflow compute
+# (where it would count against Temporal's deadlock-detection timeout).
+ModelMessagesTypeAdapter.dump_json([])
+
+# This is a *separate* `TypeAdapter` from the one above: `PydanticAIPayloadConverter` builds and
+# memoizes its own adapter per type hint (see `_payload_converter.py`), so warming
+# `ModelMessagesTypeAdapter` doesn't touch it — verified empirically, not assumed: a fresh
+# `TypeAdapter(list[ModelMessage])` pays its own ~40ms build even right after the warm-up above.
+# `list[ModelMessage]` crosses a Temporal payload boundary twice in this package — as the `messages`
+# field of every model-request activity's params, and optionally as a `continue_as_new` argument —
+# so warm this cache entry too, for the same reason as above: the first of those calls in a worker's
+# life would otherwise pay the build cost wherever it happens to land, activity or workflow sandbox.
+_type_adapter(list[ModelMessage])
 
 
 def _data_converter(converter: DataConverter | None) -> DataConverter:
