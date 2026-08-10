@@ -59,6 +59,23 @@ class _ToolCallWorkflow:
 
     @workflow.run
     async def run(self, params: CallToolParams, deps: Any) -> CallToolResult:
+        # This workflow type is registered on the worker like any other, so any Temporal client with
+        # permission to start workflows on this task queue could start `pydantic_ai__tool_call_workflow`
+        # directly, supplying arbitrary `CallToolParams` — bypassing the parent agent run, its tool
+        # preparation, and any approval logic entirely. Rejecting non-child executions here is a cheap
+        # first check, not a full authorization boundary: a caller can just as easily start their own
+        # throwaway parent workflow and issue the same `execute_child_workflow` call from inside it,
+        # since the target workflow type and `CallToolParams` shape are both public. The per-tool
+        # `child_workflow` check in `call_tool_child_workflow` below narrows the blast radius further —
+        # closing off tools never tagged for `child_workflow` — but does not fully close this either,
+        # for the same reason. A worker whose task queue is reachable by untrusted clients needs that
+        # boundary enforced by Temporal itself (namespace/task-queue access control), not by this check.
+        if workflow.info().parent is None:
+            raise ApplicationError(
+                f'{workflow.info().workflow_type!r} must be started as a child workflow of an agent run, '
+                'not invoked directly.',
+                type=UserError.__name__,
+            )
         assert params.handler_key is not None
         handler = _child_workflow_handlers.get(params.handler_key)
         if handler is None:  # pragma: no cover — only reachable if a worker is missing the toolset's capability
@@ -148,6 +165,16 @@ def temporalize_function_toolset(
                 run_context_type, params.serialized_run_context, deps=deps, agent=agent, unit_noun='child workflow'
             )
             tool = await _tool_for_call(toolset, params, ctx)
+            # Re-verify against the tool's own current config, rather than trusting that reaching this
+            # handler at all implies the caller went through `resolve_tool_config`'s normal `activity`
+            # vs. `child_workflow` dispatch — see `_ToolCallWorkflow.run`'s docstring above on why that
+            # normal path isn't the only way to reach here. Rejects a request for a tool that was never
+            # tagged for `child_workflow`, even if the request otherwise looks well-formed.
+            wrapping = resolve_tool_temporal_wrapping(tool, params.name, tool_activity_config)
+            if not (isinstance(wrapping, Mapping) and 'child_workflow' in wrapping):
+                raise UserError(
+                    f'Tool {params.name!r} is not configured to run as a `child_workflow`; refusing to run it as one.'
+                )
             args = tool.args_validator.validate_python(params.tool_args)
             return await wrap_tool_call_result(toolset.call_tool(params.name, args, ctx, tool))
         except FailureError:

@@ -8598,6 +8598,8 @@ def test_resolve_tool_temporal_wrapping_reads_child_workflow_metadata():
         'UserError',
         'PydanticUserError',
         'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
     # A bare `{'child_workflow': {}}` (all Temporal defaults) resolves too.
