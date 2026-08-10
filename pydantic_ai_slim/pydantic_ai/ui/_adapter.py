@@ -27,9 +27,11 @@ from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.agent.abstract import AgentMetadata
 from pydantic_ai.capabilities import AbstractCapability, ReinjectSystemPrompt
 from pydantic_ai.messages import (
+    CompactionPart,
     ForceDownloadMode,
     ModelMessage,
     ToolAvailabilityDeltaPart,
+    _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
 from pydantic_ai.models import KnownModelName, Model
@@ -100,6 +102,47 @@ def resolve_allow_uploaded_files(
         stacklevel=stacklevel,
     )
     return preserve_file_data
+
+
+_COMPACTION_PART_ADAPTER = TypeAdapter(CompactionPart)
+
+
+def compaction_payload(part: CompactionPart) -> dict[str, Any]:
+    """Serialize a compaction part as a UI payload, omitting fields whose value is `None`.
+
+    The payload is faithful — `provider_details` travels verbatim, provenance stamp included.
+    Trust is enforced on the load side: client-submitted messages pass through
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages], which strips the stamp.
+    """
+    return {
+        key: value
+        for key, value in {
+            'content': part.content,
+            'id': part.id,
+            'provider_name': part.provider_name,
+            'provider_details': part.provider_details,
+        }.items()
+        if value is not None
+    }
+
+
+def compaction_part_from_payload(payload: Mapping[str, Any]) -> CompactionPart | None:
+    """Build a [`CompactionPart`][pydantic_ai.messages.CompactionPart] from a UI payload.
+
+    Like `tool_availability_delta_from_payload`, validation here is shape hygiene at the UI
+    boundary, not a security gate: malformed data returns `None` and the part is skipped, rather
+    than raising out of `load_messages` and taking the whole request with it. Skipping — instead of
+    degrading to an empty part — is deliberate: even an empty `CompactionPart` acts as a visibility
+    boundary for [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] (which
+    ignores `provider_name`), resetting derived state like tool discovery, so it would not be
+    inert. The cost is that a corrupted-in-transit valid boundary un-compacts the conversation —
+    acceptable, since the protocol history still holds the plaintext messages and the window merely
+    re-inflates until the next compaction.
+    """
+    try:
+        return _COMPACTION_PART_ADAPTER.validate_python(payload)
+    except ValidationError:
+        return None
 
 
 def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvailabilityDeltaPart:
@@ -474,6 +517,10 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             conversation_id = self.conversation_id
 
         frontend_messages = self.sanitize_messages(self.messages, deferred_tool_results=deferred_tool_results)
+        if message_history:
+            # A client-supplied compaction part would trim the trusted server-side history off the
+            # wire, so only the server's own boundaries are honored. See `_drop_compaction_parts`.
+            frontend_messages = _drop_compaction_parts(frontend_messages)
         message_history = [*(message_history or []), *frontend_messages]
 
         toolset = self.toolset

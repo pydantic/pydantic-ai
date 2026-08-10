@@ -7,7 +7,7 @@ from ._event_stream import SSE_CONTENT_TYPE, NativeEvent, OnCancelFunc, OnComple
 from ._messages_builder import BuilderCheckpoint, MessagesBuilder
 
 if TYPE_CHECKING:
-    from ._web import DEFAULT_HTML_URL
+    from ._web import DEFAULT_HTML_URL, OFFLINE_HTML_URL
 
 __all__ = [
     'UIAdapter',
@@ -21,6 +21,7 @@ __all__ = [
     'MessagesBuilder',
     'BuilderCheckpoint',
     'DEFAULT_HTML_URL',
+    'OFFLINE_HTML_URL',
 ]
 
 
@@ -29,4 +30,8 @@ def __getattr__(name: str) -> object:
         from ._web import DEFAULT_HTML_URL
 
         return DEFAULT_HTML_URL
+    if name == 'OFFLINE_HTML_URL':
+        from ._web import OFFLINE_HTML_URL
+
+        return OFFLINE_HTML_URL
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

@@ -495,7 +495,7 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Provider | `'required'` | Specific tools | Notes |
 |----------|:------------:|:--------------:|-------|
 | OpenAI | ✓ | ✓ | Full support |
-| Anthropic | ⚠️ | ⚠️ | Not supported with thinking enabled |
+| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking; adaptive thinking is compatible |
 | Google | ✓ | ✓ | |
 | Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
@@ -513,7 +513,7 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 
 | Provider | Cache-breaking case |
 |----------|---------------------|
-| Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled |
+| Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
 | OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
 | Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled or on a model that doesn't support forcing |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
@@ -607,7 +607,7 @@ import asyncio
 
 from pydantic_ai import Agent
 
-# Set a default timeout for all tools on the agent
+# Set a default timeout for the agent's own tools
 agent = Agent('test', tool_timeout=30)
 
 
@@ -625,10 +625,12 @@ async def fast_tool() -> str:
     return 'Done'
 ```
 
-- **Agent-level timeout**: Set `tool_timeout` on the [`Agent`][pydantic_ai.agent.Agent] to apply a default timeout to all tools.
+- **Agent-level timeout**: Set `tool_timeout` on the [`Agent`][pydantic_ai.agent.Agent] to apply a default timeout to the tools registered on it.
 - **Per-tool timeout**: Set `timeout` on individual tools via [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] dataclass. This overrides the agent-level default.
 
 When a timeout occurs, the tool is treated as a retryable failure and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
+
+Both settings are enforced by [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], which is what backs the agent's own tools. Tools served by an [MCP server](mcp/client.md), an [external toolset](deferred-tools.md), or a custom [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] do not read them — bind those deadlines at the server or transport level instead. See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for how tool timeouts relate to the other deadlines in a run.
 
 ### Cancelling the Run from a Tool
 

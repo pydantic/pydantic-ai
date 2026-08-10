@@ -49,9 +49,15 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
-from .._adapter import resolve_allow_uploaded_files, tool_availability_delta_from_payload
+from .._adapter import (
+    compaction_part_from_payload,
+    compaction_payload,
+    resolve_allow_uploaded_files,
+    tool_availability_delta_from_payload,
+)
 from ._event_stream import VercelAIEventStream
 from ._utils import (
+    COMPACTION_DATA_TYPE,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     apply_message_metadata,
     dump_message_metadata,
@@ -420,6 +426,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 provider_details=provider_meta.get('provider_details'),
                             )
                         )
+                    elif isinstance(part, DataUIPart):
+                        if (
+                            part.type == COMPACTION_DATA_TYPE
+                            and _is_str_dict(part.data)
+                            and (compaction_part := compaction_part_from_payload(part.data)) is not None
+                        ):
+                            builder.add(compaction_part)
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
                             tool_name = part.tool_name
@@ -819,8 +832,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         )
             elif isinstance(part, ToolCallPart):
                 ui_parts.extend(cls._dump_tool_call_part(part, tool_results, sdk_version))
-            elif isinstance(part, CompactionPart):  # pragma: no cover
-                pass  # Compaction parts are not rendered in the UI
+            elif isinstance(part, CompactionPart):
+                ui_parts.append(
+                    DataUIPart(
+                        type=COMPACTION_DATA_TYPE,
+                        data=compaction_payload(part),
+                    )
+                )
             else:
                 assert_never(part)
 
