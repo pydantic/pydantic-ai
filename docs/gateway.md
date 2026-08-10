@@ -150,6 +150,10 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 """
 ```
 
+#### Request cost
+
+The gateway includes its cost estimate for each non-streaming request in the response, and Pydantic AI surfaces it as [`RequestUsage.cost`][pydantic_ai.usage.RequestUsage.cost] (summed into [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost]). The gateway-reported cost takes precedence over the client-side [genai-prices](https://github.com/pydantic/genai-prices) estimate, so [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit] and your own cost tracking use the number the gateway meters — including for custom providers genai-prices can't price. Streamed, Bedrock Converse, and Google requests fall back to the genai-prices estimate.
+
 ### Claude Code
 
 Before you start, log out of Claude Code using `/logout`.

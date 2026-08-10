@@ -2779,10 +2779,15 @@ def _map_usage(
 
     # Anthropic reports top-level tokens excluding compaction iteration usage; add the
     # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
-    usage_for_extraction = dict(details)
+    usage_for_extraction: dict[str, Any] = dict(details)
     for key in _COMPACTION_TOKEN_KEYS:
         if compaction_value := details.get(f'compaction_{key}'):
             usage_for_extraction[key] = usage_for_extraction.get(key, 0) + compaction_value
+
+    # `_extract_usage_details` keeps int fields only; carry the Pydantic AI Gateway's injected
+    # cost object through so `RequestUsage.extract` can pick it up.
+    if gateway_usage := getattr(response_usage, 'pydantic_ai_gateway', None):
+        usage_for_extraction['pydantic_ai_gateway'] = gateway_usage
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens

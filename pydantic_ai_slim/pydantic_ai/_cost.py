@@ -89,9 +89,9 @@ def best_effort_price(
 def fill_response_cost(response: ModelResponse) -> None:
     """Fill `response.usage.cost` with a best-effort price if it's still unset.
 
-    An already-set cost is never overwritten, so a provider-reported cost could take precedence in future; no model
-    sets one today. If pricing data is unavailable the cost stays `None`, distinguishing "unknown" from a genuine
-    zero cost.
+    An already-set cost is never overwritten; this is how the Pydantic AI Gateway's reported cost, set at usage
+    extraction time, takes precedence over the estimate. If pricing data is unavailable the cost stays `None`,
+    distinguishing "unknown" from a genuine zero cost.
     """
     if (
         response.usage.cost is None

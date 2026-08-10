@@ -1164,6 +1164,66 @@ def test_usage_unknown_provider():
     assert RequestUsage.extract({}, provider='unknown', provider_url='', provider_fallback='') == RequestUsage()
 
 
+def test_gateway_reported_cost_edge_cases():
+    """Malformed `pydantic_ai_gateway` payloads never break extraction and set no cost.
+
+    Unit test rather than VCR: the gateway only records well-formed payloads, so the defensive
+    branches (missing or unparseable `cost_estimate`, current string format vs the recorded
+    number format) can't be reached through a cassette. The happy path is covered by the
+    `test_gateway_provider_with_*` VCR tests in `tests/providers/test_gateway.py`.
+    """
+
+    def extract(gateway_usage: object) -> RequestUsage:
+        usage = {'prompt_tokens': 2, 'completion_tokens': 1, 'pydantic_ai_gateway': gateway_usage}
+        return RequestUsage.extract(
+            {'model': 'gpt-5', 'usage': usage},
+            provider='openai',
+            provider_url='https://api.openai.com/v1',
+            provider_fallback='openai',
+            api_flavor='chat',
+        )
+
+    assert extract({'cost_estimate': '0.00012625'}).cost == snapshot(Decimal('0.00012625'))
+    assert extract({}).cost is None
+    assert extract({'cost_estimate': 'not-a-number'}).cost is None
+    assert extract({'cost_estimate': True}).cost is None
+    assert extract('not-a-mapping').cost is None
+    # NaN would blow up `cost_limit` comparisons and a negative cost would reduce the run total.
+    assert extract({'cost_estimate': 'NaN'}).cost is None
+    assert extract({'cost_estimate': '-0.5'}).cost is None
+    # Token extraction is unaffected by the injected key.
+    assert extract({'cost_estimate': '0.00012625'}).input_tokens == 2
+    # Non-mapping response data degrades to empty usage instead of raising.
+    assert RequestUsage.extract('garbage', provider='openai', provider_url='', provider_fallback='') == RequestUsage()
+
+
+async def test_gateway_reported_cost_wins_over_estimate(allow_model_requests: None):
+    """A reported cost survives to the run total even when genai-prices can't price the model.
+
+    This is the motivating scenario: a custom provider behind the Pydantic AI Gateway that
+    genai-prices has no data for, where the gateway's reported cost is the only source.
+    `fill_response_cost` never overwrites an already-set cost, so the reported value wins.
+    Unit-style with `FunctionModel` because no cassette can produce an unpriceable model;
+    the priced-model precedence path is proven by `test_gateway_provider_with_anthropic`,
+    whose asserted value carries float artifacts a clean genai-prices estimate can't produce.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('4')],
+            usage=RequestUsage.extract(
+                {'model': 'custom-model', 'usage': {'pydantic_ai_gateway': {'cost_estimate': '0.125'}}},
+                provider='unknown-custom-provider',
+                provider_url='',
+                provider_fallback='',
+            ),
+        )
+
+    agent = Agent(FunctionModel(respond))
+    result = await agent.run('What is 2+2?')
+    assert result.usage.cost == snapshot(Decimal('0.125'))
+
+
 def test_usage_limits_explicit_zero():
     """Explicit 0 token limits round-trip correctly (regression: zero is not coerced to None)."""
     limits = UsageLimits(input_tokens_limit=0)
