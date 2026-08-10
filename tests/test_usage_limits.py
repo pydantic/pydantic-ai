@@ -1168,7 +1168,7 @@ def test_gateway_reported_cost_edge_cases():
     """Malformed `pydantic_ai_gateway` payloads never break extraction and set no cost.
 
     Unit test rather than VCR: the gateway only records well-formed payloads, so the defensive
-    branches (missing or unparseable `cost_estimate`, current string format vs the recorded
+    branches (missing or unparsable `cost_estimate`, current string format vs the recorded
     number format) can't be reached through a cassette. The happy path is covered by the
     `test_gateway_provider_with_*` VCR tests in `tests/providers/test_gateway.py`.
     """
