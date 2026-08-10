@@ -1534,6 +1534,18 @@ async def test_console_table_renders_ascii_glyphs_when_asked(
 """)
 
 
+async def test_print_falls_back_to_ascii_microseconds_on_non_utf8_console(sample_report_case: ReportCase):
+    report = EvaluationReport(
+        cases=[replace(sample_report_case, task_duration=0.0000005, total_duration=0.0000005)],
+        name='test_report',
+    )
+
+    rendered = render_to_non_utf8_console(report, encoding='cp932')
+
+    assert '0.5us' in rendered
+    assert 'µ' not in rendered
+
+
 async def test_console_table_keeps_custom_duration_formatters_on_ascii_only(sample_report_case: ReportCase):
     """ASCII fallback applies only to renderer-supplied duration formatters."""
     report = EvaluationReport(cases=[replace(sample_report_case, task_duration=0.0001)], name='test_report')

@@ -114,3 +114,8 @@ def test_default_render_duration_diff(old: float, new: float, expected: str | No
 def test_default_duration_formatters_retain_microsecond_units():
     assert default_render_duration(0.0001) == '100µs'
     assert default_render_duration_diff(0.0001, 0.0002) == '+100µs / +100.0%'
+
+
+def test_default_render_duration_ascii_only():
+    assert default_render_duration(0.0000005, ascii_only=True) == '0.5us'
+    assert default_render_duration_diff(0, 0.0000005, ascii_only=True) == '+0.5us'

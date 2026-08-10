@@ -94,22 +94,32 @@ def default_render_number_diff(old: float | int, new: float | int) -> str | None
         return f'{abs_diff_str} / {rel_diff_str}'
 
 
-def default_render_duration(seconds: float) -> str:
+def default_render_duration(seconds: float, *, ascii_only: bool = False) -> str:
     """Format a duration given in seconds to a string.
 
     If the duration is less than 1 millisecond, show microseconds.
     If it's less than one second, show milliseconds.
     Otherwise, show seconds.
+
+    If `ascii_only` is true, use `us` instead of `µs` for microseconds.
     """
+    if ascii_only:
+        return _render_duration(seconds, False, ascii_only=True)
     return _render_duration(seconds, False)
 
 
-def default_render_duration_diff(old: float, new: float) -> str | None:
-    """Format a duration difference (in seconds) with an explicit sign."""
+def default_render_duration_diff(old: float, new: float, *, ascii_only: bool = False) -> str | None:
+    """Format a duration difference (in seconds) with an explicit sign.
+
+    If `ascii_only` is true, use `us` instead of `µs` for microseconds.
+    """
     if old == new:
         return None
 
-    abs_diff_str = _render_duration(new - old, True)
+    if ascii_only:
+        abs_diff_str = _render_duration(new - old, True, ascii_only=True)
+    else:
+        abs_diff_str = _render_duration(new - old, True)
     rel_diff_str = _render_relative(new, old, BASE_THRESHOLD)
     if rel_diff_str is None:
         return abs_diff_str
@@ -161,7 +171,7 @@ def _render_relative(new: float, base: float, small_base_threshold: float) -> st
         return mult_str
 
 
-def _render_duration(seconds: float, force_signed: bool) -> str:
+def _render_duration(seconds: float, force_signed: bool, *, ascii_only: bool = False) -> str:
     """Format a duration given in seconds to a string.
 
     If the duration is less than 1 millisecond, show microseconds.
@@ -173,7 +183,7 @@ def _render_duration(seconds: float, force_signed: bool) -> str:
     precision = 1
     if (abs_seconds := abs(seconds)) < 1e-3:
         value = seconds * 1_000_000
-        unit = 'µs'
+        unit = 'us' if ascii_only else 'µs'
         if abs(value) >= 1:
             precision = 0
     elif abs_seconds < 1:

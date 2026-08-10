@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from io import StringIO
 from typing import Any, Generic, Literal, Protocol
 
@@ -904,10 +905,14 @@ class _NumberRenderer:
         value_formatter = config.get('value_formatter', UNSET)
         if isinstance(value_formatter, Unset):
             value_formatter = default_render_number
+        elif value_formatter is default_render_duration:
+            value_formatter = partial(default_render_duration, ascii_only=ascii_only)
 
         diff_formatter = config.get('diff_formatter', UNSET)
         if isinstance(diff_formatter, Unset):
             diff_formatter = default_render_number_diff
+        elif diff_formatter is default_render_duration_diff:
+            diff_formatter = partial(default_render_duration_diff, ascii_only=ascii_only)
 
         diff_atol = config.get('diff_atol', UNSET)
         if isinstance(diff_atol, Unset):
