@@ -151,6 +151,10 @@ removing, or moving a page:
 repository-owned manifest. Do not add a third navigation design there; mirror `navigation.yml`
 until the compatibility file is removed.
 
+All routes in `docs/navigation.yml` are relative to the Pydantic AI documentation root. Give each
+page its complete canonical route in `slug`; use `aliases` only for redirect sources. Do not prefix
+either value with `/ai` or a leading slash.
+
 To run the documentation page locally, run:
 
 ```bash
