@@ -9,6 +9,7 @@ from __future__ import annotations as _annotations
 import base64
 import hashlib
 import json
+import re
 import time
 import warnings
 from abc import ABC, abstractmethod
@@ -2047,12 +2048,26 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
+_SYSTEM_CLOSE_TAG_OPENER = re.compile(r'<(?=/\s*system\s*>)', re.IGNORECASE)
+"""Matches only the `<` of a closing system tag, in every spelling a model might reach for.
+
+Escaping just that character neutralizes the tag while leaving the rest of the text it appeared in
+exactly as written.
+"""
+
+
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
     parts those are is `_standing_system_prompt_count`'s
     question, and it is not simply "everything in the first request".
+
+    The wrapped content is not all operator-authored: a `RetryFeedbackPart` renders validation
+    feedback whose nested error values are text the model itself produced, and a delta announcement
+    names tools a remote MCP server chose the names of. A closing tag inside that content would end
+    the statement early and let whatever follows read as if it stood outside it, so every spelling of
+    the tag is escaped before wrapping.
 
     Returns the original list when nothing changed so the identity check in `_make_request` can skip the
     redundant `_clean_message_history` pass.
@@ -2069,12 +2084,13 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     for offset, msg in enumerate(messages[first_request_idx:]):
         start = _standing_system_prompt_count(msg) if offset == 0 and isinstance(msg, ModelRequest) else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
-            new_parts = [
-                UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
-                if index >= start and isinstance(part, SystemPromptPart)
-                else part
-                for index, part in enumerate(msg.parts)
-            ]
+            new_parts: list[ModelRequestPart] = []
+            for index, part in enumerate(msg.parts):
+                if index >= start and isinstance(part, SystemPromptPart):
+                    content = _SYSTEM_CLOSE_TAG_OPENER.sub('&lt;', part.content)
+                    new_parts.append(UserPromptPart(content=f'<system>{content}</system>', timestamp=part.timestamp))
+                else:
+                    new_parts.append(part)
             new_messages.append(replace(msg, parts=new_parts))
             changed = True
         else:
