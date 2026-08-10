@@ -17,7 +17,7 @@ import httpx2
 
 try:
     import httpx as _legacy_httpx
-except ImportError:  # pragma: no cover
+except ImportError:
     _legacy_httpx = None
 
 from ._http import create_httpx2_client
@@ -157,7 +157,7 @@ if _legacy_httpx is not None:
         (httpx2.HTTPStatusError, _legacy_httpx.HTTPStatusError),
         {'__init__': _compatible_http_status_error_init},
     )
-else:  # pragma: no cover
+else:
     _CompatibleRequestError = httpx2.RequestError
     _CompatibleHTTPStatusError = httpx2.HTTPStatusError
 
