@@ -35,6 +35,20 @@ _KIND_LABELS: dict[RuntimeToolsetKind, str] = {
 }
 
 
+def cancellation_token_unsupported_error(engine: str) -> UserError:
+    """The error raised when a same-process cancellation token meets a durable execution boundary."""
+    return UserError(
+        f'`cancellation_token` cannot be used with {engine} durable execution because it is a same-process '
+        'handle and cannot cross the durable execution boundary. Cancel the durable workflow or flow instead.'
+    )
+
+
+def reject_cancellation_token(cancellation_token: object | None, *, engine: str) -> None:
+    """Reject same-process cancellation tokens at a durable execution boundary."""
+    if cancellation_token is not None:
+        raise cancellation_token_unsupported_error(engine)
+
+
 def _runtime_toolset_kind(toolset: AbstractToolset[Any]) -> RuntimeToolsetKind | None:
     """Classify a leaf toolset for durable-execution runtime support, or `None` if it needs no wrapping."""
     from ..toolsets._dynamic import DynamicToolset
@@ -61,6 +75,7 @@ def reject_unsupported_runtime_toolsets(
     *,
     unsupported_kinds: frozenset[RuntimeToolsetKind],
     engine: str,
+    tool_config_key: str | None = None,
 ) -> None:
     """Raise a `UserError` if any per-run toolset contains a leaf `engine` can't durably wrap at runtime.
 
@@ -69,6 +84,7 @@ def reject_unsupported_runtime_toolsets(
         unsupported_kinds: The leaf kinds this engine cannot handle when added per-run. Engines that run
             function tools inline (DBOS) omit `'function'`.
         engine: Human-readable engine name for the error message (e.g. `'DBOS'`).
+        tool_config_key: Metadata key whose explicit `False` value opts async function tools out of wrapping.
     """
     if not toolsets:
         return
@@ -77,6 +93,12 @@ def reject_unsupported_runtime_toolsets(
 
     def collect(leaf: AbstractToolset[Any]) -> None:
         kind = _runtime_toolset_kind(leaf)
+        if kind == 'function' and tool_config_key is not None:
+            from ..toolsets.function import FunctionToolset
+
+            assert isinstance(leaf, FunctionToolset)
+            if leaf.tools and all((tool.metadata or {}).get(tool_config_key) is False for tool in leaf.tools.values()):
+                return
         if kind in unsupported_kinds:
             found.add(kind)
 
@@ -85,9 +107,15 @@ def reject_unsupported_runtime_toolsets(
 
     if found:
         labels = ', '.join(_KIND_LABELS[kind] for kind in sorted(found))
+        opt_out = (
+            f" Async tools that don't need durable wrapping can opt out with "
+            f'metadata={{{tool_config_key!r}: False}} to be allowed at runtime.'
+            if tool_config_key is not None
+            else ''
+        )
         raise UserError(
             f'{labels} cannot be passed to `run(toolsets=...)` at runtime with {engine}, because toolsets '
             'that execute their own tools or resolve dynamically must be registered for durable execution '
             'when the agent is constructed. Pass them to the agent constructor instead. Non-executing '
-            'toolsets like `ExternalToolset` can be passed at runtime.'
+            f'toolsets like `ExternalToolset` can be passed at runtime.{opt_out}'
         )

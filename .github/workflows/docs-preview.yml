@@ -24,6 +24,7 @@ concurrency:
 
 jobs:
   dispatch:
+    name: Dispatch Docs Preview Build
     if: github.event.label.name == 'trigger:docs'
     runs-on: ubuntu-latest
     permissions:

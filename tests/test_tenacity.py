@@ -419,15 +419,15 @@ class TestWaitRetryAfter:
         assert result == 30.0
         fallback.assert_not_called()
 
-    def test_retry_after_seconds_respects_max_wait(self):
-        """Test that max_wait is respected for seconds format."""
+    @pytest.mark.parametrize('retry_after', ['120', pytest.param('1' + '0' * 309, id='huge')])
+    def test_retry_after_seconds_respects_max_wait(self, retry_after: str):
+        """Integer `Retry-After` values are capped locally without a provider request."""
         fallback = Mock()
         wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=60)
 
-        # Create HTTP status error with Retry-After > max_wait
         request = httpx.Request('GET', 'https://example.com')
         response = Mock(spec=httpx.Response)
-        response.headers = {'retry-after': '120'}
+        response.headers = {'retry-after': retry_after}
         http_error = httpx.HTTPStatusError('Rate limited', request=request, response=response)
 
         retry_state = Mock(spec=RetryCallState)
@@ -437,7 +437,7 @@ class TestWaitRetryAfter:
 
         result = wait_func(retry_state)
 
-        assert result == 60.0  # Capped at max_wait
+        assert result == 60.0
         fallback.assert_not_called()
 
     def test_retry_after_http_date_format(self):
@@ -516,15 +516,15 @@ class TestWaitRetryAfter:
         assert result == 60.0  # Capped at max_wait
         fallback.assert_not_called()
 
-    def test_retry_after_invalid_format_uses_fallback(self):
-        """Test that invalid Retry-After values fall back to fallback strategy."""
+    @pytest.mark.parametrize('retry_after', ['invalid-value', '-1'])
+    def test_invalid_retry_after_uses_fallback(self, retry_after: str):
+        """Invalid `Retry-After` values fall back locally without a provider request."""
         fallback = Mock(return_value=4.0)
         wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
 
-        # Create HTTP status error with invalid Retry-After
         request = httpx.Request('GET', 'https://example.com')
         response = Mock(spec=httpx.Response)
-        response.headers = {'retry-after': 'invalid-value'}
+        response.headers = {'retry-after': retry_after}
         http_error = httpx.HTTPStatusError('Rate limited', request=request, response=response)
 
         retry_state = Mock(spec=RetryCallState)
@@ -678,7 +678,7 @@ class TestConnectionPool:
     class AlwaysReturnHTTP429Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(429)
-            self.send_header('Retry-After', '1')
+            self.send_header('Retry-After', '0')
             self.end_headers()
             self.wfile.write(b'Rate limited')
 
@@ -702,7 +702,7 @@ class TestConnectionPool:
 
         retry_strategy = RetryConfig(
             stop=stop_after_attempt(5),
-            wait=wait_retry_after(max_wait=5, fallback_strategy=wait_fixed(2)),
+            wait=wait_retry_after(max_wait=0, fallback_strategy=wait_fixed(0)),
             retry=retry_if_exception_type(httpx.HTTPStatusError),
             reraise=True,
         )

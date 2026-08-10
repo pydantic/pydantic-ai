@@ -6,11 +6,11 @@ import pytest
 from pytest_mock import MockerFixture
 
 from .._inline_snapshot import snapshot
-from ..conftest import BinaryContent, try_import
+from ..conftest import BinaryContent, iter_message_parts, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai import Agent
-    from pydantic_ai.messages import ModelMessage, ModelResponse, SystemPromptPart, ToolCallPart
+    from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
     from pydantic_ai.settings import ModelSettings
     from pydantic_evals.evaluators.llm_as_a_judge import (
@@ -68,7 +68,7 @@ async def test_judge_prompts_constrain_reason():
 
     async def capture_system_prompt(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         captured.append(
-            '\n'.join(part.content for m in messages for part in m.parts if isinstance(part, SystemPromptPart))
+            '\n'.join(part.content for part in iter_message_parts(messages, ModelRequest, SystemPromptPart))
         )
         assert info.output_tools is not None
         args = '{"reason": "ok", "pass": true, "score": 1.0}'

@@ -20,17 +20,13 @@ rules:
       - ci.yml
       - docs-preview.yml
       - manually-deploy-docs.yml
-      # `pr-guard.yml` reads `GH_AW_GITHUB_TOKEN` as job-level env solely to
-      # confirm private org membership via `gh api orgs/.../members/{author}`;
-      # it's used as a `gh` credential, never interpolated into a run script,
-      # and the job checks out no fork code, so shell-injection exposure is nil.
-      - pr-guard.yml
       # gh-aw-generated agentic workflow lockfiles (see
       # .github/workflows/README-pydantic-ai-agents.md). gh-aw injects API /
       # GitHub secrets as job-level env by design; they are held by the AWF
       # proxy sidecar and excluded from the agent container, not exposed to
       # shell interpolation. The *.lock.yml files are compiled artifacts —
       # the corresponding .md sources are the editable surface.
+      - pydantic-ai-attention-triage.lock.yml
       - pydantic-ai-bug-hunter.lock.yml
       - pydantic-ai-docs-drift.lock.yml
       - pydantic-ai-pr-review.lock.yml
@@ -61,3 +57,24 @@ rules:
   template-injection:
     ignore:
       - agentics-maintenance.yml
+      # Same generated-artifact rationale as `secrets-outside-env` above. gh-aw
+      # v0.83.4 emits three expansions into every lockfile, none of which take
+      # PR-author-controlled input:
+      #   - `toJSON(steps.determine-automatic-lockdown.outputs.visibility)` — a
+      #     JSON-encoded repo-visibility string produced by a gh-aw internal step;
+      #   - `vars.GH_AW_DEFAULT_MAX_AI_CREDITS` and
+      #     `vars.GH_AW_DEFAULT_DETECTION_MAX_AI_CREDITS` — repo variables, which
+      #     only someone with write access can set.
+      # PR title / body / branch name never reach a `run:` block, so the
+      # untrusted-input path the audit exists to catch does not apply here.
+      - pydantic-ai-attention-triage.lock.yml
+      - pydantic-ai-bug-hunter.lock.yml
+      - pydantic-ai-docs-drift.lock.yml
+      - pydantic-ai-pr-review.lock.yml
+      - pydantic-ai-provider-mapping-sweep.lock.yml
+      - pydantic-ai-provider-parity-explore.lock.yml
+      - pydantic-ai-regression-detector.lock.yml
+      - pydantic-ai-roundtrip-sweep.lock.yml
+      - pydantic-ai-stale-issues-finder.lock.yml
+      - pydantic-ai-streaming-resilience-sweep.lock.yml
+      - pydantic-ai-ui-security-review.lock.yml

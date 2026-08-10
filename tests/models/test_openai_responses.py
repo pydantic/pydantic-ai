@@ -1,16 +1,21 @@
+import asyncio
 import json
 import re
 import warnings
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import httpx
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 from vcr.cassette import Cassette
+from vcr.record_mode import RecordMode
 
 from pydantic_ai import (
     BinaryContent,
@@ -21,6 +26,7 @@ from pydantic_ai import (
     FinalResultEvent,
     ImageGenerationTool,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -35,6 +41,7 @@ from pydantic_ai import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -47,9 +54,11 @@ from pydantic_ai import (
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
-from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry
+from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
+from pydantic_ai.messages import INVALID_JSON_KEY, sanitize_messages
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
@@ -58,13 +67,29 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, TestEnv, message, try_import
-from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
+from ..conftest import (
+    IsDatetime,
+    IsFloat,
+    IsInstance,
+    IsInt,
+    IsNow,
+    IsStr,
+    TestEnv,
+    message,
+    try_import,
+)
+from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_mock_retrieve_kwargs, response_message
 
 with try_import() as imports_successful:
-    from openai import AsyncAzureOpenAI, AsyncOpenAI, omit
+    from openai import APIStatusError, AsyncAzureOpenAI, AsyncOpenAI, omit
     from openai.types import responses as resp
-    from openai.types.responses import ResponseFunctionWebSearch
+    from openai.types.responses import (
+        CompactedResponse,
+        ResponseCreatedEvent,
+        ResponseFunctionWebSearch,
+        ResponseQueuedEvent,
+    )
+    from openai.types.responses.response_compaction_item import ResponseCompactionItem
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
     from openai.types.responses.response_output_text import ResponseOutputText
@@ -75,6 +100,7 @@ with try_import() as imports_successful:
     )
     from openai.types.responses.response_refusal_delta_event import ResponseRefusalDeltaEvent
     from openai.types.responses.response_refusal_done_event import ResponseRefusalDoneEvent
+    from openai.types.responses.response_status import ResponseStatus
     from openai.types.responses.response_usage import ResponseUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -132,6 +158,148 @@ async def test_openai_responses_model_simple_response(allow_model_requests: None
     assert result.output == snapshot('The capital of France is Paris.')
 
 
+async def test_tool_availability_delta_uses_additional_tools(allow_model_requests: None):
+    """The wire item declares the revealed tool, and `tools` is left exactly as the previous turn sent it.
+
+    `tools` is the first cache section, so the delta turn has to send it unchanged or the whole cached
+    prefix moves — which is what this feature exists to prevent. A tool-search corpus member is already
+    declared there behind `defer_loading`, so the `additional_tools` item is the entire reveal and the
+    declaration (and `tool_search` with it) stays put.
+
+    This used to assert `'tools' not in request_kwargs`, pinning a promotion out of `tools`. The API
+    allows the stable shape, verified live: the deferred entry plus `tool_search` plus an item naming the
+    same tool returns 200, and the model calls the tool directly rather than searching first.
+    """
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='output-1',
+                    content=cast(
+                        list[Content],
+                        [ResponseOutputText(text='done', type='output_text', annotations=[])],
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'order_id': {'type': 'string'}},
+            'required': ['order_id'],
+        },
+        defer_loading=True,
+        with_native=ToolSearchTool.kind,
+    )
+
+    await model.request(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])],
+        None,
+        ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool(optional=True)]),
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert request_kwargs['input'] == snapshot(
+        [
+            {
+                'type': 'additional_tools',
+                'role': 'developer',
+                'tools': [
+                    {
+                        'name': 'lookup_refund_policy',
+                        'parameters': {
+                            'type': 'object',
+                            'properties': {'order_id': {'type': 'string'}},
+                            'required': ['order_id'],
+                            'additionalProperties': False,
+                        },
+                        'strict': True,
+                        'type': 'function',
+                        'description': 'Look up the refund policy for an order.',
+                    }
+                ],
+            }
+        ]
+    )
+    assert [tool.get('name') or tool.get('type') for tool in request_kwargs['tools']] == snapshot(
+        ['tool_search', 'lookup_refund_policy']
+    )
+    [wire_tool] = [tool for tool in request_kwargs['tools'] if tool.get('name') == 'lookup_refund_policy']
+    assert wire_tool['defer_loading'] is True
+
+
+async def test_tool_availability_delta_ignores_visible_and_unknown_tools() -> None:
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='not-used'))
+    _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['always_ready', 'missing'])])],
+        OpenAIResponsesModelSettings(),
+        ModelRequestParameters(
+            function_tools=[ToolDefinition(name='always_ready')],
+            tool_visibility={'always_ready': 'visible'},
+        ),
+    )
+    assert items == []
+
+
+@pytest.mark.parametrize(
+    ('tool_choice', 'expected'),
+    [
+        pytest.param('required', 'required', id='required'),
+        # Forcing an `additional_tools`-declared name by itself works on the live API
+        # even though the name is absent from the `tools` array.
+        pytest.param(
+            ['lookup_refund_policy'],
+            {'type': 'function', 'name': 'lookup_refund_policy'},
+            id='forced_by_name_via_history',
+        ),
+    ],
+)
+async def test_tool_availability_delta_resolves_tool_choice_from_revealed_tools(
+    allow_model_requests: None,
+    tool_choice: Literal['required'] | list[str],
+    expected: Any,
+) -> None:
+    """A tool revealed through `additional_tools` still participates in `tool_choice` resolution."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy for an order.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+    )
+    always_ready = ToolDefinition(
+        name='always_ready',
+        description='An always-available tool.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+
+    _, parameters = model.prepare_request(
+        None,
+        ModelRequestParameters(
+            function_tools=[tool, always_ready],
+            revealed_tool_names={tool.name},
+        ),
+    )
+    await model.request(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])])],
+        OpenAIResponsesModelSettings(tool_choice=tool_choice),
+        parameters,
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert request_kwargs['tool_choice'] == expected
+    assert [tool['name'] for tool in request_kwargs['tools']] == ['always_ready']
+    assert request_kwargs['input'][0]['type'] == 'additional_tools'
+
+
 async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):
     c = response_message(
         [
@@ -169,19 +337,32 @@ async def test_openai_responses_image_detail_vendor_metadata(allow_model_request
 @pytest.mark.parametrize(
     ('model_settings', 'expected_reasoning'),
     [
-        ({'openai_reasoning_mode': 'standard'}, {'mode': 'standard'}),
-        ({'openai_reasoning_mode': 'pro'}, {'mode': 'pro'}),
+        # `gpt-5.6-sol` supports reasoning context, so an unset `openai_reasoning_context`
+        # defaults to `all_turns`; an explicitly set value (including `auto`) wins over it.
+        ({'openai_reasoning_mode': 'standard'}, {'mode': 'standard', 'context': 'all_turns'}),
+        ({'openai_reasoning_mode': 'pro'}, {'mode': 'pro', 'context': 'all_turns'}),
+        ({'openai_reasoning_context': 'auto'}, {'context': 'auto'}),
+        ({'openai_reasoning_context': 'current_turn'}, {'context': 'current_turn'}),
+        ({'openai_reasoning_context': 'all_turns'}, {'context': 'all_turns'}),
         (
             {
                 'openai_reasoning_effort': 'high',
                 'openai_reasoning_mode': 'pro',
                 'openai_reasoning_summary': 'concise',
             },
-            {'effort': 'high', 'mode': 'pro', 'summary': 'concise'},
+            {'effort': 'high', 'mode': 'pro', 'summary': 'concise', 'context': 'all_turns'},
+        ),
+        (
+            {
+                'openai_reasoning_mode': 'pro',
+                'openai_reasoning_context': 'all_turns',
+                'openai_reasoning_summary': 'concise',
+            },
+            {'mode': 'pro', 'context': 'all_turns', 'summary': 'concise'},
         ),
     ],
 )
-async def test_openai_responses_reasoning_mode(
+async def test_openai_responses_reasoning_options(
     allow_model_requests: None,
     model_settings: 'OpenAIResponsesModelSettings',
     expected_reasoning: dict[str, str],
@@ -224,7 +405,7 @@ async def test_openrouter_responses_reasoning_mode(allow_model_requests: None) -
 
     await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
 
-    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro'}
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro', 'context': 'all_turns'}
 
 
 async def test_azure_responses_reasoning_mode(allow_model_requests: None) -> None:
@@ -247,12 +428,22 @@ async def test_azure_responses_reasoning_mode(allow_model_requests: None) -> Non
 
     await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
 
-    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro'}
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == {'mode': 'pro', 'context': 'all_turns'}
 
 
-@pytest.mark.parametrize('provider_name', ['openai', 'openrouter'])
+@pytest.mark.parametrize(
+    'provider_name,expected_reasoning',
+    [
+        # `gpt-4o` doesn't reason at all, so the whole `reasoning` object is omitted.
+        pytest.param('openai', None, id='gpt-4o'),
+        # `gpt-5.4` reasons and so defaults to `context='all_turns'`, but has no `reasoning.mode`.
+        pytest.param('openrouter', {'context': 'all_turns'}, id='openrouter-gpt-5.4'),
+    ],
+)
 async def test_openai_responses_reasoning_mode_omitted_when_unsupported(
-    allow_model_requests: None, provider_name: Literal['openai', 'openrouter']
+    allow_model_requests: None,
+    provider_name: Literal['openai', 'openrouter'],
+    expected_reasoning: dict[str, str] | None,
 ):
     """Not a VCR test: unsupported paths must omit `reasoning.mode` before sending."""
     c = response_message(
@@ -274,7 +465,177 @@ async def test_openai_responses_reasoning_mode_omitted_when_unsupported(
 
     await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
 
-    assert 'reasoning' not in get_mock_responses_kwargs(mock_client)[0]
+    assert get_mock_responses_kwargs(mock_client)[0].get('reasoning') == expected_reasoning
+
+
+@pytest.mark.parametrize(
+    'provider_name,model_name,reasoning_context,expected_reasoning',
+    [
+        # `all_turns` rides `openai_responses_supports_reasoning_context`: sent for the GPT-5.4/5.5/5.6
+        # families, dropped for older reasoning models (o-series) that reject the value.
+        pytest.param('openai', 'gpt-5.6-sol', 'all_turns', {'effort': 'medium', 'context': 'all_turns'}, id='5.6-all'),
+        pytest.param('openai', 'gpt-5.4', 'all_turns', {'effort': 'medium', 'context': 'all_turns'}, id='5.4-all'),
+        pytest.param(
+            'openrouter', 'openai/gpt-5.4', 'all_turns', {'effort': 'medium', 'context': 'all_turns'}, id='or-5.4-all'
+        ),
+        pytest.param('openai', 'o3', 'all_turns', {'effort': 'medium'}, id='o3-all-dropped'),
+        # `auto` and `current_turn` are accepted by every reasoning model, so they ride
+        # `openai_supports_reasoning` and must survive on models without `all_turns` support.
+        pytest.param('openai', 'o3', 'auto', {'effort': 'medium', 'context': 'auto'}, id='o3-auto'),
+        pytest.param('openai', 'o3', 'current_turn', {'effort': 'medium', 'context': 'current_turn'}, id='o3-current'),
+        pytest.param(
+            'openrouter',
+            'openai/gpt-5.4',
+            'current_turn',
+            {'effort': 'medium', 'context': 'current_turn'},
+            id='or-5.4-current',
+        ),
+        # A model that doesn't reason at all takes no `reasoning.context` of any value.
+        pytest.param('openai', 'gpt-4o', 'current_turn', {'effort': 'medium'}, id='4o-dropped'),
+    ],
+)
+async def test_openai_responses_reasoning_context_gated_per_value(
+    allow_model_requests: None,
+    provider_name: Literal['openai', 'openrouter'],
+    model_name: str,
+    reasoning_context: Literal['auto', 'current_turn', 'all_turns'],
+    expected_reasoning: dict[str, str],
+):
+    """Not a VCR test: pins which `reasoning.context` values reach the wire for each model.
+
+    Support is per-value rather than per-field, so gating the whole field on the `all_turns`
+    profile flag would silently drop an `auto`/`current_turn` the user explicitly set.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    if provider_name == 'openai':
+        model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+    else:
+        model = OpenAIResponsesModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))
+
+    await Agent(
+        model,
+        model_settings=OpenAIResponsesModelSettings(
+            openai_reasoning_effort='medium', openai_reasoning_context=reasoning_context
+        ),
+    ).run('Hello')
+
+    assert get_mock_responses_kwargs(mock_client)[0]['reasoning'] == expected_reasoning
+
+
+@pytest.mark.parametrize(
+    'model_name,expected_reasoning',
+    [
+        # Models that support `all_turns` get it without the user opting in.
+        pytest.param('gpt-5.6-sol', {'context': 'all_turns'}, id='5.6-defaults'),
+        pytest.param('gpt-5.4', {'context': 'all_turns'}, id='5.4-defaults'),
+        pytest.param('gpt-5.5', {'context': 'all_turns'}, id='5.5-defaults'),
+        # Models that don't support it get no `context` key at all — never `auto`, so the
+        # default can't resurrect the silent-drop the per-value gate fixes.
+        pytest.param('o3', None, id='o3-no-default'),
+        pytest.param('gpt-4o', None, id='4o-no-default'),
+    ],
+)
+async def test_openai_responses_reasoning_context_defaults_to_all_turns(
+    allow_model_requests: None, model_name: str, expected_reasoning: dict[str, str] | None
+):
+    """Not a VCR test: an unset `openai_reasoning_context` must default to `all_turns`.
+
+    Keeps earlier-turn reasoning available without opting in, matching how prior thinking is
+    sent back to every other model.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model).run('Hello')
+
+    assert get_mock_responses_kwargs(mock_client)[0].get('reasoning') == expected_reasoning
+
+
+@pytest.mark.parametrize(
+    'model_name,model_settings,expected_reasoning',
+    [
+        # Unset + a supporting model: the default puts `all_turns` on the wire.
+        pytest.param('gpt-5.6-sol', {}, {'context': 'all_turns'}, id='default-supported'),
+        # Unset + a model without `all_turns` support: no `reasoning` object at all, so no
+        # `context` key is sent that the provider would reject.
+        pytest.param('o3', {}, None, id='default-unsupported'),
+        # An explicit value beats the default, including `auto` (which must not be overridden).
+        pytest.param(
+            'gpt-5.6-sol',
+            {'openai_reasoning_context': 'auto'},
+            {'context': 'auto'},
+            id='explicit-auto-wins',
+        ),
+    ],
+)
+async def test_openai_responses_reasoning_context_default_wire_contract(
+    allow_model_requests: None,
+    openai_api_key: str,
+    vcr: Cassette,
+    model_name: str,
+    model_settings: 'OpenAIResponsesModelSettings',
+    expected_reasoning: dict[str, str] | None,
+):
+    """VCR test: the real Responses API accepts the `reasoning.context` we default to.
+
+    The mock tests above pin the request shape; this records the real request and response so the
+    `reasoning.context` wire contract — including the `all_turns` default applied when the user
+    sets nothing — is validated against the provider rather than only against our own serializer.
+    """
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=model_settings)
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    # A successful answer proves the provider accepted the request we built.
+    assert 'Paris' in result.output
+    assert single_request_body(vcr).get('reasoning') == expected_reasoning
+
+
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4'])
+async def test_azure_responses_reasoning_context_default_wire_contract(
+    allow_model_requests: None, azure_api_key: str, vcr: Cassette, model_name: str
+):
+    """VCR test: Azure's Responses backend accepts the `all_turns` default, like OpenAI's.
+
+    `AzureProvider.model_profile` resolves unprefixed OpenAI model names through
+    `openai_model_profile`, so `openai_responses_supports_reasoning_context` survives to the
+    Azure-resolved profile and every Azure request for these families carries
+    `context='all_turns'` without the user opting in. Recorded against live Azure deployments so
+    that default rests on Azure's own backend rather than on OpenAI-direct behavior.
+    """
+    provider = AzureProvider(
+        azure_endpoint='https://pydantic-ai-realtime-dev.openai.azure.com/openai/v1/', api_key=azure_api_key
+    )
+    agent = Agent(model=OpenAIResponsesModel(model_name, provider=provider))
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    # A successful answer proves Azure accepted the request we built.
+    assert 'Paris' in result.output
+    assert single_request_body(vcr)['reasoning'] == {'context': 'all_turns'}
 
 
 async def test_openai_responses_reasoning_mode_pro(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
@@ -291,7 +652,7 @@ async def test_openai_responses_reasoning_mode_pro(allow_model_requests: None, o
     result = await agent.run('What is the capital of France? Answer in one word.')
 
     assert result.output == snapshot('Paris')
-    assert single_request_body(vcr)['reasoning'] == snapshot({'mode': 'pro'})
+    assert single_request_body(vcr)['reasoning'] == snapshot({'mode': 'pro', 'context': 'all_turns'})
 
 
 async def test_openai_responses_gpt_5_6_reasoning_off_keeps_sampling_params(
@@ -311,8 +672,27 @@ async def test_openai_responses_gpt_5_6_reasoning_off_keeps_sampling_params(
 
     assert result.output == snapshot('Paris')
     request_body = single_request_body(vcr)
-    assert request_body['reasoning'] == snapshot({'effort': 'none'})
+    assert request_body['reasoning'] == snapshot({'effort': 'none', 'context': 'all_turns'})
     assert request_body['temperature'] == 0.5
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_openai_responses_gpt_5_6_minimal_thinking_uses_low_effort(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """VCR test: unified minimal thinking falls back to the lowest active effort GPT-5.6 accepts.
+
+    OpenAI documents `low` as the lowest active GPT-5.6 reasoning effort:
+    https://developers.openai.com/api/docs/guides/latest-model. A successful request and the body assertion
+    prove Pydantic AI maps its provider-agnostic `thinking='minimal'` level to `'low'` before sending it.
+    """
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(thinking='minimal'))
+
+    result = await agent.run('What is the capital of France? Answer in one word.')
+
+    assert result.output == snapshot('Paris')
+    assert single_request_body(vcr)['reasoning'] == snapshot({'effort': 'low', 'context': 'all_turns'})
 
 
 async def test_openai_responses_gpt_5_5_drops_sampling_params_by_default(
@@ -757,7 +1137,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(details={'reasoning_tokens': 0}),
+                usage=RequestUsage(details={'reasoning_tokens': 0}, output_reasoning_tokens=0, cost=Decimal('0.00')),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -802,7 +1182,13 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=335, output_tokens=44, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=335,
+                    output_tokens=44,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0012775'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -909,7 +1295,9 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                             provider_name='openai',
                         )
                     ],
-                    usage=RequestUsage(input_tokens=278, output_tokens=9, details={'reasoning_tokens': 0}),
+                    usage=RequestUsage(
+                        input_tokens=278, output_tokens=9, output_reasoning_tokens=0, details={'reasoning_tokens': 0}
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -924,6 +1312,375 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
             )
 
     assert output_text == snapshot(['The capital of France is Paris.'])
+
+
+async def test_openai_responses_moderation(allow_model_requests: None, openai_api_key: str):
+    """Moderation results requested via `openai_moderation` are surfaced in `provider_details['moderation']`."""
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_moderation={'model': 'omni-moderation-latest'})
+    agent = Agent(model=model, model_settings=settings)
+
+    result = await agent.run('What is the capital of France?')
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'completed',
+            'timestamp': IsDatetime(),
+            'moderation': {
+                'input': {
+                    'categories': {
+                        'harassment': False,
+                        'harassment/threatening': False,
+                        'sexual': False,
+                        'hate': False,
+                        'hate/threatening': False,
+                        'illicit': False,
+                        'illicit/violent': False,
+                        'self-harm/intent': False,
+                        'self-harm/instructions': False,
+                        'self-harm': False,
+                        'sexual/minors': False,
+                        'violence': False,
+                        'violence/graphic': False,
+                    },
+                    'category_applied_input_types': {
+                        'harassment': ['text'],
+                        'harassment/threatening': ['text'],
+                        'sexual': ['text'],
+                        'hate': ['text'],
+                        'hate/threatening': ['text'],
+                        'illicit': ['text'],
+                        'illicit/violent': ['text'],
+                        'self-harm/intent': ['text'],
+                        'self-harm/instructions': ['text'],
+                        'self-harm': ['text'],
+                        'sexual/minors': ['text'],
+                        'violence': ['text'],
+                        'violence/graphic': ['text'],
+                    },
+                    'category_scores': {
+                        'harassment': 1.5598027633743823e-05,
+                        'harassment/threatening': 2.212566909570261e-06,
+                        'sexual': 9.818326983657703e-07,
+                        'hate': 2.7803096387751555e-05,
+                        'hate/threatening': 1.0783312222985275e-06,
+                        'illicit': 0.005284363395662242,
+                        'illicit/violent': 3.514382632807918e-05,
+                        'self-harm/intent': 2.627477314480822e-06,
+                        'self-harm/instructions': 5.955139348629957e-07,
+                        'self-harm': 2.4682904407607285e-06,
+                        'sexual/minors': 1.9333584585546466e-07,
+                        'violence': 6.814872211615988e-06,
+                        'violence/graphic': 7.889262586245034e-07,
+                    },
+                    'flagged': False,
+                    'model': 'omni-moderation-latest',
+                    'type': 'moderation_result',
+                },
+                'output': {
+                    'categories': {
+                        'harassment': False,
+                        'harassment/threatening': False,
+                        'sexual': False,
+                        'hate': False,
+                        'hate/threatening': False,
+                        'illicit': False,
+                        'illicit/violent': False,
+                        'self-harm/intent': False,
+                        'self-harm/instructions': False,
+                        'self-harm': False,
+                        'sexual/minors': False,
+                        'violence': False,
+                        'violence/graphic': False,
+                    },
+                    'category_applied_input_types': {
+                        'harassment': ['text'],
+                        'harassment/threatening': ['text'],
+                        'sexual': ['text'],
+                        'hate': ['text'],
+                        'hate/threatening': ['text'],
+                        'illicit': ['text'],
+                        'illicit/violent': ['text'],
+                        'self-harm/intent': ['text'],
+                        'self-harm/instructions': ['text'],
+                        'self-harm': ['text'],
+                        'sexual/minors': ['text'],
+                        'violence': ['text'],
+                        'violence/graphic': ['text'],
+                    },
+                    'category_scores': {
+                        'harassment': 5.0333557545281144e-05,
+                        'harassment/threatening': 1.2533751425646102e-05,
+                        'sexual': 0.00012448433020883747,
+                        'hate': 3.740956047302422e-05,
+                        'hate/threatening': 1.6187581436151335e-06,
+                        'illicit': 3.077430764601415e-05,
+                        'illicit/violent': 1.442598644847886e-05,
+                        'self-harm/intent': 1.6442494559854523e-06,
+                        'self-harm/instructions': 1.2805474213228684e-06,
+                        'self-harm': 1.0391067562761452e-05,
+                        'sexual/minors': 3.120191139396651e-06,
+                        'violence': 0.0005852836038915696,
+                        'violence/graphic': 1.2339457598623173e-05,
+                    },
+                    'flagged': False,
+                    'model': 'omni-moderation-latest',
+                    'type': 'moderation_result',
+                },
+            },
+        }
+    )
+
+
+async def test_openai_responses_moderation_stream(allow_model_requests: None, openai_api_key: str):
+    """Streaming moderation results arrive on the final `response.completed` event and are surfaced in `provider_details['moderation']`."""
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_moderation={'model': 'omni-moderation-latest'})
+    agent = Agent(model=model, model_settings=settings)
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        await result.get_output()
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'timestamp': IsDatetime(),
+            'finish_reason': 'completed',
+            'moderation': {
+                'input': {
+                    'categories': {
+                        'harassment': False,
+                        'harassment/threatening': False,
+                        'sexual': False,
+                        'hate': False,
+                        'hate/threatening': False,
+                        'illicit': False,
+                        'illicit/violent': False,
+                        'self-harm/intent': False,
+                        'self-harm/instructions': False,
+                        'self-harm': False,
+                        'sexual/minors': False,
+                        'violence': False,
+                        'violence/graphic': False,
+                    },
+                    'category_applied_input_types': {
+                        'harassment': ['text'],
+                        'harassment/threatening': ['text'],
+                        'sexual': ['text'],
+                        'hate': ['text'],
+                        'hate/threatening': ['text'],
+                        'illicit': ['text'],
+                        'illicit/violent': ['text'],
+                        'self-harm/intent': ['text'],
+                        'self-harm/instructions': ['text'],
+                        'self-harm': ['text'],
+                        'sexual/minors': ['text'],
+                        'violence': ['text'],
+                        'violence/graphic': ['text'],
+                    },
+                    'category_scores': {
+                        'harassment': 1.5598027633743823e-05,
+                        'harassment/threatening': 2.212566909570261e-06,
+                        'sexual': 9.818326983657703e-07,
+                        'hate': 2.7803096387751555e-05,
+                        'hate/threatening': 1.0783312222985275e-06,
+                        'illicit': 0.005284363395662242,
+                        'illicit/violent': 3.514382632807918e-05,
+                        'self-harm/intent': 2.627477314480822e-06,
+                        'self-harm/instructions': 5.955139348629957e-07,
+                        'self-harm': 2.4682904407607285e-06,
+                        'sexual/minors': 1.9333584585546466e-07,
+                        'violence': 6.814872211615988e-06,
+                        'violence/graphic': 7.889262586245034e-07,
+                    },
+                    'flagged': False,
+                    'model': 'omni-moderation-latest',
+                    'type': 'moderation_result',
+                },
+                'output': {
+                    'categories': {
+                        'harassment': False,
+                        'harassment/threatening': False,
+                        'sexual': False,
+                        'hate': False,
+                        'hate/threatening': False,
+                        'illicit': False,
+                        'illicit/violent': False,
+                        'self-harm/intent': False,
+                        'self-harm/instructions': False,
+                        'self-harm': False,
+                        'sexual/minors': False,
+                        'violence': False,
+                        'violence/graphic': False,
+                    },
+                    'category_applied_input_types': {
+                        'harassment': ['text'],
+                        'harassment/threatening': ['text'],
+                        'sexual': ['text'],
+                        'hate': ['text'],
+                        'hate/threatening': ['text'],
+                        'illicit': ['text'],
+                        'illicit/violent': ['text'],
+                        'self-harm/intent': ['text'],
+                        'self-harm/instructions': ['text'],
+                        'self-harm': ['text'],
+                        'sexual/minors': ['text'],
+                        'violence': ['text'],
+                        'violence/graphic': ['text'],
+                    },
+                    'category_scores': {
+                        'harassment': 5.0333557545281144e-05,
+                        'harassment/threatening': 1.2533751425646102e-05,
+                        'sexual': 0.00012448433020883747,
+                        'hate': 3.740956047302422e-05,
+                        'hate/threatening': 1.6187581436151335e-06,
+                        'illicit': 3.077430764601415e-05,
+                        'illicit/violent': 1.442598644847886e-05,
+                        'self-harm/intent': 1.6442494559854523e-06,
+                        'self-harm/instructions': 1.2805474213228684e-06,
+                        'self-harm': 1.0391067562761452e-05,
+                        'sexual/minors': 3.120191139396651e-06,
+                        'violence': 0.0005852836038915696,
+                        'violence/graphic': 1.2339457598623173e-05,
+                    },
+                    'flagged': False,
+                    'model': 'omni-moderation-latest',
+                    'type': 'moderation_result',
+                },
+            },
+        }
+    )
+
+
+async def test_openai_responses_moderation_block_policy(allow_model_requests: None, openai_api_key: str):
+    """`policy.mode: 'block'` is validated by the API but was observed not to enforce (recorded 2026-07-22).
+
+    Same observation as `test_openai_moderation_block_policy` on the Chat Completions side: flagged
+    input under an input+output block policy still produced a complete response, with the Responses
+    API's flat `moderation_result` shape.
+    """
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(
+        openai_moderation={
+            'model': 'omni-moderation-latest',
+            'policy': {'input': {'mode': 'block'}, 'output': {'mode': 'block'}},
+        }
+    )
+    agent = Agent(model=model, model_settings=settings)
+
+    result = await agent.run('I want to kill them.')
+
+    assert result.output
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.provider_details == snapshot(
+        {
+            'finish_reason': 'completed',
+            'timestamp': IsDatetime(),
+            'moderation': {
+                'input': {
+                    'categories': {
+                        'harassment': True,
+                        'harassment/threatening': True,
+                        'sexual': False,
+                        'hate': False,
+                        'hate/threatening': False,
+                        'illicit': False,
+                        'illicit/violent': False,
+                        'self-harm/intent': False,
+                        'self-harm/instructions': False,
+                        'self-harm': False,
+                        'sexual/minors': False,
+                        'violence': True,
+                        'violence/graphic': False,
+                    },
+                    'category_applied_input_types': {
+                        'harassment': ['text'],
+                        'harassment/threatening': ['text'],
+                        'sexual': ['text'],
+                        'hate': ['text'],
+                        'hate/threatening': ['text'],
+                        'illicit': ['text'],
+                        'illicit/violent': ['text'],
+                        'self-harm/intent': ['text'],
+                        'self-harm/instructions': ['text'],
+                        'self-harm': ['text'],
+                        'sexual/minors': ['text'],
+                        'violence': ['text'],
+                        'violence/graphic': ['text'],
+                    },
+                    'category_scores': {
+                        'harassment': 0.3998791611998704,
+                        'harassment/threatening': 0.46157949247490154,
+                        'sexual': 7.793660930208434e-05,
+                        'hate': 0.03544004051522365,
+                        'hate/threatening': 0.023518631721968726,
+                        'illicit': 0.0943894540155202,
+                        'illicit/violent': 0.05758081155757371,
+                        'self-harm/intent': 0.0002832988454686559,
+                        'self-harm/instructions': 2.5071593847983196e-06,
+                        'self-harm': 0.0005177977297866245,
+                        'sexual/minors': 4.264746818557914e-06,
+                        'violence': 0.9530094249314258,
+                        'violence/graphic': 4.238847419937498e-05,
+                    },
+                    'flagged': True,
+                    'model': 'omni-moderation-latest',
+                    'type': 'moderation_result',
+                },
+                'output': {
+                    'categories': {
+                        'harassment': False,
+                        'harassment/threatening': False,
+                        'sexual': False,
+                        'hate': False,
+                        'hate/threatening': False,
+                        'illicit': False,
+                        'illicit/violent': False,
+                        'self-harm/intent': False,
+                        'self-harm/instructions': False,
+                        'self-harm': False,
+                        'sexual/minors': False,
+                        'violence': False,
+                        'violence/graphic': False,
+                    },
+                    'category_applied_input_types': {
+                        'harassment': ['text'],
+                        'harassment/threatening': ['text'],
+                        'sexual': ['text'],
+                        'hate': ['text'],
+                        'hate/threatening': ['text'],
+                        'illicit': ['text'],
+                        'illicit/violent': ['text'],
+                        'self-harm/intent': ['text'],
+                        'self-harm/instructions': ['text'],
+                        'self-harm': ['text'],
+                        'sexual/minors': ['text'],
+                        'violence': ['text'],
+                        'violence/graphic': ['text'],
+                    },
+                    'category_scores': {
+                        'harassment': 2.3413582477639402e-05,
+                        'harassment/threatening': 2.5315637215092633e-05,
+                        'sexual': 1.3982207564732913e-05,
+                        'hate': 7.843789122138342e-06,
+                        'hate/threatening': 2.212566909570261e-06,
+                        'illicit': 0.005287188577387887,
+                        'illicit/violent': 8.040859356292355e-05,
+                        'self-harm/intent': 0.022634764283483117,
+                        'self-harm/instructions': 0.00047595556984217433,
+                        'self-harm': 0.018623618519302523,
+                        'sexual/minors': 2.931153855960119e-06,
+                        'violence': 0.016033442344281057,
+                        'violence/graphic': 3.740956047302422e-05,
+                    },
+                    'flagged': False,
+                    'model': 'omni-moderation-latest',
+                    'type': 'moderation_result',
+                },
+            },
+        }
+    )
 
 
 async def test_openai_include_raw_annotations_streaming(allow_model_requests: None, openai_api_key: str):
@@ -1174,7 +1931,9 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     input_tokens=115886,
                     cache_read_tokens=92160,
                     output_tokens=1720,
+                    output_reasoning_tokens=1472,
                     details={'reasoning_tokens': 1472},
+                    cost=Decimal('0.0583775'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -1215,7 +1974,13 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=24, output_tokens=8, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=24,
+                    output_tokens=8,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.00014'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -1287,7 +2052,12 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=9299, cache_read_tokens=8448, output_tokens=577, details={'reasoning_tokens': 512}
+                    input_tokens=9299,
+                    cache_read_tokens=8448,
+                    output_tokens=577,
+                    output_reasoning_tokens=512,
+                    details={'reasoning_tokens': 512},
+                    cost=Decimal('0.00788975'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -1356,7 +2126,12 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=9506, cache_read_tokens=8576, output_tokens=439, details={'reasoning_tokens': 384}
+                    input_tokens=9506,
+                    cache_read_tokens=8576,
+                    output_tokens=439,
+                    output_reasoning_tokens=384,
+                    details={'reasoning_tokens': 384},
+                    cost=Decimal('0.0066245'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -1435,7 +2210,12 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=9463, cache_read_tokens=8320, output_tokens=660, details={'reasoning_tokens': 512}
+                    input_tokens=9463,
+                    cache_read_tokens=8320,
+                    output_tokens=660,
+                    output_reasoning_tokens=512,
+                    details={'reasoning_tokens': 512},
+                    cost=Decimal('0.00906875'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -1588,7 +2368,13 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                     ),
                     TextPart(content='14195730', id=IsStr(), provider_name='openai'),
                 ],
-                usage=RequestUsage(input_tokens=22013, output_tokens=1737, details={'reasoning_tokens': 1728}),
+                usage=RequestUsage(
+                    input_tokens=22013,
+                    output_tokens=1737,
+                    output_reasoning_tokens=1728,
+                    details={'reasoning_tokens': 1728},
+                    cost=Decimal('0.04488625'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -1602,6 +2388,20 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
         ]
     )
     assert result.output == snapshot('14195730')
+
+
+async def test_openai_responses_model_web_search_tool_without_external_access(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+) -> None:
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool(external_web_access=False))])
+
+    result = await agent.run('Search the web for the year the Eiffel Tower opened to the public. Reply with the year.')
+
+    assert '1889' in result.output
+    assert single_request_body(vcr)['tools'] == [
+        {'type': 'web_search', 'search_context_size': 'medium', 'external_web_access': False}
+    ]
 
 
 async def test_openai_responses_model_web_search_tool_with_invalid_region(
@@ -1664,7 +2464,12 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=9939, cache_read_tokens=8320, output_tokens=1610, details={'reasoning_tokens': 1344}
+                    input_tokens=9939,
+                    cache_read_tokens=8320,
+                    output_tokens=1610,
+                    output_reasoning_tokens=1344,
+                    details={'reasoning_tokens': 1344},
+                    cost=Decimal('0.01916375'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -1757,7 +2562,9 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     input_tokens=9463,
                     cache_read_tokens=8320,
                     output_tokens=582,
+                    output_reasoning_tokens=512,
                     details={'reasoning_tokens': 512},
+                    cost=Decimal('0.00828875'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2104,7 +2911,9 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     input_tokens=9703,
                     cache_read_tokens=8576,
                     output_tokens=638,
+                    output_reasoning_tokens=576,
                     details={'reasoning_tokens': 576},
+                    cost=Decimal('0.00886075'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2132,7 +2941,7 @@ def test_model_profile_strict_not_supported():
     )
 
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, visibility='visible')  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {
@@ -2152,7 +2961,7 @@ def test_model_profile_strict_not_supported():
             openai_model_profile('gpt-4o'), OpenAIModelProfile(openai_supports_strict_tool_definition=False)
         ),
     )
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_param = m._map_tool_definition(my_tool, visibility='visible')  # type: ignore[reportPrivateUsage]
 
     assert tool_param == snapshot(
         {
@@ -2173,6 +2982,28 @@ async def test_reasoning_model_with_temperature(allow_model_requests: None, open
     assert result.output == snapshot(
         'The capital of Mexico is Mexico City. It serves as the political, cultural, and economic heart of the country and is one of the largest metropolitan areas in the world.'
     )
+
+
+async def test_reasoning_model_with_temperature_does_not_mutate_caller_settings(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
+
+    settings = OpenAIResponsesModelSettings(temperature=0.5, top_p=0.9)
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await Agent(model, model_settings=settings).run('What is the capital of Mexico?')
+
+    assert settings == {'temperature': 0.5, 'top_p': 0.9}
 
 
 async def test_gpt5_pro(allow_model_requests: None, openai_api_key: str):
@@ -2221,7 +3052,13 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=62, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=62,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000275'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2258,7 +3095,13 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=85, output_tokens=20, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=85,
+                    output_tokens=20,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0004125'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2327,7 +3170,13 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=36, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=36,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.00021'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2362,7 +3211,13 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=59, output_tokens=11, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=59,
+                    output_tokens=11,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0002575'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2421,7 +3276,13 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=66, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=66,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000285'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2456,7 +3317,13 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=89, output_tokens=16, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=89,
+                    output_tokens=16,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0003825'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2517,7 +3384,13 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=153, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=153,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0005025'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2552,7 +3425,13 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=176, output_tokens=26, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=176,
+                    output_tokens=26,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.00070'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2609,7 +3488,13 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=107, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=107,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0003875'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2644,7 +3529,13 @@ async def test_prompted_output(allow_model_requests: None, openai_api_key: str):
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=130, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=130,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000445'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2705,7 +3596,13 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=283, output_tokens=12, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=283,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0008275'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2740,7 +3637,13 @@ async def test_prompted_output_multiple(allow_model_requests: None, openai_api_k
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=306, output_tokens=22, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=306,
+                    output_tokens=22,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000985'),
+                ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -2776,7 +3679,7 @@ async def test_openai_previous_response_id(allow_model_requests: None, openai_ap
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(model=model)
     result = await agent.run('The secret key is sesame')
-    settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.all_messages()[-1].provider_response_id)  # type: ignore
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.all_messages()[-1].provider_response_id)  # pyright: ignore[reportArgumentType, reportAttributeAccessIssue, reportUnknownMemberType]
     result = await agent.run('What is the secret code?', model_settings=settings)
     assert result.output == snapshot('sesame')
 
@@ -2851,7 +3754,7 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # type: ignore
+    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
     assert not previous_response_id
     assert messages == snapshot(
         [
@@ -2912,7 +3815,7 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # type: ignore
+    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id == 'resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b'
     assert messages == snapshot(
         [
@@ -2926,7 +3829,7 @@ async def test_openai_previous_response_id_concrete_seed_without_history(openai_
     history = [ModelRequest(parts=[UserPromptPart(content='Continue')])]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # pyright: ignore[reportArgumentType, reportPrivateUsage]
     assert previous_response_id == 'resp_seed_from_prior_turn'
     assert messages is history
 
@@ -2950,7 +3853,7 @@ async def test_openai_previous_response_id_concrete_seed_overridden_by_history(o
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id == 'resp_from_first_call'
     assert messages == snapshot(
         [
@@ -2975,7 +3878,7 @@ async def test_openai_previous_response_id_concrete_seed_with_mixed_provider_his
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id == 'resp_seed_from_prior_turn'
     assert messages is history
 
@@ -2999,7 +3902,7 @@ async def test_openai_previous_response_id_concrete_seed_broken_by_compaction(op
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # type: ignore
+    previous_response_id, messages = model._resolve_previous_response_id('resp_seed_from_prior_turn', history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id is None
     assert messages is history
 
@@ -3018,7 +3921,7 @@ async def test_openai_previous_response_id_auto_broken_by_compaction(openai_api_
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id('auto', history)  # type: ignore
+    previous_response_id, messages = model._resolve_previous_response_id('auto', history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id is None
     assert messages is history
 
@@ -3037,7 +3940,7 @@ async def test_openai_previous_response_id_unset_never_chains(openai_api_key: st
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    previous_response_id, messages = model._resolve_previous_response_id(None, history)  # type: ignore
+    previous_response_id, messages = model._resolve_previous_response_id(None, history)  # pyright: ignore[reportPrivateUsage]
     assert previous_response_id is None
     assert messages is history
 
@@ -3480,7 +4383,13 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=2199, details={'reasoning_tokens': 1920}),
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=2199,
+                    output_reasoning_tokens=1920,
+                    details={'reasoning_tokens': 1920},
+                    cost=Decimal('0.02200625'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3548,7 +4457,13 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=314, output_tokens=2737, details={'reasoning_tokens': 2112}),
+                usage=RequestUsage(
+                    input_tokens=314,
+                    output_tokens=2737,
+                    output_reasoning_tokens=2112,
+                    details={'reasoning_tokens': 2112},
+                    cost=Decimal('0.0277625'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3608,6 +4523,7 @@ async def test_openai_responses_thinking_part_from_other_model(
                         'input_tokens': 42,
                         'output_tokens': 291,
                     },
+                    cost=Decimal('0.004491'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
@@ -3683,7 +4599,13 @@ async def test_openai_responses_thinking_part_from_other_model(
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=306, output_tokens=3134, details={'reasoning_tokens': 2496}),
+                usage=RequestUsage(
+                    input_tokens=306,
+                    output_tokens=3134,
+                    output_reasoning_tokens=2496,
+                    details={'reasoning_tokens': 2496},
+                    cost=Decimal('0.0317225'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3757,7 +4679,13 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1680, details={'reasoning_tokens': 1408}),
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=1680,
+                    output_reasoning_tokens=1408,
+                    details={'reasoning_tokens': 1408},
+                    cost=Decimal('0.0074063'),
+                ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3853,7 +4781,13 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=124, output_tokens=1926, details={'reasoning_tokens': 1792}),
+                usage=RequestUsage(
+                    input_tokens=124,
+                    output_tokens=1926,
+                    output_reasoning_tokens=1792,
+                    details={'reasoning_tokens': 1792},
+                    cost=Decimal('0.019415'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3890,7 +4824,12 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=2087, cache_read_tokens=2048, output_tokens=124, details={'reasoning_tokens': 0}
+                    input_tokens=2087,
+                    cache_read_tokens=2048,
+                    output_tokens=124,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.00154475'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -4073,6 +5012,7 @@ async def test_openai_responses_thinking_with_multiple_summaries(allow_model_req
     )
 
 
+@pytest.mark.moves_cache_prefix(reason='test deliberately modifies history')
 async def test_openai_responses_thinking_with_modified_history(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='low', openai_reasoning_summary='detailed')
@@ -4107,7 +5047,13 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=248, details={'reasoning_tokens': 64}),
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=248,
+                    output_reasoning_tokens=64,
+                    details={'reasoning_tokens': 64},
+                    cost=Decimal('0.00249625'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -4170,7 +5116,13 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=142, output_tokens=355, details={'reasoning_tokens': 128}),
+                usage=RequestUsage(
+                    input_tokens=142,
+                    output_tokens=355,
+                    output_reasoning_tokens=128,
+                    details={'reasoning_tokens': 128},
+                    cost=Decimal('0.0037275'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -4261,7 +5213,12 @@ If you intended different grouping with parentheses, let me know.\
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1493, cache_read_tokens=1280, output_tokens=125, details={'reasoning_tokens': 64}
+                    input_tokens=1493,
+                    cache_read_tokens=1280,
+                    output_tokens=125,
+                    output_reasoning_tokens=64,
+                    details={'reasoning_tokens': 64},
+                    cost=Decimal('0.00167625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -4306,7 +5263,13 @@ If you intended different grouping with parentheses, let me know.\
                         content='256', id='msg_68cdba6e02c881a3802ed88715e0be4709b7445677780c8f', provider_name='openai'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=793, output_tokens=7, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=793,
+                    output_tokens=7,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.00106125'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -4411,7 +5374,12 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=3727, cache_read_tokens=3200, output_tokens=347, details={'reasoning_tokens': 128}
+                    input_tokens=3727,
+                    cache_read_tokens=3200,
+                    output_tokens=347,
+                    output_reasoning_tokens=128,
+                    details={'reasoning_tokens': 128},
+                    cost=Decimal('0.00452875'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -5742,17 +6710,43 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
                     async for _ in response_stream:
                         pass
                     assert response_stream.response.usage == snapshot(
-                        RequestUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448})
+                        RequestUsage(
+                            input_tokens=53,
+                            output_tokens=469,
+                            output_reasoning_tokens=448,
+                            details={'reasoning_tokens': 448},
+                        )
                     )
                     assert response_stream.usage == snapshot(
-                        RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
+                        RunUsage(
+                            input_tokens=53,
+                            output_tokens=469,
+                            details={'reasoning_tokens': 448},
+                            output_reasoning_tokens=448,
+                            requests=1,
+                            cost=Decimal('0.00475625'),
+                        )
                     )
                     assert run.usage == snapshot(RunUsage(requests=1))
                 assert run.usage == snapshot(
-                    RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
+                    RunUsage(
+                        input_tokens=53,
+                        output_tokens=469,
+                        details={'reasoning_tokens': 448},
+                        output_reasoning_tokens=448,
+                        requests=1,
+                        cost=Decimal('0.00475625'),
+                    )
                 )
     assert run.usage == snapshot(
-        RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
+        RunUsage(
+            input_tokens=53,
+            output_tokens=469,
+            details={'reasoning_tokens': 448},
+            output_reasoning_tokens=448,
+            requests=1,
+            cost=Decimal('0.00475625'),
+        )
     )
 
 
@@ -5789,7 +6783,13 @@ async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requ
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=36, output_tokens=15, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=36,
+                    output_tokens=15,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000192'),
+                ),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -5828,7 +6828,13 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=61, output_tokens=56, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=61,
+                    output_tokens=56,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000570'),
+                ),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -5955,7 +6961,12 @@ plt.show()\r
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2973, cache_read_tokens=1920, output_tokens=707, details={'reasoning_tokens': 512}
+                    input_tokens=2973,
+                    cache_read_tokens=1920,
+                    output_tokens=707,
+                    output_reasoning_tokens=512,
+                    details={'reasoning_tokens': 512},
+                    cost=Decimal('0.00862625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -6110,7 +7121,12 @@ If you want different colors or a holographic gradient background, tell me your 
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=4614, cache_read_tokens=1792, output_tokens=1844, details={'reasoning_tokens': 1024}
+                    input_tokens=4614,
+                    cache_read_tokens=1792,
+                    output_tokens=1844,
+                    output_reasoning_tokens=1024,
+                    details={'reasoning_tokens': 1024},
+                    cost=Decimal('0.0221915'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -6192,7 +7208,13 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=2772, output_tokens=1166, details={'reasoning_tokens': 896}),
+                usage=RequestUsage(
+                    input_tokens=2772,
+                    output_tokens=1166,
+                    output_reasoning_tokens=896,
+                    details={'reasoning_tokens': 896},
+                    cost=Decimal('0.015125'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -7668,7 +8690,9 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                     input_tokens=2746,
                     cache_read_tokens=1664,
                     output_tokens=1106,
+                    output_reasoning_tokens=960,
                     details={'reasoning_tokens': 960},
+                    cost=Decimal('0.0126205'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -7739,7 +8763,9 @@ async def test_openai_responses_image_generation(allow_model_requests: None, ope
                     input_tokens=2804,
                     cache_read_tokens=1280,
                     output_tokens=792,
+                    output_reasoning_tokens=576,
                     details={'reasoning_tokens': 576},
+                    cost=Decimal('0.009985'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -7822,7 +8848,9 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 usage=RequestUsage(
                     input_tokens=1588,
                     output_tokens=1114,
+                    output_reasoning_tokens=960,
                     details={'reasoning_tokens': 960},
+                    cost=Decimal('0.013125'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -7975,7 +9003,12 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2799, cache_read_tokens=2048, output_tokens=1390, details={'reasoning_tokens': 1216}
+                    input_tokens=2799,
+                    cache_read_tokens=2048,
+                    output_tokens=1390,
+                    output_reasoning_tokens=1216,
+                    details={'reasoning_tokens': 1216},
+                    cost=Decimal('0.01509475'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -8037,7 +9070,12 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2858, cache_read_tokens=1920, output_tokens=1071, details={'reasoning_tokens': 896}
+                    input_tokens=2858,
+                    cache_read_tokens=1920,
+                    output_tokens=1071,
+                    output_reasoning_tokens=896,
+                    details={'reasoning_tokens': 896},
+                    cost=Decimal('0.0121225'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -8133,7 +9171,13 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         content='', id='msg_0360827931d9421b0068dd836f4de881a0ae6d58054d203eb2', provider_name='openai'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=2253, output_tokens=1755, details={'reasoning_tokens': 1600}),
+                usage=RequestUsage(
+                    input_tokens=2253,
+                    output_tokens=1755,
+                    output_reasoning_tokens=1600,
+                    details={'reasoning_tokens': 1600},
+                    cost=Decimal('0.02036625'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -8175,7 +9219,13 @@ async def test_openai_responses_image_generation_with_tool_output(allow_model_re
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=587, output_tokens=2587, details={'reasoning_tokens': 2560}),
+                usage=RequestUsage(
+                    input_tokens=587,
+                    output_tokens=2587,
+                    output_reasoning_tokens=2560,
+                    details={'reasoning_tokens': 2560},
+                    cost=Decimal('0.02660375'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -8265,7 +9315,13 @@ async def test_openai_responses_image_generation_with_native_output(allow_model_
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1789, output_tokens=1312, details={'reasoning_tokens': 1152}),
+                usage=RequestUsage(
+                    input_tokens=1789,
+                    output_tokens=1312,
+                    output_reasoning_tokens=1152,
+                    details={'reasoning_tokens': 1152},
+                    cost=Decimal('0.01535625'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -8342,7 +9398,13 @@ async def test_openai_responses_image_generation_with_prompted_output(allow_mode
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1812, output_tokens=1313, details={'reasoning_tokens': 1152}),
+                usage=RequestUsage(
+                    input_tokens=1812,
+                    output_tokens=1313,
+                    output_reasoning_tokens=1152,
+                    details={'reasoning_tokens': 1152},
+                    cost=Decimal('0.015395'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -8399,7 +9461,13 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=389, output_tokens=721, details={'reasoning_tokens': 704}),
+                usage=RequestUsage(
+                    input_tokens=389,
+                    output_tokens=721,
+                    output_reasoning_tokens=704,
+                    details={'reasoning_tokens': 704},
+                    cost=Decimal('0.00769625'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -8454,7 +9522,13 @@ async def test_openai_responses_image_generation_with_tools(allow_model_requests
                         content='', id='msg_0481074da98340df0068dd8934b3f48191920fd2feb9de2332', provider_name='openai'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1294, output_tokens=65, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=1294,
+                    output_tokens=65,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0022675'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -8551,7 +9625,9 @@ async def test_openai_responses_multiple_images(allow_model_requests: None, open
                 usage=RequestUsage(
                     input_tokens=2675,
                     output_tokens=2157,
+                    output_reasoning_tokens=1984,
                     details={'reasoning_tokens': 1984},
+                    cost=Decimal('0.02491375'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -8626,7 +9702,13 @@ async def test_openai_responses_image_generation_jpeg(allow_model_requests: None
                         content='', id='msg_08acbdf1ae54befc0068dd9d468248819786f55b61db3a9a60', provider_name='openai'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1889, output_tokens=1434, details={'reasoning_tokens': 1280}),
+                usage=RequestUsage(
+                    input_tokens=1889,
+                    output_tokens=1434,
+                    output_reasoning_tokens=1280,
+                    details={'reasoning_tokens': 1280},
+                    cost=Decimal('0.01670125'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -8716,7 +9798,13 @@ async def test_openai_responses_history_with_combined_tool_call_id(allow_model_r
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=103, output_tokens=409, details={'reasoning_tokens': 384}),
+                usage=RequestUsage(
+                    input_tokens=103,
+                    output_tokens=409,
+                    output_reasoning_tokens=384,
+                    details={'reasoning_tokens': 384},
+                    cost=Decimal('0.00421875'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -9034,7 +10122,13 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-brief-summar
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1207, output_tokens=535, details={'reasoning_tokens': 320}),
+                usage=RequestUsage(
+                    input_tokens=1207,
+                    output_tokens=535,
+                    output_reasoning_tokens=320,
+                    details={'reasoning_tokens': 320},
+                    cost=Decimal('0.0036817'),
+                ),
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -9089,7 +10183,13 @@ The monorepo is organized into these main packages:  \n\
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1109, output_tokens=444, details={'reasoning_tokens': 320}),
+                usage=RequestUsage(
+                    input_tokens=1109,
+                    output_tokens=444,
+                    output_reasoning_tokens=320,
+                    details={'reasoning_tokens': 320},
+                    cost=Decimal('0.0031735'),
+                ),
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -9319,7 +10419,13 @@ View this search on DeepWiki: https://deepwiki.com/search/what-is-the-pydanticpy
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1401, output_tokens=480, details={'reasoning_tokens': 256}),
+                usage=RequestUsage(
+                    input_tokens=1401,
+                    output_tokens=480,
+                    output_reasoning_tokens=256,
+                    details={'reasoning_tokens': 256},
+                    cost=Decimal('0.0036531'),
+                ),
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -9858,7 +10964,13 @@ markdown with headings, code blocks, tables, and links preserved.\
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1199, output_tokens=103, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=1199,
+                    output_tokens=103,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.003222'),
+                ),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -10066,7 +11178,13 @@ async def test_openai_responses_model_mcp_server_tool_with_connector(allow_model
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=1065, output_tokens=760, details={'reasoning_tokens': 576}),
+                usage=RequestUsage(
+                    input_tokens=1065,
+                    output_tokens=760,
+                    output_reasoning_tokens=576,
+                    details={'reasoning_tokens': 576},
+                    cost=Decimal('0.0045155'),
+                ),
                 model_name='o4-mini-2025-04-16',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -10383,7 +11501,9 @@ async def test_openai_responses_raw_cot_stream_openrouter(allow_model_requests: 
                 usage=RequestUsage(
                     input_tokens=78,
                     output_tokens=37,
+                    output_reasoning_tokens=22,
                     details={'is_byok': 0, 'reasoning_tokens': 22},
+                    cost=Decimal('0.000007442'),
                 ),
                 model_name='openai/gpt-oss-20b',
                 timestamp=IsDatetime(),
@@ -10864,7 +11984,13 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                         ),
                         TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
                     ],
-                    usage=RequestUsage(input_tokens=870, output_tokens=30, details={'reasoning_tokens': 0}),
+                    usage=RequestUsage(
+                        input_tokens=870,
+                        output_tokens=30,
+                        output_reasoning_tokens=0,
+                        details={'reasoning_tokens': 0},
+                        cost=Decimal('0.002475'),
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -10916,7 +12042,13 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                             provider_name='openai',
                         ),
                     ],
-                    usage=RequestUsage(input_tokens=1188, output_tokens=55, details={'reasoning_tokens': 0}),
+                    usage=RequestUsage(
+                        input_tokens=1188,
+                        output_tokens=55,
+                        output_reasoning_tokens=0,
+                        details={'reasoning_tokens': 0},
+                        cost=Decimal('0.00352'),
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -11057,7 +12189,13 @@ async def test_openai_responses_model_file_search_tool_stream(
                         ),
                         TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
                     ],
-                    usage=RequestUsage(input_tokens=1177, output_tokens=37, details={'reasoning_tokens': 0}),
+                    usage=RequestUsage(
+                        input_tokens=1177,
+                        output_tokens=37,
+                        output_reasoning_tokens=0,
+                        details={'reasoning_tokens': 0},
+                        cost=Decimal('0.0033125'),
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -11210,7 +12348,13 @@ async def test_openai_responses_model_file_search_tool_with_results(
                         ),
                         TextPart(content=IsStr(), id=IsStr(), provider_name='openai'),
                     ],
-                    usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt(), details={'reasoning_tokens': 0}),
+                    usage=RequestUsage(
+                        input_tokens=IsInt(),
+                        output_tokens=IsInt(),
+                        output_reasoning_tokens=0,
+                        details={'reasoning_tokens': 0},
+                        cost=Decimal('0.003395'),
+                    ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
@@ -11457,7 +12601,13 @@ async def test_responses_usage_limit_not_exceeded(allow_model_requests: None, op
                         provider_name='openai',
                     )
                 ],
-                usage=RequestUsage(input_tokens=18, output_tokens=28, details={'reasoning_tokens': 0}),
+                usage=RequestUsage(
+                    input_tokens=18,
+                    output_tokens=28,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0000520'),
+                ),
                 model_name='gpt-4.1-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -11707,6 +12857,7 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='hello ', id='msg_001', provider_name='openai')],
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name='gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -11719,6 +12870,172 @@ async def test_stream_cancel(allow_model_requests: None):
             ),
         ]
     )
+
+
+async def test_background_stream_cancel_cancels_server_job(allow_model_requests: None):
+    """Cancelling a background stream mid-flight cancels the server-side job end-to-end.
+
+    Exercises the whole chain: `AgentStream.cancel()` → the continuation composite's `close_stream()` →
+    `OpenAIResponsesModel.cancel_suspended_response(composite.get())` → `client.responses.cancel(id)`.
+    The composite's `get()` reports a terminal `state` here (never `'suspended'`), so this pins that the
+    `background` marker, `provider_response_id`, and `provider_name` all survive into it — otherwise the
+    server-side job would leak. Not a VCR test: it pins mid-stream cancellation timing and the live
+    `responses.cancel` call, neither of which cassette playback reliably captures.
+    """
+    from openai.types import responses as resp
+
+    base_response = resp.Response(
+        id='resp_bg',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+        background=True,
+    )
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(response=base_response, type='response.in_progress', sequence_number=1),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseTextDeltaEvent(
+            item_id='msg_001',
+            output_index=0,
+            content_index=0,
+            delta='hello',
+            logprobs=[],
+            type='response.output_text.delta',
+            sequence_number=3,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(openai_background=True))
+    cancel_ids = cast(MockOpenAIResponses, mock_client).cancel_ids
+
+    async with agent.run_stream('') as result:
+        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
+            break
+        await result.cancel()
+        assert result.cancelled
+
+    assert cancel_ids == ['resp_bg']
+
+
+async def test_background_marker_stamped_from_terminal_event_only(allow_model_requests: None):
+    """The `background` marker is stamped even when a segment's only status event is terminal.
+
+    A resumed `retrieve(stream=True)` segment can start mid-stream (no `ResponseCreatedEvent`) and reach
+    only a terminal `ResponseCompletedEvent`; the marker must still be stamped from it, or
+    `cancel_suspended_response` couldn't cancel the server-side job. Unit-style because the resumed-stream
+    shape isn't reachable through a normal `agent.run`, and the background cassettes all stamp on
+    `response.created` first — so nothing else pins the terminal-only path.
+    """
+    from openai.types import responses as resp
+
+    base_response = resp.Response(
+        id='resp_bg',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+        background=True,
+    )
+
+    # No `created`/`in_progress`/`queued` event: the segment starts with output and ends on `completed`.
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=0,
+        ),
+        resp.ResponseTextDeltaEvent(
+            item_id='msg_001',
+            output_index=0,
+            content_index=0,
+            delta='hello',
+            logprobs=[],
+            type='response.output_text.delta',
+            sequence_number=1,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=2,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('') as result:
+        await result.get_output()
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.provider_details or {}).get('background') is True
+
+
+async def test_cancel_suspended_response_only_cancels_background_jobs(allow_model_requests: None):
+    """`cancel_suspended_response` calls `responses.cancel` only for background jobs.
+
+    Unit-style guard test: `responses.cancel` 400s on a non-background response, so the guard must
+    reliably tell them apart. It keys off the explicit `provider_details['background']` marker (stamped
+    from the API's own `response.background` field), not the continuation poll interval — so
+    a normal interrupted streamed response that happens to carry a delay is left untouched.
+    """
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    cancel_ids = cast(MockOpenAIResponses, mock_client).cancel_ids
+
+    # A normal streamed response interrupted by `cancel()` (no background marker) must NOT be cancelled,
+    await model.cancel_suspended_response(
+        ModelResponse(
+            parts=[],
+            provider_name='openai',
+            provider_response_id='resp_normal',
+            state='interrupted',
+        )
+    )
+    assert cancel_ids == []
+
+    # A background job (explicit `background` marker) IS cancelled server-side.
+    await model.cancel_suspended_response(
+        ModelResponse(
+            parts=[],
+            provider_name='openai',
+            provider_response_id='resp_bg',
+            provider_details={'background': True},
+        )
+    )
+    assert cancel_ids == ['resp_bg']
+
+    # A background response from a different provider is left to that provider to cancel.
+    await model.cancel_suspended_response(
+        ModelResponse(
+            parts=[],
+            provider_name='other',
+            provider_response_id='resp_other',
+            provider_details={'background': True},
+        )
+    )
+    assert cancel_ids == ['resp_bg']
 
 
 async def test_openai_responses_null_text(allow_model_requests: None):
@@ -11884,7 +13201,7 @@ async def test_openai_responses_null_text_stream(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello!', id='msg_001', provider_name='openai')],
-                usage=RequestUsage(),
+                usage=RequestUsage(cost=Decimal('0.00')),
                 model_name='gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -11949,6 +13266,483 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
     assert compaction.provider_name == 'openai'
     assert compaction.provider_details is not None
     assert 'encrypted_content' in compaction.provider_details
+
+
+async def test_openai_responses_trims_before_latest_compaction(allow_model_requests: None):
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='drop first request')]
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content='old summary',
+                    provider_name='openai',
+                    provider_details={'encrypted_content': 'old-encrypted'},
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('drop between compactions'),
+        ModelResponse(
+            parts=[
+                TextPart(content='drop before boundary'),
+                CompactionPart(
+                    content='latest summary',
+                    provider_name='openai',
+                    provider_details={
+                        'encrypted_content': 'latest-encrypted',
+                        'pydantic_ai_standing_prompt_planted': True,
+                    },
+                ),
+                TextPart(content='keep after boundary'),
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    # Everything before the latest compaction item is dropped, since the Responses API would
+    # process and bill it — including the standing system prompt: the compaction item retains the
+    # window's leading `system` items (live-verified), so re-sending it would duplicate it. The
+    # re-compaction path re-plants it instead (see
+    # `test_openai_responses_compact_replants_standing_prompt`).
+    assert mapped == snapshot(
+        [
+            {'id': None, 'encrypted_content': 'latest-encrypted', 'type': 'compaction'},
+            {'role': 'assistant', 'content': 'keep after boundary'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+    await model.count_tokens(messages, None, ModelRequestParameters())
+    assert cast(MockOpenAIResponses, mock_client).count_kwargs[0]['input'] == mapped
+
+
+async def test_openai_responses_unstamped_compaction_reinserts_standing_prompt(allow_model_requests: None):
+    """An unstamped compaction item — externally supplied, spliced in, or minted before the
+    provenance stamp existed — cannot be trusted to have been built from a window containing this
+    history's standing prompt, so the trim re-inserts it as it always did."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='drop first request')]
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content='foreign summary',
+                    provider_name='openai',
+                    provider_details={'encrypted_content': 'foreign-encrypted'},
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    assert mapped == snapshot(
+        [
+            {'role': 'system', 'content': 'Standing system prompt.'},
+            {'id': None, 'encrypted_content': 'foreign-encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
+async def test_openai_responses_sanitized_compaction_reinserts_standing_prompt(allow_model_requests: None):
+    """Sanitizing a client-supplied stamped compaction item removes its provenance, so the trim
+    re-inserts the server's standing prompt."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='drop first request')]
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content='foreign summary',
+                    provider_name='openai',
+                    provider_details={
+                        'encrypted_content': 'foreign-encrypted',
+                        'pydantic_ai_standing_prompt_planted': True,
+                    },
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    sanitized = sanitize_messages(messages, strip_system_prompts=False)
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        sanitized, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    assert mapped == snapshot(
+        [
+            {'role': 'system', 'content': 'Standing system prompt.'},
+            {'id': None, 'encrypted_content': 'foreign-encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
+async def test_openai_responses_compact_replants_standing_prompt(allow_model_requests: None):
+    """Re-compaction plants the standing prompt explicitly instead of relying on the previous
+    compaction item to carry it forward — blob-of-blob retention decayed in live probing. The
+    ordinary-request mapping of the same history omits it (see
+    `test_openai_responses_trims_before_latest_compaction`)."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='drop first request')]
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content='summary',
+                    provider_name='openai',
+                    provider_details={'encrypted_content': 'encrypted'},
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    compact_kwargs: dict[str, Any] = {}
+
+    async def fake_compact(**kwargs: Any) -> Any:
+        compact_kwargs.update(kwargs)
+        return CompactedResponse(
+            id='resp-compact',
+            created_at=0,
+            object='response.compaction',
+            output=[ResponseCompactionItem(id='comp-2', encrypted_content='new-encrypted', type='compaction')],
+            usage=ResponseUsage.model_construct(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    model.client.responses.compact = fake_compact
+    from pydantic_ai.models import ModelRequestContext
+
+    response = await model.compact_messages(
+        ModelRequestContext(
+            model=model, messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
+        )
+    )
+
+    assert compact_kwargs['input'] == snapshot(
+        [
+            {'role': 'system', 'content': 'Standing system prompt.'},
+            {'id': None, 'encrypted_content': 'encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+    # The minted part carries the provenance stamp: this window demonstrably planted the standing
+    # prompt, so later ordinary requests may rely on the item's retention and skip re-sending it.
+    minted = response.parts[0]
+    assert isinstance(minted, CompactionPart)
+    assert minted.provider_details is not None
+    assert minted.provider_details['pydantic_ai_standing_prompt_planted'] is True
+
+
+async def test_openai_responses_pre_compaction_introduced_tool_keeps_its_tools_declaration(
+    allow_model_requests: None,
+):
+    """The wire partition and the trim must see the same history.
+
+    Request building filters a delta-introduced tool out of `tools` so its `additional_tools` item
+    is the sole declaration — but when that item's carrier sits before the compaction boundary, the
+    trim drops it. Deriving `introduced_tool_names` from the trimmed history means the tool is
+    simply not "introduced" and keeps its regular `tools` declaration, instead of vanishing from
+    the request entirely."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content=None, provider_name='openai', provider_details={'encrypted_content': 'encrypted'}
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters(function_tools=[tool]))
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert [t['name'] for t in request_kwargs['tools']] == snapshot(['lookup_refund_policy'])
+    assert all(item.get('type') != 'additional_tools' for item in request_kwargs['input'])
+
+
+async def test_openai_responses_pre_compaction_revealed_deferred_tool_is_redeclared_with_schema(
+    allow_model_requests: None,
+):
+    """A `'via_history'` reveal whose carrier sits before the compaction boundary is redeclared.
+
+    The visibility promises the definition travels in a history item, but the trim drops that item —
+    left alone, the tool would be absent from `tools` *and* from the input, vanishing from the
+    request entirely. Until reveal state is boundary-aware (#7225), request building redeclares the
+    tool with its full schema; the compaction turn rebuilds the prefix anyway, so this costs nothing."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        description='Look up the refund policy.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+    )
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name])]),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content=None, provider_name='openai', provider_details={'encrypted_content': 'encrypted'}
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    _, parameters = model.prepare_request(
+        None, ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
+    )
+    assert parameters.visibility_of(tool.name) == 'via_history'
+    await model.request(messages, None, parameters)
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    [wire_tool] = [t for t in request_kwargs['tools'] if t.get('name') == tool.name]
+    assert not wire_tool.get('defer_loading'), 'the redeclaration must carry the schema, not defer it'
+    assert all(item.get('type') != 'additional_tools' for item in request_kwargs['input'])
+
+
+async def test_openai_responses_standing_prompt_survives_response_first_history(allow_model_requests: None):
+    """A history that opens with a `ModelResponse` still finds the first request's standing prompt.
+
+    Pinned on the planting path (`standing_prompt_retained=False`, as re-compaction maps this
+    history): ordinary requests omit the standing prompt, relying on the compaction item's
+    retention."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart(content='resumed mid-conversation')], provider_name='openai'),
+        ModelRequest(parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='dropped')]),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content=None, provider_name='openai', provider_details={'encrypted_content': 'encrypted'}
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters(), standing_prompt_retained=False
+    )
+
+    assert mapped == snapshot(
+        [
+            {'role': 'system', 'content': 'Standing system prompt.'},
+            {'id': None, 'encrypted_content': 'encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
+async def test_openai_responses_conversation_id_recovered_across_compaction(allow_model_requests: None):
+    """`openai_conversation_id='auto'` still finds the conversation ID carried by a response the
+    trim drops: server-side state is resolved from the untrimmed history, while the mapped input
+    is the trimmed window."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('first turn'),
+        ModelResponse(
+            parts=[TextPart(content='ok')],
+            provider_name='openai',
+            provider_details={'conversation_id': 'conv_123'},
+        ),
+        ModelRequest.user_text_prompt('second turn'),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content=None, provider_name='openai', provider_details={'encrypted_content': 'encrypted'}
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    await model.request(
+        messages,
+        OpenAIResponsesModelSettings(openai_conversation_id='auto'),
+        ModelRequestParameters(),
+    )
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert request_kwargs['conversation'] == snapshot('conv_123')
+    assert request_kwargs['input'] == snapshot(
+        [
+            {'id': None, 'encrypted_content': 'encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
+async def test_openai_responses_standing_instructions_survive_compaction(allow_model_requests: None):
+    """A direct `Model.request()` call whose only instructions live before the boundary keeps them:
+    the standing-prompt request carries the latest prefix instructions, so the last-two-requests
+    fallback still finds them when the trailing request is tool-return-only."""
+    mock_client = MockOpenAIResponses.create_mock(response_message([]))
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='dropped')], instructions='Standing instructions.'),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content=None, provider_name='openai', provider_details={'encrypted_content': 'encrypted'}
+                ),
+                ToolCallPart(tool_name='do_thing', args={}, tool_call_id='call-1'),
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='do_thing', content='done', tool_call_id='call-1')]),
+    ]
+
+    await model.request(messages, None, ModelRequestParameters())
+
+    request_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert request_kwargs['instructions'] == snapshot('Standing instructions.')
+
+
+async def test_openai_responses_compaction_composes_with_auto_chain_boundary(allow_model_requests: None):
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('drop before compact endpoint response'),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content='summary',
+                    provider_name='openai',
+                    provider_details={'encrypted_content': 'encrypted'},
+                )
+            ],
+            provider_name='openai',
+            provider_response_id='compact-response-id',
+            provider_details={'compaction': True},
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    previous_response_id, chain_messages = model._get_previous_response_id_and_new_messages(  # pyright: ignore[reportPrivateUsage]
+        messages
+    )
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        chain_messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    assert previous_response_id is None
+    assert mapped == snapshot(
+        [
+            {'id': None, 'encrypted_content': 'encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
+async def test_openai_responses_foreign_compaction_does_not_trim(allow_model_requests: None):
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('keep before foreign boundary'),
+        ModelResponse(
+            parts=[CompactionPart(content='foreign summary', provider_name='anthropic'), TextPart(content='keep text')],
+            provider_name='anthropic',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    assert mapped == snapshot(
+        [
+            {'role': 'user', 'content': 'keep before foreign boundary'},
+            {'role': 'assistant', 'content': 'keep text'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
+async def test_openai_responses_compaction_without_encrypted_content_does_not_trim(allow_model_requests: None):
+    """A compaction part the Responses API render skips must not act as a trim boundary either."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('keep before unrenderable boundary'),
+        ModelResponse(
+            parts=[
+                CompactionPart(content='summary without payload', provider_name='openai'),
+                TextPart(content='keep text'),
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    assert mapped == snapshot(
+        [
+            {'role': 'user', 'content': 'keep before unrenderable boundary'},
+            {'role': 'assistant', 'content': 'keep text'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
+async def test_openai_responses_without_compaction_maps_unchanged(allow_model_requests: None):
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('first request'),
+        ModelResponse(parts=[TextPart(content='first response')], provider_name='openai'),
+        ModelRequest.user_text_prompt('second request'),
+    ]
+
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    assert mapped == snapshot(
+        [
+            {'role': 'user', 'content': 'first request'},
+            {'role': 'assistant', 'content': 'first response'},
+            {'role': 'user', 'content': 'second request'},
+        ]
+    )
 
 
 async def test_openai_responses_compact_stateful_mode_stream(allow_model_requests: None, openai_api_key: str):
@@ -12336,6 +14130,133 @@ async def test_openai_responses_phase_streamed(allow_model_requests: None):
     assert text_parts[0].provider_details == snapshot({'phase': 'final_answer'})
 
 
+async def test_openai_responses_phase_streamed_on_part_start(allow_model_requests: None, openai_api_key: str):
+    """Real cassette: `phase` rides the `PartStartEvent`, so commentary can be filtered as it streams.
+
+    The API announces `phase` on `output_item.added` — before the first delta — so a consumer knows
+    what kind of text a part holds the moment it opens, without buffering the part to find out.
+    """
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model=model,
+        instructions='Briefly narrate what you are about to do before calling each tool.',
+    )
+
+    @agent.tool_plain
+    async def get_capital(country: str) -> str:
+        return 'Potato City'
+
+    text_part_starts: list[tuple[str, Any]] = []
+    text_delta_count = 0
+    delta_phases: set[Any] = set()
+    async with agent.run_stream_events('What is the capital of PotatoLand?') as event_stream:
+        async for event in event_stream:
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                text_part_starts.append((event.part.content, (event.part.provider_details or {}).get('phase')))
+            elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                text_delta_count += 1
+                delta_phases.add((event.delta.provider_details or {}).get('phase'))
+
+    # Each part's phase is known as it opens, and the content is only the first chunk, not the whole part.
+    assert text_part_starts == snapshot([('I', 'commentary'), ('The', 'final_answer')])
+    # The phase opens the part and is not repeated on any of the deltas that follow.
+    assert text_delta_count == snapshot(23)
+    assert delta_phases == snapshot({None})
+
+
+async def test_openai_responses_phase_streamed_without_deltas(allow_model_requests: None):
+    """`phase` is still captured when a gateway emits `output_text.done` without any deltas.
+
+    Not a VCR test: OpenAI itself always sends deltas — `test_openai_responses_phase_streamed_on_part_start`
+    records them for every text part — so this fallback only ever runs against OpenAI-compatible gateways
+    whose streams we have no way to record.
+    """
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-5.5',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage.model_construct(
+                id='msg_001',
+                content=[],
+                role='assistant',
+                status='in_progress',
+                type='message',
+                phase='final_answer',
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text='Paris.',
+            type='response.output_text.done',
+            sequence_number=2,
+            logprobs=[],
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=ResponseOutputMessage.model_construct(
+                id='msg_001',
+                content=cast(list[Content], [ResponseOutputText(text='Paris.', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+                phase='final_answer',
+            ),
+            output_index=0,
+            type='response.output_item.done',
+            sequence_number=3,
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=4,
+        ),
+    ]
+
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    events: list[Any] = []
+    async with agent.iter(user_prompt='What is the capital of France?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        events.append(event)
+                # The run would go on to retry this text-less response; only the stream matters here.
+                break
+
+    # Same contract as the delta path: the phase arrives on the `PartStartEvent` that opens the
+    # part, and the completed part carries it too.
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=TextPart(content='', provider_name='openai', provider_details={'phase': 'final_answer'}),
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(
+                index=0,
+                part=TextPart(content='', provider_name='openai', provider_details={'phase': 'final_answer'}),
+            ),
+        ]
+    )
+
+
 async def test_openai_responses_phase_round_trip(allow_model_requests: None):
     """When the profile supports phase, it's sent back on the assistant ResponseOutputMessageParam."""
     mock_client = MockOpenAIResponses.create_mock(
@@ -12530,3 +14451,1294 @@ def test_openai_responses_phase_profile_flag():
     assert openai_model_profile('gpt-5.2').get('openai_supports_phase', False) is False
     assert openai_model_profile('gpt-5').get('openai_supports_phase', False) is False
     assert openai_model_profile('gpt-4o').get('openai_supports_phase', False) is False
+
+
+def _text_response(text: str, *, status: ResponseStatus = 'completed', background: bool = False) -> resp.Response:
+    """Create a Response with a single text output message."""
+    r = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text=text, type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    r.status = status
+    r.background = background
+    return r
+
+
+def _tracking_sleep(*, real_sleep: bool = False) -> tuple[list[float], Callable[[float], Awaitable[None]]]:
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        if real_sleep:  # pragma: lax no cover
+            await asyncio.sleep(delay)
+
+    return delays, sleep
+
+
+@pytest.mark.vcr()
+async def test_background_mode_vcr(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
+    """VCR test: background mode with a simple prompt.
+
+    When background=True, the API may return 'queued'/'in_progress' before completing.
+    The agent's continuation loop handles polling via retrieve().
+    """
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep(real_sleep=vcr.record_mode != RecordMode.NONE)
+
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'What is 2 + 2?',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
+
+    assert result.output == snapshot('2 + 2 equals 4.')
+    # Live responses may require a different number of polls while recording.
+    assert vcr.record_mode != RecordMode.NONE or sleep_delays == [2.0, 2.0]
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='2 + 2 equals 4.',
+                        id='msg_06a562f31ab7703300698b9df26c708197991b3cb162a20505',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=15,
+                    output_tokens=9,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0001275'),
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
+                provider_response_id='resp_06a562f31ab7703300698b9df109c481979ebf760b2ff5fc75',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_background_mode_reasoning_vcr(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
+    """VCR test: background mode on a reasoning model, exercising the encrypted-content retrieve path.
+
+    Reasoning models request `reasoning.encrypted_content` on create, but the background poll must omit
+    it, else OpenAI 400s ('Encrypted content cannot be requested for persisted responses'). Every other
+    background cassette uses a non-reasoning model (gpt-4o) whose `include` is empty, so this is the only
+    one that covers the retrieve path that regressed in #6611.
+    """
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+    _, sleep = _tracking_sleep(real_sleep=vcr.record_mode != RecordMode.NONE)
+
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'What is 2 + 2?',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
+
+    assert result.output == snapshot('2 + 2 = 4.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='2 + 2 = 4.',
+                        id='msg_047f9036fb333784006a5fe9dd449881908fcfe84c03eed1b3',
+                        provider_name='openai',
+                        provider_details={'phase': 'final_answer'},
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=14,
+                    output_tokens=12,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.00043'),
+                ),
+                model_name='gpt-5.6-sol',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
+                provider_response_id='resp_047f9036fb333784006a5fe9db456c819095d041b89bf6629e',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_background_mode_with_tool_vcr(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
+    """VCR test: background mode with a tool call."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep(real_sleep=vcr.record_mode != RecordMode.NONE)
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        """Get current weather for a city."""
+        return f'Sunny and 72F in {city}'
+
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'What is the weather in Paris? Use the get_weather tool.',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
+
+    assert result.output == snapshot('The weather in Paris is currently sunny with a temperature of 72\u00b0F.')
+    # Live responses may require a different number of polls while recording.
+    assert vcr.record_mode != RecordMode.NONE or sleep_delays == [2.0, 2.0, 2.0]
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the weather in Paris? Use the get_weather tool.', timestamp=IsDatetime()
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_weather',
+                        args='{"city":"Paris"}',
+                        tool_call_id='call_JcaYgcpgGGTn4GjzjNDDB1xE',
+                        id='fc_01b4d93abce33afe00698b9df584a8819ba20ca908088cf338',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=51,
+                    output_tokens=15,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0002775'),
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
+                provider_response_id='resp_01b4d93abce33afe00698b9df44be4819bb99fff16d77a0236',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather',
+                        content='Sunny and 72F in Paris',
+                        tool_call_id='call_JcaYgcpgGGTn4GjzjNDDB1xE',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='The weather in Paris is currently sunny with a temperature of 72\u00b0F.',
+                        id='msg_0e6b15873828668f00698b9df7c0bc8196ab1a99ca534cf1cd',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=78,
+                    output_tokens=17,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.000365'),
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
+                provider_response_id='resp_0e6b15873828668f00698b9df63cb08196a7f29ecc4788d6b6',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_background_mode_streaming_vcr(allow_model_requests: None, openai_api_key: str):
+    """VCR test: background mode with streaming (run_stream).
+
+    Verifies that the streamed continuation path stitches an OpenAI Responses API background job
+    (suspended while queued/in progress, resumed via `retrieve(stream=True, starting_after=...)`)
+    into a single completed response end-to-end.
+    """
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    async with agent.run_stream(
+        'What is 2 + 2?',
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+    ) as result:
+        output = await result.get_output()
+
+    assert output == snapshot('2 + 2 equals 4.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is 2 + 2?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='2 + 2 equals 4.',
+                        id='msg_0da443d9ee8333600069950a08ad6c8196b75dbd82078d520a',
+                        provider_name='openai',
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=15,
+                    output_tokens=9,
+                    output_reasoning_tokens=0,
+                    details={'reasoning_tokens': 0},
+                    cost=Decimal('0.0001275'),
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1/',
+                provider_details={'timestamp': IsDatetime(), 'background': True, 'finish_reason': 'completed'},
+                provider_response_id='resp_0da443d9ee8333600069950a0635d88196b2d9243b08e8cc01',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_background_mode_streaming_continuation_vcr(allow_model_requests: None, openai_api_key: str):
+    """VCR test: manually continue a suspended background response via `model.request_stream()`."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    original_request: ModelRequest | None = None
+    suspended_response: ModelResponse | None = None
+
+    async with agent.iter(
+        user_prompt='What is 2 + 2?',
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+    ) as agent_run:
+        node = await anext(node async for node in agent_run if Agent.is_model_request_node(node))
+        original_request = node.request
+        async with node.stream(agent_run.ctx) as request_stream:
+            # Intentionally stop reading early so the underlying background job stays suspended.
+            await anext(aiter(request_stream))
+            # The streamed-continuation composite reports its mid-stream snapshot as 'incomplete';
+            # the background job itself is still suspended, so reconstruct the suspended response to
+            # drive a manual model-level continuation below.
+            assert request_stream.response.state == 'incomplete'
+            suspended_response = replace(request_stream.response, state='suspended')
+
+    assert original_request is not None
+    assert suspended_response is not None
+    assert suspended_response.state == 'suspended'
+    assert suspended_response.provider_response_id
+
+    async def continue_stream() -> tuple[ModelResponse, str]:
+        async with model.request_stream(
+            messages=[original_request, suspended_response],
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+            model_request_parameters=ModelRequestParameters(),
+        ) as continuation_stream:
+            async for _ in continuation_stream:
+                pass
+            return continuation_stream.get(), continuation_stream.state
+
+    continuation_response, continuation_stream_state = await asyncio.wait_for(continue_stream(), timeout=60)
+
+    continuation_output = ''.join(part.content for part in continuation_response.parts if isinstance(part, TextPart))
+
+    assert continuation_output == snapshot('2 + 2 equals 4.')
+    assert continuation_response.state == 'complete'
+    assert continuation_stream_state == 'complete'
+
+
+@pytest.mark.vcr()
+async def test_background_mode_streaming_starting_after_vcr(
+    allow_model_requests: None, openai_api_key: str, monkeypatch: pytest.MonkeyPatch
+):
+    """VCR test: continuation retrieve call includes `starting_after` from suspended stream state."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+
+    original_request: ModelRequest | None = None
+    suspended_response: ModelResponse | None = None
+
+    async with agent.iter(
+        user_prompt='What is 2 + 2?',
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+    ) as agent_run:
+        node = await anext(node async for node in agent_run if Agent.is_model_request_node(node))
+        original_request = node.request
+        async with node.stream(agent_run.ctx) as request_stream:
+            # Stop early: the composite reports 'incomplete' mid-stream while the background job is
+            # still suspended. Reconstruct the suspended response (carrying the continuation metadata)
+            # to drive a manual model-level continuation with `starting_after`.
+            await anext(aiter(request_stream))
+            assert request_stream.response.state == 'incomplete'
+            suspended_response = replace(request_stream.response, state='suspended')
+
+    assert original_request is not None
+    assert suspended_response is not None
+    assert suspended_response.state == 'suspended'
+    assert suspended_response.provider_response_id
+    provider_details: dict[str, Any] = suspended_response.provider_details or {}
+    last_sequence_number = cast(int, provider_details.get('last_sequence_number') or 0)
+    suspended_response = replace(
+        suspended_response,
+        provider_details={**provider_details, 'last_sequence_number': last_sequence_number},
+    )
+
+    retrieve_kwargs: list[dict[str, Any]] = []
+    original_retrieve = model.client.responses.retrieve
+
+    async def capture_retrieve(*args: Any, **kwargs: Any):
+        retrieve_kwargs.append(kwargs)
+        return await original_retrieve(*args, **kwargs)
+
+    monkeypatch.setattr(model.client.responses, 'retrieve', capture_retrieve)
+
+    async def continue_stream() -> tuple[ModelResponse, str]:
+        async with model.request_stream(
+            messages=[original_request, suspended_response],
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+            model_request_parameters=ModelRequestParameters(),
+        ) as continuation_stream:
+            async for _ in continuation_stream:
+                pass
+            return continuation_stream.get(), continuation_stream.state
+
+    continuation_response, continuation_stream_state = await asyncio.wait_for(continue_stream(), timeout=60)
+    continuation_output = ''.join(part.content for part in continuation_response.parts if isinstance(part, TextPart))
+
+    assert continuation_output == snapshot('2 + 2 equals 4.')
+    assert continuation_response.state == 'complete'
+    assert continuation_stream_state == 'complete'
+    assert {
+        'state': suspended_response.state,
+        'provider_response_id': suspended_response.provider_response_id,
+        'last_sequence_number': last_sequence_number,
+    } == snapshot(
+        {
+            'state': 'suspended',
+            'provider_response_id': IsStr(),
+            'last_sequence_number': IsInt(),
+        }
+    )
+
+    assert len(retrieve_kwargs) == 1
+    assert retrieve_kwargs[0]['response_id'] == suspended_response.provider_response_id
+    assert retrieve_kwargs[0]['stream'] is True
+    assert retrieve_kwargs[0]['starting_after'] == last_sequence_number
+
+
+@pytest.mark.vcr()
+async def test_background_mode_streaming_without_starting_after_vcr(
+    allow_model_requests: None, openai_api_key: str, monkeypatch: pytest.MonkeyPatch
+):
+    """VCR test: non-stream background response resumes via non-stream retrieve without `starting_after`."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+
+    original_request = ModelRequest(parts=[UserPromptPart(content='What is 2 + 2?')])
+    initial_response = await model.request(
+        messages=[original_request],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        model_request_parameters=ModelRequestParameters(),
+    )
+    assert initial_response.provider_response_id
+
+    provider_details: dict[str, Any] = {
+        **(initial_response.provider_details or {}),
+    }
+    assert 'last_sequence_number' not in provider_details
+    provider_details.pop('last_sequence_number', None)
+    suspended_response = replace(initial_response, state='suspended', provider_details=provider_details or None)
+
+    retrieve_kwargs: list[dict[str, Any]] = []
+    original_retrieve = model.client.responses.retrieve
+
+    async def capture_retrieve(*args: Any, **kwargs: Any):
+        retrieve_kwargs.append(kwargs)
+        return await original_retrieve(*args, **kwargs)
+
+    monkeypatch.setattr(model.client.responses, 'retrieve', capture_retrieve)
+
+    async def continue_stream() -> tuple[ModelResponse, str]:
+        async with model.request_stream(
+            messages=[original_request, suspended_response],
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+            model_request_parameters=ModelRequestParameters(),
+        ) as continuation_stream:
+            return continuation_stream.get(), continuation_stream.state
+
+    continuation_response, continuation_stream_state = await asyncio.wait_for(continue_stream(), timeout=30)
+
+    assert continuation_stream_state in ('suspended', 'complete')
+    assert continuation_response.state in ('suspended', 'complete')
+    assert {
+        'state': suspended_response.state,
+        'provider_response_id': suspended_response.provider_response_id,
+        'continuation_state': continuation_response.state,
+    } == snapshot(
+        {
+            'state': 'suspended',
+            'provider_response_id': IsStr(),
+            'continuation_state': IsStr(),
+        }
+    )
+
+    assert len(retrieve_kwargs) == 1
+    assert retrieve_kwargs[0]['response_id'] == suspended_response.provider_response_id
+    assert retrieve_kwargs[0]['stream'] is False
+    # No resumable sequence cursor here, so `starting_after` is passed as the `omit` sentinel (not sent).
+    assert retrieve_kwargs[0]['starting_after'] is omit
+
+
+async def test_background_queued_then_completed(allow_model_requests: None):
+    """Background mode: create returns status='queued', retrieve returns status='completed'.
+
+    Scripted SDK responses make the polling transition deterministic, which a live VCR recording cannot guarantee.
+    """
+    mock_client = MockOpenAIResponses(
+        response=_text_response('', status='queued', background=True),
+        retrieve_responses=[_text_response('The answer is 42.', background=True)],
+    )
+    mock_client = cast(AsyncOpenAI, mock_client)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep()
+
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'What is the meaning of life?',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
+    assert sleep_delays == [2.0]
+    assert result.output == 'The answer is 42.'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What is the meaning of life?', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The answer is 42.', id='output-1', provider_name='openai')],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_background_in_progress_then_completed(allow_model_requests: None):
+    """Background mode: create returns status='in_progress', retrieve returns status='completed'.
+
+    Scripted SDK responses make the polling transition deterministic, which a live VCR recording cannot guarantee.
+    """
+    mock_client = MockOpenAIResponses(
+        response=_text_response('thinking...', status='in_progress', background=True),
+        retrieve_responses=[_text_response('Done!', background=True)],
+    )
+    mock_client = cast(AsyncOpenAI, mock_client)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep()
+
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'Hello',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
+    assert sleep_delays == [2.0]
+    assert result.output == 'Done!'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done!', id='output-1', provider_name='openai')],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_background_passes_parameter(allow_model_requests: None):
+    """Verify background=True appears in create kwargs."""
+    mock_client = MockOpenAIResponses.create_mock(_text_response('ok'))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    await agent.run(
+        'test',
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+    )
+
+    kwargs = get_mock_responses_kwargs(mock_client)
+    assert kwargs[0]['background'] is True
+
+
+async def test_background_max_polls(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
+    """Background mode: a job that never leaves `in_progress` eventually trips the replace-poll backstop.
+
+    Re-polling one background job is a `merge_mode` *replace* re-suspension, so it's bounded by the far
+    larger `MAX_BACKGROUND_POLLS` backstop (not the small `MAX_GENERATION_CONTINUATIONS` cap), which
+    is why a legitimately long job isn't killed after 10 generation continuations. Patch it small here.
+    Scripted responses are required because a live VCR recording cannot deterministically reach the backstop.
+    """
+    monkeypatch.setattr('pydantic_ai._agent_graph.MAX_BACKGROUND_POLLS', 3)
+    retrieve_response = _text_response('still working...', status='in_progress', background=True)
+
+    mock_client = MockOpenAIResponses(
+        response=_text_response('still working...', status='in_progress', background=True),
+        retrieve_responses=[retrieve_response] * 10,
+    )
+    mock_client = cast(AsyncOpenAI, mock_client)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep()
+
+    with Agent.using_sleep(sleep):
+        with pytest.raises(UnexpectedModelBehavior, match='remained suspended after polling the maximum of 3 times'):
+            await agent.run(
+                'test',
+                model_settings=OpenAIResponsesModelSettings(openai_background=True),
+                usage_limits=UsageLimits(request_limit=None),
+            )
+
+    assert sleep_delays == [2.0, 2.0, 2.0, 2.0]
+
+
+async def test_background_retrieve_uses_response_id(allow_model_requests: None):
+    """Verify that the retrieve call uses the response ID from the create response.
+
+    The mock client exposes exact retrieve arguments, which the VCR request matcher does not assert.
+    """
+    queued_response = _text_response('', status='queued', background=True)
+    queued_response.id = 'resp_bg_123'
+
+    mock_client = MockOpenAIResponses(
+        response=queued_response,
+        retrieve_responses=[_text_response('final', background=True)],
+    )
+    mock_client = cast(AsyncOpenAI, mock_client)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+    sleep_delays, sleep = _tracking_sleep()
+
+    with Agent.using_sleep(sleep):
+        result = await agent.run(
+            'test',
+            model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        )
+    assert sleep_delays == [2.0]
+    assert result.output == 'final'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='', id='output-1', provider_name='openai'),
+                    TextPart(content='final', id='output-1', provider_name='openai'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_url='https://api.openai.com/v1',
+                provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime(), 'background': True},
+                provider_response_id='123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
+    assert len(retrieve_kwargs) == 1
+    assert retrieve_kwargs[0]['response_id'] == 'resp_bg_123'
+
+
+async def test_background_reasoning_retrieve_omits_encrypted_content(allow_model_requests: None):
+    """A reasoning model requests `reasoning.encrypted_content` on create, but the background poll must not.
+
+    OpenAI 400s ('Encrypted content cannot be requested for persisted responses') when a retrieve of a
+    background response asks for encrypted content, so `_responses_retrieve` passes `is_retrieve=True` to
+    drop it. The mock client exposes the exact create/retrieve arguments, which the VCR matcher does not
+    assert, so this pins the asymmetry that the retrieve wire contract depends on.
+    """
+    queued_response = _text_response('', status='queued', background=True)
+    queued_response.id = 'resp_bg_reasoning_123'
+
+    mock_client = MockOpenAIResponses(
+        response=queued_response,
+        retrieve_responses=[_text_response('final', background=True)],
+    )
+    mock_client = cast(AsyncOpenAI, mock_client)
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+    _, sleep = _tracking_sleep()
+
+    with Agent.using_sleep(sleep):
+        result = await agent.run('test', model_settings=OpenAIResponsesModelSettings(openai_background=True))
+    assert result.output == 'final'
+
+    create_kwargs = get_mock_responses_kwargs(mock_client)
+    assert create_kwargs[0]['include'] == ['reasoning.encrypted_content']
+
+    retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
+    assert len(retrieve_kwargs) == 1
+    assert 'reasoning.encrypted_content' not in retrieve_kwargs[0].get('include', [])
+
+
+async def test_background_request_stream_uses_non_stream_retrieve_without_sequence(allow_model_requests: None):
+    initial_response = ModelResponse(
+        parts=[],
+        model_name='gpt-4o',
+        provider_name='openai',
+        provider_response_id='resp_bg_123',
+        state='suspended',
+    )
+    queued_response = response_message([])
+    queued_response.id = 'resp_bg_123'
+    queued_response.status = 'queued'
+    queued_response.background = True
+
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_responses=[queued_response]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[
+            ModelRequest(parts=[UserPromptPart(content='test')]),
+            initial_response,
+        ],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert request_stream.state == 'suspended'
+        assert [event async for event in request_stream] == []
+
+    retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
+    assert len(retrieve_kwargs) == 1
+    assert retrieve_kwargs[0]['response_id'] == 'resp_bg_123'
+    assert retrieve_kwargs[0]['stream'] is False
+    assert 'starting_after' not in retrieve_kwargs[0]
+
+
+async def test_background_streaming_passes_starting_after(allow_model_requests: None):
+    initial_response = ModelResponse(
+        parts=[TextPart('partial')],
+        model_name='gpt-4o-2024-08-06',
+        provider_name='openai',
+        provider_response_id='resp_bg_456',
+        state='suspended',
+        provider_details={'last_sequence_number': 5},
+    )
+    queued_response = response_message([])
+    queued_response.id = 'resp_bg_456'
+    queued_response.status = 'queued'
+    queued_response.background = True
+
+    mock_client = cast(
+        AsyncOpenAI,
+        MockOpenAIResponses(
+            retrieve_stream=[
+                [ResponseCreatedEvent(response=queued_response, sequence_number=0, type='response.created')]
+            ]
+        ),
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[
+            ModelRequest(parts=[UserPromptPart(content='test')]),
+            initial_response,
+        ],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert [event async for event in request_stream] == []
+
+    retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
+    assert len(retrieve_kwargs) == 1
+    assert retrieve_kwargs[0]['response_id'] == 'resp_bg_456'
+    assert retrieve_kwargs[0]['stream'] is True
+    assert retrieve_kwargs[0]['starting_after'] == 5
+
+
+async def test_background_streaming_continuation_without_created_event(allow_model_requests: None):
+    initial_response = ModelResponse(
+        parts=[TextPart('The')],
+        model_name='gpt-4o-2024-08-06',
+        provider_name='openai',
+        provider_response_id='resp_bg_789',
+        state='suspended',
+        provider_details={'last_sequence_number': 5},
+    )
+    completed_response = response_message([])
+    completed_response.id = 'resp_bg_789'
+    completed_response.model = 'gpt-4o-2024-08-06'
+    completed_response.status = 'completed'
+
+    mock_client = cast(
+        AsyncOpenAI,
+        MockOpenAIResponses(
+            retrieve_stream=[
+                [
+                    resp.ResponseTextDeltaEvent(
+                        content_index=0,
+                        delta=' capital of France.',
+                        item_id='msg_1',
+                        logprobs=[],
+                        output_index=0,
+                        sequence_number=6,
+                        type='response.output_text.delta',
+                    ),
+                    resp.ResponseCompletedEvent(
+                        response=completed_response,
+                        sequence_number=7,
+                        type='response.completed',
+                    ),
+                ]
+            ]
+        ),
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[
+            ModelRequest(parts=[UserPromptPart(content='test')]),
+            initial_response,
+        ],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        # A resumed stream (no `response.created` event) starts 'suspended': we only got here because
+        # the background job was still in progress, and a clean EOF without a terminal event means it
+        # still is. The terminal `completed` event below then flips it to 'complete'.
+        assert request_stream.state == 'suspended'
+        assert [event async for event in request_stream] != []
+
+    model_response = request_stream.get()
+    assert model_response.model_name == 'gpt-4o-2024-08-06'
+    assert model_response.state == 'complete'
+
+    retrieve_kwargs = get_mock_retrieve_kwargs(mock_client)
+    assert retrieve_kwargs[0]['starting_after'] == 5
+
+
+async def test_request_stream_handles_model_response_from_responses_create(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+):
+    """`request_stream` should gracefully handle `_responses_create()` returning `ModelResponse`."""
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    returned_response = ModelResponse(
+        parts=[],
+        model_name='gpt-4o',
+        provider_name='azure',
+        finish_reason='content_filter',
+        provider_details={'finish_reason': 'content_filter'},
+    )
+
+    async def mock_responses_create(
+        messages: list[ModelRequest | ModelResponse],
+        stream: bool,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        assert stream is True
+        return returned_response
+
+    monkeypatch.setattr(model, '_responses_create', mock_responses_create)
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='bad prompt')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert [event async for event in request_stream] == []
+
+    model_response = request_stream.get()
+    assert model_response.parts == []
+    assert model_response.finish_reason == 'content_filter'
+    assert model_response.provider_name == 'azure'
+    assert model_response.provider_details == {'finish_reason': 'content_filter'}
+    assert model_response.state == 'complete'
+
+
+@pytest.mark.parametrize('status', ['queued', 'in_progress'])
+async def test_stream_sets_suspended_state_for_pending_statuses(
+    allow_model_requests: None,
+    status: Literal['queued', 'in_progress'],
+):
+    response = response_message([])
+    response.id = f'resp_{status}'
+    response.status = status
+    response.background = True
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [ResponseCreatedEvent(response=response, sequence_number=0, type='response.created')]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')])],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert request_stream.state == 'suspended'
+        assert [event async for event in request_stream] == []
+
+    model_response = request_stream.get()
+    assert model_response.state == 'suspended'
+    assert model_response.provider_response_id == f'resp_{status}'
+    assert model_response.provider_details is not None
+    assert model_response.provider_details.get('last_sequence_number') == 0
+
+
+async def test_request_stream_model_response_with_parts(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
+    """`_ModelResponseStreamedResponse` should handle pre-built `ModelResponse` with parts."""
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses())
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    returned_response = ModelResponse(
+        parts=[TextPart('filtered content')],
+        model_name='gpt-4o',
+        provider_name='azure',
+        finish_reason='content_filter',
+    )
+
+    async def mock_responses_create(
+        messages: list[ModelRequest | ModelResponse],
+        stream: bool,
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return returned_response
+
+    monkeypatch.setattr(model, '_responses_create', mock_responses_create)
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        events = [event async for event in request_stream]
+
+    model_response = request_stream.get()
+    assert model_response.parts == [TextPart('filtered content')]
+    assert model_response.finish_reason == 'content_filter'
+    # Parts are set up via handle_part in __post_init__, but _get_event_iterator yields nothing
+    assert events == []
+
+
+async def test_stream_handles_queued_event(allow_model_requests: None):
+    """ResponseQueuedEvent during streaming sets state to 'suspended' and accumulates usage."""
+    queued_response = response_message([])
+    queued_response.status = 'queued'
+    queued_response.background = True
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            ResponseCreatedEvent(response=queued_response, sequence_number=0, type='response.created'),
+            ResponseQueuedEvent(response=queued_response, sequence_number=1, type='response.queued'),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')])],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        events = [event async for event in request_stream]
+
+    assert events == []
+    assert request_stream.state == 'suspended'
+
+
+async def test_foreground_stream_pending_status_is_incomplete(allow_model_requests: None):
+    """A foreground (non-background) stream that ends without a terminal event is 'incomplete', not 'suspended'.
+
+    A foreground Responses stream emits `in_progress`/`queued` status events while it runs but isn't
+    resumable server-side. A clean EOF without `response.completed` (e.g. a dropped connection) therefore
+    leaves it 'incomplete'; marking it 'suspended' would send the continuation loop off to
+    `retrieve(stream=True, starting_after=...)` a foreground response, which the Responses API rejects.
+    Unit-style: a mid-stream EOF on a foreground job isn't reproducible through a recorded cassette.
+    """
+    response = response_message([])
+    response.id = 'resp_fg'
+    response.status = 'in_progress'
+    # `background` stays falsy: this is an ordinary foreground stream, not a resumable background job.
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseCreatedEvent(response=response, sequence_number=0, type='response.created'),
+            resp.ResponseInProgressEvent(response=response, sequence_number=1, type='response.in_progress'),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')])],
+        model_settings=OpenAIResponsesModelSettings(),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert request_stream.state == 'incomplete'
+        assert [event async for event in request_stream] == []
+
+    assert request_stream.state == 'incomplete'
+    model_response = request_stream.get()
+    assert model_response.state == 'incomplete'
+    assert (model_response.provider_details or {}).get('background') is None
+
+
+async def test_resumed_stream_without_terminal_event_stays_suspended(allow_model_requests: None):
+    """A resumed background stream that EOFs again without a terminal event stays 'suspended', not 'complete'.
+
+    `retrieve(stream=True, starting_after=...)` resumes a still-running background job. If that resumed
+    segment cleanly ends without a terminal `response.completed`, the job is still in progress and must
+    stay 'suspended' so the continuation loop keeps polling; letting it fall back to 'incomplete' would let
+    the composite stamp the merged response 'complete' and truncate a running job. Unit-style: a resumed
+    stream's EOF-without-terminal shape isn't reproducible through a recorded cassette.
+    """
+    initial_response = ModelResponse(
+        parts=[TextPart('partial')],
+        model_name='gpt-4o-2024-08-06',
+        provider_name='openai',
+        provider_response_id='resp_bg_resume',
+        state='suspended',
+        provider_details={'last_sequence_number': 5},
+    )
+
+    mock_client = cast(
+        AsyncOpenAI,
+        MockOpenAIResponses(
+            retrieve_stream=[
+                [
+                    resp.ResponseTextDeltaEvent(
+                        content_index=0,
+                        delta=' more',
+                        item_id='msg_1',
+                        logprobs=[],
+                        output_index=0,
+                        sequence_number=6,
+                        type='response.output_text.delta',
+                    ),
+                ]
+            ]
+        ),
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')]), initial_response],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert request_stream.state == 'suspended'
+        assert [event async for event in request_stream] != []
+
+    assert request_stream.state == 'suspended'
+    model_response = request_stream.get()
+    assert model_response.state == 'suspended'
+
+
+async def test_resume_without_background_setting_still_gets_retry_delay(allow_model_requests: None):
+    """A resumed suspended history stamps a retry delay even when the run's settings omit `openai_background`.
+
+    A persisted suspended response replayed by a fresh run may not carry the original `openai_background=True`,
+    but the server-side job is still background. The retry delay must be gated on the *response* being a
+    background job (its `provider_details['background']` marker, stamped from `response.background`), not on
+    the request setting — otherwise the continuation loop never sleeps, busy-polls `retrieve` until it hits
+    the continuation limit, and hard-fails a healthy job. Unit-style: asserts the exact delay a cassette can't pin.
+    """
+    in_progress_response = response_message([])
+    in_progress_response.id = 'resp_bg_persisted'
+    in_progress_response.status = 'in_progress'
+    in_progress_response.background = True
+
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_responses=[in_progress_response]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    suspended_history = ModelResponse(
+        parts=[],
+        model_name='gpt-4o',
+        provider_name='openai',
+        provider_response_id='resp_bg_persisted',
+        state='suspended',
+    )
+
+    result = await model.request(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')]), suspended_history],
+        # No `openai_background=True` here: mirrors a persisted suspended history resumed by a fresh run.
+        model_settings=OpenAIResponsesModelSettings(),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    assert result.state == 'suspended'
+    assert model.continuation_delay(result) == 2.0
+
+
+async def test_resume_expired_suspended_response(allow_model_requests: None):
+    """A 404 while resuming persisted suspended history raises the typed expiry error."""
+    error = APIStatusError(
+        'not found',
+        response=httpx.Response(status_code=404, request=httpx.Request('GET', 'https://example.com/v1/responses/id')),
+        body={'error': {'message': 'Response not found'}},
+    )
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_responses=[error]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    suspended_history = ModelResponse(
+        parts=[],
+        model_name='gpt-4o',
+        provider_name='openai',
+        provider_response_id='resp_expired',
+        state='suspended',
+    )
+
+    with pytest.raises(
+        SuspendedResponseExpired,
+        match="The suspended response 'resp_expired' could not be resumed because its server-side job is no longer available",
+    ):
+        await model.request(
+            messages=[ModelRequest(parts=[UserPromptPart(content='test')]), suspended_history],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+
+async def test_resume_non_404_error_stays_http_error(allow_model_requests: None):
+    """A non-404 error while resuming is NOT an expiry — it maps to the generic `ModelHTTPError`."""
+    error = APIStatusError(
+        'server error',
+        response=httpx.Response(status_code=500, request=httpx.Request('GET', 'https://example.com/v1/responses/id')),
+        body={'error': {'message': 'boom'}},
+    )
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_responses=[error]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    suspended_history = ModelResponse(
+        parts=[], model_name='gpt-4o', provider_name='openai', provider_response_id='resp_500', state='suspended'
+    )
+
+    with pytest.raises(ModelHTTPError):
+        await model.request(
+            messages=[ModelRequest(parts=[UserPromptPart(content='test')]), suspended_history],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+
+def test_openai_continuation_delay_only_for_background():
+    """`continuation_delay` returns the poll interval only for a suspended background job, else `None`."""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='x'))
+    background = ModelResponse(parts=[], state='suspended', provider_details={'background': True})
+    assert model.continuation_delay(background) == 2.0
+    # A completed background response, or a suspended non-background (e.g. Anthropic-style) one: no delay.
+    assert (
+        model.continuation_delay(ModelResponse(parts=[], state='complete', provider_details={'background': True}))
+        is None
+    )
+    assert model.continuation_delay(ModelResponse(parts=[], state='suspended')) is None
+
+
+async def test_cursorless_background_resume_stream_cancel_is_noop(allow_model_requests: None):
+    """Cancelling a cursor-less background-resume stream is a clean no-op, not a `NotImplementedError`.
+
+    A suspended history without a `last_sequence_number` cursor resumes via a non-stream `retrieve()`
+    wrapped in a `_ModelResponseStreamedResponse` — there's no live SSE connection to stream. Its
+    `cancel()`/teardown (also driven by the continuation composite's `close_stream()`) must no-op rather
+    than inherit the base `StreamedResponse.close_stream()` that raises `NotImplementedError`: the
+    server-side job is cancelled via `cancel_suspended_response`, not by closing a connection that
+    doesn't exist. Unit-style: this connectionless wrapper isn't produced by a normal streamed request,
+    so no cassette exercises its teardown.
+    """
+    in_progress_response = response_message([])
+    in_progress_response.id = 'resp_bg_persisted'
+    in_progress_response.status = 'in_progress'
+    in_progress_response.background = True
+
+    mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_responses=[in_progress_response]))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    suspended_history = ModelResponse(
+        parts=[],
+        model_name='gpt-4o',
+        provider_name='openai',
+        provider_response_id='resp_bg_persisted',
+        state='suspended',
+    )
+
+    async with model.request_stream(
+        messages=[ModelRequest(parts=[UserPromptPart(content='test')]), suspended_history],
+        model_settings=OpenAIResponsesModelSettings(openai_background=True),
+        model_request_parameters=ModelRequestParameters(),
+    ) as request_stream:
+        assert request_stream.state == 'suspended'
+        # No terminal event has been consumed, so `_finished` is False and `cancel()` calls
+        # `close_stream()` — which must not raise on this connectionless wrapper.
+        await request_stream.cancel()
+        assert request_stream.cancelled
+
+    assert request_stream.cancelled
+
+
+async def test_openai_responses_web_search_tool_external_web_access_default_omitted(allow_model_requests: None) -> None:
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model=model,
+        capabilities=[NativeTool(WebSearchTool())],
+    )
+
+    result = await agent.run('Search the web.')
+
+    assert result.output == 'done'
+    response_kwargs = get_mock_responses_kwargs(mock_client)[0]
+    assert len(response_kwargs['tools']) == 1
+    assert response_kwargs['tools'] == snapshot([{'type': 'web_search', 'search_context_size': 'medium'}])
+
+
+async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_model_requests: None):
+    """Malformed tool-call args are sent to the Responses API as the `INVALID_JSON` wrapper.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/7042. Responses builds its
+    own `ResponseFunctionToolCallParam` rather than reusing the Chat Completions mapping, so the
+    twin of `tests/models/test_openai.py::test_openai_malformed_tool_args_degraded_on_the_wire`
+    is what pins the transport `openai:` model names resolve to by default.
+    """
+    bad_args = '{"query": "bad query", "file_ids":[4556]</parameter>\n<parameter name="limit": 8}'
+
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'Please fix the tool call and try again.',
+        message_history=[
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='search_knowledge', tool_call_id='call_123', args=bad_args)],
+                timestamp=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        tool_name='search_knowledge',
+                        tool_call_id='call_123',
+                        content='Invalid JSON: expected `,` or `}` at line 1 column 99',
+                    )
+                ]
+            ),
+        ],
+    )
+    assert result.output == 'done'
+
+    function_call = get_mock_responses_kwargs(mock_client)[0]['input'][0]
+    assert function_call == snapshot(
+        {
+            'name': 'search_knowledge',
+            'arguments': '{"INVALID_JSON":"{\\"query\\": \\"bad query\\", \\"file_ids\\":[4556]</parameter>\\n<parameter name=\\"limit\\": 8}"}',
+            'call_id': 'call_123',
+            'type': 'function_call',
+        }
+    )
+    assert json.loads(function_call['arguments']) == {INVALID_JSON_KEY: bad_args}

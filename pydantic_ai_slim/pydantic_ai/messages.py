@@ -17,14 +17,16 @@ from urllib.parse import urlparse
 
 import pydantic
 import pydantic_core
-from genai_prices import calc_price, types as genai_types
+from genai_prices import types as genai_types
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import TypeAliasType, TypeVar, assert_never
 
+from pydantic_ai._cost import calculate_price_for_usage
+
 from . import _otel_messages, _utils
-from ._instrumentation import serialize_any
+from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
-from .exceptions import UnexpectedModelBehavior
+from .exceptions import ModelRetry, UnexpectedModelBehavior
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
@@ -115,9 +117,13 @@ FinishReason: TypeAlias = Literal[
     'tool_call',
     'error',
 ]
-"""Reason the model finished generating the response, normalized to OpenTelemetry values."""
+"""Reason the model finished generating the response.
 
-ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
+Mostly normalized to OpenTelemetry semantic convention values.
+Whether the agent should automatically continue is determined by `ModelResponse.state`, not by this field.
+"""
+
+ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', 'interrupted']
 """Lifecycle state of a model response.
 
 - `'complete'`: the response has been fully received from the model.
@@ -125,8 +131,13 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
   Yielded by [`AgentStream.response`][pydantic_ai.result.AgentStream.response] and
   [`StreamedRunResult.stream_response`][pydantic_ai.result.StreamedRunResult.stream_response]
   while iteration is in flight.
+- `'suspended'`: the model paused mid-turn and expects a continuation request.
+  Used by Anthropic `pause_turn` and OpenAI background mode. Pydantic AI issues these continuations
+  transparently for both `agent.run` and `agent.run_stream`, merging every segment into a single
+  completed [`ModelResponse`][pydantic_ai.messages.ModelResponse], so a finished turn in the message
+  history is never left in this state.
 - `'interrupted'`: streaming was explicitly stopped via
-  [`StreamedRunResult.cancel()`][pydantic_ai.result.StreamedRunResult.cancel] before the model
+  [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel] before the model
   finished generating.
 """
 
@@ -221,7 +232,7 @@ class FileUrl(ABC):
     """Vendor-specific metadata for the file.
 
     Supported by:
-    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+    - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, and `vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field for any file type: https://ai.google.dev/gemini-api/docs/media-resolution
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     - `GroqModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
@@ -503,7 +514,12 @@ class TextContent:
     _: KW_ONLY
 
     metadata: Any = None
-    """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
+    """Additional data that can be accessed programmatically by the application but is not sent to the LLM.
+
+    `ModelMessagesTypeAdapter` preserves this field, but as application-only data it is not
+    guaranteed to survive a round-trip through the UI adapters; see
+    [Storing and loading messages](../message-history.md#storing-and-loading-messages-to-json).
+    """
 
     kind: Literal['text-content'] = 'text-content'
     """Type identifier, this is available on all parts as a discriminator."""
@@ -536,7 +552,7 @@ class BinaryContent:
     """Vendor-specific metadata for the file.
 
     Supported by:
-    - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
+    - `GoogleModel`: `BinaryContent.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing, and `BinaryContent.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
     - `OpenAIChatModel`, `OpenAIResponsesModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `XaiModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
     - `GroqModel`: `BinaryContent.vendor_metadata['detail']` is used as `detail` setting for images
@@ -713,7 +729,9 @@ class CachePoint:
 
     - Anthropic
     - Amazon Bedrock (Converse API)
-    - OpenRouter (Anthropic and Gemini models)
+    - OpenAI (GPT-5.6 models)
+    - OpenRouter (Anthropic and Gemini models via `OpenRouterModel`, plus OpenAI GPT-5.6 models when
+      using `OpenAIChatModel` or `OpenAIResponsesModel` with `OpenRouterProvider`)
     """
 
     kind: Literal['cache-point'] = 'cache-point'
@@ -726,6 +744,7 @@ class CachePoint:
 
     * Anthropic — see https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration for more information.
     * Amazon Bedrock (Converse API) — see https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html for more information.
+    * OpenAI ignores this per-marker value and uses the request-wide `openai_prompt_cache_options['ttl']` setting instead.
     * OpenRouter with Anthropic models (automatically omitted for Gemini models, which do not support explicit TTL).
     """
 
@@ -791,7 +810,7 @@ class UploadedFile:
     The expected shape of this dictionary depends on the provider:
 
     Supported by:
-    - `GoogleModel`: used as `video_metadata` for video files
+    - `GoogleModel`: used as `video_metadata` for video files, and `UploadedFile.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
     - `OpenAIResponsesModel`: `UploadedFile.vendor_metadata['detail']` is used as `detail` setting for image files
     """
 
@@ -897,6 +916,7 @@ def is_multi_modal_content(obj: Any) -> TypeGuard[MultiModalContent]:
 
 
 UserContent: TypeAlias = str | TextContent | MultiModalContent | CachePoint
+"""A single item of user prompt content: a string, a typed text or multi-modal content part, or a [`CachePoint`][pydantic_ai.messages.CachePoint] marker."""
 
 
 _ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
@@ -932,6 +952,15 @@ class ToolReturn(Generic[_ToolReturnValueT]):
 
     metadata: Any = None
     """Additional data accessible by the application but not sent to the LLM."""
+
+    tools: list[str] | None = None
+    """Names of deferred tools made available by this tool call.
+
+    The names are recorded verbatim in message history in a sibling
+    [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], then filtered
+    against the currently served tool definitions at render time. A name that matches no deferred
+    tool, such as a typo or an always-visible tool, is a silent no-op by design.
+    """
 
     kind: Literal['tool-return'] = 'tool-return'
 
@@ -1221,6 +1250,12 @@ def parse_tool_kind(value: str) -> ToolPartKind | None:
     return next((kind for kind in _TOOL_PART_KINDS if kind == value), None)
 
 
+INTERRUPTED_TOOL_RETURN_CONTENT = 'The tool call was interrupted before a result was produced.'
+"""Placeholder content for a tool call that was interrupted before producing a result (e.g. by run
+cancellation). Shared between the agent graph's history repair and the UI adapters' stream closeout
+so both synthesize the same `outcome='interrupted'` return."""
+
+
 @dataclass(repr=False)
 class BaseToolReturnPart:
     """Base class for tool return parts."""
@@ -1258,12 +1293,22 @@ class BaseToolReturnPart:
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
 
-    outcome: Literal['success', 'failed', 'denied'] = 'success'
+    outcome: Literal['success', 'failed', 'denied', 'interrupted'] = 'success'
     """The outcome of the tool call.
 
     - `'success'`: The tool executed successfully.
-    - `'failed'`: The tool raised an error during execution.
-    - `'denied'`: The tool call was denied by the approval mechanism.
+    - `'failed'`: The tool call failed — the tool raised an error during execution (the common case), or
+      an args validator or tool hook reported a failure via [`ToolFailed`][pydantic_ai.exceptions.ToolFailed].
+    - `'denied'`: The tool call was denied — either by the approval mechanism or by a
+      [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler
+      returning [`ToolDenied`][pydantic_ai.tools.ToolDenied].
+    - `'interrupted'`: The tool call did not produce a result because the run was interrupted (e.g. a
+      cancelled stream or a crash mid-execution); synthesized during message-history repair.
+
+    Only `'failed'` is mapped to a provider's native error channel (e.g. Anthropic `is_error`,
+    Bedrock `status='error'`). A denial is a deliberate policy decision rather than a runtime error,
+    while an interruption means no result was produced. Both are sent as ordinary results; their
+    content tells the model what happened without suggesting a transient tool failure.
     """
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
@@ -1313,13 +1358,15 @@ class BaseToolReturnPart:
     def content_items(self, *, mode: Literal['raw'] = 'raw') -> list[ToolReturnContent]: ...
 
     @overload
-    def content_items(self, *, mode: Literal['str']) -> list[str | MultiModalContent]: ...
+    def content_items(self, *, mode: Literal['str'], wrap_if_error: bool = True) -> list[str | MultiModalContent]: ...
 
     @overload
-    def content_items(self, *, mode: Literal['jsonable']) -> list[Any | MultiModalContent]: ...
+    def content_items(
+        self, *, mode: Literal['jsonable'], wrap_if_error: bool = True
+    ) -> list[Any | MultiModalContent]: ...
 
     def content_items(
-        self, *, mode: Literal['raw', 'str', 'jsonable'] = 'raw'
+        self, *, mode: Literal['raw', 'str', 'jsonable'] = 'raw', wrap_if_error: bool = True
     ) -> list[ToolReturnContent] | list[str | MultiModalContent] | list[Any | MultiModalContent]:
         """Return content as a flat list for iteration, with optional serialization.
 
@@ -1330,6 +1377,11 @@ class BaseToolReturnPart:
                   File items (`MultiModalContent`) pass through unchanged.
                 - `'jsonable'`: Non-file items are serialized to JSON-compatible Python objects
                   via `tool_return_ta`. File items pass through unchanged.
+            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object (ignored in
+                `'raw'` mode). When `True` (the default), a failed return's non-file data collapses into a
+                single wrapped error item so providers without a native error channel still see the failure
+                explicitly; files pass through unchanged. Set this to `False` when the provider has a native
+                error channel (e.g. Anthropic `is_error`) and should receive the content unwrapped.
         """
         items: list[ToolReturnContent]
         if isinstance(self.content, list):
@@ -1340,6 +1392,10 @@ class BaseToolReturnPart:
         if mode == 'raw':
             return items
 
+        if wrap_if_error and self.outcome == 'failed':
+            wrapped = self.model_response_str() if mode == 'str' else self.model_response_object()
+            return [wrapped, *self.files]
+
         result: list[str | MultiModalContent] | list[Any | MultiModalContent] = []
         for item in items:
             if is_multi_modal_content(item):
@@ -1347,33 +1403,49 @@ class BaseToolReturnPart:
             elif isinstance(item, str):
                 result.append(item)
             elif mode == 'str':
-                result.append(tool_return_ta.dump_json(item).decode())
+                result.append(tool_return_ta.dump_json(item, by_alias=True).decode())
             else:
-                result.append(tool_return_ta.dump_python(item, mode='json'))
+                result.append(tool_return_ta.dump_python(item, mode='json', by_alias=True))
         return result
 
-    def model_response_str(self) -> str:
+    def model_response_str(self, *, wrap_if_error: bool = True) -> str:
         """Return a string representation of the data content for the model.
 
         This excludes multimodal files - use `.files` to get those separately.
+
+        Args:
+            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+                Set this to `False` when the provider has a native error channel.
         """
         value, _ = self._unwrap_data()
         if value is None:
-            return ''
-        if isinstance(value, str):
-            return value
-        return tool_return_ta.dump_json(value).decode()
+            response = ''
+        elif isinstance(value, str):
+            response = value
+        else:
+            response = tool_return_ta.dump_json(value, by_alias=True).decode()
 
-    def model_response_object(self) -> dict[str, Any]:
+        if wrap_if_error and self.outcome == 'failed':
+            return tool_return_ta.dump_json({'error': response}).decode()
+        return response
+
+    def model_response_object(self, *, wrap_if_error: bool = True) -> dict[str, Any]:
         """Return a dictionary representation of the data content, wrapping non-dict types appropriately.
 
         This excludes multimodal files - use `.files` to get those separately.
         Gemini supports JSON dict return values, but no other JSON types, hence we wrap anything else in a dict.
+
+        Args:
+            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+                Set this to `False` when the provider has a native error channel.
         """
+        if wrap_if_error and self.outcome == 'failed':
+            return {'error': self.model_response_str(wrap_if_error=False)}
+
         value, _ = self._unwrap_data()
         if value is None:
             return {}
-        json_content = tool_return_ta.dump_python(value, mode='json')
+        json_content = tool_return_ta.dump_python(value, mode='json', by_alias=True)
         if _utils.is_str_dict(json_content):
             return json_content
         else:
@@ -1402,21 +1474,25 @@ class BaseToolReturnPart:
             return cast('list[Any]', content)
         return None
 
-    def model_response_str_and_user_content(self) -> tuple[str, list[UserContent]]:
+    def model_response_str_and_user_content(self, *, wrap_if_error: bool = True) -> tuple[str, list[UserContent]]:
         """Build a text-only tool result with multimodal files extracted for a trailing user message.
 
         For providers whose tool result API only accepts text. Multimodal files are referenced
         by identifier in the tool result text ('See file {id}.') and included in full in the
         returned file content list ('This is file {id}:' followed by the file).
+
+        Args:
+            wrap_if_error: Whether to wrap failed tool returns in an `{"error": ...}` object.
+                Set this to `False` when the provider has a native error channel.
         """
         _, files, was_list = self._split_content()
         if not files:
-            return self.model_response_str(), []
+            return self.model_response_str(wrap_if_error=wrap_if_error), []
 
         tool_content_parts: list[str] = []
         file_content: list[UserContent] = []
 
-        for item in self.content_items(mode='str'):
+        for item in self.content_items(mode='str', wrap_if_error=False):
             if is_multi_modal_content(item):
                 tool_content_parts.append(f'See file {item.identifier}.')
                 file_content.append(f'This is file {item.identifier}:')
@@ -1424,6 +1500,10 @@ class BaseToolReturnPart:
             elif isinstance(item, str):  # pragma: no branch
                 tool_content_parts.append(item)
 
+        if wrap_if_error and self.outcome == 'failed':
+            error = {'error': self.model_response_str(wrap_if_error=False)}
+            file_references = [f'See file {file.identifier}.' for file in files]
+            return tool_return_ta.dump_json([error, *file_references]).decode(), file_content
         if was_list:
             return tool_return_ta.dump_json(tool_content_parts).decode(), file_content
         # Safe: when was_list is False, content is either scalar data (→ str item) or a single
@@ -1438,7 +1518,7 @@ class BaseToolReturnPart:
         )
 
         if settings.include_content and self.content is not None:
-            part['result'] = serialize_any(self.content)
+            part['result'] = serialize_any(redact_binary_content(self.content, settings))
 
         return [part]
 
@@ -1554,6 +1634,29 @@ class RetryPromptPart:
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    @classmethod
+    def from_error(
+        cls,
+        error: pydantic_core.ValidationError | ModelRetry,
+        *,
+        tool_name: str | None = None,
+        tool_call_id: str | None = None,
+    ) -> RetryPromptPart:
+        """Build the retry prompt for a failed tool call or output validation.
+
+        This is the exact message the model receives when the error is handled by the agent loop,
+        so anything else presenting the failure (e.g. instrumentation spans) must build it the same way.
+        """
+        content = (
+            error.errors(include_url=False, include_context=False)
+            if isinstance(error, pydantic_core.ValidationError)
+            else error.message
+        )
+        part = cls(content=content, tool_name=tool_name)
+        if tool_call_id:
+            part.tool_call_id = tool_call_id
+        return part
+
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
         if isinstance(self.content, str):
@@ -1641,6 +1744,42 @@ class InstructionPart:
     def sorted(parts: Sequence[InstructionPart]) -> list[InstructionPart]:
         """Sort instruction parts with static (`dynamic=False`) before dynamic, preserving relative order."""
         return sorted(parts, key=lambda p: p.dynamic)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class ToolAvailabilityDeltaPart:
+    """Records that the set of tools available to the model changed at this point.
+
+    Additions only. Withdrawing a tool is not supported yet, because no provider can be told about one
+    without also invalidating the prompt cache this part exists to protect: Anthropic rejects a
+    reference to a tool the request doesn't declare, so a withdrawn tool has to leave the `tools`
+    array, and that is itself the invalidation. The name says *availability* rather than *addition* so
+    removals can join once they can be done cache-safely — see
+    https://github.com/pydantic/pydantic-ai/issues/6985.
+    """
+
+    tools_added: Annotated[
+        list[str], pydantic.Field(validation_alias=pydantic.AliasChoices('tools_added', 'added'))
+    ] = field(default_factory=lambda: [])
+    """Names of tools that became available."""
+
+    tool_call_id: str | None = None
+    """The tool call associated with the change, if any."""
+
+    part_kind: Literal['tool-availability-delta'] = 'tool-availability-delta'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        """Render the change as trace content.
+
+        Tool names are recorded regardless of `include_content`: they aren't user content, they're
+        already visible in the request's tool definitions, and a run where the model suddenly can
+        call something is unreadable without them.
+        """
+        changes = ', '.join(f'+{name}' for name in self.tools_added)
+        return [_otel_messages.TextPart(type='text', content=f'Tool availability changed: {changes}')]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1782,6 +1921,15 @@ class ThinkingPart:
         return bool(self.content)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+STANDING_PROMPT_PLANTED_KEY = 'pydantic_ai_standing_prompt_planted'
+"""`CompactionPart.provider_details` key stamped on compaction items minted by our own compact
+call, whose input window explicitly planted the standing prompt. Provenance for
+`_trim_messages_before_compaction`'s `standing_prompt_retained` fast path: only a stamped item is
+trusted to retain the standing prompt; anything else — an externally supplied or spliced history,
+or an item produced by a provider-initiated compaction of an ordinary request window — gets the
+standing prompt re-inserted."""
 
 
 @dataclass(repr=False)
@@ -1936,8 +2084,8 @@ class BaseToolCallPart:
 
         Args:
             raise_if_invalid: If `True`, a `ValueError` or `AssertionError`
-                caused by malformed JSON in `args` will be re-raised.  When
-                `False` (the default), malformed JSON is handled gracefully by
+                caused by malformed or non-object JSON in `args` will be re-raised.  When
+                `False` (the default), such JSON is handled gracefully by
                 returning `{'INVALID_JSON': '<raw args>'}` so that the value
                 can still be sent to a model API (e.g. during a retry flow)
                 without crashing.
@@ -1959,12 +2107,27 @@ class BaseToolCallPart:
         """Return the arguments as a JSON string.
 
         This is just for convenience with models that require JSON strings as input.
+
+        JSON that's malformed or doesn't represent an object is handled gracefully by returning
+        `'{"INVALID_JSON":"<raw args>"}'`, matching [`args_as_dict`][pydantic_ai.messages.BaseToolCallPart.args_as_dict],
+        so that the value can still be sent to a model API (e.g. during a retry flow) instead of being rejected
+        by one that requires an object.
+
+        Because of that, this is not the way to render args that are still streaming in: a partial fragment
+        that only becomes valid JSON once the following deltas are concatenated would be degraded to the
+        wrapper. Emit those verbatim instead, as the UI event streams do.
         """
         if not self.args:
             return '{}'
         if isinstance(self.args, str):
-            return self.args
-        return pydantic_core.to_json(self.args).decode()
+            try:
+                if isinstance(pydantic_core.from_json(self.args), dict):
+                    # Returned verbatim rather than re-serialized, as the exact bytes the model produced
+                    # (key order, whitespace) matter for prompt caching.
+                    return self.args
+            except ValueError:
+                pass
+        return pydantic_core.to_json(self.args_as_dict()).decode()
 
     def has_content(self) -> bool:
         """Return `True` if the tool call has content."""
@@ -2174,7 +2337,8 @@ ModelRequestPart = Annotated[
     | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
     | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
-    | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')],
+    | Annotated[RetryPromptPart, pydantic.Tag('retry-prompt')]
+    | Annotated[ToolAvailabilityDeltaPart, pydantic.Tag('tool-availability-delta')],
     pydantic.Discriminator(_model_request_part_discriminator),
 ]
 """A message part sent by Pydantic AI to a model."""
@@ -2292,7 +2456,17 @@ class ModelResponse:
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
     state: ModelResponseState = 'complete'
-    """Lifecycle state of the response. See [`ModelResponseState`][pydantic_ai.messages.ModelResponseState]."""
+    """The state of this response, indicating whether it is final or requires further action.
+
+    - `'complete'` — The response is done. This is the default.
+    - `'incomplete'` — A streamed response is still in flight or was stopped before completion.
+    - `'suspended'` — The model paused mid-turn and expects a continuation request.
+      The agent graph will automatically send a continuation request.
+      Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
+      or return background/async responses (e.g. OpenAI background mode).
+    - `'interrupted'` — Streaming was explicitly cancelled before the model finished generating.
+      Set when a streaming response is cancelled via `StreamedResponse.cancel()`.
+    """
 
     @property
     def text(self) -> str | None:
@@ -2355,21 +2529,11 @@ class ModelResponse:
         Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
         """
         assert self.model_name, 'Model name is required to calculate price'
-        # Try matching on provider_api_url first as this is more specific, then fall back to provider_id.
-        if self.provider_url:
-            try:
-                return calc_price(
-                    self.usage,
-                    self.model_name,
-                    provider_api_url=self.provider_url,
-                    genai_request_timestamp=self.timestamp,
-                )
-            except LookupError:
-                pass
-        return calc_price(
+        return calculate_price_for_usage(
             self.usage,
-            self.model_name,
-            provider_id=self.provider_name,
+            model_name=self.model_name,
+            provider_api_url=self.provider_url,
+            provider_name=self.provider_name,
             genai_request_timestamp=self.timestamp,
         )
 
@@ -2418,7 +2582,7 @@ class ModelResponse:
                     builtin=True,
                 )
                 if settings.include_content and part.content is not None:  # pragma: no branch
-                    return_part['result'] = serialize_any(part.content)
+                    return_part['result'] = serialize_any(redact_binary_content(part.content, settings))
 
                 parts.append(return_part)
             elif isinstance(part, CompactionPart):
@@ -2437,6 +2601,46 @@ ModelMessagesTypeAdapter = pydantic.TypeAdapter(
     list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
+
+
+def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """The messages from the latest [`CompactionPart`][pydantic_ai.messages.CompactionPart] onward.
+
+    After compaction, the summary replaces everything before it, so this window is what the model
+    effectively works from — at part-level precision: within the response that carries the
+    compaction part, parts before it are excluded and parts after it are kept. With no compaction
+    part in the history, the whole history is returned (as a new list).
+
+    This is the boundary rule Pydantic AI itself uses when deriving model-visible state from
+    history (discovered tools, loaded capabilities). Capability and toolset authors should apply
+    the same rule to their own derived state — anything the model needs to have *seen*
+    (announcements, disclosures, catalogs) should be recomputed from this window rather than
+    remembered in instance attributes, so it self-heals when compaction replaces the history that
+    carried it.
+
+    Deliberately provider-agnostic, unlike the wire-level trim, which is provider-specific
+    because it must be exact for the one request it renders. This window feeds run-level state
+    (`RunContext.discovered_tool_names`, loaded capabilities) that must stay valid across
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] failover and mid-run model
+    switches — at parse time there is no "current" provider to resolve against, so the boundary
+    has to be the conservative intersection: a compaction part another provider would skip on the
+    wire still counts. The asymmetry makes that safe: treating too little as visible only permits
+    a redundant, idempotent re-disclosure; treating too much as visible hides state the model can
+    no longer see.
+    """
+    for message_index in range(len(messages) - 1, -1, -1):
+        message = messages[message_index]
+        if isinstance(message, ModelResponse):
+            for part_index in range(len(message.parts) - 1, -1, -1):
+                if isinstance(message.parts[part_index], CompactionPart):
+                    # Indexed iteration rather than `messages[message_index + 1:]`: the runtime
+                    # `Sequence` contract only requires integer `__getitem__`, so a minimal
+                    # conforming implementation may reject slices. (`message.parts` is a list.)
+                    return [
+                        replace(message, parts=list(message.parts[part_index:])),
+                        *(messages[i] for i in range(message_index + 1, len(messages))),
+                    ]
+    return list(messages)
 
 
 def _narrow_response_part(part: ModelResponsePart) -> ModelResponsePart:
@@ -2489,10 +2693,36 @@ _FileUrlT = TypeVar('_FileUrlT', bound=FileUrl)
 subclass (`ImageUrl`, `DocumentUrl`, etc.) when sanitizing a file URL."""
 
 
+def _drop_compaction_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+    """Drop client-supplied compaction parts from untrusted messages that follow trusted history.
+
+    A compaction part is the latest history boundary: provider adapters trim everything before it
+    from the request, and [`post_compaction_window`][pydantic_ai.messages.post_compaction_window]
+    derives model-visible state from it. When trusted server-side history precedes the untrusted
+    messages, honoring a client-supplied boundary would let the client hide that trusted prefix
+    from the model, replacing it with the client's own summary or blob — so only the server's own
+    boundaries are kept. With no server-side history, the client-transmitted messages are the
+    entire conversation, boundaries included, and its compaction parts should be honored. A
+    response left with no parts is dropped entirely. Shared by
+    `sanitize_messages(strip_compaction_parts=True)` and the UI adapters' handling of runs that
+    combine server-side `message_history` with client-submitted messages.
+    """
+    result: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse) and any(isinstance(part, CompactionPart) for part in message.parts):
+            parts = [part for part in message.parts if not isinstance(part, CompactionPart)]
+            if parts:
+                result.append(replace(message, parts=parts))
+        else:
+            result.append(message)
+    return result
+
+
 def sanitize_messages(
     messages: Sequence[ModelMessage],
     *,
     strip_system_prompts: bool = True,
+    strip_compaction_parts: bool = False,
     allowed_file_url_schemes: Collection[str] = ('http', 'https'),
     allowed_file_url_force_download: Collection[ForceDownloadMode] = (),
     allow_uploaded_files: bool = False,
@@ -2530,11 +2760,26 @@ def sanitize_messages(
       [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] in the same response, and the
       agent loop never dispatches them, so they aren't a client-injection risk. If stripping leaves the
       final response with no parts, the response is dropped from history entirely.
+    - The compaction provenance stamp from [`CompactionPart.provider_details`][pydantic_ai.messages.CompactionPart.provider_details].
+      This ensures a client-supplied OpenAI Responses compaction item is never trusted to already
+      carry the leading [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s: they are
+      re-sent to the model even where the provider's own compaction state would normally let them
+      be skipped.
+    - [`CompactionPart`][pydantic_ai.messages.CompactionPart]s, when `strip_compaction_parts=True`
+      (off by default). Everything before a compaction part is hidden from the model, so pass
+      `True` whenever you combine the sanitized history with trusted server-side
+      `message_history` — a client-supplied compaction part would hide that server-side history.
+      The [UI adapters](../ui/overview.md) apply this rule automatically when a run combines
+      server-side `message_history` with client-submitted messages.
 
     Args:
         messages: Messages to sanitize.
         strip_system_prompts: Whether to strip
             [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s.
+        strip_compaction_parts: Whether to drop
+            [`CompactionPart`][pydantic_ai.messages.CompactionPart]s entirely. Off by default, for
+            when the untrusted input is the entire conversation; pass `True` when the sanitized
+            history is combined with trusted server-side history.
         allowed_file_url_schemes: URL schemes allowed for [`FileUrl`][pydantic_ai.messages.FileUrl]
             parts. Defaults to `http` and `https`.
         allowed_file_url_force_download: Additional
@@ -2547,6 +2792,9 @@ def sanitize_messages(
             Use this for human-in-the-loop resumption when matching tool results are being submitted
             with the same request.
     """
+    if strip_compaction_parts:
+        messages = _drop_compaction_parts(messages)
+
     allowed_schemes = {scheme.lower() for scheme in allowed_file_url_schemes}
     allowed_force_download = set(allowed_file_url_force_download)
     resolved_ids = set(resolved_tool_call_ids)
@@ -2876,9 +3124,10 @@ def _sanitize_response_parts(
     reset_force_download_values: set[ForceDownloadMode],
     dropped_uploaded_file_providers: set[str],
 ) -> list[ModelResponsePart]:
-    """Sanitize the file references nested in an untrusted response's tool return parts.
+    """Sanitize unsafe metadata and file references in an untrusted response's parts.
 
-    Drops non-allowlisted schemes and resets non-allowlisted `force_download` values on
+    Strips compaction provenance stamps from `CompactionPart.provider_details`. Drops
+    non-allowlisted schemes and resets non-allowlisted `force_download` values on
     [`FileUrl`][pydantic_ai.messages.FileUrl]s nested in tool return parts, and drops
     [`UploadedFile`][pydantic_ai.messages.UploadedFile]s nested in tool return parts unless
     `allow_uploaded_files` is set. Unresolved (dangling) tool calls are stripped separately, from
@@ -2890,7 +3139,16 @@ def _sanitize_response_parts(
     """
     new_parts: list[ModelResponsePart] = []
     for part in parts:
-        if isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
+        if (
+            isinstance(part, CompactionPart)
+            and part.provider_details is not None
+            and STANDING_PROMPT_PLANTED_KEY in part.provider_details
+        ):
+            provider_details = {
+                key: value for key, value in part.provider_details.items() if key != STANDING_PROMPT_PLANTED_KEY
+            }
+            new_parts.append(replace(part, provider_details=provider_details))
+        elif isinstance(part, BaseToolReturnPart) and part.tool_kind is None:
             # Skip narrower subclasses (`tool_kind` set): their `content` is a typed
             # `TypedDict` with required fields, and stripping a `FileUrl`-bearing key
             # during sanitization would leave it schema-invalid.
@@ -3330,6 +3588,28 @@ ModelResponseStreamEvent = Annotated[
 """An event in the model response stream, starting a new part, applying a delta to an existing one, indicating a part is complete, or indicating the final result."""
 
 
+@dataclass(repr=False, kw_only=True)
+class EnqueuedMessagesEvent:
+    """An event indicating that messages enqueued via [`enqueue`][pydantic_ai.tools.RunContext.enqueue] were delivered into the run's message history.
+
+    Emitted at delivery time, carrying the delivered message objects themselves — the same objects
+    held in the run's message history, exactly as they landed there (with `timestamp` / `run_id` /
+    `conversation_id` stamped). A history processor that replaces history with new message objects
+    does not affect the event, but in-place mutation of a delivered message will be visible through it.
+    """
+
+    enqueue_id: str
+    """The ID of the [`enqueue`][pydantic_ai.tools.RunContext.enqueue] call that produced these messages."""
+
+    messages: tuple[ModelMessage, ...]
+    """The messages delivered into the run's message history."""
+
+    event_kind: Literal['enqueued_messages'] = 'enqueued_messages'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False)
 class ToolCallEvent:
     """Base class for events emitted when a tool call is about to be invoked.
@@ -3408,6 +3688,24 @@ class FunctionToolResultEvent(ToolResultEvent):
     """Event type identifier, used as a discriminator."""
 
 
+@dataclass(repr=False, kw_only=True)
+class ToolAvailabilityDeltaEvent:
+    """An event indicating tools were made available mid-run, carrying the recorded delta part.
+
+    This is request-side because the delta is created while executing a tool, after response-part
+    streaming has finished. It records the post-dedup change, while `ToolReturnPart.tools` preserves
+    the caller's pre-dedup intent, and is emitted for capability loads as well as tool returns.
+    """
+
+    part: ToolAvailabilityDeltaPart
+    """The tool availability delta part that will be recorded in message history."""
+
+    event_kind: Literal['tool_availability_delta'] = 'tool_availability_delta'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 @dataclass(repr=False)
 class OutputToolResultEvent(ToolResultEvent):
     """An event indicating the result of an output tool call."""
@@ -3416,11 +3714,78 @@ class OutputToolResultEvent(ToolResultEvent):
     """Event type identifier, used as a discriminator."""
 
 
+# Deferred tool types live in `_deferred.py` to break the circular import
+# chain (tools → _function_schema → _run_context → messages).  Same late-import
+# pattern as `_tool_search` above.
+from ._deferred import (  # noqa: E402
+    DeferredToolRequests as DeferredToolRequests,
+    DeferredToolResults as DeferredToolResults,
+)
+
+
+@dataclass(repr=False)
+class DeferredToolRequestsEvent:
+    """An event indicating that tool calls require approval or external execution before the run can continue.
+
+    Each deferred call also emits its own [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent];
+    this event additionally carries the batched [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests]
+    so stream consumers can tell which calls are paused waiting for interaction, e.g. to notify a frontend.
+
+    It is emitted before any [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]
+    handler runs. If no handler resolves all of the requests, the run ends with the pending requests as its
+    [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output.
+
+    See [deferred tools docs](../deferred-tools.md) for more information.
+    """
+
+    requests: DeferredToolRequests
+    """The batch of tool calls that require external execution or approval."""
+
+    _: KW_ONLY
+
+    event_kind: Literal['deferred_tool_requests'] = 'deferred_tool_requests'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class DeferredToolResultsEvent:
+    """An event indicating that deferred tool calls were resolved by a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler.
+
+    The resolved calls are then executed through the regular tool-execution pipeline, emitting a
+    [`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent] for each result.
+
+    This event is not emitted when results are instead provided to a new run via `deferred_tool_results`,
+    as in that case the caller already knows them.
+
+    See [deferred tools docs](../deferred-tools.md) for more information.
+    """
+
+    results: DeferredToolResults
+    """The results for the deferred tool calls, keyed by tool call ID."""
+
+    _: KW_ONLY
+
+    event_kind: Literal['deferred_tool_results'] = 'deferred_tool_results'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 HandleResponseEvent = Annotated[
-    FunctionToolCallEvent | FunctionToolResultEvent | OutputToolCallEvent | OutputToolResultEvent,
+    FunctionToolCallEvent
+    | FunctionToolResultEvent
+    | ToolAvailabilityDeltaEvent
+    | OutputToolCallEvent
+    | OutputToolResultEvent
+    | DeferredToolRequestsEvent
+    | DeferredToolResultsEvent,
     pydantic.Discriminator('event_kind'),
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""
 
-AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
-"""An event in the agent stream: model response stream events and response-handling events."""
+AgentStreamEvent = Annotated[
+    ModelResponseStreamEvent | EnqueuedMessagesEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')
+]
+"""An event in the agent stream: model response stream events, enqueued-message delivery events, and response-handling events."""

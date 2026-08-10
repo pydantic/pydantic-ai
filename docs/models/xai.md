@@ -94,7 +94,7 @@ agent = Agent(model)
 
 ## X Search
 
-xAI models support searching X (formerly Twitter) for real-time posts and content. The recommended way to enable it is with the [`XSearch`][pydantic_ai.capabilities.XSearch] capability — see the [capability documentation](../capabilities.md#provider-adaptive-tools) for more details, including cross-provider usage. For the full list of supported options, see the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search).
+xAI models support searching X (formerly Twitter) for real-time posts and content. The recommended way to enable it is with the [`XSearch`][pydantic_ai.capabilities.XSearch] capability — see the [capability documentation](../capabilities/overview.md#provider-adaptive-tools) for more details, including cross-provider usage. For the full list of supported options, see the [xAI X Search documentation](https://docs.x.ai/developers/tools/x-search).
 
 ```py {title="xai_x_search.py"}
 from datetime import datetime
@@ -170,6 +170,22 @@ agent = Agent(
 `xai_max_turns` only governs xAI's server-side native-tool loop. It has no effect on ordinary client-side tools or on Pydantic AI's own agent loop — to bound those, use [`UsageLimits`][pydantic_ai.usage.UsageLimits].
 
 Note that when parallel tool calls are enabled, multiple tool calls can occur within a single turn, so `xai_max_turns` does not necessarily equal the total number of tool calls made.
+
+## Multi-agent models
+
+xAI's [multi-agent models](https://docs.x.ai/developers/model-capabilities/text/multi-agent) (e.g. `grok-4.20-multi-agent`) research a question with several agents in parallel before answering. You can choose how many agents they use with [`XaiModelSettings.xai_agent_count`][pydantic_ai.models.xai.XaiModelSettings.xai_agent_count], which accepts `4` or `16`:
+
+```py {title="xai_agent_count.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.xai import XaiModelSettings
+
+agent = Agent(
+    'xai:grok-4.20-multi-agent',
+    model_settings=XaiModelSettings(xai_agent_count=16),
+)
+```
+
+More agents means deeper research, at the cost of more tokens and higher latency. Other xAI models ignore the setting.
 
 ## Streaming cancellation
 

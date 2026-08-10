@@ -367,7 +367,8 @@ async def _run_and_collect(
                     target=target,
                     include_baggage=config.include_baggage,
                 )
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:  # pragma: no cover
+                # Defensive.
                 # Report OTel emission failures under the `'sink'` location: it's the
                 # catch-all for "something went wrong delivering results downstream",
                 # which default-sink users and OTel users can both reason about. See

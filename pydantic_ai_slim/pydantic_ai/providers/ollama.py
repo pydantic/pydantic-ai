@@ -63,7 +63,7 @@ class OllamaProvider(Provider[AsyncOpenAI]):
 
         # `json_schema_transformer` is a fallback (upstream wins if it set one). The other Ollama-specific
         # overrides win on top of upstream — Ollama's /v1/chat/completions endpoint supports response_format
-        # with json_schema natively, but strict mode is not supported (issue #4116).
+        # with json_schema natively, but strict mode is not supported (https://github.com/pydantic/pydantic-ai/issues/4116).
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,

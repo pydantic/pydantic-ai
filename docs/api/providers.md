@@ -8,6 +8,8 @@
 
 ::: pydantic_ai.providers.google
 
+::: pydantic_ai.providers.google_cloud
+
 ::: pydantic_ai.providers.openai
 
 ::: pydantic_ai.providers.xai
@@ -15,6 +17,8 @@
 ::: pydantic_ai.providers.deepseek
 
 ::: pydantic_ai.providers.bedrock
+
+::: pydantic_ai.providers.bedrock_mantle
 
 ::: pydantic_ai.providers.groq
 
@@ -55,5 +59,7 @@
 ::: pydantic_ai.providers.alibaba.AlibabaProvider
 
 ::: pydantic_ai.providers.sambanova.SambaNovaProvider
+
+::: pydantic_ai.providers.snowflake.SnowflakeProvider
 
 ::: pydantic_ai.providers.zai.ZaiProvider

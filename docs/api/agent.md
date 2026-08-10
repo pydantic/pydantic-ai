@@ -8,9 +8,19 @@
             - WrapperAgent
             - AgentRetries
             - AgentRun
+            - AgentRunEvents
             - AgentRunResult
             - EndStrategy
             - RunOutputDataT
             - capture_run_messages
             - InstrumentationSettings
             - EventStreamHandler
+            - AgentSpec
+            - AgentModelSettings
+            - AgentInstructions
+            - UserPromptNode
+            - ModelRequestNode
+            - CallToolsNode
+            - PydanticAIDeprecationWarning
+
+::: pydantic_ai.CancellationToken

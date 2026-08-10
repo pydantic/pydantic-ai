@@ -17,7 +17,7 @@ from pydantic_graph import GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import _output, exceptions, messages as _messages, result
-from .exceptions import ToolRetryError
+from .exceptions import ToolFailedError, ToolRetryError
 from .tools import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDenied, ToolKind
 
 if TYPE_CHECKING:
@@ -78,12 +78,66 @@ class _OutputCallResult(Generic[NodeRunEndT]):
 
 # The payload `run_one` returns for each tool index under the exhaustive strategy: an output
 # result, a settled function-tool return (part + optional user content), or a deferral signal.
+_FunctionCallParts = list[_messages.ToolReturnPart | _messages.RetryPromptPart | _messages.ToolAvailabilityDeltaPart]
+
 _ToolCallPayload = (
     _OutputCallResult[NodeRunEndT]
-    | tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]
+    | tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]
     | exceptions.CallDeferred
     | exceptions.ApprovalRequired
 )
+
+
+def _reject_unloaded_capability_reveals(tools: Sequence[str], tool_manager: ToolManager[Any]) -> None:
+    """Reject `ToolReturn.tools` names owned by a capability that hasn't been loaded.
+
+    A capability-owned tool must be revealed by loading its capability: `load_capability`
+    activates the whole bundle — instructions, hooks, model settings — while a bare name
+    reveal would surface the tool with its capability's hooks skipped. (`load_capability`
+    itself passes: the loader marks the capability loaded before returning its names.)
+    """
+    run_ctx = tool_manager.ctx
+    for name in tools:
+        toolset_tool = (tool_manager.tools or {}).get(name)
+        if (
+            toolset_tool is not None
+            and (capability_id := toolset_tool.tool_def.capability_id) is not None
+            and run_ctx is not None
+            and capability_id not in run_ctx.loaded_capability_ids
+        ):
+            raise exceptions.UserError(
+                f'`ToolReturn.tools` cannot reveal {name!r}: it belongs to capability '
+                f'{capability_id!r}, which must be loaded with `load_capability` so its '
+                'instructions and hooks activate with it.'
+            )
+
+
+def _prune_duplicate_tool_reveals(
+    parts_by_index: dict[int, _FunctionCallParts], discovered_tool_names: set[str]
+) -> None:
+    """Keep only the first emitted-history reveal of each tool name across a step's tool calls.
+
+    Tool calls execute concurrently and author their availability deltas at completion time, so
+    deduplicating there would tie the emitted history to task scheduling: parallel siblings that
+    reveal the same name would race for the delta. Prune at assembly instead, in model call
+    (index) order — the first call to name a tool in history owns its reveal, later duplicates
+    are dropped, and already-discovered names from earlier steps are removed the same way.
+    `discovered_tool_names` is updated here so the durable set always matches the emitted deltas
+    deterministically. Must run exactly once per executor pass: it is not idempotent (a second
+    pass would see every name as already discovered and drop the deltas it just kept).
+    """
+    for index in sorted(parts_by_index):
+        parts = parts_by_index[index]
+        for i, part in enumerate(parts):
+            if isinstance(part, _messages.ToolAvailabilityDeltaPart):
+                newly_discovered = [name for name in part.tools_added if name not in discovered_tool_names]
+                if newly_discovered:
+                    discovered_tool_names.update(newly_discovered)
+                    if newly_discovered != part.tools_added:
+                        parts[i] = dataclasses.replace(part, tools_added=newly_discovered)
+                else:
+                    del parts[i]
+                break
 
 
 def _segment_by_barriers(indices: list[int], *, is_barrier: Callable[[int], bool]) -> list[list[int]]:
@@ -249,7 +303,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         if self.tool_call_results is not None:
             # The resume path must supply a result for every eligible call from the original response,
             # including `'unknown'` (hallucinated) ones, using the `'skip'` sentinel for any call that
-            # was already handled in a prior step. The check below relies on that convention.
+            # was already handled in a prior step. Non-eligible `'output'` calls settled in the original
+            # step also arrive as `'skip'` entries (from their retry/status parts in the trailing
+            # request), so results may cover more than the eligible calls but never more than the
+            # response's calls. The check below relies on that convention.
             self.executable_function_kinds = ('function', 'unknown', 'external', 'unapproved')
             eligible_calls = [
                 call
@@ -266,7 +323,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 )
             result_tool_call_ids = set(self.tool_call_results.keys())
             eligible_call_ids = {call.tool_call_id for call in eligible_calls}
-            if eligible_call_ids != result_tool_call_ids:
+            response_tool_call_ids = {call.tool_call_id for call in self.tool_calls}
+            if not (eligible_call_ids <= result_tool_call_ids <= response_tool_call_ids):
                 raise exceptions.UserError(
                     'Tool call results need to be provided for all deferred tool calls. '
                     f'Expected: {eligible_call_ids}, got: {result_tool_call_ids}'
@@ -279,16 +337,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             self.calls_to_run_results = {}
 
         self.function_indices = [i for i in range(len(self.tool_calls)) if self.is_executable_function(i)]
-        self.output_indices = [i for i in range(len(self.tool_calls)) if call_kinds[i] == 'output']
+        self.output_indices = [i for i in range(len(self.tool_calls)) if self.is_executable_output(i)]
         self.schema = self.ctx.deps.output_schema
 
-    def is_executable_function(self, index: int) -> bool:
-        if self.call_kinds[index] not in self.executable_function_kinds:
-            return False
+    def _is_resume_eligible(self, index: int) -> bool:
         # On resume, calls without a supplied result were executed in a previous step; skip.
-        if self.tool_call_results is not None and self.tool_calls[index].tool_call_id not in self.calls_to_run_results:
-            return False
-        return True
+        return self.tool_call_results is None or self.tool_calls[index].tool_call_id in self.calls_to_run_results
+
+    def is_executable_output(self, index: int) -> bool:
+        return self.call_kinds[index] == 'output' and self._is_resume_eligible(index)
+
+    def is_executable_function(self, index: int) -> bool:
+        return self.call_kinds[index] in self.executable_function_kinds and self._is_resume_eligible(index)
 
     async def run(self) -> AsyncIterator[_messages.HandleResponseEvent]:
         """Run the configured strategy, then apply retry-wins and resolve deferred calls."""
@@ -355,6 +415,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         if not validated.args_valid:
             assert validated.validation_error is not None
+            # Output-tool validation (`validate_output_tool_call`) only ever raises
+            # `ToolRetryError`/`ValidationError`/`ModelRetry`, never `ToolFailed`, so
+            # `validation_error` is always a `ToolRetryError` here — unlike the function-tool
+            # path, which also handles `ToolFailedError`.
+            assert isinstance(validated.validation_error, ToolRetryError)
             self.output_retries_increment += 1
             return _OutputCallResult(call=call, args_valid=False, retry_part=validated.validation_error.tool_retry)
 
@@ -502,7 +567,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         tool_call: ValidatedToolCall[DepsT] | _messages.ToolCallPart,
         *,
         tool_call_result: DeferredToolResult | None,
-    ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None]:
+    ) -> tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]:
         if isinstance(tool_call, ValidatedToolCall):
             validated = tool_call
             call = tool_call.call
@@ -518,12 +583,22 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 else:
                     raise RuntimeError('Expected validated tool call')  # pragma: no cover
             elif isinstance(tool_call_result, ToolDenied):
-                return _messages.ToolReturnPart(
+                return [
+                    _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content=tool_call_result.message,
+                        tool_call_id=call.tool_call_id,
+                        outcome='denied',
+                    )
+                ], None
+            elif isinstance(tool_call_result, exceptions.ToolFailed):
+                m = _messages.ToolReturnPart(
                     tool_name=call.tool_name,
                     content=tool_call_result.message,
                     tool_call_id=call.tool_call_id,
-                    outcome='denied',
-                ), None
+                    outcome='failed',
+                )
+                raise ToolFailedError(m)
             elif isinstance(tool_call_result, exceptions.ModelRetry):
                 m = _messages.RetryPromptPart(
                     content=tool_call_result.message,
@@ -538,7 +613,27 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             else:
                 tool_result = tool_call_result
         except ToolRetryError as e:
-            return e.tool_retry, None
+            return [e.tool_retry], None
+        except ToolFailedError as e:
+            return [e.tool_failed], None
+        except exceptions.RunCancelled as e:
+            # A sub-agent run awaited inside this tool cancelled *itself* (`cancel()` on its own
+            # context). `cancel()` cancels the run it belongs to, not this one — and a
+            # `RunCancelled` seen inside a tool body is always a nested run's, since this run's own
+            # cancellation arrives as `CancelledError` and only becomes `RunCancelled` at the run's
+            # outer edge. So isolate it: report a failed tool return the parent's model can react to,
+            # rather than tearing the parent run down. A delegate tool that *wants* the parent
+            # cancelled too can catch `RunCancelled` and call `ctx.cancel()` itself; whole-tree
+            # cancellation is spelled with a shared `CancellationToken`. See
+            # https://github.com/pydantic/pydantic-ai/issues/7199.
+            return [
+                _messages.ToolReturnPart(
+                    tool_name=call.tool_name,
+                    content=f'The sub-agent run was cancelled: {e}',
+                    tool_call_id=call.tool_call_id,
+                    outcome='failed',
+                )
+            ], None
 
         if isinstance(tool_result, _messages.ToolReturn):
             tool_return = cast(_messages.ToolReturn[Any], tool_result)
@@ -551,6 +646,17 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             )
         else:
             tool_return = _messages.ToolReturn[Any](return_value=cast(Any, tool_result))
+
+        tools = tool_return.tools
+        if tools is not None and (
+            isinstance(tools, str)
+            or not isinstance(tools, Sequence)
+            or any(not isinstance(name, str) for name in tools)
+        ):
+            raise exceptions.UserError(
+                '`ToolReturn.tools` must be a list of tool names; pass a list of strings instead of a bare '
+                'string, non-sequence value, or non-string elements.'
+            )
 
         # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
         # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the
@@ -566,7 +672,19 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         )
         return_part = _messages.ToolReturnPart.narrow_type(return_part)
 
-        return return_part, tool_return.content or None
+        parts: _FunctionCallParts = [return_part]
+        if tools:
+            _reject_unloaded_capability_reveals(tools, self.tool_manager)
+            # Only call-level dedupe here: cross-call dedupe and `discovered_tool_names`
+            # bookkeeping happen at assembly time in emitted history order, via
+            # `_prune_duplicate_tool_reveals` — parallel siblings complete in scheduler order,
+            # and the first call to name a tool in *history* must own its reveal.
+            parts.append(
+                _messages.ToolAvailabilityDeltaPart(
+                    tools_added=list(dict.fromkeys(tools)), tool_call_id=call.tool_call_id
+                )
+            )
+        return parts, tool_return.content or None
 
     async def _call_tools(  # noqa: C901
         self,
@@ -577,26 +695,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
         deferred_metadata: dict[str, dict[str, Any]],
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
-        tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
+        tool_parts_by_index: dict[int, _FunctionCallParts] = {}
         user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
         deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
         deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
         async def handle_call_or_result(
-            coro_or_task: Awaitable[
-                tuple[
-                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
-                ]
-            ]
-            | asyncio.Task[
-                tuple[
-                    _messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None
-                ]
-            ],
+            coro_or_task: Awaitable[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]]
+            | asyncio.Task[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]],
             index: int,
         ) -> _messages.HandleResponseEvent | None:
             try:
-                tool_part, tool_user_content = (
+                tool_parts, tool_user_content = (
                     (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
                 )
             except exceptions.CallDeferred as e:
@@ -606,10 +716,12 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 deferred_calls_by_index[index] = 'unapproved'
                 deferred_metadata_by_index[index] = e.metadata
             else:
-                tool_parts_by_index[index] = tool_part
+                tool_parts_by_index[index] = tool_parts
                 if tool_user_content:
                     user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
 
+                tool_part = tool_parts[0]
+                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
                 return _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
 
         def call_tool(
@@ -617,7 +729,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         ) -> Coroutine[
             Any,
             Any,
-            tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, str | Sequence[_messages.UserContent] | None],
+            tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None],
         ]:
             call = tool_calls[index]
             return self._call_tool(
@@ -659,12 +771,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                                     yield event
                         else:
                             pending: set[
-                                asyncio.Task[
-                                    tuple[
-                                        _messages.ToolReturnPart | _messages.RetryPromptPart,
-                                        str | Sequence[_messages.UserContent] | None,
-                                    ]
-                                ]
+                                asyncio.Task[tuple[_FunctionCallParts, str | Sequence[_messages.UserContent] | None]]
                             ] = set(tasks_by_index.values())
                             while pending:
                                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
@@ -686,8 +793,16 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # to the outer capture in `CallToolsNode._handle_tool_calls`. We append the
             # results at the end, rather than as they are received, to retain a
             # consistent ordering.
-            self.output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
+            # The output-tool path has the matching prune at final-result assembly below.
+            _prune_duplicate_tool_reveals(tool_parts_by_index, self.ctx.deps.discovered_tool_names)
+            for index in sorted(tool_parts_by_index):
+                self.output_parts.extend(tool_parts_by_index[index])
             self.output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
+
+        for index in sorted(tool_parts_by_index):
+            for part in tool_parts_by_index[index]:
+                if isinstance(part, _messages.ToolAvailabilityDeltaPart):
+                    yield _messages.ToolAvailabilityDeltaEvent(part=part)
 
         self._populate_deferred_calls(
             tool_calls,
@@ -791,12 +906,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         self.deferred_calls['unapproved'].append(call)
                 else:
                     # Call execute_tool_call to raise the validation error inside a trace span;
-                    # retries are already tracked by validate_tool_call() via failed_tools.
+                    # retry failures are already tracked by validate_tool_call() via failed_tools.
                     try:
                         await self.tool_manager.execute_tool_call(validated)
-                    except ToolRetryError as e:
-                        self.output_parts.append(e.tool_retry)
-                        yield _messages.FunctionToolResultEvent(e.tool_retry)
+                    except (ToolRetryError, ToolFailedError) as e:
+                        part = e.tool_retry if isinstance(e, ToolRetryError) else e.tool_failed
+                        self.output_parts.append(part)
+                        yield _messages.FunctionToolResultEvent(part)
 
     async def _resolve_deferred_calls(self) -> AsyncIterator[_messages.HandleResponseEvent]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""
@@ -815,12 +931,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             metadata=self.deferred_metadata,
         )
 
+        # Emit the batch of deferred requests so stream consumers can observe the pending
+        # interactions without coupling to the resolution handler. (Each deferred call already
+        # emitted its own `FunctionToolCallEvent`.)
+        yield _messages.DeferredToolRequestsEvent(deferred_tool_requests)
+
         # Let capability handlers resolve deferred calls inline (one shot).
         # Results are fed back through the existing tool-execution pipeline so that
         # approvals, denials, retries, and ToolReturn unwrapping all behave identically
         # to the UserPromptNode resume path.
         handler_results = await self.tool_manager.resolve_deferred_tool_calls(deferred_tool_requests)
         if handler_results is not None:
+            yield _messages.DeferredToolResultsEvent(handler_results)
             handler_tool_call_results = handler_results.to_tool_call_results()
             resolved_calls = [
                 call
@@ -860,6 +982,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
             deferred_tool_requests = deferred_tool_requests.remaining(handler_results)
             if new_deferred_calls['external'] or new_deferred_calls['unapproved']:
+                # A resolved call can defer again when it re-executes (e.g. an approved tool raises
+                # `CallDeferred`). No second `DeferredToolRequestsEvent` is emitted for these: the
+                # batch was already announced above, and re-announcing the same tool call IDs
+                # (possibly under a different kind) would be ambiguous for consumers. The final
+                # pending batch still surfaces as the run's `DeferredToolRequests` output below.
                 if deferred_tool_requests is None:
                     deferred_tool_requests = DeferredToolRequests()
                 deferred_tool_requests.calls.extend(new_deferred_calls['external'])
@@ -881,9 +1008,9 @@ class _EarlyProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
     """`'early'`: run all output tools first; run function tools only if every output failed."""
 
     async def _run_strategy(self) -> AsyncIterator[_messages.HandleResponseEvent]:
-        for call in self.tool_calls_by_kind['output']:
+        for i in self.output_indices:
             # `_run_output` always yields ≥1 event, so the empty-iterator branch can't happen.
-            async for event in self._run_output(call):  # pragma: no branch
+            async for event in self._run_output(self.tool_calls[i]):  # pragma: no branch
                 yield event
         self.ctx.state.output_retries_used += self.output_retries_increment
 
@@ -920,7 +1047,7 @@ class _GracefulProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                     yield event
 
         for i, call in enumerate(self.tool_calls):
-            if self.call_kinds[i] == 'output':
+            if self.is_executable_output(i):
                 async for event in flush_pending():
                     yield event
                 # `_run_output` always yields ≥1 event, so the empty-iterator branch can't happen.
@@ -974,7 +1101,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             task_indices, is_barrier=lambda i: global_sequential or self.tool_manager.is_sequential(self.tool_calls[i])
         )
 
-        function_parts: dict[int, _messages.ModelRequestPart] = {}
+        function_parts: dict[int, _FunctionCallParts] = {}
         function_user_parts: dict[int, _messages.UserPromptPart] = {}
         # Under `parallel_ordered_events`, function-tool result events are buffered and yielded in
         # emission order at the end (alongside output events) instead of streaming as tasks complete.
@@ -994,7 +1121,13 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             except (exceptions.CallDeferred, exceptions.ApprovalRequired) as e:
                 return index, e
 
-        appended = False
+        # Track appends per index rather than with a single flag: the append loop below yields
+        # events between extends (output events, ordered result events, availability-delta
+        # events), and a consumer closing or throwing at any of those suspension points would
+        # otherwise make the `finally` cleanup re-extend indices the loop already appended.
+        appended_function_indices: set[int] = set()
+        appended_user_indices: set[int] = set()
+        pruned = False
         try:
             for segment in segments:
                 tasks = [asyncio.create_task(run_one(i), name=self.tool_calls[i].tool_name) for i in segment]
@@ -1013,10 +1146,12 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                 deferred_by_index[index] = 'unapproved'
                                 deferred_meta_by_index[index] = payload.metadata
                             else:
-                                tool_part, tool_user_content = payload
-                                function_parts[index] = tool_part
+                                tool_parts, tool_user_content = payload
+                                function_parts[index] = tool_parts
                                 if tool_user_content:
                                     function_user_parts[index] = _messages.UserPromptPart(content=tool_user_content)
+                                tool_part = tool_parts[0]
+                                assert isinstance(tool_part, _messages.ToolReturnPart | _messages.RetryPromptPart)
                                 if self._is_retry_wins_trigger(tool_part, kind=self.call_kinds[index]):
                                     self.retry_wins_triggered = True
                                 result_event = _messages.FunctionToolResultEvent(tool_part, content=tool_user_content)
@@ -1049,11 +1184,15 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                         raise r.raise_exc
 
             # Append parts and emit output events in emission order.
+            # The ordinary function-tool path has the matching prune in `_call_tools` above.
+            _prune_duplicate_tool_reveals(function_parts, self.ctx.deps.discovered_tool_names)
+            pruned = True
             for i in executable_indices:
                 if self.call_kinds[i] == 'output':
                     r = output_results.get(i)
+                    # Every output index is populated above.
                     if r is None:
-                        continue  # pragma: no cover  # every output index is populated above
+                        continue  # pragma: no cover
                     is_winner = self.final_result is not None and r.call.tool_call_id == self.final_result.tool_call_id
                     if is_winner and self.final_result_was_set_externally:
                         # Streamed-in winner: record "processed" without claiming it was selected here.
@@ -1063,26 +1202,37 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                         for event in self._emit_settled_output(r, is_winner=is_winner):
                             yield event
                 elif i in function_parts:
-                    self.output_parts.append(function_parts[i])
+                    self.output_parts.extend(function_parts[i])
+                    appended_function_indices.add(i)
                     # Under `parallel_ordered_events`, emit the buffered result event here so events
                     # stream in emission order; otherwise it was already yielded as the task completed.
                     if ordered_events and i in function_events:
                         yield function_events[i]
+                    for part in function_parts[i]:
+                        if isinstance(part, _messages.ToolAvailabilityDeltaPart):
+                            yield _messages.ToolAvailabilityDeltaEvent(part=part)
             for i in executable_indices:
                 if i in function_user_parts:
                     self.output_parts.append(function_user_parts[i])
-            appended = True
+                    appended_user_indices.add(i)
         finally:
-            if not appended:
-                # Partial capture on exception: surface completed function-tool returns so
-                # `CallToolsNode._handle_tool_calls` can record them in the interrupted request.
-                for i in executable_indices:
-                    if i in function_parts:
-                        self.output_parts.append(function_parts[i])
-                # `executable_indices` is non-empty whenever this runs, so the empty-loop branch can't happen.
-                for i in executable_indices:  # pragma: no branch
-                    if i in function_user_parts:
-                        self.output_parts.append(function_user_parts[i])
+            # Partial capture on exception or mid-stream close: surface completed function-tool
+            # returns so `CallToolsNode._handle_tool_calls` can record them in the interrupted
+            # request — but only the indices the normal loop didn't already append, since the
+            # yields inside that loop are suspension points and an interruption delivered there
+            # would otherwise make this cleanup duplicate everything the loop got through.
+            # `pruned` likewise guards the non-idempotent prune (see
+            # `_prune_duplicate_tool_reveals`). Interrupting between a loop iteration's extend
+            # and its yield needs an exception from inside the append loop itself, which no
+            # test can trigger cleanly — hence the pragmas.
+            if not pruned:
+                _prune_duplicate_tool_reveals(function_parts, self.ctx.deps.discovered_tool_names)
+            for i in executable_indices:
+                if i in function_parts and i not in appended_function_indices:  # pragma: no branch
+                    self.output_parts.extend(function_parts[i])
+            for i in executable_indices:  # pragma: no branch
+                if i in function_user_parts and i not in appended_user_indices:
+                    self.output_parts.append(function_user_parts[i])
 
         self._populate_deferred_calls(
             self.tool_calls,

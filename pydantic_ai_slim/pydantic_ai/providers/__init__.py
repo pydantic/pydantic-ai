@@ -15,9 +15,25 @@ import anyio
 import httpx
 from typing_extensions import Self, TypeVar
 
+from ..exceptions import UserError
 from ..profiles import ModelProfile
 
 InterfaceClient = TypeVar('InterfaceClient', default=Any)
+
+_KEYLESS_HINT = (
+    "To try Pydantic AI without an API key, use the built-in test model: `Agent('test')`. "
+    'See https://ai.pydantic.dev/testing/'
+)
+
+
+def missing_api_key_error(message: str) -> UserError:
+    """Build a [`UserError`][pydantic_ai.exceptions.UserError] for missing provider credentials.
+
+    The provider-specific `message` (which environment variable to set or how to pass the key) is followed by a
+    hint pointing newcomers to the keyless [test model](https://ai.pydantic.dev/testing/), so a missing key never
+    dead-ends the getting-started experience.
+    """
+    return UserError(f'{message} {_KEYLESS_HINT}')
 
 
 class Provider(ABC, Generic[InterfaceClient]):
@@ -151,6 +167,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .bedrock import BedrockProvider
 
         return BedrockProvider
+    elif provider == 'bedrock-mantle':
+        from .bedrock_mantle import BedrockMantleProvider
+
+        return BedrockMantleProvider
     elif provider == 'groq':
         from .groq import GroqProvider
 
@@ -200,9 +220,9 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
         return OllamaProvider
     elif provider == 'github':
-        from .github import GitHubProvider
+        from .github import GitHubProvider  # pyright: ignore[reportDeprecated]
 
-        return GitHubProvider
+        return GitHubProvider  # pyright: ignore[reportDeprecated]
     elif provider == 'litellm':
         from .litellm import LiteLLMProvider
 
@@ -227,6 +247,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .sentence_transformers import SentenceTransformersProvider
 
         return SentenceTransformersProvider
+    elif provider == 'snowflake':
+        from .snowflake import SnowflakeProvider
+
+        return SnowflakeProvider
     elif provider == 'voyageai':
         from .voyageai import VoyageAIProvider
 

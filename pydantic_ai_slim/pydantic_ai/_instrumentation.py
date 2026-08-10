@@ -2,28 +2,32 @@ from __future__ import annotations
 
 import itertools
 import json
-import warnings
-from collections.abc import Callable, Generator, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
+from opentelemetry import context as otel_context
 from opentelemetry.baggage import get_baggage
 from opentelemetry.trace import INVALID_SPAN, SpanKind, get_current_span
 from opentelemetry.util.types import AttributeValue
-from pydantic import TypeAdapter
+from pydantic import ConfigDict, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_graph._utils import get_traceparent
 
+from ._cost import best_effort_price
+
 if TYPE_CHECKING:
+    from genai_prices.types import PriceCalculation
     from typing_extensions import Self
 
     from pydantic_ai.messages import ModelMessage, ModelResponse
     from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
+    from pydantic_ai.settings import ModelSettings
 
 DEFAULT_INSTRUMENTATION_VERSION = 5
 """Default instrumentation version for `InstrumentationSettings`."""
@@ -56,6 +60,7 @@ MODEL_SETTING_ATTRIBUTES: tuple[
 )
 
 ANY_ADAPTER = TypeAdapter[Any](Any)
+_BASE64_ANY_ADAPTER = TypeAdapter[Any](Any, config=ConfigDict(ser_json_bytes='base64'))
 
 # These are in the spec:
 # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
@@ -82,8 +87,37 @@ public and holds only the *inputs* to `Model.request[_stream]`.
 """
 
 
-class CostCalculationFailedWarning(Warning):
-    """Warning raised when cost calculation fails."""
+@dataclass(slots=True)
+class CachedMessageJson:
+    """A `MessageJsonCache` entry: one input message's serialized OTel JSON fragment."""
+
+    message: ModelMessage
+    """The cached message itself. Never read — held so the message stays alive while the entry
+    exists, which pins its `id`: a cache hit is therefore guaranteed to be for this very object,
+    never for a new message that recycled a garbage-collected message's address (e.g. a
+    `dataclasses.replace`d sibling sharing the same `parts` list)."""
+    parts: object
+    """The message's `parts` list at serialization time, compared by identity: a message whose
+    `parts` list is reassigned (e.g. dynamic system prompt re-evaluation) is re-serialized rather
+    than served stale."""
+    fragment: bytes
+    """The serialized fragment (see `message_json_fragment`)."""
+
+
+MessageJsonCache: TypeAlias = dict[int, CachedMessageJson]
+"""Per-run cache of input messages' serialized OTel JSON fragments, keyed by `id(message)`.
+
+Created fresh per agent run and discarded when the run ends, so it never outlives the run whose
+messages it caches. Entries for messages no longer in the input history are evicted on each
+request, so the cache (and the messages it keeps alive) stays bounded by the current history even
+when a history processor prunes or rebuilds messages.
+
+This caching is what makes the per-request `gen_ai.input.messages` attribute O(new messages)
+instead of O(history). It relies on an invariant that framework code must uphold: never mutate a
+history message's fields in place after it may have been serialized for a span — build new
+message/part objects or reassign `.parts` instead. User code mutating history in place mid-run is
+unsupported (see `MessageHistoryMutatedWarning`).
+"""
 
 
 def get_agent_run_baggage_attributes() -> dict[str, Any]:
@@ -101,9 +135,94 @@ def get_agent_run_baggage_attributes() -> dict[str, Any]:
     return attrs
 
 
+CIRCULAR_REFERENCE_PLACEHOLDER = '<circular reference>'
+
+
+def redact_binary_content(value: Any, settings: InstrumentationSettings) -> object:
+    """Strip binary data out of a value that's about to be serialized into a span attribute.
+
+    The attributes that carry whatever a tool or output function produced serialize arbitrary
+    values, so they can't honor `include_binary_content` the way `_convert_binary_to_otel_part`
+    does for message content: `BinaryContent`'s own serialization is a public contract shared with
+    message history, and making it depend on instrumentation would change how it dumps everywhere.
+    The value is redacted up front instead, keeping the media type and the rest of the file
+    metadata, and dropping only the data. That retained set is `BinaryContent`'s own and is wider
+    than the `mime_type` `_convert_binary_to_otel_part` keeps, because this replaces a value the
+    type itself serialized rather than building a spec-shaped message part.
+
+    Containers and `ToolReturn` are walked, matching the depth at which binary content is honored
+    elsewhere (the sequence in a `UserPromptPart`'s content). A `BinaryContent` nested inside a
+    user's own model is left alone: rebuilding that model to redact one field would change how
+    everything else in the attribute is serialized.
+    """
+    if settings.include_binary_content:
+        return value
+    try:
+        return _redact_binary_content(value, set())
+    except Exception as e:
+        # Instrumentation must not fail an otherwise-successful run, and the value can't be handed
+        # back to make that happen: the callers fall back to `str(value)`, whose `BinaryContent`
+        # repr prints the very data the flag excludes. Only the exception's type is reported for
+        # the same reason -- its message is user-controlled and can itself embed a `BinaryContent`.
+        return f'Unable to redact binary content: {type(e).__name__}'
+
+
+def _redact_binary_content(value: Any, active: set[int]) -> object:
+    from pydantic_ai._deferred import DeferredToolRequests
+    from pydantic_ai.messages import BinaryContent, ToolReturn
+
+    identity = id(value)
+    if not isinstance(value, (BinaryContent, ToolReturn, DeferredToolRequests, Mapping, list, tuple)):
+        return value
+    if identity in active:
+        return CIRCULAR_REFERENCE_PLACEHOLDER
+
+    # Tracks the objects on the path currently being walked, not every object seen, so that the
+    # same `BinaryContent` appearing twice side by side is redacted twice rather than the second
+    # occurrence being mistaken for a cycle.
+    active.add(identity)
+    try:
+        if isinstance(value, BinaryContent):
+            return {
+                'media_type': value.media_type,
+                # Typed `dict[str, Any]`, so it can hold binary content of its own.
+                'vendor_metadata': _redact_binary_content(value.vendor_metadata, active),
+                'kind': value.kind,
+                'identifier': value.identifier,
+            }
+        if isinstance(value, ToolReturn):
+            return {
+                'return_value': _redact_binary_content(value.return_value, active),
+                'content': _redact_binary_content(value.content, active),
+                'metadata': _redact_binary_content(value.metadata, active),
+                # Tool names, so never binary.
+                'tools': value.tools,
+                'kind': value.kind,
+            }
+        if isinstance(value, DeferredToolRequests):
+            # Carries the metadata a deferring tool attached, so the run's own output has to drop
+            # the same binary the tool's span already did.
+            return {
+                'calls': _redact_binary_content(value.calls, active),
+                'approvals': _redact_binary_content(value.approvals, active),
+                'metadata': _redact_binary_content(value.metadata, active),
+            }
+        if isinstance(value, Mapping):
+            return {  # pyright: ignore[reportUnknownVariableType]
+                key: _redact_binary_content(item, active)
+                for key, item in value.items()  # pyright: ignore[reportUnknownVariableType]
+            }
+        return [_redact_binary_content(item, active) for item in value]  # pyright: ignore[reportUnknownVariableType]
+    finally:
+        active.discard(identity)
+
+
 def serialize_any(value: Any) -> str:
     try:
-        return ANY_ADAPTER.dump_python(value, mode='json')
+        try:
+            return ANY_ADAPTER.dump_python(value, mode='json')
+        except UnicodeDecodeError:
+            return _BASE64_ANY_ADAPTER.dump_python(value, mode='json')
     except Exception:
         try:
             return str(value)
@@ -124,6 +243,44 @@ def safe_to_json(value: object) -> bytes:
         return json.dumps(value, separators=(',', ':')).encode()
 
 
+def message_json_fragment(settings: InstrumentationSettings, message: ModelMessage) -> bytes:
+    """Serialize one message to its OTel JSON fragment: comma-joined objects without enclosing brackets.
+
+    A single `ModelMessage` can map to multiple OTel `ChatMessage`s (a `ModelRequest` splits into
+    system/user messages) or to none (an empty request), so the fragment is the whole serialized
+    array with the outer `[` and `]` stripped — fragments then concatenate into a single array.
+    """
+    return safe_to_json(settings.messages_to_otel_messages([message]))[1:-1]
+
+
+def has_stale_message_json(
+    settings: InstrumentationSettings, messages: Sequence[ModelMessage], cache: MessageJsonCache
+) -> bool:
+    """Detect whether in-place mutation made any cached message fragment stale.
+
+    Re-serializes each message that still has a valid cache entry (same `parts` list) and compares
+    bytes — an O(history) pass meant to run once per run, at the end. Entries whose `parts` token no
+    longer matches are skipped: reassigning `.parts` is the supported mutation style and the next
+    serialization would have refreshed them, so they can't have produced a stale span.
+
+    Detection is deliberately best-effort, covering messages still present at the end of the run: a
+    message that was mutated in place and *then* dropped or rebuilt by a history processor may have
+    produced a stale span without a warning. Closing that gap would require either re-checking
+    cached fragments on every request (the O(history-squared) cost this cache exists to remove) or
+    re-serializing entries as they're evicted (which doubles the serialization cost for processors
+    that rebuild history each request — the workload the cache can't help to begin with).
+    """
+    for message in messages:
+        entry = cache.get(id(message))
+        if (
+            entry is not None
+            and entry.parts is message.parts
+            and entry.fragment != message_json_fragment(settings, message)
+        ):
+            return True
+    return False
+
+
 def model_attributes(model: Model) -> dict[str, AttributeValue]:
     attributes: dict[str, AttributeValue] = {
         GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,  # New OTel standard attribute
@@ -133,13 +290,15 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
     if base_url := model.base_url:
         try:
             parsed = urlparse(base_url)
-        except Exception:  # pragma: no cover
+            # `urlparse` defers port validation to `.port`, so a malformed port raises on the read, not the parse.
+            hostname, port = parsed.hostname, parsed.port
+        except ValueError:
             pass
         else:
-            if parsed.hostname:  # pragma: no branch
-                attributes['server.address'] = parsed.hostname
-            if parsed.port:  # pragma: no branch
-                attributes['server.port'] = parsed.port
+            if hostname:  # pragma: no branch
+                attributes['server.address'] = hostname
+            if port:  # pragma: no branch
+                attributes['server.port'] = port
 
     return attributes
 
@@ -148,6 +307,16 @@ def model_request_parameters_attributes(
     model_request_parameters: ModelRequestParameters,
 ) -> dict[str, AttributeValue]:
     return {'model_request_parameters': safe_to_json(serialize_any(model_request_parameters)).decode()}
+
+
+def model_settings_attributes(model_settings: ModelSettings | None) -> dict[str, AttributeValue]:
+    """Map the OTel-spec model settings (`max_tokens`, `temperature`, ...) to `gen_ai.request.*` attributes."""
+    attributes: dict[str, AttributeValue] = {}
+    if model_settings:
+        for key in MODEL_SETTING_ATTRIBUTES:
+            if isinstance(value := model_settings.get(key), float | int):
+                attributes[f'gen_ai.request.{key}'] = value
+    return attributes
 
 
 def annotate_tool_call_otel_metadata(response: ModelResponse, parameters: ModelRequestParameters) -> None:
@@ -187,6 +356,12 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
 
     tool_definitions: list[dict[str, Any]] = []
     for tool in all_tools:
+        if model_request_parameters.visibility_of(tool.name) == 'withheld':
+            # Withheld tools are not represented anywhere in the request — recording their
+            # schema and description would put a tool the model cannot see (and whose hidden
+            # description may be sensitive) into telemetry. `via_history` and `deferred` tools
+            # do reach the model, so they stay.
+            continue
         tool_def: dict[str, Any] = {'type': 'function', 'name': tool.name}
         if tool.description:
             tool_def['description'] = tool.description
@@ -211,6 +386,8 @@ class _FinishModelRequestSpan(Protocol):
 def open_model_request_span(
     settings: InstrumentationSettings,
     request_context: ModelRequestContext,
+    *,
+    message_json_cache: MessageJsonCache | None = None,
 ) -> Generator[tuple[_FinishModelRequestSpan, ModelRequestContext]]:
     """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
 
@@ -221,6 +398,9 @@ def open_model_request_span(
     response with OTel tool-call metadata and records outcome attributes. Token/cost metrics are
     recorded *after* the span closes so backends that aggregate from span attributes don't
     double-count.
+
+    `message_json_cache` is a per-run cache reused across requests so the growing input history
+    isn't re-serialized in full each time; the agent flow passes one, one-off requests pass `None`.
     """
     # TODO Missing attributes:
     #  - error.type: unclear if we should do something here or just always rely on span exceptions
@@ -237,24 +417,19 @@ def open_model_request_span(
     attributes: dict[str, AttributeValue] = {
         'gen_ai.operation.name': operation,
         **model_attributes(model),
-        **model_request_parameters_attributes(prepared_parameters),
         **get_agent_run_baggage_attributes(),
-        'logfire.json_schema': to_json(
-            {
-                'type': 'object',
-                'properties': {'model_request_parameters': {'type': 'object'}},
-            }
-        ).decode(),
     }
+    json_schema_properties: dict[str, dict[str, str]] = {}
+    if settings.include_model_request_parameters:
+        attributes.update(model_request_parameters_attributes(prepared_parameters))
+        json_schema_properties['model_request_parameters'] = {'type': 'object'}
+    attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
 
     tool_definitions = build_tool_definitions(prepared_parameters)
     if tool_definitions:
         attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
 
-    if prepared_settings:
-        for key in MODEL_SETTING_ATTRIBUTES:
-            if isinstance(value := prepared_settings.get(key), float | int):
-                attributes[f'gen_ai.request.{key}'] = value
+    attributes.update(model_settings_attributes(prepared_settings))
 
     record_metrics: Callable[[], None] | None = None
     try:
@@ -275,7 +450,7 @@ def open_model_request_span(
                 system = cast(str, attributes[GEN_AI_SYSTEM_ATTRIBUTE])
 
                 response_model = response.model_name or request_model
-                price_calculation = None
+                price_calculation: PriceCalculation | None = None
 
                 def _record_metrics() -> None:
                     metric_attributes = {
@@ -291,20 +466,24 @@ def open_model_request_span(
 
                 # Compute cost before the `is_recording()` gate so `_record_metrics`
                 # always emits cost data, even when the span is dropped by sampling.
-                try:
-                    price_calculation = response.cost()
-                except LookupError:
-                    pass
-                except Exception as e:
-                    warnings.warn(
-                        f'Failed to get cost from response: {type(e).__name__}: {e}',
-                        CostCalculationFailedWarning,
-                    )
+                price_calculation = best_effort_price(
+                    response.usage,
+                    model_name=response.model_name,
+                    provider_api_url=response.provider_url,
+                    provider_name=response.provider_name,
+                    genai_request_timestamp=response.timestamp,
+                )
 
                 if not span.is_recording():
                     return
 
-                settings.handle_messages(prepared_request_context.messages, response, span, prepared_parameters)
+                settings.handle_messages(
+                    prepared_request_context.messages,
+                    response,
+                    span,
+                    prepared_parameters,
+                    message_json_cache=message_json_cache,
+                )
 
                 attributes_to_set: dict[str, Any] = {
                     **response.usage.opentelemetry_attributes(),
@@ -325,6 +504,39 @@ def open_model_request_span(
     finally:
         if record_metrics:
             record_metrics()
+
+
+def capture_current_context() -> Callable[[], AbstractContextManager[None]]:
+    """Snapshot the current OTel context so it can be re-attached in another task.
+
+    The streaming continuation composite opens each segment's `request_stream` lazily,
+    in the *consumer* task that iterates the stream, whereas the `chat` span is opened
+    by `wrap_model_request` in a separate task. Those tasks don't share an OTel context,
+    so without re-attaching, span updates driven by `get_current_span()` (e.g.
+    `FallbackModel` recording the resolved inner model) would land on the wrong span.
+
+    Returns a factory that yields a context manager re-attaching the captured context;
+    the composite enters it around each segment without depending on OpenTelemetry itself.
+    """
+    captured = otel_context.get_current()
+
+    @contextmanager
+    def attach_captured_context() -> Generator[None]:
+        # Restore the previous context by re-`attach`ing it rather than `detach`ing the token: this CM is
+        # held across the `yield` in `_ContinuationStreamedResponse._get_event_iterator`, so when a streamed
+        # run is interrupted mid-segment the async generator is finalized (`GeneratorExit`) in a different
+        # contextvars `Context`, where `otel_context.detach(token)` -> `ContextVar.reset` raises
+        # `ValueError: ... created in a different Context`. OTel swallows it but logs a noisy
+        # 'Failed to detach context' (surfaced verbatim in the Pyodide output panel). `attach()` is a plain
+        # `set`, which never fails cross-context, so it restores `previous` silently. See #6569.
+        previous = otel_context.get_current()
+        otel_context.attach(captured)
+        try:
+            yield
+        finally:
+            otel_context.attach(previous)
+
+    return attach_captured_context
 
 
 def get_instructions(
@@ -423,6 +635,9 @@ class InstrumentationNames:
     # Deferral span attributes
     tool_deferral_name_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.name'
     tool_deferral_metadata_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.metadata'
+
+    # Set on tool spans for calls that failed before execution; absent on execution failures
+    tool_failure_stage_attr: ClassVar[str] = 'pydantic_ai.tool.failure_stage'
 
     @classmethod
     def for_version(cls, version: int) -> Self:
