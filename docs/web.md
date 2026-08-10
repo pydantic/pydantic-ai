@@ -116,16 +116,25 @@ The app cannot currently be mounted at a subpath (e.g., `/chat`) because the UI 
 
 By default, the web UI is fetched from a CDN and cached locally. You can provide `html_source` to override this for offline usage or enterprise environments.
 
-For offline usage, download the html file once while you have internet access:
+### Offline and air-gapped deployments
+
+The default UI build is split across many files: `index.html` references a stylesheet and, at runtime,
+lazily imports chunks for syntax highlighting, diagrams and math. Those references point back at the
+CDN, so downloading `index.html` alone gives you a page that boots and then fails to render as soon as
+a code block or an equation appears.
+
+Use the **offline build** instead — a single self-contained file with every chunk, font and icon
+inlined, so it needs no network access beyond your own server:
 
 ```python
-from pydantic_ai.ui import DEFAULT_HTML_URL
+from pydantic_ai.ui import OFFLINE_HTML_URL
 
-print(DEFAULT_HTML_URL)  # Use this URL to download the UI HTML file
-#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.0.0/dist/index.html
+print(OFFLINE_HTML_URL)  # Use this URL to download the self-contained UI HTML file
+#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.1.0/offline/index.html
 ```
 
-You can then download the file using the URL printed above:
+Download it once from a machine that has internet access, then move it into the air-gapped
+environment:
 
 ```bash
 curl -o ~/pydantic-ai-ui.html <chat_ui_url>
@@ -143,4 +152,16 @@ app = agent.to_web(html_source='~/pydantic-ai-ui.html')
 
 # Or use a custom URL (e.g., for enterprise environments)
 app = agent.to_web(html_source='https://cdn.example.com/ui/index.html')
+```
+
+The offline file is around 16 MB. That is not extra weight so much as relocated weight — the default
+build ships the same assets across 400-odd files that the browser fetches from the CDN on demand,
+where the offline build front-loads all of them into the first request. The default `to_web()` path
+is unchanged and still uses the split build:
+
+```python
+from pydantic_ai.ui import DEFAULT_HTML_URL
+
+print(DEFAULT_HTML_URL)
+#> https://cdn.jsdelivr.net/npm/@pydantic/ai-chat-ui@2.1.0/dist/index.html
 ```
