@@ -6380,8 +6380,8 @@ async def test_stream_cancel_guard_suppresses_httpx2_transport_error():
         async def _get_event_iterator(self) -> AsyncIterator[Any]:
             for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
                 yield event
-            if self.cancelled:
-                raise httpx2.StreamClosed()
+            assert self.cancelled
+            raise httpx2.StreamClosed()
 
         async def close_stream(self) -> None:
             pass

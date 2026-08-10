@@ -41,6 +41,20 @@ pytestmark = [
 class TestHTTPX2TenacityTransport:
     """HTTPX2 retry transports use the same Tenacity configuration as their HTTPX predecessors."""
 
+    def test_sync_transport_passes_response_without_validator_and_closes_wrapped_transport(self):
+        request = httpx2.Request('GET', 'https://example.com')
+        response = httpx2.Response(200, request=request)
+        wrapped = Mock(spec=httpx2.BaseTransport)
+        wrapped.handle_request.return_value = response
+        transport = HTTPX2TenacityTransport(config=RetryConfig(), wrapped=wrapped)
+
+        assert transport.handle_request(request) is response
+
+        transport.close()
+
+        wrapped.handle_request.assert_called_once_with(request)
+        wrapped.close.assert_called_once_with()
+
     def test_sync_transport_retries_response_validator(self):
         attempts = 0
 
@@ -78,6 +92,45 @@ class TestHTTPX2TenacityTransport:
 
         wrapped.__aenter__.assert_awaited_once_with()
         wrapped.__aexit__.assert_awaited_once_with(None, None, None)
+
+    async def test_async_transport_retries_response_validator(self):
+        attempts = 0
+
+        async def handler(request: httpx2.Request) -> httpx2.Response:
+            nonlocal attempts
+            attempts += 1
+            return httpx2.Response(503 if attempts == 1 else 200, request=request)
+
+        transport = AsyncHTTPX2TenacityTransport(
+            config=RetryConfig(
+                retry=retry_if_exception_type(httpx2.HTTPStatusError),
+                stop=stop_after_attempt(2),
+                wait=wait_fixed(0),
+                reraise=True,
+            ),
+            wrapped=httpx2.MockTransport(handler),
+            validate_response=lambda response: response.raise_for_status(),
+        )
+
+        async with httpx2.AsyncClient(transport=transport) as client:
+            response = await client.get('https://example.com')
+
+        assert response.status_code == 200
+        assert attempts == 2
+
+    async def test_async_transport_passes_response_without_validator_and_closes_wrapped_transport(self):
+        request = httpx2.Request('GET', 'https://example.com')
+        response = httpx2.Response(200, request=request)
+        wrapped = AsyncMock(spec=httpx2.AsyncBaseTransport)
+        wrapped.handle_async_request.return_value = response
+        transport = AsyncHTTPX2TenacityTransport(config=RetryConfig(), wrapped=wrapped)
+
+        assert await transport.handle_async_request(request) is response
+
+        await transport.aclose()
+
+        wrapped.handle_async_request.assert_awaited_once_with(request)
+        wrapped.aclose.assert_awaited_once_with()
 
 
 class TestLegacyHTTPXTransports:

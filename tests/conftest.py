@@ -695,12 +695,11 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
         # modules (e.g. `transformers` submodules) define a lazy PEP 562 `__getattr__`
         # that imports submodules on attribute access, and probing every loaded module
         # with `getattr` would trigger those unrelated (and possibly failing) imports.
-        mod_dict = getattr(mod, '__dict__', None)
-        if mod_dict is not None:
-            if mod_dict.get('create_async_http_client', None) is original_httpx:
-                monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
-            if mod_dict.get('create_httpx2_client', None) is original_httpx2:
-                monkeypatch.setattr(mod, 'create_httpx2_client', cached_httpx2_per_test)
+        mod_dict: dict[str, object] = getattr(mod, '__dict__', None) or {}
+        if mod_dict.get('create_async_http_client', None) is original_httpx:
+            monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
+        if mod_dict.get('create_httpx2_client', None) is original_httpx2:
+            monkeypatch.setattr(mod, 'create_httpx2_client', cached_httpx2_per_test)
 
     yield cache
 

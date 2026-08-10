@@ -157,7 +157,7 @@ if _legacy_httpx is not None:
         (httpx2.HTTPStatusError, _legacy_httpx.HTTPStatusError),
         {'__init__': _compatible_http_status_error_init},
     )
-else:
+else:  # pragma: no cover
     _CompatibleRequestError = httpx2.RequestError
     _CompatibleHTTPStatusError = httpx2.HTTPStatusError
 

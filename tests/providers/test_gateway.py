@@ -4,6 +4,7 @@ from typing import Any, Literal
 from unittest.mock import patch
 from urllib.parse import urlparse
 
+import httpx
 import httpx2
 import pytest
 
@@ -127,6 +128,42 @@ async def test_init_with_http_client_replaces_existing_gateway_hook():
 
         assert request.headers['X-Existing-Request-Hook'] == 'kept'
         assert request.headers['Authorization'] == 'Bearer second'
+
+
+async def test_non_openai_gateway_provider_recreates_owned_http_client():
+    provider = gateway_provider('groq', api_key='foobar', base_url=GATEWAY_BASE_URL)
+
+    async with provider:
+        pass
+    original_http_client = provider._own_http_client  # pyright: ignore[reportPrivateUsage]
+
+    async with provider:
+        pass
+
+    assert provider._own_http_client is not original_http_client  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_non_openai_gateway_provider_preserves_custom_http_client():
+    async with httpx.AsyncClient() as http_client:
+        provider = gateway_provider('groq', http_client=http_client, api_key='foobar', base_url=GATEWAY_BASE_URL)
+
+        async with provider:
+            pass
+
+        assert not http_client.is_closed
+
+
+async def test_non_openai_gateway_provider_rejects_httpx2_client():
+    async with httpx2.AsyncClient() as http_client:
+        with pytest.raises(
+            UserError, match=re.escape('`httpx2.AsyncClient` is only supported for OpenAI Gateway routes.')
+        ):
+            gateway_provider(  # pyright: ignore[reportCallIssue]
+                'groq',
+                http_client=http_client,  # pyright: ignore[reportArgumentType]
+                api_key='foobar',
+                base_url=GATEWAY_BASE_URL,
+            )
 
 
 @pytest.fixture
