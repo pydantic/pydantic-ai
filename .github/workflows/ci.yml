@@ -44,8 +44,11 @@ jobs:
           enable-cache: true
           cache-suffix: lint
 
+      # `--no-extra mcp-tasks` everywhere `--all-extras` appears: the extra lives in the
+      # FastMCP 4 / MCP SDK v2 lock fork, which `tool.uv.conflicts` bars from co-installing
+      # with the FastMCP 3 dev environment (the `test-fastmcp-4` job covers that universe).
       - name: Install dependencies
-        run: uv sync --all-extras --all-packages --group lint
+        run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
 
       # pyright typechecks the gh-aw shim (.github/scripts/pydantic_ai_gh_aw_shim),
       # which imports pydantic-ai-harness. The harness depends on pydantic-ai-slim,
@@ -212,7 +215,7 @@ jobs:
           - name: standard
             command: ""
           - name: all-extras
-            command: "--all-extras"
+            command: "--all-extras --no-extra mcp-tasks"
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
@@ -271,7 +274,7 @@ jobs:
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --all-extras python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
+            if uv run --all-extras --no-extra mcp-tasks python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."
@@ -364,7 +367,7 @@ jobs:
           restore-keys: |
             temporal-cli-${{ runner.os }}-${{ runner.arch }}-lowest-
 
-      - run: uv sync --all-extras --resolution lowest-direct
+      - run: uv sync --all-extras --no-extra mcp-tasks --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 
@@ -454,7 +457,7 @@ jobs:
           enable-cache: true
           cache-suffix: examples
 
-      - run: uv run --all-extras python tests/import_examples.py
+      - run: uv run --all-extras --no-extra mcp-tasks python tests/import_examples.py
 
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
@@ -478,22 +481,23 @@ jobs:
 
       # Keep the normal matrix locked to FastMCP 3 while `--with` gives these tests an isolated
       # FastMCP 4 environment without mutating the project environment.
-      # TODO: Drop these package-specific cutoffs after 2026-08-04, when the pinned artifacts clear
+      # TODO: Drop these package-specific cutoffs after 2026-08-14, when the pinned artifacts clear
       # the workspace's seven-day cooldown. Unrelated dependencies remain subject to the cooldown.
       # uv only opts direct requirements into prereleases, so the two beta distributions that
       # FastMCP pins transitively must also be named as direct requirements.
       - run: >-
           uv run
           --all-extras
+          --no-extra mcp-tasks
           --all-packages
-          --with "fastmcp[tasks]==4.0.0b1"
-          --with "fastmcp-slim==4.0.0b1"
-          --with "fastmcp-tasks==4.0.0b1"
-          --exclude-newer-package "fastmcp=2026-07-29T00:00:00Z"
-          --exclude-newer-package "fastmcp-slim=2026-07-29T00:00:00Z"
-          --exclude-newer-package "fastmcp-tasks=2026-07-29T00:00:00Z"
-          --exclude-newer-package "mcp=2026-07-29T00:00:00Z"
-          --exclude-newer-package "mcp-types=2026-07-29T00:00:00Z"
+          --with "fastmcp[tasks]==4.0.0b2"
+          --with "fastmcp-slim==4.0.0b2"
+          --with "fastmcp-tasks==4.0.0b2"
+          --exclude-newer-package "fastmcp=2026-08-08T00:00:00Z"
+          --exclude-newer-package "fastmcp-slim=2026-08-08T00:00:00Z"
+          --exclude-newer-package "fastmcp-tasks=2026-08-08T00:00:00Z"
+          --exclude-newer-package "mcp=2026-08-08T00:00:00Z"
+          --exclude-newer-package "mcp-types=2026-08-08T00:00:00Z"
           coverage run -m pytest
           tests/test_mcp.py
           tests/models/test_mcp_sampling.py
