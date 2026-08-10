@@ -12868,28 +12868,20 @@ async def test_anthropic_container_id_from_stream_response(allow_model_requests:
 
 
 @pytest.mark.vcr()
-async def test_anthropic_code_execution_tool_container_reuse(allow_model_requests: None, anthropic_api_key: str):
+async def test_anthropic_code_execution_tool_container_reuse(
+    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+):
     """Reusing a `container_id` from message history must be sent as a raw string.
 
     The Anthropic SDK types `container` as `BetaContainerParams | str`, but the live
     API rejects the object form with `container: Input should be a valid string`.
     This test records a two-turn conversation using the code execution tool and
     asserts that the second request sends `container` on the wire as the raw id —
-    using an httpx event hook so the assertion runs against what the client
+    reading it off `request_capture` so the assertion runs against what the client
     actually sent, not what the VCR cassette happens to hold.
     """
-    sent_bodies: list[dict[str, Any]] = []
-
-    async def capture_request(request: httpx.Request) -> None:
-        sent_bodies.append(json.loads(request.read()))
-
-    http_client = httpx.AsyncClient(event_hooks={'request': [capture_request]})
-    m = AnthropicModel(
-        'claude-sonnet-4-5',
-        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=http_client),
-    )
     agent = Agent(
-        m,
+        anthropic_model('claude-sonnet-4-5', capture=True),
         capabilities=[NativeTool(CodeExecutionTool())],
         instructions='Always use the code execution tool for math.',
     )
@@ -12902,6 +12894,7 @@ async def test_anthropic_code_execution_tool_container_reuse(allow_model_request
 
     second = await agent.run('And what about 4 * 12390?', message_history=first.new_messages())
 
+    sent_bodies = request_capture.bodies('/v1/messages')
     assert len(sent_bodies) == 2
     assert 'container' not in sent_bodies[0]
     assert sent_bodies[1]['container'] == container_id
