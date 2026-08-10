@@ -1398,7 +1398,6 @@ async def test_evaluation_renderer_non_utf8_stream(
     buffer = io.BytesIO()
     console = Console(file=io.TextIOWrapper(buffer, encoding='cp1252', newline=''), width=120)
     new_report.print(baseline=baseline_report, console=console, include_averages=False)
-    console.file.flush()
 
     assert buffer.getvalue().decode('cp1252') == snapshot("""\
 +- Evaluation Diff: baseline_report > new_report -+
