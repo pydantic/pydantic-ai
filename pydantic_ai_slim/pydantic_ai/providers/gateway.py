@@ -158,11 +158,13 @@ def gateway_provider(
     if canonical == 'bedrock':
         from .bedrock import BedrockProvider
 
-        return BedrockProvider(
+        provider = BedrockProvider(
             api_key=api_key,
             base_url=base_url,
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
+        provider._model_id_namespace = f'gateway/{provider.name}'  # pyright: ignore[reportPrivateUsage]
+        return provider
 
     own_http_client = http_client is None
     http_client = http_client or create_async_http_client()
@@ -182,17 +184,17 @@ def gateway_provider(
     if canonical in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
-        return _with_http_client(OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client))
+        provider = _with_http_client(OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client))
     elif canonical == 'groq':
         from .groq import GroqProvider
 
-        return _with_http_client(GroqProvider(api_key=api_key, base_url=base_url, http_client=http_client))
+        provider = _with_http_client(GroqProvider(api_key=api_key, base_url=base_url, http_client=http_client))
     elif canonical == 'anthropic':
         from anthropic import AsyncAnthropic
 
         from .anthropic import AnthropicProvider
 
-        return _with_http_client(
+        provider = _with_http_client(
             AnthropicProvider(
                 anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
             )
@@ -203,9 +205,12 @@ def gateway_provider(
         # land here via `normalize_gateway_provider`.
         from .google_cloud import GoogleCloudProvider
 
-        return _with_http_client(GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client))
+        provider = _with_http_client(GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client))
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
+
+    provider._model_id_namespace = f'gateway/{provider.name}'  # pyright: ignore[reportPrivateUsage]
+    return provider
 
 
 class _GatewayRequestHook:

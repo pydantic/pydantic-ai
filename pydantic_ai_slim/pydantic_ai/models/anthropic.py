@@ -318,7 +318,7 @@ _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
 
 @contextmanager
-def _map_api_errors(model_name: str, provider_name: str = 'anthropic') -> Generator[None]:
+def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
@@ -327,7 +327,7 @@ def _map_api_errors(model_name: str, provider_name: str = 'anthropic') -> Genera
             suggested_model_id = None
             if _utils.is_str_dict(body) and _utils.is_str_dict(error := body.get('error')):
                 if error.get('type') == 'not_found_error' and error.get('message') == f'model: {model_name}':
-                    suggested_model_id = _suggest_known_model_id_from_provider_error(provider_name, model_name)
+                    suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
             raise ModelHTTPError(
                 status_code=status_code,
                 model_name=model_name,
@@ -909,7 +909,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self._validate_task_budget_vs_context_management(model_settings, context_management)
         container = self._get_container(messages, model_settings)
 
-        with _map_api_errors(self.model_name, self.system):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or OMIT,
@@ -1157,7 +1157,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(self.client, AsyncAnthropicBedrock):
             from ._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
 
-            with _map_api_errors(self.model_name, self.system):
+            with _map_api_errors(self.model_name, self._provider.model_id_namespace):
                 return await count_tokens_via_bedrock(
                     self.client,
                     self._model_name,
@@ -1178,7 +1178,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     extra_body=model_settings.get('extra_body'),
                 )
 
-        with _map_api_errors(self.model_name, self.system):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
@@ -1336,7 +1336,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         peekable_response: _utils.PeekableAsyncStream[
             BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name, self.system):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
@@ -1355,6 +1355,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _model_name=model_name,
             _response=peekable_response,
             _provider_name=self._provider.name,
+            _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _enabled_server_tool_names=self._get_enabled_server_tool_names(model_request_parameters, model_settings),
         )
@@ -2818,12 +2819,13 @@ class AnthropicStreamedResponse(StreamedResponse):
     _model_name: AnthropicModelName
     _response: _utils.PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]]
     _provider_name: str
+    _model_id_namespace: str
     _provider_url: str
     _enabled_server_tool_names: frozenset[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        with _map_api_errors(self._model_name, self._provider_name):
+        with _map_api_errors(self._model_name, self._model_id_namespace):
             current_block: BetaContentBlock | None = None
             ignored_server_tool_use_indices: set[int] = set()
 

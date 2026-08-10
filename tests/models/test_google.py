@@ -391,6 +391,7 @@ async def test_google_close_stream_only_suppresses_async_generator_race(error_me
         _model_name='gemini-2.0-flash',
         _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
         _provider_name='google',
+        _model_id_namespace='google',
         _provider_url='https://generativelanguage.googleapis.com',
     )
 
@@ -4702,6 +4703,7 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
         _response=cast(Any, PeekableAsyncStream(response)),
         _timestamp=IsDatetime(),
         _provider_name='test-provider',
+        _model_id_namespace='test-provider',
         _provider_url='',
     )
 
@@ -4744,6 +4746,7 @@ async def _stream_gemini_usage(chunks: list[GenerateContentResponse]) -> Request
         _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
         _timestamp=IsDatetime(),
         _provider_name='google',
+        _model_id_namespace='google',
         _provider_url='',
     )
 

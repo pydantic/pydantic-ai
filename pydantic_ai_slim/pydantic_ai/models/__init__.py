@@ -944,7 +944,8 @@ class Model(ABC, Generic[InterfaceClient]):
     @property
     def model_id(self) -> str:
         """The fully qualified model name in `'provider:model_name'` format."""
-        return f'{self.system}:{self.model_name}'
+        namespace = provider.model_id_namespace if (provider := self.provider) is not None else self.system
+        return f'{namespace}:{self.model_name}'
 
     @property
     def label(self) -> str:
@@ -1614,10 +1615,10 @@ def _suggest_known_model_name(model: str, model_name: str, known_model_ids: Sequ
 
 
 def _suggest_known_model_id_from_provider_error(  # pyright: ignore[reportUnusedFunction]
-    provider_name: str, model_name: str
+    model_id_namespace: str, model_name: str
 ) -> str | None:
-    model_id = f'{provider_name}:{model_name}'
-    provider_prefix = f'{provider_name}:'
+    model_id = f'{model_id_namespace}:{model_name}'
+    provider_prefix = f'{model_id_namespace}:'
     known_model_ids = [name for name in known_model_names() if name.startswith(provider_prefix)]
     suggestion = _suggest_known_model_name(model_id, model_name, known_model_ids)
     return suggestion if suggestion != model_id else None

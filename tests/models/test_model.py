@@ -229,6 +229,16 @@ TEST_CASES = [
     ),
 ]
 
+GATEWAY_MODEL_ID_NAMESPACES = {
+    'gateway/openai': 'gateway/openai',
+    'gateway/chat': 'gateway/openai',
+    'gateway/responses': 'gateway/openai',
+    'gateway/groq': 'gateway/groq',
+    'gateway/google': 'gateway/google-cloud',
+    'gateway/anthropic': 'gateway/anthropic',
+    'gateway/converse': 'gateway/bedrock',
+}
+
 
 @pytest.mark.parametrize(
     'mock_env_vars, model_name, expected_model_name, expected_system, module_name, model_class', TEST_CASES
@@ -253,8 +263,9 @@ def test_infer_model(
         assert m.model_name == expected_model_name
         assert m.system == expected_system
 
-        # Test that model_id matches the provider:model string that was passed in
-        assert m.model_id == f'{expected_system}:{expected_model_name}'
+        input_namespace = model_name.split(':', maxsplit=1)[0]
+        expected_namespace = GATEWAY_MODEL_ID_NAMESPACES.get(input_namespace, expected_system)
+        assert m.model_id == f'{expected_namespace}:{expected_model_name}'
 
         m2 = infer_model(m)
         assert m2 is m

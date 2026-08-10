@@ -121,7 +121,7 @@ if TYPE_CHECKING:
 
 
 @contextmanager
-def _map_api_errors(model_name: str, provider_name: str = 'bedrock') -> Generator[None]:
+def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Generator[None]:
     try:
         yield
     except ClientError as e:
@@ -131,7 +131,7 @@ def _map_api_errors(model_name: str, provider_name: str = 'bedrock') -> Generato
             suggested_model_id = None
             error = e.response.get('Error')
             if _utils.is_str_dict(error) and error.get('Message') == 'The provided model identifier is invalid.':
-                suggested_model_id = _suggest_known_model_id_from_provider_error(provider_name, model_name)
+                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
             raise ModelHTTPError(
                 status_code=status_code,
                 model_name=model_name,
@@ -802,7 +802,7 @@ class BedrockConverseModel(Model[BaseClient]):
         }
         # One client object for both registration and the call, in case the property is reassigned mid-request.
         client = self.client
-        with _map_api_errors(self.model_name, self.system):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             response = await _call_bedrock(client, client.count_tokens, params, settings.get('extra_headers'))
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
@@ -827,6 +827,7 @@ class BedrockConverseModel(Model[BaseClient]):
             _model_profile=cast(BedrockModelProfile, self.profile),
             _event_stream=response['stream'],
             _provider_name=self._provider.name,
+            _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self.base_url,
             _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
@@ -1039,7 +1040,7 @@ class BedrockConverseModel(Model[BaseClient]):
 
         # One client object for both registration and the call, in case the property is reassigned mid-request.
         client = self.client
-        with _map_api_errors(self.model_name, self.system):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             if stream:
                 model_response = await _call_bedrock(
                     client, client.converse_stream, params, settings.get('extra_headers')
@@ -1650,6 +1651,7 @@ class BedrockStreamedResponse(StreamedResponse):
     _model_profile: BedrockModelProfile
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _provider_name: str
+    _model_id_namespace: str
     _provider_url: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _provider_response_id: str | None = None
@@ -1661,7 +1663,7 @@ class BedrockStreamedResponse(StreamedResponse):
         await anyio.to_thread.run_sync(self._event_stream.close)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        with _map_api_errors(self._model_name, self._provider_name):
+        with _map_api_errors(self._model_name, self._model_id_namespace):
             if self._provider_response_id is not None:
                 self.provider_response_id = self._provider_response_id
 
