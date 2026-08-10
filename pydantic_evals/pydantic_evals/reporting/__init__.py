@@ -573,7 +573,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         this, so it defaults to `False`; pass `ascii_only=console.options.ascii_only` from the console you print the
         table to.
         """
-        if ascii_only and duration_config is None:
+        if ascii_only and not duration_config:
             duration_config = {
                 **_DEFAULT_DURATION_CONFIG,
                 'value_formatter': lambda value: default_render_duration(value).replace('µs', 'us'),

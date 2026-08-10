@@ -1519,7 +1519,7 @@ async def test_console_table_renders_ascii_glyphs_when_asked(
     buffer = BytesIO()
     stream = TextIOWrapper(buffer, encoding='cp932', errors='strict', newline='')
     console = Console(file=stream, width=150)
-    console.print(report.console_table(ascii_only=True))
+    console.print(report.console_table(ascii_only=True, duration_config={}))
     stream.flush()
 
     assert trim_trailing_whitespace(buffer.getvalue().decode('cp932')) == snapshot("""\
