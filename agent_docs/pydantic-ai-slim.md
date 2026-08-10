@@ -4,7 +4,7 @@ Use this guide for non-trivial changes to `pydantic-ai-slim`: public APIs, provi
 
 ## Ownership
 
-- `Agent` owns user-facing construction and run APIs. Prefer not to add constructor kwargs for behavior that can be modeled as a capability, toolset, model setting, or profile fact.
+- `Agent` owns user-facing construction and run APIs. `Agent.iter()` is the graph-run facade: `_prepare_run()` resolves per-run inputs into a private `_PreparedAgentRun`, whose `open()` method owns resource entry, capability lifecycle, recovery, and cleanup. Prefer not to add constructor kwargs for behavior that can be modeled as a capability, toolset, model setting, or profile fact.
 - `_agent_graph.py` owns loop orchestration: prompt assembly, model requests, tool/output processing, retries, usage checks, and finalization.
 - `tool_manager.py`, `tools.py`, and `toolsets/` own tool discovery, validation, execution, retries, approval/deferral, wrapper composition, and stable tool identity.
 - `output.py` is the public output API; `_output.py` owns internal output schemas, processors, output tools, and output validation/processing.
@@ -35,6 +35,26 @@ Before editing, identify which contracts can change:
 - When changing tool/output execution, check ordering, retry semantics, deferred calls, output finalization, streaming events, and durable wrappers together.
 - When removing deprecated APIs, distinguish public surface cleanup from persisted-data compatibility. Old constructors/imports may be removed in a major version; old serialized histories may still need to deserialize.
 
+## Capability Lifecycle Internals
+
+`capabilities/_lifecycle.py` owns lifecycle sequencing. `LifecycleStack` is deliberately
+phase-agnostic: callers choose forward or reverse transformation, middleware nesting,
+recovery, stream wrapping, or deferred-result settlement, while the stack applies that
+algorithm consistently. Do not implement those algorithms again in a capability container
+or registration API.
+
+`CombinedCapability` adapts capability instances into the shared stack and remains responsible
+for availability and capability-owned-tool activation. `Hooks` adapts its typed decorator
+registrations into the same stack and remains responsible for timeouts and tool-name filters.
+Keep operation-specific adapters typed; a single `Callable[..., Any]` registry would centralize
+code while weakening the contract.
+
+Capability construction still has two distinct stages. Agent binding runs before model inference,
+with durability bound after ordinary capability toolsets are visible. Run preparation happens
+after bootstrap model resolution and resolves per-run or dynamic state exactly once. V3 may replace
+the public `for_agent()` / `for_run()` and capability-tree APIs, but must preserve these stages,
+stable capability and toolset identities, model-selection provenance, and durable registration.
+
 ## Run Event Stream Internals
 
 `GraphAgentState.event_stream_buffer` is the internal, run-scoped queue for framework events emitted outside the direct model/tool event generators. It's shared by reference into every `RunContext` this run as the private `_event_stream_buffer` field; framework code appends via `RunContext._emit_event(event)`. This is internal plumbing, not public API — there is deliberately no public `emit_event` surface yet (a follow-up custom-events PR will design one, accounting for durable runtimes like Temporal where tools run in activities with a deserialized `RunContext`).
@@ -45,7 +65,7 @@ Feature code emits typed `AgentStreamEvent`s into the buffer once the public eve
 
 ## Cancellation Internals
 
-`_cancel.RunCancellation` is the run-scoped first-party cancellation controller, held on `GraphAgentDeps.cancellation` and shared by reference into every `RunContext` as the private `_cancellation` field (same never-`replace` invariant as `_event_stream_buffer` — see the comment in `build_run_context`). First-party cancellation works by cancelling the asyncio task driving the run, so it reuses the entire external-cancellation teardown; the `CancelledError` is classified exactly once, at the outer edge of `Agent.iter()`'s exit stack (`_translate_cancellation`), after all history-producing teardown has committed.
+`_cancel.RunCancellation` is the run-scoped first-party cancellation controller, held on `GraphAgentDeps.cancellation` and shared by reference into every `RunContext` as the private `_cancellation` field (same never-`replace` invariant as `_event_stream_buffer` — see the comment in `build_run_context`). First-party cancellation works by cancelling the asyncio task driving the run, so it reuses the entire external-cancellation teardown; the `CancelledError` is classified exactly once, at the outer edge of `_PreparedAgentRun.open()`'s exit stack (`_translate_cancellation`), after all history-producing teardown has committed.
 
 Three pieces of bookkeeping are load-bearing and easy to break from `_agent_graph.py` / `run.py`:
 
