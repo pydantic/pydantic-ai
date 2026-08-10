@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, NamedTuple, cast
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -2942,6 +2942,18 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
     return f'{x} {y}'  # pragma: no cover
 
 
+def tool_with_fixed_tuple(x: tuple[int, int]) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_heterogeneous_tuple(x: tuple[int, str]) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_length_constraints(x: Annotated[str, Field(min_length=2, max_length=10)]) -> str:
+    return x  # pragma: no cover
+
+
 @pytest.mark.parametrize(
     'tool,tool_strict,expected_params,expected_strict',
     [
@@ -3048,7 +3060,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {'x': {'type': 'string', 'description': 'minLength=1, format=uri'}},
+                    'properties': {'x': {'minLength': 1, 'type': 'string', 'description': 'format=uri'}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -3419,12 +3431,12 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                        'x': {'items': {'type': 'integer'}, 'maxItems': 1, 'minItems': 1, 'type': 'array'},
                         'y': {
                             'default': ['abc'],
+                            'items': {'type': 'string'},
                             'maxItems': 1,
                             'minItems': 1,
-                            'prefixItems': [{'type': 'string'}],
                             'type': 'array',
                         },
                     },
@@ -3441,10 +3453,58 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
-                        'y': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'string'}], 'type': 'array'},
+                        'x': {'items': {'type': 'integer'}, 'maxItems': 1, 'minItems': 1, 'type': 'array'},
+                        'y': {'items': {'type': 'string'}, 'maxItems': 1, 'minItems': 1, 'type': 'array'},
                     },
                     'required': ['x', 'y'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_fixed_tuple,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {'items': {'type': 'integer'}, 'maxItems': 2, 'minItems': 2, 'type': 'array'},
+                    },
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_heterogeneous_tuple,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {
+                        'x': {
+                            'maxItems': 2,
+                            'minItems': 2,
+                            'prefixItems': [{'type': 'integer'}, {'type': 'string'}],
+                            'type': 'array',
+                        },
+                    },
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_length_constraints,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'maxLength': 10, 'minLength': 2, 'type': 'string'}},
+                    'required': ['x'],
                     'type': 'object',
                 }
             ),
@@ -3538,9 +3598,9 @@ def test_strict_schema():
                         },
                         'my_recursive': {'anyOf': [{'$ref': '#'}, {'type': 'null'}]},
                         'my_tuple': {
+                            'items': {'type': 'integer'},
                             'maxItems': 1,
                             'minItems': 1,
-                            'prefixItems': [{'type': 'integer'}],
                             'type': 'array',
                         },
                     },
@@ -3557,7 +3617,7 @@ def test_strict_schema():
                     'properties': {},
                     'required': [],
                 },
-                'my_tuple': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                'my_tuple': {'items': {'type': 'integer'}, 'maxItems': 1, 'minItems': 1, 'type': 'array'},
                 'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                 'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
             },
@@ -6201,6 +6261,215 @@ def test_transformer_untyped_array_explicit_strict_raises():
     }
     with pytest.raises(UserError, match='OpenAI strict mode requires array items to have a type'):
         OpenAIJsonSchemaTransformer(schema, strict=True).walk()
+
+
+def test_transformer_length_constraints_strict_compatible():
+    """OpenAI strict mode accepts `minLength`/`maxLength`, so they must be kept and must not
+    downgrade the schema to non-strict.
+    See https://github.com/pydantic/pydantic-ai/issues/7315
+    """
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'value': {'type': 'string', 'minLength': 2, 'maxLength': 10}},
+        'required': ['value'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+
+    assert result['properties']['value'] == {'type': 'string', 'minLength': 2, 'maxLength': 10}
+    assert transformer.is_strict_compatible is True
+
+
+@pytest.mark.parametrize('strict', [None, True])
+def test_transformer_homogeneous_tuple_rewritten_for_strict_mode(strict: bool | None):
+    """OpenAI strict mode rejects `prefixItems`, but a fixed-length homogeneous tuple like
+    `tuple[int, int]` means the same as a length-bounded `list[int]`, so it's rewritten to the
+    supported `items` + `minItems`/`maxItems` form and stays strict-compatible.
+    See https://github.com/pydantic/pydantic-ai/issues/7315
+    """
+
+    class Model(BaseModel):
+        bbox: tuple[int, int, int, int]
+
+    transformer = OpenAIJsonSchemaTransformer(Model.model_json_schema(), strict=strict)
+    result = transformer.walk()
+
+    assert result['properties']['bbox'] == {
+        'type': 'array',
+        'items': {'type': 'integer'},
+        'minItems': 4,
+        'maxItems': 4,
+    }
+    if strict is None:
+        assert transformer.is_strict_compatible is True
+
+
+_UNCONVERTIBLE_PREFIX_ITEMS_SCHEMAS = [
+    pytest.param(
+        {
+            'type': 'array',
+            'prefixItems': [{'type': 'integer'}, {'type': 'string'}],
+            'minItems': 2,
+            'maxItems': 2,
+        },
+        id='heterogeneous',
+    ),
+    pytest.param(
+        {'type': 'array', 'prefixItems': [{'type': 'integer'}, {'type': 'integer'}]},
+        id='no-length-bounds',
+    ),
+    pytest.param(
+        {'type': 'array', 'prefixItems': [{'type': 'integer'}, {'type': 'integer'}], 'minItems': 2},
+        id='min-items-only',
+    ),
+    pytest.param(
+        {'type': 'array', 'prefixItems': [{'type': 'integer'}, {'type': 'integer'}], 'maxItems': 3},
+        id='max-items-mismatch',
+    ),
+    pytest.param(
+        {'type': 'array', 'prefixItems': [{'const': True}, {'const': 1}], 'minItems': 2, 'maxItems': 2},
+        id='bool-vs-int-const',
+    ),
+    pytest.param(
+        {
+            'type': 'array',
+            'prefixItems': [{'type': 'integer'}, {'type': 'integer'}, {'type': 'string'}],
+            'minItems': 3,
+            'maxItems': 3,
+        },
+        id='mismatch-after-first-pair',
+    ),
+    pytest.param(
+        {
+            'type': 'array',
+            'prefixItems': [{'type': 'integer'}],
+            'items': {'type': 'string'},
+            'minItems': 1,
+            'maxItems': 1,
+        },
+        id='prefix-items-plus-items',
+    ),
+]
+
+
+@pytest.mark.parametrize('array_schema', _UNCONVERTIBLE_PREFIX_ITEMS_SCHEMAS)
+def test_transformer_unconvertible_prefix_items_not_strict_compatible(array_schema: dict[str, Any]):
+    """A `prefixItems` schema that can't be rewritten to a plain typed array (a heterogeneous
+    tuple, missing length bounds, or `items` alongside `prefixItems`) has no strict-mode
+    representation, so with `strict=None` the schema must be inferred non-strict rather than
+    rejected by the API.
+    See https://github.com/pydantic/pydantic-ai/issues/7315
+    """
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'value': array_schema},
+        'required': ['value'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+
+    assert result['properties']['value']['prefixItems'] == array_schema['prefixItems']
+    assert transformer.is_strict_compatible is False
+
+
+@pytest.mark.parametrize('array_schema', _UNCONVERTIBLE_PREFIX_ITEMS_SCHEMAS)
+def test_transformer_unconvertible_prefix_items_explicit_strict_raises(array_schema: dict[str, Any]):
+    """With `strict=True` explicitly requested, an unconvertible `prefixItems` schema can't be
+    repaired without changing its meaning, so we raise a clear error instead of letting OpenAI
+    reject the request with an opaque 400."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'value': array_schema},
+        'required': ['value'],
+    }
+    with pytest.raises(UserError, match='OpenAI strict mode does not support `prefixItems`'):
+        OpenAIJsonSchemaTransformer(schema, strict=True).walk()
+
+
+def test_transformer_named_tuple_with_defaults_rewritten_for_strict_mode():
+    """A `NamedTuple` with defaults emits `maxItems` but no matching `minItems`. Once the child
+    transform strips per-element `title` and (under explicit strict) `default`, the elements all
+    share one schema, so the tuple is still rewritten to the length-bounded `items` form."""
+
+    class Point(NamedTuple):
+        x: int = 0
+        y: int = 0
+
+    class Model(BaseModel):
+        point: Point
+
+    result = OpenAIJsonSchemaTransformer(Model.model_json_schema(), strict=True).walk()
+
+    assert result['$defs']['Point'] == {'type': 'array', 'items': {'type': 'integer'}, 'maxItems': 2}
+
+
+def test_transformer_mixed_type_literal_tuple_not_strict_compatible():
+    """Mixed-type Literals emit `enum` without `type`, so `Literal[True, 'x']` and `Literal[1, 'x']`
+    differ only by `True` vs `1`. Canonical JSON comparison must keep them distinct (Python `==`
+    treats `True == 1`) so the tuple is not collapsed into a single wrong element schema."""
+
+    class Model(BaseModel):
+        pair: tuple[Literal[True, 'x'], Literal[1, 'x']]
+
+    transformer = OpenAIJsonSchemaTransformer(Model.model_json_schema(), strict=None)
+    result = transformer.walk()
+
+    assert result['properties']['pair']['prefixItems'] == [{'enum': [True, 'x']}, {'enum': [1, 'x']}]
+    assert transformer.is_strict_compatible is False
+
+
+def test_transformer_empty_prefix_items_dropped():
+    """An empty `prefixItems` constrains nothing, so the unsupported keyword is dropped and a
+    typed `items` keeps the schema strict-compatible."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'value': {'type': 'array', 'prefixItems': [], 'items': {'type': 'string'}}},
+        'required': ['value'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+
+    assert result['properties']['value'] == {'type': 'array', 'items': {'type': 'string'}}
+    assert transformer.is_strict_compatible is True
+
+
+def test_transformer_prefix_items_key_order_insensitive():
+    """Element schemas that differ only in key order are the same schema and must still collapse."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {
+            'value': {
+                'type': 'array',
+                'prefixItems': [{'type': 'string', 'maxLength': 3}, {'maxLength': 3, 'type': 'string'}],
+                'minItems': 2,
+                'maxItems': 2,
+            }
+        },
+        'required': ['value'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+
+    assert result['properties']['value'] == {
+        'type': 'array',
+        'items': {'type': 'string', 'maxLength': 3},
+        'minItems': 2,
+        'maxItems': 2,
+    }
+    assert transformer.is_strict_compatible is True
+
+
+def test_transformer_prefix_items_untouched_when_not_strict():
+    """With `strict=False` there's nothing to repair, so tuple schemas are passed through as-is."""
+
+    class Model(BaseModel):
+        pair: tuple[int, str]
+        bbox: tuple[int, int]
+
+    result = OpenAIJsonSchemaTransformer(Model.model_json_schema(), strict=False).walk()
+
+    assert result['properties']['pair']['prefixItems'] == [{'type': 'integer'}, {'type': 'string'}]
+    assert result['properties']['bbox']['prefixItems'] == [{'type': 'integer'}, {'type': 'integer'}]
 
 
 def chunk_with_usage(
