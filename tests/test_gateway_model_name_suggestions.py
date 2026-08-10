@@ -19,6 +19,8 @@ with try_import() as anthropic_imports:
     from pydantic_ai.models.anthropic import AnthropicModel
 
 with try_import() as google_imports:
+    from google.genai import errors
+
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -210,11 +212,25 @@ async def test_explicit_gateway_provider_suggests_gateway_model_id(allow_model_r
 
 
 @pytest.mark.skipif(not google_imports(), reason='google not installed')
-async def test_google_not_found_without_model_resolution_does_not_suggest(allow_model_requests: None):
+@pytest.mark.parametrize(
+    'error',
+    [
+        pytest.param('Resource not found.', id='non-object-error'),
+        pytest.param(
+            {
+                'code': 404,
+                'message': 'models/gemini-3.6-flahs is not supported for generateContent.',
+                'status': 'NOT_FOUND',
+            },
+            id='unsupported-method',
+        ),
+    ],
+)
+async def test_google_not_found_without_model_resolution_does_not_suggest(
+    allow_model_requests: None, error: str | dict[str, int | str]
+):
     async def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            404, json={'error': {'code': 404, 'message': 'Resource not found.', 'status': 'NOT_FOUND'}}
-        )
+        return httpx.Response(404, json={'error': error})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         model = GoogleModel(
@@ -225,3 +241,4 @@ async def test_google_not_found_without_model_resolution_does_not_suggest(allow_
             await Agent(model).run('hello')
 
     assert exc_info.value.suggested_model_id is None
+    assert isinstance(exc_info.value.__cause__, errors.ClientError)
