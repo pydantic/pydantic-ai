@@ -9,7 +9,7 @@ from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
 
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
-from pydantic_core import ErrorDetails, SchemaValidator
+from pydantic_core import SchemaValidator
 from typing_extensions import Self, TypedDict, TypeVar
 
 from pydantic_ai._utils import get_function_type_hints
@@ -118,29 +118,45 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
         return origin is not None and isinstance(value, origin)
 
 
-def dump_tool_validation_errors(errors: list[ErrorDetails]) -> list[Any]:
-    """Serialize validation errors as the structured content of a retried tool return.
+def build_retried_tool_return(
+    error: ValidationError | ModelRetry, *, tool_name: str, tool_call_id: str | None = None
+) -> _messages.ToolReturnPart:
+    """Build the result a tool call that has to be retried is answered with.
 
-    Root-level errors share one `input` — the whole arguments object — so serializing it once per
-    error multiplies a large payload by the error count, and a partially complete response can blow
-    the context window before the model gets to correct it
-    (https://github.com/pydantic/pydantic-ai/issues/7171). The first root-level error keeps its
-    `input`, so the model still sees the arguments it sent; a later one drops it only when it is that
-    same value. A distinct input is information of its own and stays, as does a nested error's, which
-    is the offending sub-value rather than the whole object.
+    This is the exact result the model receives when the agent loop handles the failure, so anything
+    else presenting the same failure (an instrumentation span, say) must build it the same way.
+
+    A `ValidationError`'s details travel as structured tool-result content: `ctx` is dropped by
+    `include_context=False`, and `input` is kept once per distinct value. Root-level errors share one
+    `input` — the whole arguments object — so serializing it into each multiplies a large payload by
+    the error count, and a partially complete response can blow the context window before the model
+    gets to correct it (https://github.com/pydantic/pydantic-ai/issues/7171). The first root-level
+    error keeps it, so the model still sees the arguments it sent; a later one drops it only when it
+    is that same value. A distinct input is information of its own and stays, as does a nested
+    error's, which is the offending sub-value rather than the whole object.
     """
-    exclude: dict[int, set[str]] = {}
-    root_input: Any = None
-    seen_root_error = False
-    for index, error in enumerate(errors):
-        if len(error.get('loc', ())) > 1:
-            continue
-        if not seen_root_error:
-            root_input = error.get('input')
-            seen_root_error = True
-        elif error.get('input') == root_input:
-            exclude[index] = {'input'}
-    return _messages.error_details_ta.dump_python(errors, mode='json', exclude=exclude)
+    content: list[Any] | str
+    if isinstance(error, ValidationError):
+        errors = error.errors(include_url=False, include_context=False)
+        exclude: dict[int, set[str]] = {}
+        root_input: Any = None
+        seen_root_error = False
+        for index, detail in enumerate(errors):
+            if len(detail.get('loc', ())) > 1:
+                continue
+            if not seen_root_error:
+                root_input = detail.get('input')
+                seen_root_error = True
+            elif detail.get('input') == root_input:
+                exclude[index] = {'input'}
+        content = _messages.error_details_ta.dump_python(errors, mode='json', exclude=exclude)
+    else:
+        content = error.message
+
+    part = _messages.ToolReturnPart(tool_name=tool_name, content=content, outcome='retried')
+    if tool_call_id:
+        part.tool_call_id = tool_call_id
+    return part
 
 
 def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
@@ -159,14 +175,9 @@ def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[
             )
         return ToolRetryError(_messages.RetryFeedbackPart(content=e.message, cause='model_retry'))
 
-    if isinstance(e, ValidationError):
-        content: list[Any] | str = dump_tool_validation_errors(e.errors(include_url=False, include_context=False))
-    else:
-        content = e.message
-    m = _messages.ToolReturnPart(tool_name=run_context.tool_name, content=content, outcome='retried')
-    if run_context.tool_call_id:
-        m.tool_call_id = run_context.tool_call_id
-    return ToolRetryError(m)
+    return ToolRetryError(
+        build_retried_tool_return(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
+    )
 
 
 async def run_output_validate_hooks(

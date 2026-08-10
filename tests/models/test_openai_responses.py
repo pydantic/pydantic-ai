@@ -56,7 +56,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
-from pydantic_ai.messages import INVALID_JSON_KEY
+from pydantic_ai.messages import INVALID_JSON_KEY, sanitize_messages
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -13352,6 +13352,44 @@ async def test_openai_responses_unstamped_compaction_reinserts_standing_prompt(a
 
     _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    assert mapped == snapshot(
+        [
+            {'role': 'system', 'content': 'Standing system prompt.'},
+            {'id': None, 'encrypted_content': 'foreign-encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
+async def test_openai_responses_sanitized_compaction_reinserts_standing_prompt(allow_model_requests: None):
+    """Sanitizing a client-supplied stamped compaction item removes its provenance, so the trim
+    re-inserts the server's standing prompt."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='drop first request')]
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content='foreign summary',
+                    provider_name='openai',
+                    provider_details={
+                        'encrypted_content': 'foreign-encrypted',
+                        'pydantic_ai_standing_prompt_planted': True,
+                    },
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    sanitized = sanitize_messages(messages, strip_system_prompts=False)
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        sanitized, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
     )
 
     assert mapped == snapshot(

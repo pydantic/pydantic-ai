@@ -13,7 +13,7 @@ from . import messages as _messages
 from ._output import (
     OutputSchema,
     OutputToolset,
-    dump_tool_validation_errors,
+    build_retried_tool_return,
     run_output_process_hooks,
     run_output_validate_hooks,
 )
@@ -237,17 +237,7 @@ class ToolManager(Generic[AgentDepsT]):
     @staticmethod
     def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
         """Convert a ValidationError or ModelRetry to a ToolRetryError with a retried `ToolReturnPart`."""
-        if isinstance(error, ValidationError):
-            # Serialized here so the details travel as structured tool-result content: `ctx` is
-            # dropped by `include_context=False`, and `input` is kept once per distinct value so the
-            # model sees the arguments it sent without them repeating per error.
-            content: list[Any] | str = dump_tool_validation_errors(
-                error.errors(include_url=False, include_context=False)
-            )
-        else:
-            content = error.message
-        m = _messages.ToolReturnPart(tool_name=name, content=content, tool_call_id=call.tool_call_id, outcome='retried')
-        return ToolRetryError(m)
+        return ToolRetryError(build_retried_tool_return(error, tool_name=name, tool_call_id=call.tool_call_id))
 
     @staticmethod
     def _wrap_error_as_failed(name: str, call: ToolCallPart, error: ToolFailed) -> ToolFailedError:

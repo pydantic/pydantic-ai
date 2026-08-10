@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from vcr.cassette import Cassette
 
 from pydantic_ai import Agent
@@ -424,6 +424,40 @@ pears are out of stock
 
 Fix the errors and try again.\
 """)
+
+
+def test_retry_prompt_part_from_error_builds_the_legacy_content():
+    """`RetryPromptPart.from_error` stays as the way user code builds one.
+
+    Nothing in the framework calls it any more — a tool retry is built by
+    `_output.build_retried_tool_return` instead — but answering a deferred call with a retry of your
+    own still needs the same content shape, so the constructor keeps its job.
+    """
+    try:
+        Answer.model_validate({'count': 'lots'})
+    except ValidationError as e:
+        part = RetryPromptPart.from_error(e, tool_name='count_things', tool_call_id='call_1')
+    else:  # pragma: no cover
+        raise AssertionError('expected a validation error')
+
+    assert part == snapshot(
+        RetryPromptPart(
+            content=[
+                {
+                    'type': 'int_parsing',
+                    'loc': ('count',),
+                    'msg': 'Input should be a valid integer, unable to parse string as an integer',
+                    'input': 'lots',
+                }
+            ],
+            tool_name='count_things',
+            tool_call_id='call_1',
+            timestamp=IsDatetime(),
+        )
+    )
+
+    from_retry = RetryPromptPart.from_error(ModelRetry('try again'))
+    assert (from_retry.content, from_retry.tool_name) == ('try again', None)
 
 
 @pytest.mark.skipif(not groq_available(), reason='groq not installed')

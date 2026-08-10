@@ -40,6 +40,7 @@ from .._utils import (
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import SuspendedResponseExpired, UserError
 from ..messages import (
+    STANDING_PROMPT_PLANTED_KEY,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -105,7 +106,6 @@ from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
-    STANDING_PROMPT_PLANTED_KEY,
     Model,
     ModelRequestContext,
     ModelRequestParameters,

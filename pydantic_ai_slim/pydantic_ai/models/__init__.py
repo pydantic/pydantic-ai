@@ -32,6 +32,7 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
+    STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
     BaseToolReturnPart,
     BinaryImage,
@@ -133,6 +134,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'openrouter',
         'ovhcloud',
         'sambanova',
+        'snowflake',
         'together',
         'vercel',
         'zai',
@@ -1673,7 +1675,7 @@ def infer_model(  # noqa: C901
             return BedrockMantleChatModel(model_name, provider=provider)
         return BedrockMantleResponsesModel(model_name, provider=provider)
 
-    # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
+    # OpenRouter, Cerebras, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
@@ -1683,6 +1685,10 @@ def infer_model(  # noqa: C901
         from .cerebras import CerebrasModel
 
         return CerebrasModel(model_name, provider=provider)
+    elif model_kind == 'snowflake':
+        from .snowflake import SnowflakeModel
+
+        return SnowflakeModel(model_name, provider=provider)
     elif model_kind == 'ollama':
         from .ollama import OllamaModel
 
@@ -1949,15 +1955,6 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
             break
         count += 1
     return count
-
-
-STANDING_PROMPT_PLANTED_KEY = 'pydantic_ai_standing_prompt_planted'
-"""`CompactionPart.provider_details` key stamped on compaction items minted by our own compact
-call, whose input window explicitly planted the standing prompt. Provenance for
-`_trim_messages_before_compaction`'s `standing_prompt_retained` fast path: only a stamped item is
-trusted to retain the standing prompt; anything else — an externally supplied or spliced history,
-or an item produced by a provider-initiated compaction of an ordinary request window — gets the
-standing prompt re-inserted."""
 
 
 def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
