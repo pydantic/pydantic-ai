@@ -127,8 +127,10 @@ Run hooks fire once per agent run. `wrap_run` (registered via `hooks.on.run`) wr
 
 Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.agent.UserPromptNode], [`ModelRequestNode`][pydantic_ai.agent.ModelRequestNode], [`CallToolsNode`][pydantic_ai.agent.CallToolsNode]).
 
+Node hooks fire no matter how the run is driven: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent_run.next()`][pydantic_ai.run.AgentRun.next], and `async for node in agent_run:` over [`agent.iter()`][pydantic_ai.agent.Agent.iter] all advance the run the same way.
+
 !!! note
-    `wrap_node_run` hooks are called automatically by [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent_run.next()`][pydantic_ai.run.AgentRun.next], but **not** when iterating with bare `async for node in agent_run:`.
+    [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] is the exception: it hands you the result as soon as the final output is found mid-stream, so the model request that produced it gets `before_node_run` but not `wrap_node_run` or `after_node_run`. The hooks fire in full for every other node, including the one that ends the run.
 
 ### Model request hooks
 

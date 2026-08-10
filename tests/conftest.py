@@ -945,6 +945,16 @@ def zai_api_key() -> str:
     return os.getenv('ZAI_API_KEY', 'mock-api-key')
 
 
+@pytest.fixture(scope='session')
+def snowflake_account() -> str:
+    return os.getenv('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
+
+
+@pytest.fixture(scope='session')
+def snowflake_token() -> str:
+    return os.getenv('SNOWFLAKE_TOKEN', 'mock-api-key')
+
+
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
 def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]:
     """xAI provider fixture backed by protobuf cassettes.
@@ -964,7 +974,7 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]
 
     cassette_name = sanitize_filename(request.node.name, 240)
     test_module = cast(str, request.node.fspath.basename.replace('.py', ''))
-    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
+    cassette_path = Path(request.node.fspath).parent / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
     record_mode: str | None
     try:
         # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).

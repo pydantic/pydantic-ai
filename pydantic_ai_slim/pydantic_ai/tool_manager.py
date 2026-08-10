@@ -29,7 +29,7 @@ from .exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from .messages import ToolCallPart, ToolReturn
+from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 from .tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import RunUsage
@@ -236,11 +236,7 @@ class ToolManager(Generic[AgentDepsT]):
     @staticmethod
     def _wrap_error_as_retry(name: str, call: ToolCallPart, error: ValidationError | ModelRetry) -> ToolRetryError:
         """Convert a ValidationError or ModelRetry to a ToolRetryError with a RetryPromptPart."""
-        if isinstance(error, ValidationError):
-            content: list[Any] | str = error.errors(include_url=False, include_context=False)
-        else:
-            content = error.message
-        m = _messages.RetryPromptPart(tool_name=name, content=content, tool_call_id=call.tool_call_id)
+        m = RetryPromptPart.from_error(error, tool_name=name, tool_call_id=call.tool_call_id)
         return ToolRetryError(m)
 
     @staticmethod

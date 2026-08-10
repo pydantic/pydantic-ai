@@ -1,6 +1,7 @@
 import datetime
-from collections.abc import Sequence
+from collections.abc import AsyncIterable, Sequence
 from copy import deepcopy
+from decimal import Decimal
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
@@ -19,7 +20,9 @@ from pydantic_ai import (
     ModelResponse,
     PartEndEvent,
     PartStartEvent,
+    RunContext,
     RunUsage,
+    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -46,6 +49,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModelSettings
     from pydantic_ai.models.fallback import FallbackModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.models.openrouter import (
         OpenRouterModel,
         OpenRouterModelSettings,
@@ -55,6 +59,7 @@ with try_import() as imports_successful:
         _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.test import TestModel
+    from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
@@ -532,6 +537,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
             details={'reasoning_tokens': 704},
             output_reasoning_tokens=704,
             requests=1,
+            cost=Decimal('0.00303425'),
         )
     )
 
@@ -546,6 +552,7 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
             details={'is_byok': 0, 'reasoning_tokens': 960, 'image_tokens': 0},
             output_reasoning_tokens=960,
             requests=1,
+            cost=Decimal('0.00435825'),
         )
     )
 
@@ -727,6 +734,87 @@ async def test_openrouter_streaming_reasoning(allow_model_requests: None, openro
                 TextPart(content='2 + 2 = 4'),
             ]
         )
+
+
+async def test_openrouter_streamed_reasoning_details_are_preserved(
+    allow_model_requests: None,
+) -> None:
+    """A streamed OpenRouter response keeps details with distinct indexes separate.
+
+    Mock-based rather than VCR — reasoning details spread across distinct indexes can't be reliably elicited
+    from a live provider, so the chunks are hand-built.
+    """
+
+    async def consume_events(_: RunContext[object], event_stream: AsyncIterable[Any]) -> None:
+        async for _event in event_stream:
+            pass
+
+    def reasoning_chunk(
+        reasoning_detail: dict[str, Any], *, content: str = '', finish_reason: str | None = None
+    ) -> ChatCompletionChunk:
+        return _OpenRouterChatCompletionChunk.model_validate(
+            {
+                'id': 'gen-123',
+                'choices': [
+                    {
+                        'index': 0,
+                        'delta': {'role': 'assistant', 'content': content, 'reasoning_details': [reasoning_detail]},
+                        'finish_reason': finish_reason,
+                    }
+                ],
+                'created': 1704067200,
+                'model': 'openai/gpt-5.6-luna',
+                'object': 'chat.completion.chunk',
+                'provider': 'OpenAI',
+            }
+        )
+
+    mock_client = MockOpenAI(
+        stream=[
+            reasoning_chunk(
+                {'type': 'reasoning.summary', 'summary': 'first summary', 'format': 'openai-responses-v1', 'index': 0}
+            ),
+            reasoning_chunk(
+                {
+                    'type': 'reasoning.encrypted',
+                    'id': 'rs_123',
+                    'data': 'encrypted reasoning',
+                    'format': 'openai-responses-v1',
+                    'index': 1,
+                }
+            ),
+            reasoning_chunk(
+                {'type': 'reasoning.summary', 'summary': 'second summary', 'format': 'openai-responses-v1', 'index': 2},
+                content='first answer',
+                finish_reason='stop',
+            ),
+        ],
+    )
+    model = OpenRouterModel('openai/gpt-5.6-luna', provider=OpenRouterProvider(openai_client=cast(Any, mock_client)))
+    agent = Agent(model)
+
+    result = await agent.run('first prompt', event_stream_handler=consume_events)
+
+    assert result.response.parts == [
+        ThinkingPart(
+            content='first summary',
+            provider_name='openrouter',
+            provider_details={'format': 'openai-responses-v1', 'index': 0, 'type': 'reasoning.summary'},
+        ),
+        ThinkingPart(
+            content='',
+            id='rs_123',
+            signature='encrypted reasoning',
+            provider_name='openrouter',
+            provider_details={'format': 'openai-responses-v1', 'index': 1, 'type': 'reasoning.encrypted'},
+        ),
+        ThinkingPart(
+            content='second summary',
+            provider_name='openrouter',
+            provider_details={'format': 'openai-responses-v1', 'index': 2, 'type': 'reasoning.summary'},
+        ),
+        TextPart(content='first answer'),
+    ]
 
 
 async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None:
@@ -1091,6 +1179,48 @@ def _openrouter_completion(content: str) -> ChatCompletion:
     choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
     return ChatCompletion.model_construct(
         id='123', choices=[choice], created=1704067200, model='test', object='chat.completion', provider='test'
+    )
+
+
+async def test_openrouter_wraps_mid_conversation_system_prompt(allow_model_requests: None) -> None:
+    """OpenRouter gets the fallback while the same history stays native on OpenAI.
+
+    Mocked clients pin the rendered request bodies directly: OpenRouter accepts an inline `system`
+    message but silently transforms it, so a successful gateway response cannot prove native support.
+    """
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='Hello.')]),
+        ModelResponse(parts=[TextPart(content='Hi.')]),
+        ModelRequest(parts=[SystemPromptPart(content='Answer in one sentence.')]),
+    ]
+    openrouter_client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
+    openai_client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
+
+    openrouter_model = OpenRouterModel('openai/gpt-5', provider=OpenRouterProvider(openai_client=openrouter_client))
+    openai_model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+
+    await Agent(openrouter_model).run('Continue.', message_history=history)
+    await Agent(openai_model).run('Continue.', message_history=history)
+
+    assert openrouter_model.profile.get('supports_inline_system_prompts') is False
+    assert openai_model.profile.get('supports_inline_system_prompts') is True
+    assert get_mock_chat_completion_kwargs(openrouter_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'You are helpful.'},
+            {'role': 'user', 'content': 'Hello.'},
+            {'role': 'assistant', 'content': 'Hi.'},
+            {'role': 'user', 'content': '<system>Answer in one sentence.</system>'},
+            {'role': 'user', 'content': 'Continue.'},
+        ]
+    )
+    assert get_mock_chat_completion_kwargs(openai_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'You are helpful.'},
+            {'role': 'user', 'content': 'Hello.'},
+            {'role': 'assistant', 'content': 'Hi.'},
+            {'role': 'system', 'content': 'Answer in one sentence.'},
+            {'role': 'user', 'content': 'Continue.'},
+        ]
     )
 
 
