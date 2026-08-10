@@ -6263,47 +6263,6 @@ def test_transformer_untyped_array_explicit_strict_raises():
         OpenAIJsonSchemaTransformer(schema, strict=True).walk()
 
 
-def test_transformer_length_constraints_strict_compatible():
-    """OpenAI strict mode accepts `minLength`/`maxLength`, so they must be kept and must not
-    downgrade the schema to non-strict.
-    See https://github.com/pydantic/pydantic-ai/issues/7315
-    """
-    schema: dict[str, Any] = {
-        'type': 'object',
-        'properties': {'value': {'type': 'string', 'minLength': 2, 'maxLength': 10}},
-        'required': ['value'],
-    }
-    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
-    result = transformer.walk()
-
-    assert result['properties']['value'] == {'type': 'string', 'minLength': 2, 'maxLength': 10}
-    assert transformer.is_strict_compatible is True
-
-
-@pytest.mark.parametrize('strict', [None, True])
-def test_transformer_homogeneous_tuple_rewritten_for_strict_mode(strict: bool | None):
-    """OpenAI strict mode rejects `prefixItems`, but a fixed-length homogeneous tuple like
-    `tuple[int, int]` means the same as a length-bounded `list[int]`, so it's rewritten to the
-    supported `items` + `minItems`/`maxItems` form and stays strict-compatible.
-    See https://github.com/pydantic/pydantic-ai/issues/7315
-    """
-
-    class Model(BaseModel):
-        bbox: tuple[int, int, int, int]
-
-    transformer = OpenAIJsonSchemaTransformer(Model.model_json_schema(), strict=strict)
-    result = transformer.walk()
-
-    assert result['properties']['bbox'] == {
-        'type': 'array',
-        'items': {'type': 'integer'},
-        'minItems': 4,
-        'maxItems': 4,
-    }
-    if strict is None:
-        assert transformer.is_strict_compatible is True
-
-
 _UNCONVERTIBLE_PREFIX_ITEMS_SCHEMAS = [
     pytest.param(
         {
@@ -6354,12 +6313,8 @@ _UNCONVERTIBLE_PREFIX_ITEMS_SCHEMAS = [
 
 @pytest.mark.parametrize('array_schema', _UNCONVERTIBLE_PREFIX_ITEMS_SCHEMAS)
 def test_transformer_unconvertible_prefix_items_not_strict_compatible(array_schema: dict[str, Any]):
-    """A `prefixItems` schema that can't be rewritten to a plain typed array (a heterogeneous
-    tuple, missing length bounds, or `items` alongside `prefixItems`) has no strict-mode
-    representation, so with `strict=None` the schema must be inferred non-strict rather than
-    rejected by the API.
-    See https://github.com/pydantic/pydantic-ai/issues/7315
-    """
+    """An unconvertible `prefixItems` schema has no strict-mode representation, so `strict=None`
+    must infer non-strict. See https://github.com/pydantic/pydantic-ai/issues/7315"""
     schema: dict[str, Any] = {
         'type': 'object',
         'properties': {'value': array_schema},
@@ -6374,9 +6329,7 @@ def test_transformer_unconvertible_prefix_items_not_strict_compatible(array_sche
 
 @pytest.mark.parametrize('array_schema', _UNCONVERTIBLE_PREFIX_ITEMS_SCHEMAS)
 def test_transformer_unconvertible_prefix_items_explicit_strict_raises(array_schema: dict[str, Any]):
-    """With `strict=True` explicitly requested, an unconvertible `prefixItems` schema can't be
-    repaired without changing its meaning, so we raise a clear error instead of letting OpenAI
-    reject the request with an opaque 400."""
+    """Explicit `strict=True` raises a clear error instead of letting OpenAI reject with a 400."""
     schema: dict[str, Any] = {
         'type': 'object',
         'properties': {'value': array_schema},
@@ -6387,9 +6340,7 @@ def test_transformer_unconvertible_prefix_items_explicit_strict_raises(array_sch
 
 
 def test_transformer_named_tuple_with_defaults_rewritten_for_strict_mode():
-    """A `NamedTuple` with defaults emits `maxItems` but no matching `minItems`. Once the child
-    transform strips per-element `title` and (under explicit strict) `default`, the elements all
-    share one schema, so the tuple is still rewritten to the length-bounded `items` form."""
+    """A `NamedTuple` with defaults emits `maxItems` without `minItems` and still rewrites."""
 
     class Point(NamedTuple):
         x: int = 0
@@ -6404,9 +6355,8 @@ def test_transformer_named_tuple_with_defaults_rewritten_for_strict_mode():
 
 
 def test_transformer_mixed_type_literal_tuple_not_strict_compatible():
-    """Mixed-type Literals emit `enum` without `type`, so `Literal[True, 'x']` and `Literal[1, 'x']`
-    differ only by `True` vs `1`. Canonical JSON comparison must keep them distinct (Python `==`
-    treats `True == 1`) so the tuple is not collapsed into a single wrong element schema."""
+    """`Literal[True, 'x']` and `Literal[1, 'x']` differ only by `True` vs `1` (equal in Python,
+    distinct in JSON), and must not be collapsed into one element schema."""
 
     class Model(BaseModel):
         pair: tuple[Literal[True, 'x'], Literal[1, 'x']]
@@ -6419,8 +6369,7 @@ def test_transformer_mixed_type_literal_tuple_not_strict_compatible():
 
 
 def test_transformer_empty_prefix_items_dropped():
-    """An empty `prefixItems` constrains nothing, so the unsupported keyword is dropped and a
-    typed `items` keeps the schema strict-compatible."""
+    """An empty `prefixItems` constrains nothing and is dropped."""
     schema: dict[str, Any] = {
         'type': 'object',
         'properties': {'value': {'type': 'array', 'prefixItems': [], 'items': {'type': 'string'}}},

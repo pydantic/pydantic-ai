@@ -434,13 +434,9 @@ _sentinel = object()
 def _is_homogeneous_bounded_tuple(schema: JsonSchema, prefix_items: list[Any]) -> bool:
     """Whether an array schema is a tuple of elements sharing one schema, length-capped to the prefix.
 
-    Such a schema (e.g. `tuple[int, int]`, or a `NamedTuple` whose fields all have one type) means
-    the same as a length-bounded `list[int]`: `items` equal to the element schema plus `maxItems`
-    (and `minItems` if present), which OpenAI strict mode supports. Without `maxItems` capping the
-    length, elements beyond the prefix are unconstrained and the rewrite would narrow the schema.
-
-    Elements are compared as canonical JSON rather than with `==`: Python equality conflates
-    `True`/`1` and `1`/`1.0`, which are distinct in JSON Schema.
+    Such a schema (e.g. `tuple[int, int]`) means the same as `items` + `maxItems`, which strict mode
+    supports. Elements are compared as canonical JSON: Python `==` conflates `True` with `1`, which
+    JSON Schema distinguishes.
     """
     if schema.get('maxItems') != len(prefix_items):
         return False
@@ -574,19 +570,15 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                             self.is_strict_compatible = False
 
         if schema_type == 'array':
-            # OpenAI strict mode does not support `prefixItems` (tuple types): the API ignores the
-            # keyword and then rejects the array for not typing its elements. A tuple whose elements
-            # all share one schema and whose length is capped (e.g. `tuple[int, int]`) means the same
-            # as a length-bounded `list[int]`, so it's rewritten to the supported `items` +
-            # `minItems`/`maxItems` form. Any other `prefixItems` schema (a heterogeneous tuple like
-            # `tuple[int, str]`, no `maxItems` bound, or `items` alongside `prefixItems`) can't be
-            # rewritten without changing its meaning, so it's not strict-compatible.
+            # OpenAI strict mode does not support `prefixItems` (tuple types). A homogeneous
+            # length-capped tuple (e.g. `tuple[int, int]`) is rewritten to the equivalent supported
+            # `items` + `minItems`/`maxItems` form; any other `prefixItems` schema can't be rewritten
+            # without changing its meaning, so it's not strict-compatible.
             # See https://github.com/pydantic/pydantic-ai/issues/7315
             prefix_items = schema.get('prefixItems')
             if prefix_items is not None and self.strict is not False:
                 if not prefix_items:
-                    # An empty `prefixItems` constrains nothing, so the unsupported keyword can
-                    # simply be dropped.
+                    # empty `prefixItems` constrains nothing
                     del schema['prefixItems']
                 elif 'items' not in schema and _is_homogeneous_bounded_tuple(schema, prefix_items):
                     schema['items'] = prefix_items[0]
