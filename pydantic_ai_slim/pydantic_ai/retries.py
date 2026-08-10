@@ -233,25 +233,6 @@ class TenacityTransport(BaseTransport):
             Common use case is to raise exceptions for certain HTTP status codes.
             If None, no response validation is performed.
 
-    Example:
-        ```python
-        from httpx import Client, HTTPStatusError, HTTPTransport
-        from tenacity import retry_if_exception_type, stop_after_attempt
-
-        from pydantic_ai.retries import RetryConfig, TenacityTransport, wait_retry_after
-
-        transport = TenacityTransport(
-            RetryConfig(
-                retry=retry_if_exception_type(HTTPStatusError),
-                wait=wait_retry_after(max_wait=300),
-                stop=stop_after_attempt(5),
-                reraise=True
-            ),
-            HTTPTransport(),
-            validate_response=lambda r: r.raise_for_status()
-        )
-        client = Client(transport=transport)
-        ```
     """
 
     def __init__(
@@ -337,24 +318,6 @@ class AsyncTenacityTransport(AsyncBaseTransport):
             Common use case is to raise exceptions for certain HTTP status codes.
             If None, no response validation is performed.
 
-    Example:
-        ```python
-        from httpx import AsyncClient, HTTPStatusError
-        from tenacity import retry_if_exception_type, stop_after_attempt
-
-        from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
-
-        transport = AsyncTenacityTransport(
-            RetryConfig(
-                retry=retry_if_exception_type(HTTPStatusError),
-                wait=wait_retry_after(max_wait=300),
-                stop=stop_after_attempt(5),
-                reraise=True
-            ),
-            validate_response=lambda r: r.raise_for_status()
-        )
-        client = AsyncClient(transport=transport)
-        ```
     """
 
     def __init__(
@@ -447,7 +410,11 @@ def wait_retry_after(
         from httpx2 import AsyncClient, HTTPStatusError
         from tenacity import retry_if_exception_type, stop_after_attempt
 
-        from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig, wait_retry_after
+        from pydantic_ai.retries import (
+            AsyncHTTPX2TenacityTransport,
+            RetryConfig,
+            wait_retry_after,
+        )
 
         transport = AsyncHTTPX2TenacityTransport(
             RetryConfig(
