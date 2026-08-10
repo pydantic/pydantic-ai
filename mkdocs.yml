@@ -163,6 +163,7 @@ nav:
           - examples/rag.md
           - examples/twelvelabs-video-agent.md
       - Streaming:
+          - examples/cancellation.md
           - examples/stream-markdown.md
           - examples/stream-whales.md
       - Complex Workflows:
