@@ -15,7 +15,6 @@ from typing_extensions import Self, TypedDict, TypeVar
 from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
-from ._retry_prompt import retry_prompt_from_error
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UserError
 from .output import (
@@ -120,7 +119,7 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
 
 
 def _make_retry_prompt(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
-    m = retry_prompt_from_error(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
+    m = _messages.RetryPromptPart.from_error(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
     return ToolRetryError(m)
 
 
@@ -388,7 +387,9 @@ async def execute_output_function(
         return await function_schema.call(args, run_context)
     except ModelRetry as r:
         if wrap_validation_errors:
-            m = retry_prompt_from_error(r, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
+            m = _messages.RetryPromptPart.from_error(
+                r, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id
+            )
             raise ToolRetryError(m) from r
         else:
             raise
