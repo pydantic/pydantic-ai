@@ -330,7 +330,9 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
     modality = params.get('modality', 'audio')
     if modality not in ('audio', 'text'):
         raise ValueError(f'Output modality {modality!r} must be "audio" or "text"')
-    common_settings = RealtimeModelSettings(output_modality=modality)
+    common_settings = RealtimeModelSettings(
+        output_modality=modality, reconnect=ReconnectPolicy(max_attempts=5)
+    )
     voice = params.get('voice') or VOICE
     start, end = params.get('start_sensitivity'), params.get('end_sensitivity')
     if isinstance(model, GoogleRealtimeModel):
@@ -357,7 +359,6 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
                 end_sensitivity=end if end in ('high', 'low') else None,
             )
         model.settings = settings
-        model.reconnect = ReconnectPolicy(max_attempts=5)
     elif isinstance(model, OpenAIRealtimeModel):
         settings = OpenAIRealtimeModelSettings(**common_settings)
         if voice:
@@ -366,7 +367,6 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
         if (sensitivity := start or end) in ('high', 'low'):
             settings['turn_detection'] = TurnDetection(sensitivity=sensitivity)
         model.settings = settings
-        model.reconnect = ReconnectPolicy(max_attempts=5)
     else:
         raise ValueError(
             f'Realtime model {model_id!r} does not support camera image input'
