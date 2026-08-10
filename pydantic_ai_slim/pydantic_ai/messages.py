@@ -26,7 +26,7 @@ from pydantic_ai._cost import calculate_price_for_usage
 from . import _otel_messages, _utils
 from ._instrumentation import redact_binary_content, serialize_any
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
-from .exceptions import UnexpectedModelBehavior
+from .exceptions import ModelRetry, UnexpectedModelBehavior
 from .usage import RequestUsage
 
 if TYPE_CHECKING:
@@ -1633,6 +1633,29 @@ class RetryPromptPart:
 
     part_kind: Literal['retry-prompt'] = 'retry-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+    @classmethod
+    def from_error(
+        cls,
+        error: pydantic_core.ValidationError | ModelRetry,
+        *,
+        tool_name: str | None = None,
+        tool_call_id: str | None = None,
+    ) -> RetryPromptPart:
+        """Build the retry prompt for a failed tool call or output validation.
+
+        This is the exact message the model receives when the error is handled by the agent loop,
+        so anything else presenting the failure (e.g. instrumentation spans) must build it the same way.
+        """
+        content = (
+            error.errors(include_url=False, include_context=False)
+            if isinstance(error, pydantic_core.ValidationError)
+            else error.message
+        )
+        part = cls(content=content, tool_name=tool_name)
+        if tool_call_id:
+            part.tool_call_id = tool_call_id
+        return part
 
     def model_response(self) -> str:
         """Return a string message describing why the retry is requested."""
