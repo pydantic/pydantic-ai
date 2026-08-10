@@ -29,6 +29,7 @@ out loud:
 
 ```python {title="reservations.py" dunder_name="not_main"}
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 
 from pydantic_ai import Agent
@@ -64,8 +65,12 @@ async def main():
             if part.speaker == 'assistant':
                 break  # keep listening in a real call; we stop after one exchange
 
-    # Leaving the `async with` block closes the session and ends its audio stream.
-    await asyncio.gather(microphone, speaker)
+    # Leaving the `async with` block closes the session, which ends the speaker's audio stream —
+    # but the microphone reads an external source, so stop it explicitly.
+    microphone.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await microphone
+    await speaker
 
 
 if __name__ == '__main__':
@@ -255,3 +260,4 @@ Not every voice product needs the realtime agent loop:
 | History processors do not transform `message_history` before realtime seeding; [preprocess it](capabilities.md#seeded-history-is-not-processed) before opening the session when filtering or redaction is required. | [#7299](https://github.com/pydantic/pydantic-ai/issues/7299) |
 | Interactive human-in-the-loop tool approval is not supported: a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves approvals [from policy, immediately](tools.md#deferred-and-approval-required-tools). | [#7301](https://github.com/pydantic/pydantic-ai/issues/7301) |
 | [`RunContext.enqueue()`][pydantic_ai.tools.RunContext.enqueue] accepts [one plain-text prompt per call](tools.md#enqueuing-prompts-from-tools), unlike its [standard-run form](../message-history.md#injecting-messages-mid-run). | [#7300](https://github.com/pydantic/pydantic-ai/issues/7300) |
+| Gemini Live tool results are JSON-only: binary content attached to a [tool return](tools.md#function-tools) raises rather than being delivered. | [#7362](https://github.com/pydantic/pydantic-ai/issues/7362) |

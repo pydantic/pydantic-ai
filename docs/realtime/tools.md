@@ -19,10 +19,13 @@ Tool return values reach the model exactly as in a
 of the return value — plus, where the provider supports it, multimodal content attached via
 [`ToolReturn`][pydantic_ai.messages.ToolReturn]'s `content` — while local history keeps the full
 structured [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with its `return_value`,
-`content`, and `metadata`. OpenAI, Azure OpenAI, and xAI deliver attached content as a follow-up
-user message, raising before anything is sent if the media type isn't supported; Gemini Live's tool
-results are JSON-only, so non-text attachments reach the model as a text placeholder naming the
-attachment while the real content stays in local history. If the provider cancels an in-flight call, Pydantic AI cancels the task
+`content`, and `metadata`. Attached content is delivered for real or refused loudly — never
+silently degraded: OpenAI and Azure OpenAI deliver text and images as a follow-up user message;
+Gemini Live's tool results are JSON-only, so text is folded into the result and any binary
+attachment raises [`UserError`][pydantic_ai.exceptions.UserError]
+([#7362](https://github.com/pydantic/pydantic-ai/issues/7362)); media a provider can't carry
+(audio and documents everywhere; images also on xAI) likewise raises before anything is sent.
+If the provider cancels an in-flight call, Pydantic AI cancels the task
 and records a synthetic cancellation result locally without sending that result back to the
 provider.
 
@@ -60,6 +63,7 @@ async def main():
         'google:gemini-2.5-flash-native-audio-latest',
         capabilities=[WebSearch()],
     ).session() as session:
+        await session.send("What's the latest Pydantic AI release?")
         async for event in session:
             if isinstance(event, PartEndEvent) and isinstance(event.part, NativeToolReturnPart):
                 print(event.part.content)

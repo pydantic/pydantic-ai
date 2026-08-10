@@ -1062,31 +1062,49 @@ async def test_send_tool_result_async_scheduling(async_tool_calls: bool) -> None
     )
 
 
-async def test_send_tool_result_content_falls_back_to_text() -> None:
-    session = _RecordingSession()
-    conn = _conn(session)
+def _register_call(conn: GoogleRealtimeConnection, tool_call_id: str = 'c1', name: str = 'inspect') -> None:
     conn._map_message(  # pyright: ignore[reportPrivateUsage]
         genai_types.LiveServerMessage(
             tool_call=genai_types.LiveServerToolCall(
-                function_calls=[genai_types.FunctionCall(id='c1', name='inspect', args={})]
+                function_calls=[genai_types.FunctionCall(id=tool_call_id, name=name, args={})]
             )
         )
     )
+
+
+async def test_send_tool_result_text_content_folds_into_output() -> None:
+    """`FunctionResponse.response` is JSON-only, so text attachments are folded into the output."""
+    session = _RecordingSession()
+    conn = _conn(session)
+    _register_call(conn)
     await conn.send(
         ToolResult(
             tool_call_id='c1',
             output='done',
-            content=[
-                'plain context',
-                TextContent('extra context'),
-                CachePoint(),
-                BinaryContent(data=b'png', media_type='image/png', identifier='result.png'),
-            ],
+            content=['plain context', TextContent('extra context'), CachePoint()],
         )
     )
-    assert session.tool_responses[0].response == {
-        'output': 'done\n\nplain context\n\nextra context\n\n[BinaryContent: result.png]'
-    }
+    assert session.tool_responses[0].response == {'output': 'done\n\nplain context\n\nextra context'}
+
+
+async def test_send_tool_result_binary_content_raises_with_nothing_sent() -> None:
+    """Media attached to a tool return raises with the tool result unsent — never a silent
+    placeholder. Gemini Live has no channel that delivers it correctly today (probed live; see
+    https://github.com/pydantic/pydantic-ai/issues/7362), so the loud error is the honest behavior,
+    matching the never-silent rule the OpenAI-protocol codec applies to its unsupported media."""
+    session = _RecordingSession()
+    conn = _conn(session)
+    _register_call(conn)
+    with pytest.raises(UserError, match='tool results are JSON-only, so `BinaryContent` content'):
+        await conn.send(
+            ToolResult(
+                tool_call_id='c1',
+                output='done',
+                content=[BinaryContent(data=b'png', media_type='image/png', identifier='result.png')],
+            )
+        )
+    assert session.tool_responses == []
+    assert session.client_content == []
 
 
 async def test_parallel_id_less_calls_do_not_collide() -> None:

@@ -1113,9 +1113,12 @@ SeedContent = TypeAliasType('SeedContent', 'str | BinaryContent')
 async def seed_user_content(part: UserPromptPart, *, provider_name: str, supports_images: bool) -> list[SeedContent]:
     """Normalize a `UserPromptPart` to replayable text and image content.
 
-    Image URLs are downloaded because realtime history APIs accept inline image bytes, not arbitrary
-    HTTPS URLs. `CachePoint`s are deliberately ignored, matching request-response model adapters.
-    Other file kinds cannot be represented faithfully and raise [`UserError`][pydantic_ai.exceptions.UserError].
+    Used both when seeding `message_history` at connect and for a live tool result's attached
+    content, so its errors speak of "a realtime session" rather than either path. Image URLs are
+    downloaded because realtime APIs accept inline image bytes, not arbitrary HTTPS URLs.
+    `CachePoint`s are deliberately ignored, matching request-response model adapters. Other file
+    kinds cannot be represented faithfully and raise [`UserError`][pydantic_ai.exceptions.UserError]
+    before anything is sent.
     """
     content: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
     result: list[SeedContent] = []
@@ -1129,36 +1132,35 @@ async def seed_user_content(part: UserPromptPart, *, provider_name: str, support
         elif isinstance(item, ImageUrl):
             if not supports_images:
                 raise UserError(
-                    f'{provider_name} realtime history seeding does not support images. '
-                    'Remove the image from `message_history` or use a realtime provider that supports image seeding.'
+                    f'{provider_name} realtime sessions do not support images in seeded history or tool results. '
+                    'Remove the image, or use a realtime provider that supports images.'
                 )
             downloaded = await download_item(item, data_format='bytes')
             image = BinaryContent(data=downloaded['data'], media_type=downloaded['data_type'])
             if not image.is_image:
                 raise UserError(
-                    f'`ImageUrl` resolved to unsupported media type {image.media_type!r} while seeding '
-                    f'{provider_name} realtime history. Use a URL that returns an image or filter it from '
-                    '`message_history`.'
+                    f'`ImageUrl` resolved to unsupported media type {image.media_type!r} in a '
+                    f'{provider_name} realtime session. Use a URL that returns an image, or remove it.'
                 )
             result.append(image)
         elif isinstance(item, BinaryContent):
             if not item.is_image:
                 raise UserError(
-                    f'`BinaryContent` with media type {item.media_type!r} cannot be seeded into '
-                    f'{provider_name} realtime history. Convert it to text or an image, or filter it from '
-                    '`message_history`.'
+                    f'`BinaryContent` with media type {item.media_type!r} cannot be sent to {provider_name} '
+                    'in a realtime session. Convert it to text or an image, or remove it '
+                    'from `message_history` or the tool result.'
                 )
             if not supports_images:
                 raise UserError(
-                    f'{provider_name} realtime history seeding does not support images. '
-                    'Remove the image from `message_history` or use a realtime provider that supports image seeding.'
+                    f'{provider_name} realtime sessions do not support images in seeded history or tool results. '
+                    'Remove the image, or use a realtime provider that supports images.'
                 )
             result.append(item)
         elif isinstance(item, (AudioUrl, VideoUrl, DocumentUrl, UploadedFile)):
             content_type = item.__class__.__name__
             raise UserError(
-                f'`{content_type}` cannot be seeded into {provider_name} realtime history. '
-                'Convert it to text or an inline image, or filter it from `message_history`.'
+                f'`{content_type}` cannot be sent to {provider_name} in a realtime session. '
+                'Convert it to text or an inline image, or remove it from `message_history` or the tool result.'
             )
         else:
             assert_never(item)

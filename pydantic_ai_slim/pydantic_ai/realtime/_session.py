@@ -2658,6 +2658,10 @@ class RealtimeSession:
         self._background_tasks.add(task)
         self._pending_tool_calls[call_part.tool_call_id] = (task, call_part)
         task.add_done_callback(self._tool_task_done)
+        # Deliberate, bounded block: this waits for argument *validation* only — `on_validate` sets
+        # the event before any execution prerequisite or the tool body runs, and `_run_tool`'s
+        # `finally` sets it if validation itself raises — so `FunctionToolCallEvent` is enqueued
+        # before the pump processes any later event, without the pump ever waiting on user tool code.
         await validation_done.wait()
 
     async def _handle_non_tool_pump_event(self, event: RealtimeCodecEvent) -> bool:

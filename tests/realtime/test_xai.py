@@ -42,6 +42,7 @@ from pydantic_ai.realtime.codec import (
     OutputTranscript,
     SessionUsageEvent,
     ToolCall,
+    ToolResult,
 )
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -220,6 +221,23 @@ def test_connection_map_event_override_matches_module() -> None:
     assert conn._map_event({'type': 'response.output_audio_transcript.delta', 'delta': 'hi'}) == OutputTranscript(  # pyright: ignore[reportPrivateUsage]
         text='hi', is_final=False
     )
+
+
+@pytest.mark.anyio
+async def test_connection_send_tool_result_image_raises_with_nothing_sent() -> None:
+    """Grok Voice has no image input, so an image attached to a tool result raises before any frame
+    goes out — instead of the shared codec's follow-up user message — rather than degrading silently."""
+    ws = FakeWebSocket([])
+    conn = XaiRealtimeConnection(ws)  # type: ignore[arg-type]
+    with pytest.raises(UserError, match='xai realtime sessions do not support images'):
+        await conn.send(
+            ToolResult(
+                tool_call_id='call_1',
+                output='See file result.png.',
+                content=['This is file result.png:', BinaryContent(data=b'png', media_type='image/png')],
+            )
+        )
+    assert ws.sent == []
 
 
 # --- capabilities --------------------------------------------------------------------------------
@@ -690,7 +708,7 @@ async def test_connect_rejects_seeded_image(monkeypatch: pytest.MonkeyPatch, ima
     )
     history = [ModelRequest(parts=[UserPromptPart(content=[image])])]
 
-    with pytest.raises(UserError, match='xai realtime history seeding does not support images'):
+    with pytest.raises(UserError, match='xai realtime sessions do not support images'):
         async with _connect(_model(), 'x', messages=history):
             pass  # pragma: no cover
 

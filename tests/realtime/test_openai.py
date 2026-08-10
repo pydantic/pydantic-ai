@@ -1793,7 +1793,7 @@ async def test_connect_rejects_unseedable_user_content(monkeypatch: pytest.Monke
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [ModelRequest(parts=[UserPromptPart(content=[content])])]
 
-    with pytest.raises(UserError, match='cannot be seeded into openai realtime history'):
+    with pytest.raises(UserError, match='cannot be sent to openai in a realtime session'):
         async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x', messages=history):
             pass  # pragma: no cover
 
@@ -1966,6 +1966,23 @@ async def test_connection_send_tool_result_with_follow_up_user_content() -> None
         },
         {'type': 'response.create'},
     ]
+
+
+@pytest.mark.anyio
+async def test_connection_send_tool_result_unsupported_media_raises_with_nothing_sent() -> None:
+    """The follow-up user message is built before any frame goes out, so media the wire can't carry
+    (here a PDF) raises with the tool result unsent — never a silent degrade or a half-sent round."""
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    with pytest.raises(UserError, match='cannot be sent to openai in a realtime session'):
+        await conn.send(
+            ToolResult(
+                tool_call_id='call_1',
+                output='See file doc.pdf.',
+                content=['This is file doc.pdf:', BinaryContent(data=b'pdf', media_type='application/pdf')],
+            )
+        )
+    assert ws.sent == []
 
 
 @pytest.mark.anyio

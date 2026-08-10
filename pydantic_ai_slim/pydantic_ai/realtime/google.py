@@ -1225,6 +1225,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
             )
         elif isinstance(content, ToolResult):
             name, gemini_id = self._tool_calls.pop(content.tool_call_id, ('', None))
+            # `FunctionResponse.response` is JSON-only, so text attachments are folded into the
+            # output and binary attachments raise — loudly, with the tool result unsent, never a
+            # silent placeholder. Every live delivery channel was probed and fails: content in a
+            # `send_client_content(turn_complete=False)` turn or a `send_realtime_input` frame is
+            # invisible to the generation `send_tool_response` triggers (the model guesses), a
+            # `turn_complete=True` turn is seen but first triggers a spurious extra spoken response,
+            # and `FunctionResponse.parts` — the true analog of the classic Gemini 3 multimodal
+            # function-response path — doesn't serialize in the SDK's live path yet. Tracked in
+            # https://github.com/pydantic/pydantic-ai/issues/7362.
             output = content.output
             if content.content:
                 text_content: list[str] = []
@@ -1236,7 +1245,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     elif isinstance(item, CachePoint):
                         continue
                     elif isinstance(item, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)):
-                        text_content.append(f'[{type(item).__name__}: {item.identifier}]')
+                        raise UserError(
+                            f'{self._provider_label} tool results are JSON-only, so `{type(item).__name__}` '
+                            'content attached to a tool return cannot be delivered. Return text instead, or '
+                            'use a realtime provider that supports tool-result media. '
+                            'See https://github.com/pydantic/pydantic-ai/issues/7362.'
+                        )
                     else:
                         assert_never(item)
                 output = '\n\n'.join(part for part in (output, *text_content) if part)

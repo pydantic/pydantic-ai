@@ -7183,6 +7183,40 @@ def test_temporal_agent_retry_policy_non_retryable_errors():
     ]
 
 
+def test_temporal_agent_custom_retry_policy_keeps_non_retryable_errors():
+    """A caller-supplied `retry_policy` in a merged config must not drop the non-retryable errors.
+
+    `TemporalAgent`'s `model_activity_config` (and per-toolset configs) merge over the normalized
+    base config, and a `retry_policy` in the override replaces the base policy wholesale — without
+    re-normalization an oversized payload would retry the whole (paid) model request forever.
+    """
+    toolset = FunctionToolset[None](id='merge_probe_toolset')
+
+    async def my_tool() -> str:
+        return 'ok'  # pragma: no cover
+
+    toolset.add_function(my_tool)
+
+    temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='retry_policy_merge_probe_agent', deps_type=type(None), toolsets=[toolset]),
+        model_activity_config=ActivityConfig(retry_policy=RetryPolicy(non_retryable_error_types=['ModelError'])),
+        toolset_activity_config={
+            'merge_probe_toolset': ActivityConfig(retry_policy=RetryPolicy(non_retryable_error_types=['ToolError'])),
+        },
+    )
+
+    model_retry = temporal_agent._temporal_model.activity_config.get('retry_policy')  # pyright: ignore[reportPrivateUsage]
+    assert model_retry is not None
+    assert model_retry.non_retryable_error_types == [
+        'ModelError',
+        'UserError',
+        'PydanticUserError',
+        'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
+        'PayloadSizeError',
+    ]
+
+
 def test_durability_custom_retry_policy_keeps_non_retryable_errors():
     """A caller-supplied `retry_policy` must not drop the framework's non-retryable errors.
 
