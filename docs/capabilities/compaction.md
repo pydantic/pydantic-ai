@@ -30,6 +30,16 @@ To compact on any model, edit the message history yourself with a [history proce
 - [Keep only recent messages](../message-history.md#keep-only-recent-messages) — a zero-cost sliding window over the most recent turns.
 - [Summarize old messages](../message-history.md#summarize-old-messages) — use a (cheaper) model to condense older messages into a summary.
 
+## When compaction isn't enough
+
+If a request still overflows the context window, the provider rejects it and Pydantic AI raises
+[`ContextWindowExceeded`][pydantic_ai.exceptions.ContextWindowExceeded] — a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] subclass you can catch to compact harder and
+retry, without inspecting the 400 body. See [Context window overflow](../models/overview.md#context-window-overflow).
+
+Treat it as a backstop rather than a strategy: model performance usually degrades well before the hard
+limit, so compacting on a threshold beats waiting for the error.
+
 ## Pydantic AI Harness
 
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) packages a menu of ready-made, model-agnostic [compaction strategies](https://pydantic.dev/docs/ai/harness/compaction/): mostly zero-LLM history editing — sliding-window trimming, clearing old tool results, deduplicating repeated file reads, clamping oversized message parts — plus LLM summarization for when that's not enough, and a `TieredCompaction` orchestrator (the recommended default) that escalates from cheap to expensive strategies only as far as needed to fit the target.

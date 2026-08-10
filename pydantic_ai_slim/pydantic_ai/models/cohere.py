@@ -7,7 +7,7 @@ from typing import Literal, cast
 
 from typing_extensions import assert_never
 
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ContextWindowExceeded, ModelAPIError
 
 from .. import ModelHTTPError, usage
 from .._utils import (
@@ -100,6 +100,23 @@ _FINISH_REASON_MAP: dict[ChatFinishReason, FinishReason] = {
     'TOOL_CALL': 'tool_call',
     'ERROR': 'error',
 }
+
+# Every known Cohere context-window error opens with this phrase: `too many tokens: size limit
+# exceeded by N tokens` from Chat v2, and `Too many tokens: the total number of tokens in the
+# prompt exceeds the limit of N` from https://docs.cohere.com/reference/errors. Broader phrases
+# like `exceeds the limit` add no coverage and also match unrelated 400s such as an invalid
+# `max_tokens`, which would wrongly tell callers to truncate their history.
+_CONTEXT_WINDOW_ERROR_PATTERNS = ('too many tokens',)
+
+
+def _is_context_window_error(e: ApiError, status_code: int) -> bool:
+    """Whether the error reports the input exceeding the model's context window."""
+    if status_code != 400:
+        return False
+    if _is_str_dict(body := e.body):
+        message = body.get('message', '')
+        return isinstance(message, str) and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS)
+    return False
 
 
 class CohereModelSettings(ModelSettings, total=False):
@@ -210,7 +227,8 @@ class CohereModel(Model[AsyncClientV2]):
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
-                raise ModelHTTPError(
+                error_type = ContextWindowExceeded if _is_context_window_error(e, status_code) else ModelHTTPError
+                raise error_type(
                     status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
                 ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e

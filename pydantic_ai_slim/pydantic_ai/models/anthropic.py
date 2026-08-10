@@ -18,7 +18,7 @@ from .._run_context import RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..capabilities.abstract import AbstractCapability
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ContextWindowExceeded, ModelAPIError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -103,6 +103,11 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
     'pause_turn': None,
     'refusal': 'content_filter',
 }
+
+_CONTEXT_WINDOW_ERROR_PATTERNS = (
+    'prompt is too long',
+    'exceeds the context window',
+)
 
 
 def _revealed_deferred_tool_order(
@@ -322,7 +327,8 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         yield
     except APIStatusError as e:
         if (status_code := e.status_code) >= 400:
-            raise ModelHTTPError(
+            error_type = ContextWindowExceeded if _is_context_window_error(e, status_code) else ModelHTTPError
+            raise error_type(
                 status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.response.headers)
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
@@ -528,6 +534,17 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/compaction) for more details.
     """
+
+
+def _is_context_window_error(e: APIStatusError, status_code: int) -> bool:
+    """Whether the error reports the input exceeding the model's context window."""
+    if status_code != 400:
+        return False
+    if is_str_dict(body := e.body) and is_str_dict(error := body.get('error')):
+        if error.get('type') == 'invalid_request_error':
+            message = error.get('message', '')
+            return isinstance(message, str) and any(p in message.lower() for p in _CONTEXT_WINDOW_ERROR_PATTERNS)
+    return False
 
 
 def _resolve_anthropic_service_tier(
