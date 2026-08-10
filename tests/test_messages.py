@@ -2141,6 +2141,66 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     assert '"name"' in response
 
 
+def test_retry_prompt_otel_message_parts_include_content():
+    """Retry prompt parts honor `include_content` like every other message part, in both the
+    tool-call and non-tool branches."""
+    non_tool = RetryPromptPart(
+        content=[
+            {
+                'type': 'string_type',
+                'loc': ('items', 0, 'name'),
+                'msg': 'Input should be a valid string',
+                'input': 'model-generated value',
+            },
+        ],
+    )
+    tool = RetryPromptPart(tool_name='my_tool', tool_call_id='call_1', content='Try again')
+
+    with_content = InstrumentationSettings(include_content=True)
+    assert non_tool.otel_message_parts(with_content) == snapshot(
+        [
+            {
+                'type': 'text',
+                'content': """\
+1 validation error:
+```json
+[
+  {
+    "type": "string_type",
+    "loc": [
+      "items",
+      0,
+      "name"
+    ],
+    "msg": "Input should be a valid string",
+    "input": "model-generated value"
+  }
+]
+```
+
+Fix the errors and try again.\
+""",
+            }
+        ]
+    )
+    assert tool.otel_message_parts(with_content) == snapshot(
+        [
+            {
+                'type': 'tool_call_response',
+                'id': 'call_1',
+                'name': 'my_tool',
+                'result': 'Try again\n\nFix the errors and try again.',
+            }
+        ]
+    )
+
+    without_content = InstrumentationSettings(include_content=False)
+    assert non_tool.otel_message_parts(without_content) == snapshot([{'type': 'text'}])
+    assert tool.otel_message_parts(without_content) == snapshot(
+        [{'type': 'tool_call_response', 'id': 'call_1', 'name': 'my_tool'}]
+    )
+
+
 def test_narrow_type_leaves_claim_free_part_unchanged_on_invalid_data():
     """Best-effort: a kwarg `tool_kind` claim whose data doesn't validate against the typed
     subclass leaves the (claim-free) part untouched instead of raising.
