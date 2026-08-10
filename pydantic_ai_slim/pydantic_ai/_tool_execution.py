@@ -141,6 +141,24 @@ def _prune_duplicate_tool_reveals(
                 break
 
 
+def _validated_return_value(tool_name: str, return_value: Any) -> Any:
+    """Materialize one-shot iterators and reject non-JSON-serializable tool return values.
+
+    One-shot iterators (generators, `map`/`filter` objects) are exhausted by their first
+    serialization — the probe here, or history re-serialization on a later request — leaving `[]`
+    for every consumer after it, so they are materialized first. Non-serializable values are
+    rejected before they enter message history: once stored, they crash later — and without the
+    tool's name — in model request mapping, usage estimation, and history serialization.
+    """
+    if isinstance(return_value, Iterator):
+        return_value = list(cast(Iterator[Any], return_value))
+    try:
+        _messages.tool_return_ta.dump_json(return_value, by_alias=True)
+    except PydanticSerializationError as e:
+        raise exceptions.UserError(f'The return value of tool {tool_name!r} is not JSON-serializable: {e}') from e
+    return return_value
+
+
 def _segment_by_barriers(indices: list[int], *, is_barrier: Callable[[int], bool]) -> list[list[int]]:
     """Split `indices` into execution segments around barrier tools.
 
@@ -659,15 +677,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 'string, non-sequence value, or non-string elements.'
             )
 
-        # Reject non-JSON-serializable return values here, before they enter message history:
-        # once stored, they crash later — and without the tool's name — in model request mapping,
-        # usage estimation, and history serialization.
-        try:
-            _messages.tool_return_ta.dump_json(tool_return.return_value, by_alias=True)
-        except PydanticSerializationError as e:
-            raise exceptions.UserError(
-                f'The return value of tool {call.tool_name!r} is not JSON-serializable: {e}'
-            ) from e
+        return_value = _validated_return_value(call.tool_name, tool_return.return_value)
 
         # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
         # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the
@@ -677,7 +687,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         return_part = _messages.ToolReturnPart(
             tool_name=call.tool_name,
             tool_call_id=call.tool_call_id,
-            content=tool_return.return_value,
+            content=return_value,
             metadata=tool_return.metadata,
             tool_kind=tool_def.tool_kind if tool_def else None,
         )

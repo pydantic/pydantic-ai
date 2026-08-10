@@ -9340,6 +9340,30 @@ def test_tool_returning_unserializable_value():
         agent.run_sync('go')
 
 
+def test_tool_returning_iterator_is_materialized():
+    """A one-shot iterator return value is materialized so serialization doesn't consume it.
+
+    Without materialization, the first serialization of the part exhausts the iterator and every
+    later consumer — including history serialization for the next model request — sees `[]`.
+    """
+    agent = Agent('test')
+
+    @agent.tool_plain
+    def gen() -> Any:
+        return (x for x in [1, 2, 3])
+
+    result = agent.run_sync('go')
+    assert result.output == snapshot('{"gen":[1,2,3]}')
+
+    tool_returns = [
+        part.content
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert tool_returns == snapshot([[1, 2, 3]])
+
+
 def test_override_toolsets():
     foo_toolset = FunctionToolset()
 
