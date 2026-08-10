@@ -548,7 +548,11 @@ async def safe_download(
                 extensions['sni_hostname'] = resolved.hostname
 
             request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
-            request_headers['Host'] = resolved.hostname
+            default_port = 443 if resolved.is_https else 80
+            if resolved.port == default_port:
+                request_headers['Host'] = resolved.hostname
+            else:
+                request_headers['Host'] = f'{resolved.hostname}:{resolved.port}'
             if max_bytes is not None and not any(k.lower() == 'accept-encoding' for k in request_headers):
                 request_headers['Accept-Encoding'] = _BOUNDED_ACCEPT_ENCODING
 
