@@ -7,8 +7,9 @@ from io import StringIO
 from typing import Any, Generic, Literal, Protocol
 
 from pydantic import BaseModel, TypeAdapter
-from rich.console import Console, Group, RenderableType
+from rich.console import Console, ConsoleOptions, Group, RenderableType, RenderResult
 from rich.panel import Panel
+from rich.segment import Segment
 from rich.table import Table
 from rich.text import Text
 from typing_extensions import TypedDict, TypeVar, assert_never
@@ -493,7 +494,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         # Wrap table with experiment metadata panel if present
         if metadata_panel:
             renderable = Group(metadata_panel, renderable)
-        console.print(renderable)
+        console.print(_AsciiFallback(renderable))
         if include_analyses and self.analyses:
             for analysis in self.analyses:
                 console.print(_render_analysis(analysis))
@@ -1617,6 +1618,29 @@ class EvaluationRenderer:
         if self.include_total_duration:
             all_durations += [x.total_duration for x in all_cases]
         return _NumberRenderer.infer_from_config(self.duration_config, 'duration', all_durations)
+
+
+_ASCII_FALLBACKS = str.maketrans({'✔': 'v', '✗': 'x', '→': '>', 'µ': 'u'})
+"""Replacements for the characters we render that a non-UTF-8 output stream can't encode.
+
+Each replacement is one character wide, so substituting them doesn't affect column widths.
+"""
+
+
+@dataclass
+class _AsciiFallback:
+    """Renders `renderable`, replacing the characters a non-UTF-8 output stream can't encode.
+
+    `rich` degrades its own box-drawing characters for such streams, but passes text it is given through unchanged.
+    """
+
+    renderable: RenderableType
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        for segment in console.render(self.renderable, options):
+            if options.ascii_only:
+                segment = Segment(segment.text.translate(_ASCII_FALLBACKS), segment.style, segment.control)
+            yield segment
 
 
 def _render_analysis(
