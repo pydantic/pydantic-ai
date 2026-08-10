@@ -1595,8 +1595,10 @@ def parse_model_id(model: str) -> tuple[str | None, str]:
     return None, model
 
 
-def _suggest_known_model_name(model: str, model_name: str) -> str | None:
-    known_ids = sorted(known_model_names(), key=lambda name: (name.startswith('gateway/'), name))
+def _suggest_known_model_name(model: str, model_name: str, known_model_ids: Sequence[str] | None = None) -> str | None:
+    if known_model_ids is None:
+        known_model_ids = known_model_names()
+    known_ids = sorted(known_model_ids, key=lambda name: (name.startswith('gateway/'), name))
     normalized_ids: list[str] = [known_id.replace(':', '-', 1) for known_id in known_ids if ':' in known_id]
     normalized_model = model.replace(':', '-', 1)
     if matches := get_close_matches(normalized_model, normalized_ids, n=1, cutoff=0.9):
@@ -1609,6 +1611,16 @@ def _suggest_known_model_name(model: str, model_name: str) -> str | None:
     if matches:
         return next(known_id for known_id in known_ids if known_id.endswith(f':{matches[0]}'))
     return None
+
+
+def _suggest_known_model_id_from_provider_error(  # pyright: ignore[reportUnusedFunction]
+    provider_name: str, model_name: str
+) -> str | None:
+    model_id = f'{provider_name}:{model_name}'
+    provider_prefix = f'{provider_name}:'
+    known_model_ids = [name for name in known_model_names() if name.startswith(provider_prefix)]
+    suggestion = _suggest_known_model_name(model_id, model_name, known_model_ids)
+    return suggestion if suggestion != model_id else None
 
 
 def infer_model_profile(model: str) -> ModelProfile:

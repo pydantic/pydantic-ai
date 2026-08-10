@@ -60,6 +60,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -387,15 +388,26 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
     return 'pt_then_on_demand'
 
 
-def _map_api_error(e: errors.APIError, model_name: str) -> ModelAPIError:
+def _map_api_error(e: errors.APIError, model_name: str, provider_name: str = 'google') -> ModelAPIError:
     """Map a `google.genai` API error to the pydantic-ai exception to raise in its place."""
     if (status_code := e.code) >= 400:
         headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        details = e.details  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        suggested_model_id = None
+        if _utils.is_str_dict(details) and _utils.is_str_dict(error := details.get('error')):
+            message = error.get('message')
+            if (
+                error.get('status') == 'NOT_FOUND'
+                and isinstance(message, str)
+                and message.startswith(f'models/{model_name} is not found ')
+            ):
+                suggested_model_id = _suggest_known_model_id_from_provider_error(provider_name, model_name)
         return ModelHTTPError(
             status_code=status_code,
             model_name=model_name,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
             headers=headers,
+            suggested_model_id=suggested_model_id,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
 
@@ -821,7 +833,7 @@ class GoogleModel(Model[Client]):
         try:
             return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
         except errors.APIError as e:
-            raise _map_api_error(e, self._model_name) from e
+            raise _map_api_error(e, self._model_name, self._provider.name) from e
 
     def _translate_thinking(
         self,
@@ -1039,7 +1051,7 @@ class GoogleModel(Model[Client]):
         try:
             first_chunk = await peekable_response.peek()
         except errors.APIError as e:
-            raise _map_api_error(e, self._model_name) from e
+            raise _map_api_error(e, self._model_name, self._provider.name) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
@@ -1551,7 +1563,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             self._pending_file_search_returns = []
         except errors.APIError as e:
-            raise _map_api_error(e, self._model_name) from e
+            raise _map_api_error(e, self._model_name, self._provider_name) from e
 
     def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None

@@ -85,6 +85,7 @@ from . import (
     StreamedResponse,
     ToolVisibility,
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
+    _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
     _trim_messages_before_compaction,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -317,13 +318,22 @@ _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Generator[None]:
+def _map_api_errors(model_name: str, provider_name: str = 'anthropic') -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
         if (status_code := e.status_code) >= 400:
+            body: object | None = e.body
+            suggested_model_id = None
+            if _utils.is_str_dict(body) and _utils.is_str_dict(error := body.get('error')):
+                if error.get('type') == 'not_found_error' and error.get('message') == f'model: {model_name}':
+                    suggested_model_id = _suggest_known_model_id_from_provider_error(provider_name, model_name)
             raise ModelHTTPError(
-                status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.response.headers)
+                status_code=status_code,
+                model_name=model_name,
+                body=body,
+                headers=dict(e.response.headers),
+                suggested_model_id=suggested_model_id,
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
@@ -899,7 +909,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self._validate_task_budget_vs_context_management(model_settings, context_management)
         container = self._get_container(messages, model_settings)
 
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self.system):
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or OMIT,
@@ -1147,7 +1157,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if isinstance(self.client, AsyncAnthropicBedrock):
             from ._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
 
-            with _map_api_errors(self.model_name):
+            with _map_api_errors(self.model_name, self.system):
                 return await count_tokens_via_bedrock(
                     self.client,
                     self._model_name,
@@ -1168,7 +1178,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     extra_body=model_settings.get('extra_body'),
                 )
 
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self.system):
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
@@ -1326,7 +1336,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         peekable_response: _utils.PeekableAsyncStream[
             BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self.system):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
@@ -2813,7 +2823,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name, self._provider_name):
             current_block: BetaContentBlock | None = None
             ignored_server_tool_use_indices: set[int] = set()
 
