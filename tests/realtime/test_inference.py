@@ -66,6 +66,14 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     assert type(google_model).__name__ == 'GoogleRealtimeModel'
     assert google_model.model_name == 'gemini-2.5-flash-native-audio-latest'
 
+    # `google-cloud:` selects Vertex AI directly (no gateway), exactly as in `infer_model`.
+    env.set('GOOGLE_CLOUD_PROJECT', 'test-project')
+    env.set('GOOGLE_CLOUD_LOCATION', 'us-central1')
+    vertex_model = infer_realtime_model('google-cloud:gemini-live-2.5-flash')
+    assert type(vertex_model).__name__ == 'GoogleRealtimeModel'
+    assert vertex_model.model_name == 'gemini-live-2.5-flash'
+    assert getattr(vertex_model, '_provider').client.vertexai
+
     azure_model = infer_realtime_model('azure:gpt-realtime')
     assert type(azure_model).__name__ == 'AzureRealtimeModel'
     assert azure_model.model_name == 'gpt-realtime'
@@ -120,7 +128,9 @@ def test_azure_rejects_non_azure_provider(env: TestEnv) -> None:
 
 
 def test_infer_realtime_model_unknown_provider() -> None:
-    with pytest.raises(UserError, match='Supported providers are `openai`, `azure`, `xai`, and `google`'):
+    with pytest.raises(
+        UserError, match='Supported providers are `openai`, `azure`, `xai`, `google`, and `google-cloud`'
+    ):
         infer_realtime_model('anthropic:voice')
 
     with pytest.raises(UserError, match=r'use the `provider:model` format .*; got \'openai\''):

@@ -76,7 +76,8 @@ KnownRealtimeModelName = TypeAliasType(
 def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
     """Infer a realtime model from a `provider:model` identifier.
 
-    The provider is one of `openai`, `azure`, `xai`, or `google` (e.g. `openai:gpt-realtime`), or a
+    The provider is one of `openai`, `azure`, `xai`, `google` (the Gemini Developer API), or
+    `google-cloud` (Vertex AI) — e.g. `openai:gpt-realtime` — or a
     [Pydantic AI Gateway](../gateway.md) route (`gateway/openai:gpt-realtime`,
     `gateway/google:gemini-live-2.5-flash`), which connects through the gateway's built-in provider —
     the provider string is passed to the realtime model as its `provider`, so authentication and the
@@ -103,17 +104,19 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
         from .xai import XaiRealtimeModel
 
         return XaiRealtimeModel(model_name)
-    # `gateway/google` (and its `gateway/google-cloud` alias) route Gemini Live through the gateway's
-    # Vertex upstream: the provider string flows into `GoogleRealtimeModel`, which resolves it via
-    # `gateway_provider` and adds the gateway's bearer auth to the `google-genai` WebSocket handshake.
-    if provider in ('google', 'gateway/google', 'gateway/google-cloud'):
+    # `google` is the Gemini Developer API and `google-cloud` is Vertex AI, exactly as in
+    # `infer_model`. `gateway/google` (and its `gateway/google-cloud` alias) route Gemini Live
+    # through the gateway's Vertex upstream: the provider string flows into `GoogleRealtimeModel`,
+    # which resolves it via `gateway_provider` and adds the gateway's bearer auth to the
+    # `google-genai` WebSocket handshake.
+    if provider in ('google', 'google-cloud', 'gateway/google', 'gateway/google-cloud'):
         from .google import GoogleRealtimeModel
 
         return GoogleRealtimeModel(model_name, provider=provider)
     raise UserError(
         f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `azure`, '
-        '`xai`, and `google`, or `gateway/openai` / `gateway/google` to route OpenAI or Gemini Live '
-        'realtime through the Pydantic AI Gateway.'
+        '`xai`, `google`, and `google-cloud`, or `gateway/openai` / `gateway/google` to route OpenAI '
+        'or Gemini Live realtime through the Pydantic AI Gateway.'
     )
 
 

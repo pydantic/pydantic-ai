@@ -579,8 +579,8 @@ async def ws(socket: WebSocket) -> None:
     await emit(
         {
             'type': 'session_config',
-            'input_sample_rate': model.profile.get('audio_input_sample_rate', 24_000),
-            'output_sample_rate': model.profile.get('audio_output_sample_rate', 24_000),
+            'input_sample_rate': model.audio_input_sample_rate,
+            'output_sample_rate': model.audio_output_sample_rate,
         }
     )
 

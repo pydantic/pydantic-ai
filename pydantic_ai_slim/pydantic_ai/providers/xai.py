@@ -108,6 +108,7 @@ class XaiProvider(Provider[AsyncClient]):
             # that rather than pinning versions: `grok-voice-think-fast-2.0` shipped a week after 1.0,
             # and a pinned list would have silently dropped reasoning for anyone who moved to it.
             'supports_thinking': model_name == 'grok-voice-latest' or model_name.startswith('grok-voice-think-'),
+            'emits_input_speech_events': True,
             'audio_input_sample_rate': 24000,
             'audio_output_sample_rate': 24000,
         }

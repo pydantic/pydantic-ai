@@ -71,6 +71,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             # wire flag to set, unlike Gemini. The session already runs tools in the background and
             # defers `response.create` while a response is active, so this is true end to end.
             'supports_async_tool_calls': True,
+            'emits_input_speech_events': True,
             'audio_input_sample_rate': 24000,
             'audio_output_sample_rate': 24000,
             # Reasoning effort is only accepted by the `gpt-realtime-2*` reasoning models; the GA

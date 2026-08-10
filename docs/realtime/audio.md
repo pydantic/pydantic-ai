@@ -9,8 +9,11 @@ playback and captions. Use the high-level session views for media and transcript
 You send and receive raw audio samples; there is no container or codec in the live path.
 [`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] accepts raw, signed 16-bit
 little-endian mono PCM. [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio]
-returns the same format. Capture at `session.profile['audio_input_sample_rate']` and play at
-`session.profile['audio_output_sample_rate']`; input and output rates can differ.
+returns the same format. Capture at
+[`session.audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
+and play at
+[`session.audio_output_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_output_sample_rate];
+input and output rates can differ.
 
 Start with 100 ms input chunks to balance interactive cadence with per-chunk overhead, then tune for
 your transport. The provider pages list their model-specific rates and constraints:

@@ -591,7 +591,13 @@ async def test_session_reports_the_connected_model_profile() -> None:
     agent = Agent()
     async with agent.realtime(model).session() as session:
         assert session.profile == profile
-        assert session.profile.get('audio_input_sample_rate') == 16000
+        # The sample-rate properties are the supported read surface: they resolve the profile keys and
+        # supply the 24 kHz default for keys a profile omits, so callers never index the profile dict.
+        assert session.audio_input_sample_rate == 16000
+        assert session.audio_output_sample_rate == 24000
+    # The same properties exist on the model, for configuring capture/playback before a session exists.
+    assert model.audio_input_sample_rate == 16000
+    assert model.audio_output_sample_rate == 24000
 
 
 async def test_close_ends_views_and_is_idempotent() -> None:

@@ -8,8 +8,8 @@ documentation, see the general [troubleshooting page](../troubleshooting.md), as
 
 ## No audio, or no useful speech
 
-Send mono PCM16 at `session.profile['audio_input_sample_rate']` and play it at
-`session.profile['audio_output_sample_rate']`. Do not assume the rates match. See the
+Send mono PCM16 at `session.audio_input_sample_rate` and play it at
+`session.audio_output_sample_rate`. Do not assume the rates match. See the
 [audio wire contract](audio.md#audio-wire-contract).
 
 ## The model never responds

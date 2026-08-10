@@ -32,10 +32,13 @@ Their accepted values, defaults, and limitations are documented on the
 With server-side turn detection, providers interrupt the model when they detect new user speech.
 Your application still owns audio already queued for playback and must flush that local buffer.
 
-OpenAI, Azure OpenAI, and xAI emit
+Providers whose profile declares
+[`emits_input_speech_events`][pydantic_ai.realtime.RealtimeModelProfile.emits_input_speech_events]
+(OpenAI, Azure OpenAI, and xAI) emit
 [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] when user speech begins.
 Gemini emits [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] when it
-interrupts model output instead. These are the signals to flush playback.
+interrupts model output instead. These are the signals to flush playback; read the flag rather than
+waiting on an event a provider never sends.
 
 [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] handles the server-side half of the
 problem. When supported, pass how many milliseconds actually played so the provider does not record

@@ -73,6 +73,7 @@ from ..run import AgentRunResult
 from ..tool_manager import ToolManager
 from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._base import (
+    DEFAULT_AUDIO_SAMPLE_RATE,
     AudioDelta,
     AudioInput,
     AudioRetention,
@@ -136,8 +137,8 @@ _FULL_PROFILE = RealtimeModelProfile(
     supports_output_truncation=True,
     supports_session_seeding=True,
     supported_native_tools=SUPPORTED_NATIVE_TOOLS,
-    audio_input_sample_rate=24000,
-    audio_output_sample_rate=24000,
+    audio_input_sample_rate=DEFAULT_AUDIO_SAMPLE_RATE,
+    audio_output_sample_rate=DEFAULT_AUDIO_SAMPLE_RATE,
 )
 
 # Audio chunks are kilobytes apiece, so a slow player is bounded tightly. Transcript items are short
@@ -902,14 +903,33 @@ class RealtimeSession:
         """What the connected model supports, as [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile].
 
         Available here because the session is what a call actually holds: `agent.realtime()` accepts a
-        model *name* and builds the model itself, leaving nothing else to read the profile from. The field
-        most code needs is
-        [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeModelProfile.audio_input_sample_rate] —
-        the rate to resample the microphone to before
-        [`send_audio`][pydantic_ai.realtime.RealtimeSession.send_audio], since sending audio at the wrong
-        rate is heard as a chipmunk rather than reported as an error.
+        model *name* and builds the model itself, leaving nothing else to read the profile from. The
+        audio sample rates have their own dedicated properties —
+        [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate] and
+        [`audio_output_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_output_sample_rate] —
+        so most code never needs to read the profile directly.
         """
         return self._profile
+
+    @property
+    def audio_input_sample_rate(self) -> int:
+        """The sample rate, in Hz, of the raw PCM audio this session expects.
+
+        Resample the microphone to this rate before
+        [`send_audio`][pydantic_ai.realtime.RealtimeSession.send_audio]: audio sent at the wrong rate
+        is heard as a chipmunk (or slow-motion voice) rather than reported as an error.
+        """
+        return self._profile.get('audio_input_sample_rate', DEFAULT_AUDIO_SAMPLE_RATE)
+
+    @property
+    def audio_output_sample_rate(self) -> int:
+        """The sample rate, in Hz, of the raw PCM audio [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] yields.
+
+        Play output at this rate; it can differ from
+        [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
+        (Gemini Live, for example, listens at 16 kHz and speaks at 24 kHz).
+        """
+        return self._profile.get('audio_output_sample_rate', DEFAULT_AUDIO_SAMPLE_RATE)
 
     async def stream_audio(self) -> AsyncIterator[bytes]:
         """Stream model audio chunks ready for playback.
@@ -1044,7 +1064,7 @@ class RealtimeSession:
                     seed_pcm_audio(
                         content,
                         provider_name=self._provider_name or 'realtime',
-                        sample_rate=self._profile.get('audio_input_sample_rate', 24000),
+                        sample_rate=self.audio_input_sample_rate,
                     )
                 )
             elif content.media_type == 'audio/pcm':
@@ -1140,8 +1160,9 @@ class RealtimeSession:
     async def send_audio(self, data: bytes) -> None:
         """Stream a chunk of mono PCM16 audio to the model.
 
-        Resample it to [`profile`][pydantic_ai.realtime.RealtimeSession.profile]'s
-        `audio_input_sample_rate` first (24 kHz on the OpenAI-protocol providers, 16 kHz on Gemini):
+        Resample it to
+        [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
+        first (24 kHz on the OpenAI-protocol providers, 16 kHz on Gemini):
         raw bytes carry no rate, so the wrong one is heard as a chipmunk rather than reported.
         """
         user_turn_was_active = self._user_turn_active
@@ -1382,7 +1403,7 @@ class RealtimeSession:
             if part.transcript == '':
                 part = replace(part, transcript=None)
             if self._retain_output and self._output_audio:
-                sample_rate = self._profile.get('audio_output_sample_rate', 24000)
+                sample_rate = self.audio_output_sample_rate
                 part = replace(
                     part,
                     audio=BinaryContent(
@@ -1871,7 +1892,7 @@ class RealtimeSession:
                 segment = bytes(self._input_audio) if self._input_audio else None
                 self._input_audio.clear()
             if segment:
-                sample_rate = self._profile.get('audio_input_sample_rate', 24000)
+                sample_rate = self.audio_input_sample_rate
                 part = replace(
                     part,
                     audio=BinaryContent(data=_pcm_to_wav(segment, sample_rate), media_type=_WAV_MEDIA_TYPE),
@@ -1998,7 +2019,7 @@ class RealtimeSession:
                 part = replace(
                     part,
                     audio=BinaryContent(
-                        data=_pcm_to_wav(segment, self._profile.get('audio_input_sample_rate', 24000)),
+                        data=_pcm_to_wav(segment, self.audio_input_sample_rate),
                         media_type=_WAV_MEDIA_TYPE,
                     ),
                 )
@@ -2055,7 +2076,7 @@ class RealtimeSession:
         audio = None
         if self._input_audio:
             audio = BinaryContent(
-                data=_pcm_to_wav(bytes(self._input_audio), self._profile.get('audio_input_sample_rate', 24000)),
+                data=_pcm_to_wav(bytes(self._input_audio), self.audio_input_sample_rate),
                 media_type=_WAV_MEDIA_TYPE,
             )
         part = SpeechPart(speaker='user', transcript=None, audio=audio)

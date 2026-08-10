@@ -281,8 +281,7 @@ class AudioInput:
 
     data: bytes
     """Raw mono PCM16 audio bytes, at the model's
-    [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeModelProfile.audio_input_sample_rate]
-    (read it from [`RealtimeSession.profile`][pydantic_ai.realtime.RealtimeSession.profile])."""
+    [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]."""
 
 
 @dataclass
@@ -755,11 +754,31 @@ class RealtimeModelProfile(TypedDict, total=False):
     tools against this set before connecting, raising a [`UserError`][pydantic_ai.exceptions.UserError]
     that names any the model doesn't support — mirroring the classic
     [`Model.supported_native_tools`][pydantic_ai.models.Model.supported_native_tools] check."""
-    audio_input_sample_rate: int
-    """The sample rate, in Hz, expected for raw PCM audio input."""
-    audio_output_sample_rate: int
-    """The sample rate, in Hz, produced in raw PCM audio output deltas."""
+    emits_input_speech_events: bool
+    """Whether the provider reports when the user starts and stops speaking, as
+    [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] and
+    [`RealtimeInputSpeechEndEvent`][pydantic_ai.realtime.RealtimeInputSpeechEndEvent].
 
+    `emits_` rather than `supports_` because this describes events that appear in the stream, not an
+    operation the session can invoke. The OpenAI-protocol providers (OpenAI, Azure OpenAI, xAI) emit
+    them; Gemini Live does not — a UI that shows a "listening" indicator should read this flag rather
+    than wait for events that will never arrive."""
+    audio_input_sample_rate: int
+    """The sample rate, in Hz, expected for raw PCM audio input.
+
+    Read it via [`RealtimeSession.audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
+    (or [`RealtimeModel.audio_input_sample_rate`][pydantic_ai.realtime.RealtimeModel.audio_input_sample_rate]
+    before a session exists), which fall back to the default when a profile omits it."""
+    audio_output_sample_rate: int
+    """The sample rate, in Hz, produced in raw PCM audio output deltas.
+
+    Read it via [`RealtimeSession.audio_output_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_output_sample_rate]
+    (or [`RealtimeModel.audio_output_sample_rate`][pydantic_ai.realtime.RealtimeModel.audio_output_sample_rate]
+    before a session exists), which fall back to the default when a profile omits it."""
+
+
+DEFAULT_AUDIO_SAMPLE_RATE = 24000
+"""The sample rate, in Hz, assumed for PCM audio when a realtime model profile doesn't specify one."""
 
 DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_image_input': False,
@@ -773,8 +792,9 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_async_tool_calls': False,
     'supports_tool_return_schema': False,
     'supported_native_tools': frozenset(),
-    'audio_input_sample_rate': 24000,
-    'audio_output_sample_rate': 24000,
+    'emits_input_speech_events': False,
+    'audio_input_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
+    'audio_output_sample_rate': DEFAULT_AUDIO_SAMPLE_RATE,
 }
 """Default realtime model profile values."""
 
@@ -984,6 +1004,26 @@ class RealtimeModel(AbstractModel):
         if effective_tools != profile_supported:
             resolved = merge_realtime_profile(resolved, RealtimeModelProfile(supported_native_tools=effective_tools))
         return resolved
+
+    @property
+    def audio_input_sample_rate(self) -> int:
+        """The sample rate, in Hz, expected for raw PCM audio input.
+
+        Also available on the session as
+        [`RealtimeSession.audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate];
+        read it here when audio capture must be configured before a session exists.
+        """
+        return self.profile.get('audio_input_sample_rate', DEFAULT_AUDIO_SAMPLE_RATE)
+
+    @property
+    def audio_output_sample_rate(self) -> int:
+        """The sample rate, in Hz, of the raw PCM audio the model produces.
+
+        Also available on the session as
+        [`RealtimeSession.audio_output_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_output_sample_rate];
+        read it here when audio playback must be configured before a session exists.
+        """
+        return self.profile.get('audio_output_sample_rate', DEFAULT_AUDIO_SAMPLE_RATE)
 
 
 @dataclass

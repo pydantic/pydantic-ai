@@ -336,6 +336,11 @@ validation:
   unrecognized_links: warn
   anchors: warn
 
+# Agent instruction files live alongside the docs they govern but are not documentation pages.
+exclude_docs: |
+  AGENTS.md
+  CLAUDE.md
+
 extra_css:
   - "extra/tweaks.css"
 # used for analytics

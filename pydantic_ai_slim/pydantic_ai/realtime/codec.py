@@ -12,6 +12,7 @@ model-profile merge helpers.
 from __future__ import annotations as _annotations
 
 from ._base import (
+    DEFAULT_AUDIO_SAMPLE_RATE,
     DEFAULT_REALTIME_PROFILE,
     AudioDelta,
     CancelResponse,
@@ -58,5 +59,6 @@ __all__ = (
     'TruncateOutput',
     # Model-profile helpers for provider implementations.
     'merge_realtime_profile',
+    'DEFAULT_AUDIO_SAMPLE_RATE',
     'DEFAULT_REALTIME_PROFILE',
 )
