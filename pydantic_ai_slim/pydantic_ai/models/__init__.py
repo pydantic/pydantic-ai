@@ -41,6 +41,8 @@ from ..messages import (
     FileUrl,
     FinalResultEvent,
     FinishReason,
+    ImageMediaType,
+    ImageUrl,
     InstructionPart,
     ModelMessage,
     ModelRequest,
@@ -1766,6 +1768,25 @@ class DownloadedItem(TypedDict, Generic[DataT]):
     """
 
 
+def _sniff_image_media_type(data: bytes) -> ImageMediaType | None:
+    """Detect a supported image media type from the leading bytes (magic-byte signature).
+
+    Returns one of the [`ImageMediaType`][pydantic_ai.messages.ImageMediaType] values if `data`
+    starts with a recognized image signature, otherwise `None`. This lets us verify that bytes
+    downloaded for an `ImageUrl` really are an image rather than trusting a remote `Content-Type`
+    header that the same server controls.
+    """
+    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'image/png'
+    if data.startswith(b'\xff\xd8\xff'):
+        return 'image/jpeg'
+    if data.startswith((b'GIF87a', b'GIF89a')):
+        return 'image/gif'
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return 'image/webp'
+    return None
+
+
 @overload
 async def download_item(
     item: FileUrl,
@@ -1823,11 +1844,24 @@ async def download_item(
     response = await safe_download(item.url, allow_local=allow_local, max_bytes=_MAX_FILE_URL_DOWNLOAD_BYTES)
 
     if content_type := response.headers.get('content-type'):
-        content_type = content_type.split(';')[0]
+        content_type = content_type.split(';')[0].strip().lower()
         if content_type == 'application/octet-stream':
             content_type = None
 
     media_type = content_type or item.media_type
+
+    if isinstance(item, ImageUrl):
+        # The same server controls both the response bytes and the `Content-Type` header, so the
+        # header cannot be trusted to describe what the bytes actually are: a spoofed or mismatched
+        # type would forward arbitrary content (e.g. HTML) to a model provider as an image (#7146).
+        # Verify the bytes against known image signatures and use the detected type instead.
+        sniffed_media_type = _sniff_image_media_type(response.content)
+        if sniffed_media_type is None:
+            raise UserError(
+                f'Downloaded data for image URL {item.url!r} is not a recognized image '
+                f'(PNG, JPEG, GIF or WebP); the response reported content type {media_type!r}.'
+            )
+        media_type = sniffed_media_type
 
     data_type = media_type
     if type_format == 'extension':
