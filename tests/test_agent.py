@@ -9356,10 +9356,7 @@ def test_tool_returning_iterator_is_materialized():
     assert result.output == snapshot('{"gen":[1,2,3]}')
 
     tool_returns = [
-        part.content
-        for message in result.all_messages()
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
+        part.content for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
     ]
     assert tool_returns == snapshot([[1, 2, 3]])
 
