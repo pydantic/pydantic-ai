@@ -961,12 +961,16 @@ class TestMCPToolsetIntegration:
                     arguments=[
                         PromptArgument(
                             name='name',
-                            description='Provide as a JSON string matching the following schema: {"type":"string"}',
+                            # FastMCP generates this text and has reworded it across releases; pin only
+                            # that the argument's JSON schema is conveyed.
+                            description=IsStr(regex=r'.*\{"type":"string"\}.*'),
                             required=True,
                         ),
                         PromptArgument(
                             name='topic',
-                            description='Provide as a JSON string matching the following schema: {"type":"string"}',
+                            # FastMCP generates this text and has reworded it across releases; pin only
+                            # that the argument's JSON schema is conveyed.
+                            description=IsStr(regex=r'.*\{"type":"string"\}.*'),
                             required=True,
                         ),
                     ],
