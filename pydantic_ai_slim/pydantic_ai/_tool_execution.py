@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Itera
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast
 
+from pydantic_core import PydanticSerializationError
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._utils import cancel_and_drain
@@ -657,6 +658,16 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 '`ToolReturn.tools` must be a list of tool names; pass a list of strings instead of a bare '
                 'string, non-sequence value, or non-string elements.'
             )
+
+        # Reject non-JSON-serializable return values here, before they enter message history:
+        # once stored, they crash later — and without the tool's name — in model request mapping,
+        # usage estimation, and history serialization.
+        try:
+            _messages.tool_return_ta.dump_json(tool_return.return_value, by_alias=True)
+        except PydanticSerializationError as e:
+            raise exceptions.UserError(
+                f'The return value of tool {call.tool_name!r} is not JSON-serializable: {e}'
+            ) from e
 
         # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
         # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the

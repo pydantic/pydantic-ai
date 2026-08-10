@@ -872,7 +872,9 @@ def test_return_unknown():
         def return_pydantic_model() -> Foobar:
             return Foobar()
 
-    with pytest.raises(PydanticSerializationError, match='Unable to serialize unknown type:'):
+    with pytest.raises(
+        UserError, match=re.escape("The return value of tool 'return_pydantic_model' is not JSON-serializable:")
+    ):
         agent.run_sync('')
 
 

@@ -9312,6 +9312,34 @@ def test_many_multimodal_tool_response():
         agent.run_sync('Please analyze the data')
 
 
+def test_tool_returning_unserializable_value():
+    """A non-JSON-serializable return value fails at the tool seam, naming the tool, before entering message history.
+
+    Without the check it would poison the history and crash later — without the tool's name — in
+    model request mapping, usage estimation, or history serialization.
+    """
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('get_data', {})])
+        else:  # pragma: no cover
+            return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def get_data() -> Any:
+        return dict  # a class, which pydantic-core cannot serialize
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "The return value of tool 'get_data' is not JSON-serializable: Unable to serialize unknown type: <class 'type'>"
+        ),
+    ):
+        agent.run_sync('go')
+
+
 def test_override_toolsets():
     foo_toolset = FunctionToolset()
 
