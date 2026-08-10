@@ -13750,31 +13750,25 @@ async def test_anthropic_compaction_usage_with_cache(
     )
 
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
-    # Request-level `cache_control` with no per-block breakpoint is what `anthropic_cache=True`
-    # sends today: #4840 moved automatic caching onto the top-level parameter, leaving per-block
-    # breakpoints as the Bedrock/Vertex fallback. The cassette predates that and still records the
-    # old per-block shape, so the usage below was recorded under the previous request shape; the
-    # snapshot here pins the current one off the wire, where a breakpoint that moves later — which
-    # busts the cache with no error to notice — shows up as a diff.
     assert cache_breakpoints(request_capture.body()) == snapshot(({'type': 'ephemeral', 'ttl': '5m'}, []))
     assert result.usage == snapshot(
         RunUsage(
-            input_tokens=55376,
+            input_tokens=55425,
             cache_write_tokens=55096,
-            output_tokens=90,
+            output_tokens=136,
             details={
-                'input_tokens': 180,
-                'output_tokens': 8,
+                'input_tokens': 229,
+                'output_tokens': 5,
                 'cache_creation_input_tokens': 0,
                 'cache_read_input_tokens': 0,
                 'compaction_iterations': 1,
                 'message_iterations': 1,
                 'compaction_input_tokens': 100,
-                'compaction_output_tokens': 82,
+                'compaction_output_tokens': 131,
                 'compaction_cache_creation_input_tokens': 55096,
             },
             requests=1,
-            cost=Decimal('0.20880'),
+            cost=Decimal('0.209637'),
         )
     )
 
@@ -13785,7 +13779,11 @@ async def test_anthropic_compaction_usage_with_cache_streaming(
     """Same as the non-streaming variant, but via `agent.run_stream`. The real API sends the
     `iterations` array on the `message_delta` event (not `message_start`), so this pins the
     merge-across-events path — specifically that the compaction cache (55k tokens) survives
-    the delta overwriting top-level `cache_creation_input_tokens` back to 0.
+    the delta overwriting the top-level cache fields back to 0.
+
+    This one records a cache *read* where the non-streaming variant records a write: the padding
+    is identical, so whichever test records second finds the prefix already cached. That makes the
+    pair cover both compaction cache directions, `_read_` here and `_creation_` there.
     """
     model = anthropic_model('claude-sonnet-4-6', capture=True)
     padding = 'The quick brown fox jumps over the lazy dog. ' * 5000
@@ -13800,26 +13798,25 @@ async def test_anthropic_compaction_usage_with_cache_streaming(
         async for _ in result.stream_text():
             pass
         usage = result.usage
-    # Same cassette-vs-code breakpoint gap as the non-streaming variant; see its comment.
     assert cache_breakpoints(request_capture.body()) == snapshot(({'type': 'ephemeral', 'ttl': '5m'}, []))
     assert usage == snapshot(
         RunUsage(
-            input_tokens=55368,
-            cache_write_tokens=55096,
-            output_tokens=76,
+            input_tokens=55377,
+            cache_read_tokens=55096,
+            output_tokens=91,
             details={
-                'input_tokens': 172,
-                'output_tokens': 5,
+                'input_tokens': 181,
+                'output_tokens': 8,
                 'cache_creation_input_tokens': 0,
                 'cache_read_input_tokens': 0,
                 'compaction_iterations': 1,
                 'message_iterations': 1,
                 'compaction_input_tokens': 100,
-                'compaction_output_tokens': 71,
-                'compaction_cache_creation_input_tokens': 55096,
+                'compaction_output_tokens': 83,
+                'compaction_cache_read_input_tokens': 55096,
             },
             requests=1,
-            cost=Decimal('0.208566'),
+            cost=Decimal('0.0187368'),
         )
     )
 
