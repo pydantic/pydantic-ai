@@ -336,7 +336,7 @@ def get_grok_tool_chunk(
     chunk = create_stream_chunk(
         content='',
         tool_calls=chunk_tool_calls,
-        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+        finish_reason=finish_reason or None,  # type: ignore[arg-type]
     )
 
     # Create response tool calls (accumulated view)
@@ -357,7 +357,7 @@ def get_grok_tool_chunk(
     response = create_response(
         content='',
         tool_calls=response_tool_calls,
-        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+        finish_reason=finish_reason or None,  # type: ignore[arg-type]
         usage=usage,
     )
 
@@ -372,13 +372,13 @@ def get_grok_text_chunk(text: str, finish_reason: str = 'stop') -> tuple[chat_ty
     """
     chunk = create_stream_chunk(
         content=text,
-        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+        finish_reason=finish_reason or None,  # type: ignore[arg-type]
     )
 
     usage = usage_pb2.SamplingUsage(prompt_tokens=2, completion_tokens=1) if finish_reason else None
     response = create_response(
         content=text,
-        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+        finish_reason=finish_reason or None,  # type: ignore[arg-type]
         usage=usage,
     )
 
@@ -396,13 +396,13 @@ def get_grok_reasoning_text_chunk(
         content=text,
         reasoning_content=reasoning_content,
         encrypted_content=encrypted_content,
-        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+        finish_reason=finish_reason or None,  # type: ignore[arg-type]
     )
 
     usage = usage_pb2.SamplingUsage(prompt_tokens=2, completion_tokens=1) if finish_reason else None
     response = create_response(
         content=text,
-        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+        finish_reason=finish_reason or None,  # type: ignore[arg-type]
         usage=usage,
         reasoning_content=reasoning_content,
         encrypted_content=encrypted_content,

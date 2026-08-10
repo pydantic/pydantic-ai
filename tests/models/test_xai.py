@@ -65,6 +65,7 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     CachePoint,
+    FinishReason,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
@@ -99,7 +100,7 @@ from .mock_xai import (
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from xai_sdk.chat import required_tool
-    from xai_sdk.proto import chat_pb2, usage_pb2
+    from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
 
     from pydantic_ai.models import xai as xai_module
     from pydantic_ai.models.xai import (
@@ -6115,35 +6116,24 @@ async def test_xai_legacy_grok_provider_name_in_history(allow_model_requests: No
             assert '<think>' not in part.get('text', '')
 
 
-@pytest.mark.parametrize(
-    'stream_finish, non_stream_finish',
-    [
-        ('stop', 'stop'),
-        ('length', 'length'),
-        ('tool_call', 'tool_call'),
-        ('error', 'error'),
-    ],
-    ids=['stop', 'length', 'tool_call', 'error'],
-)
-async def test_xai_stream_finish_reason_matches_non_stream(
-    allow_model_requests: None, stream_finish: str, non_stream_finish: str
-):
-    """Streamed and non-streamed ModelResponse.finish_reason must agree for each xAI finish reason."""
-    stream = [get_grok_text_chunk('hello ', ''), get_grok_text_chunk('world', stream_finish)]
+@pytest.mark.parametrize('finish_reason', ['stop', 'length', 'tool_call', 'error'])
+async def test_xai_stream_finish_reason_matches_non_stream(allow_model_requests: None, finish_reason: FinishReason):
+    """Streamed and non-streamed responses must map the same xAI finish reason to the same value."""
+    mock_client = MockXai.create_mock([create_response(content='hello world', finish_reason=finish_reason)])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    non_stream_result = await Agent(m).run('')
+
+    stream = [get_grok_text_chunk('hello ', ''), get_grok_text_chunk('world', finish_reason)]
     mock_client = MockXai.create_mock_stream([stream])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m)
+    async with Agent(m).run_stream('') as result:
+        await result.get_output()
 
-    finish_reason: str | None = None
-    async with agent.run_stream('') as result:
-        async for response in result.stream_response(debounce_by=None):
-            finish_reason = response.finish_reason
-
-    assert finish_reason == non_stream_finish
+    assert result.response.finish_reason == non_stream_result.response.finish_reason == finish_reason
 
 
 async def test_xai_stream_intermediate_chunks_keep_finish_reason_unset(allow_model_requests: None):
-    """Intermediate streaming chunks (REASON_INVALID) must not set finish_reason to 'stop'."""
+    """Intermediate streaming chunks (REASON_INVALID) must not report a premature 'stop'."""
     stream = [
         get_grok_text_chunk('hello ', ''),
         get_grok_text_chunk('world', ''),
@@ -6153,44 +6143,20 @@ async def test_xai_stream_intermediate_chunks_keep_finish_reason_unset(allow_mod
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
     agent = Agent(m)
 
-    finish_reasons: list[str | None] = []
+    finish_reasons: list[FinishReason | None] = []
     async with agent.run_stream('') as result:
         async for response in result.stream_response(debounce_by=None):
             finish_reasons.append(response.finish_reason)
 
-    # Intermediate chunks (REASON_INVALID) must keep finish_reason None, not coerce to 'stop'.
-    assert finish_reasons[0] is None
-    assert finish_reasons[1] is None
-    # The stream terminates with the real finish reason.
-    assert finish_reasons[-1] == 'stop'
+    # Unset while the two intermediate chunks arrive, 'stop' from the finishing chunk onwards.
+    assert finish_reasons[:2] == [None, None]
+    assert all(reason == 'stop' for reason in finish_reasons[2:])
 
 
 def test_xai_finish_reason_proto_map_covers_all_enum_members():
-    """Every FinishReason proto enum member except REASON_INVALID must have a mapping."""
-    from xai_sdk.proto import sample_pb2
-
-    # REASON_INVALID (0) is the proto default meaning "not finished yet" and is deliberately unmapped.
-    expected_unmapped = {sample_pb2.FinishReason.REASON_INVALID}
-    mapped = set(xai_module._FINISH_REASON_PROTO_MAP.keys())  # pyright: ignore[reportPrivateUsage]
-    all_members = {value for name, value in sample_pb2.FinishReason.items() if name.startswith('REASON')}
-
-    unmapped = all_members - mapped
-    assert unmapped == expected_unmapped, (
-        f'Expected only {expected_unmapped} to be unmapped, but got unmapped={unmapped}'
-    )
-
-
-def test_xai_map_finish_reason_empty_outputs_returns_none():
-    """`_map_finish_reason` returns None when the response has no outputs."""
-    import xai_sdk.chat as chat_types
-    from xai_sdk.proto import chat_pb2
-
-    from pydantic_ai.models.xai import _map_finish_reason  # pyright: ignore[reportPrivateUsage]
-
-    proto = chat_pb2.GetChatCompletionResponse(id='grok-123', outputs=[])
-    response = chat_types.Response(proto, index=None)
-
-    assert _map_finish_reason(response) is None
+    """Every proto finish reason except REASON_INVALID ("not finished yet") must be mapped."""
+    unmapped = set(sample_pb2.FinishReason.values()) - set(xai_module._FINISH_REASON_PROTO_MAP)  # pyright: ignore[reportPrivateUsage]
+    assert unmapped == {sample_pb2.FinishReason.REASON_INVALID}
 
 
 # End of tests

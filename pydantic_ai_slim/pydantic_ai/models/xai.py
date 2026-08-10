@@ -140,11 +140,9 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         assert_never(thinking)
 
 
-# `GetChatCompletionResponse.outputs[*].finish_reason` (and the streaming accumulated
-# `Response.proto.outputs[-1].finish_reason`) use the proto enum (ints), not the string
-# values returned by `Response.finish_reason` (which are proto *names* like 'REASON_STOP').
-# `REASON_INVALID` is the proto default meaning "not finished yet" and is deliberately absent
-# so that `_map_finish_reason` returns `None` for intermediate streaming chunks.
+# Keyed on the proto enum ints from `outputs[*].finish_reason`, not the enum names (e.g. 'REASON_STOP')
+# that the `Response.finish_reason` string property returns. `REASON_INVALID`, the proto default meaning
+# "not finished yet", is deliberately unmapped so intermediate streaming chunks map to `None`.
 _FINISH_REASON_PROTO_MAP: dict[int, FinishReason] = {
     sample_pb2.FinishReason.REASON_STOP: 'stop',
     sample_pb2.FinishReason.REASON_MAX_LEN: 'length',
@@ -155,16 +153,9 @@ _FINISH_REASON_PROTO_MAP: dict[int, FinishReason] = {
 
 
 def _map_finish_reason(response: chat_types.Response) -> FinishReason | None:
-    """Derive the normalized finish reason from the final output of an xAI SDK response.
-
-    Reads the proto int finish reason from the last output so both the streaming and
-    non-streaming paths share one source of truth. Returns `None` when there are no
-    outputs or the response has not finished yet (`REASON_INVALID`).
-    """
+    """Map the final output's finish reason, `None` if unfinished (`REASON_INVALID`) or unknown."""
     outputs = response.proto.outputs
-    if not outputs:
-        return None
-    return _FINISH_REASON_PROTO_MAP.get(outputs[-1].finish_reason)
+    return _FINISH_REASON_PROTO_MAP.get(outputs[-1].finish_reason) if outputs else None
 
 
 class XaiModelSettings(ModelSettings, total=False):
@@ -875,11 +866,6 @@ class XaiModel(Model[AsyncClient]):
         # Convert usage with detailed token information
         usage = _extract_usage(response, self._model_name, self._provider.name, self._provider.base_url)
 
-        # Map finish reason (shared helper reads proto int from final output).
-        if outputs:
-            finish_reason = _map_finish_reason(response) or 'stop'
-        else:  # pragma: no cover
-            finish_reason = 'stop'
         return ModelResponse(
             parts=parts,
             usage=usage,
@@ -888,7 +874,7 @@ class XaiModel(Model[AsyncClient]):
             provider_name=self.system,
             provider_url=self._provider.base_url,
             provider_response_id=response.id,
-            finish_reason=finish_reason,
+            finish_reason=_map_finish_reason(response),
         )
 
     async def _process_streamed_response(
@@ -965,8 +951,9 @@ class XaiStreamedResponse(StreamedResponse):
         if response.id and self.provider_response_id is None:
             self.provider_response_id = response.id
 
-        # Only assign finish_reason once the response has actually finished.
-        # Intermediate chunks carry REASON_INVALID (proto default), which maps to None.
+        # Only assign when a real reason is present. Intermediate chunks carry REASON_INVALID (-> None),
+        # and a trailing chunk can regress the accumulated proto back to REASON_INVALID after the real
+        # reason arrived, so the guard also preserves the last real value.
         if (finish_reason := _map_finish_reason(response)) is not None:
             self.finish_reason = finish_reason
 
