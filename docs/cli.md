@@ -55,8 +55,11 @@ Then running `clai` will start an interactive session where you can chat with th
 | `-a`, `--agent` | Custom agent in `module:variable` format |
 | `-t`, `--code-theme` | Syntax highlighting theme (`dark`, `light`, or [pygments theme](https://pygments.org/styles/)) |
 | `--no-stream` | Disable streaming from the model |
+| `--traceback` | Show the full exception traceback when a request fails |
 | `-l`, `--list-models` | List all available models and exit |
 | `--version` | Show version and exit |
+
+Request failures are concise by default. Add `--traceback` when you need the complete Python exception chain for debugging.
 
 ### Choose a model
 

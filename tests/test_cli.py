@@ -12,6 +12,7 @@ from rich.console import Console
 
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage, UsageLimits
@@ -194,6 +195,86 @@ def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
         assert cli(['--no-stream', 'hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
+
+
+def _failing_agent() -> Agent[None, str]:
+    def raise_request_error() -> None:
+        try:
+            raise ValueError('provider detail')
+        except ValueError as e:
+            raise RuntimeError('request failed') from e
+
+    async def fail(_messages: list[ModelMessage], _info: Any) -> ModelResponse:
+        raise_request_error()
+        raise AssertionError
+
+    async def fail_stream(_messages: list[ModelMessage], _info: Any):
+        raise_request_error()
+        yield ''
+
+    return Agent(FunctionModel(fail, stream_function=fail_stream))
+
+
+@pytest.mark.parametrize('stream', [True, False])
+@pytest.mark.parametrize('show_traceback', [True, False])
+def test_cli_prompt_error(
+    capfd: CaptureFixture[str],
+    create_test_module: Callable[..., None],
+    stream: bool,
+    show_traceback: bool,
+):
+    create_test_module(agent=_failing_agent())
+    args = ['--agent', 'test_module:agent', 'hello']
+    if not stream:
+        args.insert(0, '--no-stream')
+    if show_traceback:
+        args.insert(0, '--traceback')
+
+    assert cli(args) == 1
+    output = capfd.readouterr().out
+    assert 'RuntimeError: request failed' in output
+    assert ('Traceback (most recent call last)' in output) is show_traceback
+    assert ('ValueError: provider detail' in output) is show_traceback
+
+
+@pytest.mark.parametrize('show_traceback', [True, False])
+def test_chat_error(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    create_test_module: Callable[..., None],
+    show_traceback: bool,
+):
+    attempts = 0
+
+    async def recover(_messages: list[ModelMessage], _info: Any) -> ModelResponse:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            try:
+                raise ValueError('provider detail')
+            except ValueError as e:
+                raise RuntimeError('request failed') from e
+        return ModelResponse(parts=[TextPart(content='recovered')])
+
+    create_test_module(agent=Agent(FunctionModel(recover)))
+    with create_pipe_input() as inp:
+        inp.send_text('hello\n')
+        inp.send_text('try again\n')
+        inp.send_text('/exit\n')
+        session = PromptSession[Any](input=inp, output=DummyOutput())
+        mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
+
+        args = ['--agent', 'test_module:agent', '--no-stream']
+        if show_traceback:
+            args.append('--traceback')
+        assert cli(args) == 0
+
+    output = capfd.readouterr().out
+    assert 'RuntimeError: request failed' in output
+    assert ('Traceback (most recent call last)' in output) is show_traceback
+    assert ('ValueError: provider detail' in output) is show_traceback
+    assert 'recovered' in output
+    assert attempts == 2
 
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):

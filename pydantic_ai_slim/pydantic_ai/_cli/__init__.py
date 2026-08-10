@@ -6,6 +6,7 @@ import sys
 from collections.abc import Sequence
 from contextlib import ExitStack
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -257,6 +258,7 @@ subcommands:
         default='dark',
     )
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
+    parser.add_argument('--traceback', action='store_true', help='Show full tracebacks for errors')
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
@@ -320,10 +322,14 @@ def _run_chat_command(
             anyio.run(ask_agent, agent, args.prompt, stream, console, code_theme)
         except KeyboardInterrupt:
             pass
+        except Exception as e:
+            _render_error(console, e, show_traceback=args.traceback)
+            return 1
         return 0
 
     try:
-        return anyio.run(run_chat, stream, agent, console, code_theme, prog_name)
+        run_chat_fn = partial(run_chat, show_traceback=True) if args.traceback else run_chat
+        return anyio.run(run_chat_fn, stream, agent, console, code_theme, prog_name)
     except KeyboardInterrupt:  # pragma: no cover
         return 0
 
@@ -340,6 +346,7 @@ async def run_chat(
     model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
     usage_limits: _usage.UsageLimits | None = None,
+    show_traceback: bool = False,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -387,10 +394,17 @@ async def run_chat(
             except anyio.get_cancelled_exc_class():  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
             except Exception as e:  # pragma: no cover
-                cause = getattr(e, '__cause__', None)
-                console.print(f'\n[red]{type(e).__name__}:[/red] {e}')
-                if cause:
-                    console.print(f'[dim]Caused by: {cause}[/dim]')
+                _render_error(console, e, show_traceback=show_traceback)
+
+
+def _render_error(console: Console, error: Exception, *, show_traceback: bool) -> None:
+    if show_traceback:
+        console.print_exception(show_locals=False)
+        return
+
+    console.print(f'\n[red]{type(error).__name__}:[/red] {error}')
+    if cause := error.__cause__:
+        console.print(f'[dim]Caused by: {cause}[/dim]')
 
 
 async def ask_agent(
