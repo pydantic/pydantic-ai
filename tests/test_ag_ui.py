@@ -62,7 +62,7 @@ from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.capabilities import Capability, PrepareTools
-from pydantic_ai.exceptions import ApprovalRequired, ToolFailed, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailed, UserError
 from pydantic_ai.messages import (
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
@@ -7039,6 +7039,60 @@ async def test_client_submitted_tool_call_resolved_by_deferred_results_runs() ->
             pass
 
     assert executed == [{'key': 'prod'}], 'approval-resumed tool call must execute'
+
+
+async def test_deferred_result_handed_back_as_a_legacy_retry_prompt_part() -> None:
+    """A `RetryPromptPart` supplied by user code still streams as the tool result it always did.
+
+    Pydantic AI no longer builds one, so this branch is now reachable only from a handler answering
+    a deferred call with a retry of its own — including the `'Fix the errors and try again.'` tail
+    the framework's own retries have dropped.
+    """
+    agent = Agent(model=TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def refresh_cache(key: str) -> str:
+        raise CallDeferred
+
+    run_input = create_input(
+        UserMessage(id='msg_1', content='Hi'),
+        AssistantMessage(
+            id='msg_2',
+            tool_calls=[
+                ToolCall(
+                    id='deferred-call-1',
+                    type='function',
+                    function=FunctionCall(name='refresh_cache', arguments='{"key": "prod"}'),
+                )
+            ],
+        ),
+    )
+
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(
+            adapter.run_stream(
+                deferred_tool_results=DeferredToolResults(
+                    calls={'deferred-call-1': RetryPromptPart(content='stale key')}
+                )
+            )
+        )
+    ]
+
+    results = [event for event in events if event['type'] == 'TOOL_CALL_RESULT']
+    assert [(event['toolCallId'], event['content']) for event in results] == snapshot(
+        [
+            (
+                'deferred-call-1',
+                """\
+stale key
+
+Fix the errors and try again.\
+""",
+            )
+        ]
+    )
 
 
 async def test_client_submitted_file_url_disallowed_scheme_stripped() -> None:

@@ -20,6 +20,7 @@ from pydantic import BaseModel, ValidationError
 from vcr.cassette import Cassette
 
 from pydantic_ai import Agent
+from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai.exceptions import CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -333,21 +334,8 @@ def _error_channel_model(provider: str, anthropic_api_key: str, gemini_api_key: 
 
 
 def _model_call_bodies(vcr: Cassette) -> list[Any]:
-    """The recorded model-call bodies, in order.
-
-    Not every recorded request is a model call: Bedrock's client signs through a form-encoded STS
-    exchange first, so indexing `vcr.requests` directly would read the wrong body on one provider and
-    the right one on the others.
-    """
-    bodies: list[Any] = []
-    for request in vcr.requests:  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        try:
-            body = json.loads(request.body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        except (TypeError, ValueError):
-            continue
-        if isinstance(body, dict) and ('messages' in body or 'contents' in body):
-            bodies.append(body)
-    return bodies
+    """The recorded model-call bodies, in order."""
+    return [json.loads(request.body) for request in vcr.requests]  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType,reportUnknownVariableType]
 
 
 @pytest.mark.vcr
@@ -458,6 +446,20 @@ def test_retry_prompt_part_from_error_builds_the_legacy_content():
 
     from_retry = RetryPromptPart.from_error(ModelRetry('try again'))
     assert (from_retry.content, from_retry.tool_name) == ('try again', None)
+
+
+def test_a_retried_tool_return_generates_a_call_id_when_it_is_given_none():
+    """`RunContext.tool_call_id` is optional, so the builder has to cope with its absence.
+
+    A unit test rather than a VCR one because no provider produces this: every tool call the agent
+    loop retries carries an id, and the branch exists for the output-processing path, where the
+    context can be built without one. Falling through to `ToolReturnPart`'s own default is what stops
+    a retry from answering the empty string.
+    """
+    part = build_retried_tool_return(ModelRetry('try again'), tool_name='count_things')
+
+    assert part.tool_call_id
+    assert (part.tool_name, part.content, part.outcome) == ('count_things', 'try again', 'retried')
 
 
 @pytest.mark.skipif(not groq_available(), reason='groq not installed')
