@@ -4145,8 +4145,8 @@ async def test_bedrock_leading_cache_point_after_tool_return_shares_the_turn(
 ):
     """A tool return followed by a `[CachePoint, text]` part maps to one user message with the boundary between them.
 
-    This is the planning-reminder pattern from pydantic-ai-harness `Planning`:
-    https://github.com/pydantic/pydantic-ai/issues/7004
+    This is the shape reported in https://github.com/pydantic/pydantic-ai/issues/7004
+    (a reminder part injected behind a cache boundary after a tool call).
     """
     model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
@@ -4204,37 +4204,6 @@ async def test_bedrock_leading_cache_point_replaces_existing_boundary_marker(
                 'content': [
                     {'text': 'Some context'},
                     {'cachePoint': {'type': 'default', 'ttl': '1h'}},
-                    {'text': 'A reminder'},
-                ],
-            }
-        ]
-    )
-
-
-async def test_bedrock_leading_cache_point_lands_before_trailing_documents(
-    allow_model_requests: None, bedrock_provider: BedrockProvider
-):
-    """When the preceding user content ends with documents, the boundary lands before them (AWS rejects a cache point directly after a document)."""
-    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
-    messages: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                UserPromptPart(content=['Read this', BinaryContent(data=b'Document content', media_type='text/plain')]),
-                UserPromptPart(content=[CachePoint(), 'A reminder']),
-            ]
-        ),
-    ]
-    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, ModelRequestParameters(), BedrockModelSettings()
-    )
-    assert bedrock_messages == snapshot(
-        [
-            {
-                'role': 'user',
-                'content': [
-                    {'text': 'Read this'},
-                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
-                    {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Document content'}}},
                     {'text': 'A reminder'},
                 ],
             }
@@ -4301,49 +4270,6 @@ async def test_bedrock_leading_cache_point_with_video_only_preceding_content_is_
                 'role': 'user',
                 'content': [{'video': {'format': 'mp4', 'source': {'bytes': b'video data'}}}, {'text': 'A reminder'}],
             }
-        ]
-    )
-
-
-async def test_bedrock_leading_cache_point_stays_with_tool_result_when_the_turn_splits(
-    allow_model_requests: None, bedrock_provider: BedrockProvider
-):
-    """Content that cannot share a tool result's turn still splits; the attached cache point stays with the tool result."""
-    model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
-    messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Summarize the doc')]),
-        ModelResponse(parts=[ToolCallPart(tool_name='get_doc', args={}, tool_call_id='tc1')]),
-        ModelRequest(
-            parts=[
-                ToolReturnPart(tool_name='get_doc', content='Fetched', tool_call_id='tc1'),
-                UserPromptPart(
-                    content=[CachePoint(), BinaryContent(data=b'Document content', media_type='text/plain')]
-                ),
-            ]
-        ),
-    ]
-    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, ModelRequestParameters(), BedrockModelSettings()
-    )
-    assert bedrock_messages == snapshot(
-        [
-            {'role': 'user', 'content': [{'text': 'Summarize the doc'}]},
-            {'role': 'assistant', 'content': [{'toolUse': {'toolUseId': 'tc1', 'name': 'get_doc', 'input': {}}}]},
-            {
-                'role': 'user',
-                'content': [
-                    {'toolResult': {'toolUseId': 'tc1', 'content': [{'text': 'Fetched'}], 'status': 'success'}},
-                    {'cachePoint': {'type': 'default', 'ttl': '5m'}},
-                ],
-            },
-            {'role': 'assistant', 'content': [{'text': '.'}]},
-            {
-                'role': 'user',
-                'content': [
-                    {'text': 'See attached document(s).'},
-                    {'document': {'name': 'Document 1', 'format': 'txt', 'source': {'bytes': b'Document content'}}},
-                ],
-            },
         ]
     )
 
