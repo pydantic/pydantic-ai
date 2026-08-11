@@ -644,6 +644,7 @@ class TestSafeDownload:
             ('http://example.com/file.txt', 'example.com'),
             ('http://example.com:8080/file.txt', 'example.com:8080'),
             ('https://[2606:4700:4700::1111]:8443/file.txt', '[2606:4700:4700::1111]:8443'),
+            ('http://93.184.215.14:8080/file.txt', '93.184.215.14:8080'),
         ],
     )
     async def test_host_header_includes_non_default_port(
