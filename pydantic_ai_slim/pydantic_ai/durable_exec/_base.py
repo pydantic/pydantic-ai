@@ -4,7 +4,7 @@ import copy
 from abc import abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from typing_extensions import Self
 
@@ -30,6 +30,9 @@ from ._runtime_toolsets import (
 )
 from ._toolset import guard_run_context
 from ._utils import unwrap_model
+
+if TYPE_CHECKING:
+    pass
 
 _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
@@ -337,7 +340,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Deliver one workflow-side event inside an engine-specific durable boundary."""
 
     @staticmethod
-    async def _single_event_stream(event: AgentStreamEvent) -> AsyncIterator[AgentStreamEvent]:
+    async def _single_event_stream(
+        event: AgentStreamEvent,
+    ) -> AsyncIterator[AgentStreamEvent]:
         yield event
 
     def _bind_models(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
@@ -402,7 +407,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         so it falls back to `_find_model_id`.
         """
         provenance = request_context.model_id
-        if provenance is not None and unwrap_model(request_context.model) is unwrap_model(ctx.model):
+        # A durable run always targets a regular `Model`, never a realtime model, so `ctx.model`
+        # (typed as the wider `AbstractModel`) is a `Model` here; the guard narrows it for `unwrap_model`.
+        run_model = ctx.model
+        if (
+            provenance is not None
+            and isinstance(run_model, Model)
+            and unwrap_model(request_context.model) is unwrap_model(cast('Model[Any]', run_model))
+        ):
             return provenance
         return self._find_model_id(request_context.model)
 
