@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+import pydantic_ai.images as images_module
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
@@ -190,6 +191,56 @@ class TestImageGenerationCapability:
         )
         await aspect_ratio_agent.run('Generate an image')
         assert aspect_ratio_model.last_settings == {'aspect_ratio': '1:1'}
+
+    async def test_image_generation_spec_string_local_resolves_deferred_model_during_run(
+        self, allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A spec-loaded string `local` stays unresolved until the tool generates, then applies the JSON dimensions."""
+        image_model = TestImageGenerationModel()
+        inferred_models: list[object] = []
+
+        def infer_model(model: object) -> TestImageGenerationModel:
+            inferred_models.append(model)
+            return image_model
+
+        monkeypatch.setattr(images_module, 'infer_image_generation_model', infer_model)
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
+
+        agent = Agent.from_spec(
+            {
+                'capabilities': [
+                    {
+                        'ImageGeneration': {
+                            'native': False,
+                            'local': 'openai:gpt-image-1.5',
+                            'dimensions': [1280, 720],
+                        }
+                    }
+                ]
+            },
+            model=FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset())),
+        )
+        assert inferred_models == snapshot([])
+
+        result = await agent.run('Generate an image')
+
+        assert inferred_models == snapshot(['openai:gpt-image-1.5'])
+        assert image_model.last_settings == snapshot({'dimensions': (1280, 720)})
+        tool_returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
+        assert tool_returns == snapshot(
+            [
+                ToolReturnPart(
+                    tool_name='generate_image',
+                    content=IsInstance(BinaryImage),
+                    tool_call_id=IsStr(),
+                    timestamp=IsDatetime(),
+                )
+            ]
+        )
 
     @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
     async def test_image_generation_direct_fallback_instrumentation_omits_binary_tool_result(
