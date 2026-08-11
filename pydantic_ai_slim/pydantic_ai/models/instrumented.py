@@ -301,9 +301,11 @@ class InstrumentationSettings:
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
-        if price_calculation:
-            cost = float(price_calculation.total_price)
-            self.cost_histogram.record(cost, attributes)
+        cost = response.usage.cost
+        if cost is None and price_calculation:
+            cost = price_calculation.total_price
+        if cost is not None:
+            self.cost_histogram.record(float(cost), attributes)
         if time_to_first_chunk is not None:
             self.time_to_first_chunk_histogram.record(time_to_first_chunk, attributes)
 

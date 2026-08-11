@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal
 
 import pytest
@@ -1414,6 +1415,50 @@ def test_message_with_thinking_parts():
             },
         ]
     )
+
+
+@pytest.mark.parametrize('model_name', ['gpt-4o', 'unpriceable-custom-model'])
+async def test_reported_cost_wins_in_telemetry(capfire: CaptureLogfire, model_name: str):
+    """A cost already on the usage (e.g. gateway-reported) is what telemetry records.
+
+    `gpt-4o` is priceable, so the estimate would differ (0.002225 in the sibling tests);
+    the unpriceable model would previously record no cost at all.
+    """
+
+    class ReportedCostModel(Model):
+        @property
+        def system(self) -> str:
+            return 'openai'
+
+        @property
+        def model_name(self) -> str:
+            return model_name
+
+        @property
+        def base_url(self) -> str:
+            return 'https://example.com:8000/foo'
+
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(
+                parts=[TextPart('ok')],
+                usage=RequestUsage(input_tokens=100, output_tokens=200, cost=Decimal('0.125')),
+                model_name=model_name,
+            )
+
+    model = InstrumentedModel(ReportedCostModel())
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime())]
+    await model.request(messages, model_settings=ModelSettings(), model_request_parameters=ModelRequestParameters())
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert span['attributes']['operation.cost'] == 0.125
+
+    [cost_metric] = [m for m in capfire.get_collected_metrics() if m['name'] == 'operation.cost']
+    assert cost_metric['data']['data_points'][0]['sum'] == 0.125
 
 
 async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
