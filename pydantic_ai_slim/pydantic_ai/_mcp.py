@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
 from typing_extensions import assert_never
 
 from . import exceptions, messages
-from ._mcp_compat import import_mcp_types, mcp_field, mcp_optional_field
+from ._mcp_compat import mcp_field, mcp_optional_field
 
-if TYPE_CHECKING:
+try:
+    # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
-else:
-    mcp_types = import_mcp_types('the MCP server')
+except ImportError as _mcp_import_error:  # pragma: no cover
+    raise ImportError(
+        'Please install the `mcp` package to use the MCP integrations, '
+        'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
+    ) from _mcp_import_error
 
 
 def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[messages.ModelMessage]:

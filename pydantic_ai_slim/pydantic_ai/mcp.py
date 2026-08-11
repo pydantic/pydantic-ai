@@ -21,14 +21,8 @@ from typing_extensions import Self, assert_never
 
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
-from ._mcp_compat import import_mcp_types
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
-
-if TYPE_CHECKING:
-    from mcp import types as mcp_types
-else:
-    mcp_types = import_mcp_types('`MCPToolset`')
 
 try:
     from fastmcp.client import Client as FastMCPClient
@@ -53,9 +47,13 @@ except ImportError as _fastmcp_import_error:  # pragma: no cover
         'or install the full `fastmcp` package directly.'
     ) from _fastmcp_import_error
 
+# `mcp.types` serves either SDK generation (v2 keeps it as an exact re-export of `mcp_types`), and
+# fastmcp — just guarded with a friendly error — depends on the `mcp` package, so this plain import
+# can only fail alongside it.
 # SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has,
 # but doesn't mark the re-export as public, so pyright must be told to allow the import.
 from fastmcp.exceptions import McpError  # pyright: ignore[reportPrivateImportUsage]
+from mcp import types as mcp_types
 
 # In-process MCP servers (`FastMCP` / `FastMCP1Server`) live in the *server* halves of fastmcp /
 # the MCP SDK respectively. The lightweight `[mcp]` install (`fastmcp-slim[client]`) does NOT ship

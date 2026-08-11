@@ -1,30 +1,11 @@
 from __future__ import annotations
 
 from importlib.metadata import version as _package_version
-from types import ModuleType
 from typing import TypeVar
 
 from pydantic import BaseModel, TypeAdapter
 
 T = TypeVar('T')
-
-
-def import_mcp_types(feature: str) -> ModuleType:
-    """Import the MCP wire types from whichever SDK generation is installed.
-
-    SDK v1 ships them as `mcp.types`. SDK v2 moved them to a standalone `mcp_types` distribution
-    but kept `mcp.types` as an exact re-export of it — so this import yields either generation,
-    and only [`is_mcp_sdk_v2`][pydantic_ai._mcp_compat.is_mcp_sdk_v2] tells them apart.
-    `feature` names the caller in the error raised when the SDK is not installed.
-    """
-    try:
-        from mcp import types
-    except ImportError as import_error:
-        raise ImportError(
-            f'Please install the `mcp` package to use {feature}, '
-            'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
-        ) from import_error
-    return types
 
 
 def is_mcp_sdk_v2() -> bool:

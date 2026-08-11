@@ -13,7 +13,6 @@ import asyncio
 import base64
 import json
 import re
-import sys
 import warnings
 from dataclasses import replace
 from pathlib import Path
@@ -58,7 +57,6 @@ with try_import() as imports_successful:
     from mcp import types as mcp_types
 
     from pydantic_ai import mcp as mcp_module
-    from pydantic_ai._mcp_compat import import_mcp_types
 
     # `fastmcp_tasks` is never installed in the typecheck environment, so pyright only gets a declaration.
     if TYPE_CHECKING:
@@ -120,17 +118,6 @@ def wrap_server_notification(notification: Any) -> Any:
     if MCP_SDK_V2:
         return notification
     return mcp_types.ServerNotification(root=notification)
-
-
-def test_import_mcp_types_without_the_sdk_raises(monkeypatch: pytest.MonkeyPatch):
-    """Without the MCP SDK installed, the error names the extra that installs it."""
-    import mcp
-
-    monkeypatch.delattr(mcp, 'types', raising=False)
-    monkeypatch.setitem(sys.modules, 'mcp.types', None)
-
-    with pytest.raises(ImportError, match=r'Please install the `mcp` package to use `MCPToolset`'):
-        import_mcp_types('`MCPToolset`')
 
 
 def make_legacy_client(server: FastMCP[None]) -> Client[Any]:
