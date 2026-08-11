@@ -548,9 +548,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         hooks, as [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] does.
 
         The hook is entered before model and sandbox resolution, capability and toolset `for_run`,
-        resource entry, and graph construction. It exits after the entire run, including
-        `after_run`/`on_run_error` and resource teardown. Multiple hooks follow middleware order:
-        the first capability is entered first and exits last, matching `wrap_run`.
+        resource entry, and graph construction — and before the run's cancellation binding, so a
+        `cancel()` issued while hooks are entering takes effect only once they finish. It exits
+        after the entire run, including `after_run`/`on_run_error` and resource teardown. Multiple
+        hooks follow middleware order: the first capability is entered first and exits last,
+        matching `wrap_run`.
 
         `ctx.model` and `ctx.sandbox` contain only values explicitly supplied to the run (including
         overrides); configured and capability-contributed values are resolved inside this hook's

@@ -1355,11 +1355,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # only after all inner contexts have torn down.
                 await stack.enter_async_context(_translate_cancellation())
 
-                # Bind the run's cancellation controller to this task and register the token BEFORE any
-                # potentially-blocking setup (the concurrency limiter, model entry): a run queued behind
+                # Bind the run's cancellation controller to this task and register the token before
+                # the blocking setup below (the concurrency limiter, model entry): a run queued behind
                 # the concurrency limiter must still be cancellable via its token or `cancel()`, and a
-                # pre-cancelled token must prevent it from starting. `finish` neutralizes `cancel()` once
-                # the run is over so it can never cancel unrelated later work on this task.
+                # pre-cancelled token must prevent it from starting. `wrap_entire_run` hooks entered
+                # above run before this binding, so a cancel issued while they enter is deferred until
+                # they finish. `finish` neutralizes `cancel()` once the run is over so it can never
+                # cancel unrelated later work on this task.
                 run_cancellation.bind()
                 stack.callback(run_cancellation.finish)
                 if cancellation_token is not None:
@@ -1485,7 +1487,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
                 # Unwrap an explicitly instrumented model; the shared instrumentation capability
                 # entered above owns the spans.
+                late_instrumentation = False
                 if isinstance(model_used, InstrumentedModel):
+                    if instrumentation_settings is None and not has_capability_type(run_layers, InstrumentationCap):
+                        # The model was declared as a string or selector and only resolved to an
+                        # `InstrumentedModel` now — too late for the whole-run span, but adopting
+                        # its settings keeps model and tool spans instead of silently dropping
+                        # all telemetry.
+                        instrumentation_settings = model_used.instrumentation_settings
+                        tracer = instrumentation_settings.tracer
+                        run_layers.insert(0, InstrumentationCap(settings=instrumentation_settings))
+                        late_instrumentation = True
                     model_used = model_used.wrapped
 
                 # Resolve the sandbox before constructing any `RunContext`, so every downstream
@@ -1573,7 +1585,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     initial_ctx,
                     [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
                 )
-                if layers_unchanged:
+                # A late-adopted instrumentation layer is not part of `preparation_capability`,
+                # so the unchanged-layers shortcut must not resurrect the pre-composed tree.
+                if layers_unchanged and not late_instrumentation:
                     run_capability = preparation_capability
                 elif len(resolved_layers) > 1:
                     run_capability = CombinedCapability(resolved_layers)
