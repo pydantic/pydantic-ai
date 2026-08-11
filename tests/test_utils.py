@@ -242,6 +242,45 @@ async def test_peekable_async_stream_aclose_cancels_in_flight_pull(peek_pull: bo
     assert not pull.cancelled()
 
 
+@pytest.mark.anyio
+async def test_peekable_async_stream_aclose_cancels_all_in_flight_pulls():
+    pull_started = anyio.Event()
+    source_closed = anyio.Event()
+    peek_done = anyio.Event()
+    next_done = anyio.Event()
+
+    async def source() -> AsyncIterator[int]:
+        try:
+            pull_started.set()
+            await anyio.sleep_forever()
+            yield 1  # pragma: no cover
+        finally:
+            source_closed.set()
+
+    stream: PeekableAsyncStream[int, AsyncIterator[int]] = PeekableAsyncStream(source())
+
+    async def peek() -> None:
+        assert await stream.peek() is UNSET
+        peek_done.set()
+
+    async def pull() -> None:
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+        next_done.set()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(peek)
+        await pull_started.wait()
+        task_group.start_soon(pull)
+        await anyio.sleep(0)
+        assert len(stream._pull_scopes) == 2  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(1):
+            await stream.aclose()
+            await source_closed.wait()
+            await peek_done.wait()
+            await next_done.wait()
+
+
 def test_run_until_complete_cleans_up_own_task_on_interrupt():
     """A `KeyboardInterrupt` during `run_until_complete` must drive our own coroutine's cleanup
     (closing model streams and HTTP connections via its `async with`/`finally` blocks) and leave no
