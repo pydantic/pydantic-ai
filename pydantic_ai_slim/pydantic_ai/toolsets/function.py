@@ -4,13 +4,13 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, overload
 
-import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
 from .._instructions import prepare_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
-from ..exceptions import ModelRetry, UserError
+from .._tool_timeout import run_with_tool_timeout
+from ..exceptions import UserError
 from ..messages import InstructionPart
 from ..tools import (
     ArgsValidatorFunc,
@@ -34,12 +34,6 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
     is_async: bool
-    timeout: float | None = None
-    """Timeout in seconds for tool execution.
-
-    If the tool takes longer than this, a retry prompt is returned to the model.
-    Defaults to None (no timeout).
-    """
     original_name: str | None = None
     """The name the toolset holds this tool under, which a `prepare` function may have renamed in `tool_def.name`.
 
@@ -620,6 +614,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tool_def = await tool.prepare_tool_def(run_context)
             if not tool_def:
                 continue
+            if tool_def.timeout is None and self.timeout is not None:
+                tool_def = replace(tool_def, timeout=self.timeout)
 
             new_name = tool_def.name
             if new_name in tools:
@@ -657,11 +653,21 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         tool = self.tools[original_name]
         max_retries = tool.max_retries if tool.max_retries is not None else self.max_retries
         return self._tool_for(
-            tool, tool_def, max_retries if max_retries is not None else ctx.max_retries, original_name
+            tool,
+            tool_def,
+            max_retries if max_retries is not None else ctx.max_retries,
+            original_name,
+            timeout_managed_by_toolset=True,
         )
 
     def _tool_for(
-        self, tool: Tool[AgentDepsT], tool_def: ToolDefinition, max_retries: int, original_name: str
+        self,
+        tool: Tool[AgentDepsT],
+        tool_def: ToolDefinition,
+        max_retries: int,
+        original_name: str,
+        *,
+        timeout_managed_by_toolset: bool = False,
     ) -> FunctionToolsetTool[AgentDepsT]:
         return FunctionToolsetTool(
             toolset=self,
@@ -671,8 +677,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             args_validator_func=tool.args_validator,
             call_func=tool.function_schema.call,
             is_async=tool.function_schema.is_async,
-            timeout=tool_def.timeout,
             original_name=original_name,
+            timeout_managed_by_toolset=timeout_managed_by_toolset,
         )
 
     async def call_tool(
@@ -680,13 +686,5 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         assert isinstance(tool, FunctionToolsetTool)
 
-        # Per-tool timeout takes precedence over toolset timeout
-        timeout = tool.timeout if tool.timeout is not None else self.timeout
-        if timeout is not None:
-            try:
-                with anyio.fail_after(timeout):
-                    return await tool.call_func(tool_args, ctx)
-            except TimeoutError:
-                raise ModelRetry(f'Timed out after {timeout} seconds.') from None
-        else:
-            return await tool.call_func(tool_args, ctx)
+        timeout = tool.tool_def.timeout if tool.timeout_managed_by_toolset else None
+        return await run_with_tool_timeout(lambda: tool.call_func(tool_args, ctx), timeout)

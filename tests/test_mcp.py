@@ -27,7 +27,10 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, ToolsetTool, models
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import BaseExceptionGroup
+from pydantic_ai.capabilities import PrepareTools
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
@@ -275,6 +278,12 @@ async def fastmcp_server() -> FastMCP[None]:
         raise ValueError('boom')
 
     @server.tool()
+    async def slow() -> str:
+        """Sleep long enough for tool timeout tests."""
+        await anyio.sleep(1)
+        return 'slow'  # pragma: no cover
+
+    @server.tool()
     async def image_tool() -> ImageContent:
         """A tool that returns an image content block."""
         encoded = base64.b64encode(b'fake_image_bytes').decode('utf-8')
@@ -428,6 +437,40 @@ class TestMCPToolsetIntegration:
             assert {'echo', 'add', 'boom'} <= set(tools_first)
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
+
+    async def test_timeout_keeps_session_usable(self, fastmcp_server: FastMCP[None]):
+        model_calls = 0
+
+        async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal model_calls
+            model_calls += 1
+            if model_calls == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='slow', args={}, tool_call_id='slow')])
+            if model_calls == 2:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name='echo', args={'message': 'still connected'}, tool_call_id='echo')]
+                )
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        async def prepare_tools(_ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+            return [replace(tool_def, timeout=0.01 if tool_def.name == 'slow' else 1) for tool_def in tool_defs]
+
+        agent = Agent(
+            FunctionModel(model_logic),
+            toolsets=[MCPToolset(fastmcp_server)],
+            capabilities=[PrepareTools(prepare_tools)],
+        )
+        result = await agent.run('test timeout recovery')
+
+        assert result.output == 'done'
+        retry_parts = [
+            part
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, RetryPromptPart)
+        ]
+        assert [part.content for part in retry_parts] == ['Timed out after 0.01 seconds.']
 
     async def test_get_instructions_when_enabled(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)

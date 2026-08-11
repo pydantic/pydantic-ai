@@ -8,6 +8,7 @@ from prefect.context import FlowRunContext
 from typing_extensions import deprecated
 
 from pydantic_ai import ToolsetTool
+from pydantic_ai._tool_timeout import run_with_tool_timeout
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.durable_exec._toolset import (
     CallToolOperation,
@@ -34,7 +35,11 @@ def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfi
     ) -> Any:
         # The context is guarded because a `process_tool_call=` hook receives it and could enqueue.
         task_ctx = guard_task_enqueue(ctx)
-        return await wrap_tool_call_result(wrapped.call_tool(tool_name, tool_args, task_ctx, tool))
+        return await wrap_tool_call_result(
+            run_with_tool_timeout(
+                lambda: wrapped.call_tool(tool_name, tool_args, task_ctx, tool), tool.tool_def.timeout
+            )
+        )
 
     async def call_tool_operation(
         name: str,

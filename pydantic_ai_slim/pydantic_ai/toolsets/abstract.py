@@ -71,6 +71,12 @@ class ToolsetTool(Generic[AgentDepsT]):
     try again, or [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] to report a terminal failure the model
     should adapt to instead of retrying. Return `None` on success.
     """
+    timeout_managed_by_toolset: bool = False
+    """Whether the toolset owns this tool's timeout deadline instead of `ToolManager`.
+
+    Durable wrappers set this to `True` so the deadline starts inside the task or activity that
+    runs the tool, rather than while the workflow or flow is still dispatching it.
+    """
 
 
 class AbstractToolset(ABC, Generic[AgentDepsT]):
