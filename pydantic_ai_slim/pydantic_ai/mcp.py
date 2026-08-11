@@ -231,7 +231,9 @@ class ResourceAnnotations:
             priority=mcp_annotations.priority,
             # `lastModified` is in the 2025-11-25 spec on `Annotations` but absent from `mcp` v1.25.0;
             # read defensively so we pick it up as soon as the SDK catches up.
-            last_modified=mcp_optional_field(mcp_annotations, 'lastModified', 'last_modified', str),
+            last_modified=mcp_optional_field(
+                mcp_annotations, v1_name='lastModified', v2_name='last_modified', expected=str
+            ),
         )
 
 
@@ -304,7 +306,7 @@ class Resource(BaseResource):
             name=mcp_resource.name,
             title=mcp_resource.title,
             description=mcp_resource.description,
-            mime_type=mcp_optional_field(mcp_resource, 'mimeType', 'mime_type', str),
+            mime_type=mcp_optional_field(mcp_resource, v1_name='mimeType', v2_name='mime_type', expected=str),
             size=mcp_resource.size,
             annotations=ResourceAnnotations.from_mcp_sdk(mcp_resource.annotations)
             if mcp_resource.annotations
@@ -312,7 +314,7 @@ class Resource(BaseResource):
             icons=[
                 Icon(
                     src=icon.src,
-                    mime_type=mcp_optional_field(icon, 'mimeType', 'mime_type', str),
+                    mime_type=mcp_optional_field(icon, v1_name='mimeType', v2_name='mime_type', expected=str),
                     sizes=icon.sizes,
                 )
                 for icon in mcp_resource.icons
@@ -341,18 +343,18 @@ class ResourceTemplate(BaseResource):
             mcp_template: The MCP SDK ResourceTemplate object.
         """
         return cls(
-            uri_template=mcp_field(mcp_template, 'uriTemplate', 'uri_template', str),
+            uri_template=mcp_field(mcp_template, v1_name='uriTemplate', v2_name='uri_template', expected=str),
             name=mcp_template.name,
             title=mcp_template.title,
             description=mcp_template.description,
-            mime_type=mcp_optional_field(mcp_template, 'mimeType', 'mime_type', str),
+            mime_type=mcp_optional_field(mcp_template, v1_name='mimeType', v2_name='mime_type', expected=str),
             annotations=ResourceAnnotations.from_mcp_sdk(mcp_template.annotations)
             if mcp_template.annotations
             else None,
             icons=[
                 Icon(
                     src=icon.src,
-                    mime_type=mcp_optional_field(icon, 'mimeType', 'mime_type', str),
+                    mime_type=mcp_optional_field(icon, v1_name='mimeType', v2_name='mime_type', expected=str),
                     sizes=icon.sizes,
                 )
                 for icon in mcp_template.icons
@@ -417,7 +419,7 @@ class ResourceLink:
             name=mcp_resource_link.name,
             title=mcp_resource_link.title,
             description=mcp_resource_link.description,
-            mime_type=mcp_optional_field(mcp_resource_link, 'mimeType', 'mime_type', str),
+            mime_type=mcp_optional_field(mcp_resource_link, v1_name='mimeType', v2_name='mime_type', expected=str),
             size=mcp_resource_link.size,
             annotations=ResourceAnnotations.from_mcp_sdk(mcp_resource_link.annotations)
             if mcp_resource_link.annotations
@@ -425,7 +427,7 @@ class ResourceLink:
             icons=[
                 Icon(
                     src=icon.src,
-                    mime_type=mcp_optional_field(icon, 'mimeType', 'mime_type', str),
+                    mime_type=mcp_optional_field(icon, v1_name='mimeType', v2_name='mime_type', expected=str),
                     sizes=icon.sizes,
                 )
                 for icon in mcp_resource_link.icons
@@ -509,7 +511,7 @@ class Prompt:
             icons=[
                 Icon(
                     src=icon.src,
-                    mime_type=mcp_optional_field(icon, 'mimeType', 'mime_type', str),
+                    mime_type=mcp_optional_field(icon, v1_name='mimeType', v2_name='mime_type', expected=str),
                     sizes=icon.sizes,
                 )
                 for icon in mcp_prompt.icons
@@ -565,7 +567,7 @@ class EmbeddedResource:
         return cls(
             uri=str(part.resource.uri),
             content=content,
-            mime_type=mcp_optional_field(part.resource, 'mimeType', 'mime_type', str),
+            mime_type=mcp_optional_field(part.resource, v1_name='mimeType', v2_name='mime_type', expected=str),
             annotations=ResourceAnnotations.from_mcp_sdk(part.annotations) if part.annotations else None,
             metadata=part.meta,
             resource_metadata=part.resource.meta,
@@ -655,15 +657,21 @@ class ServerCapabilities:
             experimental=list(mcp_capabilities.experimental.keys()) if mcp_capabilities.experimental else None,
             logging=mcp_capabilities.logging is not None,
             prompts=prompts_cap is not None,
-            prompts_list_changed=bool(mcp_optional_field(prompts_cap, 'listChanged', 'list_changed', bool))
+            prompts_list_changed=bool(
+                mcp_optional_field(prompts_cap, v1_name='listChanged', v2_name='list_changed', expected=bool)
+            )
             if prompts_cap
             else False,
             resources=resources_cap is not None,
-            resources_list_changed=bool(mcp_optional_field(resources_cap, 'listChanged', 'list_changed', bool))
+            resources_list_changed=bool(
+                mcp_optional_field(resources_cap, v1_name='listChanged', v2_name='list_changed', expected=bool)
+            )
             if resources_cap
             else False,
             tools=tools_cap is not None,
-            tools_list_changed=bool(mcp_optional_field(tools_cap, 'listChanged', 'list_changed', bool))
+            tools_list_changed=bool(
+                mcp_optional_field(tools_cap, v1_name='listChanged', v2_name='list_changed', expected=bool)
+            )
             if tools_cap
             else False,
             completions=mcp_capabilities.completions is not None,
@@ -1243,7 +1251,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                         server_info = raw_server_info if isinstance(raw_server_info, mcp_types.Implementation) else None
                         instructions = raw_instructions if isinstance(raw_instructions, str) else None
                     else:
-                        server_info = mcp_field(init_result, 'serverInfo', 'server_info', mcp_types.Implementation)
+                        server_info = mcp_field(
+                            init_result, v1_name='serverInfo', v2_name='server_info', expected=mcp_types.Implementation
+                        )
                         capabilities = init_result.capabilities
                         instructions = init_result.instructions
                     server_capabilities = ServerCapabilities.from_mcp_sdk(capabilities)
@@ -1338,13 +1348,17 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             # survives in the v2 wire types, but FastMCP 4 leaves it unset, and a listing without
             # `execution` reads as `task: False` — matching the transparent path it would take.
             task_support = (
-                mcp_optional_field(mcp_tool.execution, 'taskSupport', 'task_support', str)
+                mcp_optional_field(mcp_tool.execution, v1_name='taskSupport', v2_name='task_support', expected=str)
                 if mcp_tool.execution
                 else None
             )
-            input_schema = mcp_validated_field(mcp_tool, 'inputSchema', 'input_schema', _JSON_SCHEMA_ADAPTER)
+            input_schema = mcp_validated_field(
+                mcp_tool, v1_name='inputSchema', v2_name='input_schema', adapter=_JSON_SCHEMA_ADAPTER
+            )
             assert input_schema is not None, 'MCP tools always carry an input schema'
-            output_schema = mcp_validated_field(mcp_tool, 'outputSchema', 'output_schema', _JSON_SCHEMA_ADAPTER)
+            output_schema = mcp_validated_field(
+                mcp_tool, v1_name='outputSchema', v2_name='output_schema', adapter=_JSON_SCHEMA_ADAPTER
+            )
             tools[mcp_tool.name] = self.tool_for_tool_def(
                 ToolDefinition(
                     name=mcp_tool.name,
@@ -1748,10 +1762,14 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
         ctx: Any,
     ) -> mcp_types.CreateMessageResult:
         pai_messages = _mcp.map_from_mcp_params(params)
-        model_settings = ModelSettings(max_tokens=mcp_field(params, 'maxTokens', 'max_tokens', int))
+        model_settings = ModelSettings(
+            max_tokens=mcp_field(params, v1_name='maxTokens', v2_name='max_tokens', expected=int)
+        )
         if (temperature := params.temperature) is not None:  # pragma: no branch
             model_settings['temperature'] = temperature
-        stop_sequences = mcp_validated_field(params, 'stopSequences', 'stop_sequences', _STOP_SEQUENCES_ADAPTER)
+        stop_sequences = mcp_validated_field(
+            params, v1_name='stopSequences', v2_name='stop_sequences', adapter=_STOP_SEQUENCES_ADAPTER
+        )
         if stop_sequences is not None:  # pragma: no branch
             model_settings['stop_sequences'] = stop_sequences
 
@@ -1829,12 +1847,12 @@ def _map_mcp_tool_result(part: mcp_types.ContentBlock) -> str | messages.BinaryC
     elif isinstance(part, mcp_types.ImageContent):
         return messages.BinaryImage(
             data=base64.b64decode(part.data),
-            media_type=mcp_field(part, 'mimeType', 'mime_type', str),
+            media_type=mcp_field(part, v1_name='mimeType', v2_name='mime_type', expected=str),
         )
     elif isinstance(part, mcp_types.AudioContent):
         return messages.BinaryContent(  # pragma: no cover
             data=base64.b64decode(part.data),
-            media_type=mcp_field(part, 'mimeType', 'mime_type', str),
+            media_type=mcp_field(part, v1_name='mimeType', v2_name='mime_type', expected=str),
         )
     elif isinstance(part, mcp_types.EmbeddedResource):
         return _resource_content_to_pai(part.resource)
@@ -1863,12 +1881,12 @@ def _map_mcp_binary_content(part: mcp_types.ImageContent | mcp_types.AudioConten
     if isinstance(part, mcp_types.ImageContent):
         return messages.BinaryImage(
             data=data,
-            media_type=mcp_field(part, 'mimeType', 'mime_type', str),
+            media_type=mcp_field(part, v1_name='mimeType', v2_name='mime_type', expected=str),
             vendor_metadata=vendor_metadata,
         )
     return messages.BinaryContent(
         data=data,
-        media_type=mcp_field(part, 'mimeType', 'mime_type', str),
+        media_type=mcp_field(part, v1_name='mimeType', v2_name='mime_type', expected=str),
         vendor_metadata=vendor_metadata,
     )
 
@@ -1895,7 +1913,8 @@ def _resource_content_to_pai(
         return messages.BinaryContent.narrow_type(
             messages.BinaryContent(
                 data=base64.b64decode(resource.blob),
-                media_type=mcp_optional_field(resource, 'mimeType', 'mime_type', str) or 'application/octet-stream',
+                media_type=mcp_optional_field(resource, v1_name='mimeType', v2_name='mime_type', expected=str)
+                or 'application/octet-stream',
             )
         )
     else:

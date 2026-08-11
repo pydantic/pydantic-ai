@@ -19,7 +19,7 @@ def is_mcp_sdk_v2() -> bool:
     return int(_package_version('mcp').split('.')[0]) >= 2
 
 
-def mcp_field_value(value: BaseModel, v1_name: str, v2_name: str) -> object:
+def mcp_field_value(value: BaseModel, *, v1_name: str, v2_name: str) -> object:
     """Read an MCP model field by whichever spelling the installed SDK uses.
 
     SDK v2 renamed every wire field from camelCase to snake_case, keeping the v1 spelling as a
@@ -30,24 +30,24 @@ def mcp_field_value(value: BaseModel, v1_name: str, v2_name: str) -> object:
     return getattr(value, v2_name if v2_name in type(value).model_fields else v1_name, None)
 
 
-def mcp_field(value: BaseModel, v1_name: str, v2_name: str, expected: type[T]) -> T:
+def mcp_field(value: BaseModel, *, v1_name: str, v2_name: str, expected: type[T]) -> T:
     """Read a required MCP model field of a non-generic type."""
-    result = mcp_field_value(value, v1_name, v2_name)
+    result = mcp_field_value(value, v1_name=v1_name, v2_name=v2_name)
     assert isinstance(result, expected), f'Expected MCP field to be {expected.__name__}, got {type(result).__name__}'
     return result
 
 
-def mcp_optional_field(value: BaseModel, v1_name: str, v2_name: str, expected: type[T]) -> T | None:
+def mcp_optional_field(value: BaseModel, *, v1_name: str, v2_name: str, expected: type[T]) -> T | None:
     """Read an optional MCP model field of a non-generic type."""
-    result = mcp_field_value(value, v1_name, v2_name)
+    result = mcp_field_value(value, v1_name=v1_name, v2_name=v2_name)
     return result if isinstance(result, expected) else None
 
 
-def mcp_validated_field(value: BaseModel, v1_name: str, v2_name: str, adapter: TypeAdapter[T]) -> T | None:
+def mcp_validated_field(value: BaseModel, *, v1_name: str, v2_name: str, adapter: TypeAdapter[T]) -> T | None:
     """Read an optional MCP model field of a generic type.
 
     `isinstance` can't narrow a parameterized type like `dict[str, Any]`, so these fields validate
     through a `TypeAdapter` rather than the plain `isinstance` check the readers above use.
     """
-    result = mcp_field_value(value, v1_name, v2_name)
+    result = mcp_field_value(value, v1_name=v1_name, v2_name=v2_name)
     return None if result is None else adapter.validate_python(result)

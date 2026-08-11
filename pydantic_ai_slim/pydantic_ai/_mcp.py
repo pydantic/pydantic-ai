@@ -23,7 +23,7 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
     """Convert from MCP create message request parameters to pydantic-ai messages."""
     pai_messages: list[messages.ModelMessage] = []
     request_parts: list[messages.ModelRequestPart] = []
-    if system_prompt := mcp_optional_field(params, 'systemPrompt', 'system_prompt', str):
+    if system_prompt := mcp_optional_field(params, v1_name='systemPrompt', v2_name='system_prompt', expected=str):
         request_parts.append(messages.SystemPromptPart(content=system_prompt))
     response_parts: list[messages.ModelResponsePart] = []
     for msg in params.messages:
@@ -41,7 +41,7 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
                 user_part_content = [
                     messages.BinaryContent(
                         data=base64.b64decode(content.data),
-                        media_type=mcp_field(content, 'mimeType', 'mime_type', str),
+                        media_type=mcp_field(content, v1_name='mimeType', v2_name='mime_type', expected=str),
                     )
                 ]
             elif isinstance(content, list):
