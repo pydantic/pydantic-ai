@@ -13,25 +13,19 @@ from __future__ import annotations as _annotations
 
 import base64
 import json
-import math
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
+from pydantic import FiniteFloat, TypeAdapter
 from typing_extensions import TypeAliasType
 
 try:
     import websockets
     from openai.types.realtime import (
-        ConversationItemInputAudioTranscriptionCompletedEvent,
         RealtimeResponseUsage,
-        RealtimeResponseUsageInputTokenDetails,
-        RealtimeResponseUsageOutputTokenDetails,
         RealtimeSessionCreateRequest,
-        ResponseAudioDeltaEvent,
-        ResponseCreatedEvent,
-        ResponseDoneEvent,
         SessionCreatedEvent,
     )
     from openai.types.realtime.conversation_item_input_audio_transcription_completed_event import (
@@ -40,7 +34,6 @@ try:
         UsageTranscriptTextUsageTokensInputTokenDetails,
     )
     from openai.types.realtime.realtime_audio_config_output import VoiceID
-    from openai.types.realtime.realtime_response_usage_input_token_details import CachedTokensDetails
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -55,7 +48,6 @@ if TYPE_CHECKING:
     from openai.types.realtime.realtime_truncation_param import RealtimeTruncationParam
 
 from .._instrumentation import get_instructions
-from .._utils import is_str_dict
 from ..exceptions import UserError
 from ..messages import (
     BinaryAudio,
@@ -72,6 +64,9 @@ from ..usage import RequestUsage
 from ._openai_protocol import (
     AUDIO_DELTA_TYPES,
     INPUT_TRANSCRIPT_DONE_TYPES,
+    RESPONSE_CREATED_EVENT_ADAPTER,
+    RESPONSE_DONE_EVENT_ADAPTER,
+    ProtocolResponseDoneEvent,
     RealtimeHandshakeError,
     SemanticVAD,
     ServerVAD,
@@ -89,7 +84,6 @@ from ._openai_protocol import (
     tool_def_to_openai,
     turn_detection_config,
     user_message_item,
-    validate_response_data,
 )
 from .codec import (
     AudioDelta,
@@ -183,43 +177,6 @@ class OpenAIRealtimeModelSettings(RealtimeModelSettings, total=False):
     """
 
 
-def _int(value: Any) -> int:
-    """Return `value` if it is an int (but not a bool), otherwise `0`."""
-    return value if isinstance(value, int) and not isinstance(value, bool) else 0
-
-
-def _validate_usage_shape(usage: object, *, transcription: bool = False) -> None:
-    """Reject malformed nested usage objects before accessing SDK-constructed fields."""
-    if usage is None:
-        return
-    if not is_str_dict(usage):
-        raise ValueError('`usage` must be an object')
-    detail_keys = ('input_token_details',) if transcription else ('input_token_details', 'output_token_details')
-    for key in detail_keys:
-        details = usage.get(key)
-        if details and not is_str_dict(details):
-            raise ValueError(f'`usage.{key}` must be an object')
-    input_details = usage.get('input_token_details')
-    if is_str_dict(input_details):
-        cached_details = input_details.get('cached_tokens_details')
-        if cached_details and not is_str_dict(cached_details):
-            raise ValueError('`usage.input_token_details.cached_tokens_details` must be an object')
-    if transcription:
-        # The transcription-usage union (`tokens` | `duration`) is discriminated by `type`. The SDK's
-        # lenient `construct` can build the wrong variant for a malformed payload (e.g. a `duration` type
-        # with no numeric `seconds`), so validate the raw shape here to keep such frames on the recoverable
-        # path rather than crashing on a later `usage.seconds` read.
-        usage_type = usage.get('type')
-        if usage_type == 'duration':
-            seconds = usage.get('seconds')
-            if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
-                raise ValueError('`usage.seconds` must be a number for a `duration` transcription usage')
-            if not math.isfinite(seconds):
-                raise ValueError('`usage.seconds` must be finite for a `duration` transcription usage')
-        elif usage_type not in ('tokens', None):
-            raise ValueError(f'unknown transcription usage type {usage_type!r}')
-
-
 def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
     """Map a `response.done` `usage` payload to a [`RequestUsage`][pydantic_ai.usage.RequestUsage].
 
@@ -232,15 +189,10 @@ def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
     """
     if usage is None or not usage.model_fields_set:
         return None
+    usage = RealtimeResponseUsage.model_validate(usage.model_dump(warnings=False))
     inp = usage.input_token_details or None
     out = usage.output_token_details or None
-    if inp is not None and not isinstance(inp, RealtimeResponseUsageInputTokenDetails):
-        raise ValueError('`usage.input_token_details` must be an object')
-    if out is not None and not isinstance(out, RealtimeResponseUsageOutputTokenDetails):
-        raise ValueError('`usage.output_token_details` must be an object')
     cached = inp.cached_tokens_details if inp is not None else None
-    if cached is not None and not isinstance(cached, CachedTokensDetails):
-        raise ValueError('`usage.input_token_details.cached_tokens_details` must be an object')
     # `reasoning_tokens` is on the wire but isn't a field of the SDK model, so it arrives as an extra.
     # The standard adapter names the same concept `reasoning_tokens` in `details` and also sets the
     # typed `output_reasoning_tokens`; realtime set neither, so a reasoning turn reported none at all.
@@ -260,12 +212,12 @@ def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
         if isinstance(raw, int) and not isinstance(raw, bool):
             details[key] = raw
     return RequestUsage(
-        input_tokens=_int(usage.input_tokens),
-        output_tokens=_int(usage.output_tokens),
-        input_audio_tokens=_int(inp.audio_tokens if inp is not None else None),
-        cache_read_tokens=_int(inp.cached_tokens if inp is not None else None),
-        cache_audio_read_tokens=_int(cached.audio_tokens if cached is not None else None),
-        output_audio_tokens=_int(out.audio_tokens if out is not None else None),
+        input_tokens=usage.input_tokens or 0,
+        output_tokens=usage.output_tokens or 0,
+        input_audio_tokens=inp.audio_tokens or 0 if inp is not None else 0,
+        cache_read_tokens=inp.cached_tokens or 0 if inp is not None else 0,
+        cache_audio_read_tokens=cached.audio_tokens or 0 if cached is not None else 0,
+        output_audio_tokens=out.audio_tokens or 0 if out is not None else 0,
         # Left unset — not zeroed — when the provider doesn't report it, so a model that doesn't reason
         # is distinguishable from one that reasoned for free, exactly as `RequestUsage.extract` leaves it.
         **({'output_reasoning_tokens': details['reasoning_tokens']} if 'reasoning_tokens' in details else {}),
@@ -274,6 +226,26 @@ def _map_usage(usage: RealtimeResponseUsage | None) -> RequestUsage | None:
 
 
 RealtimeTranscriptionUsage = UsageTranscriptTextUsageTokens | UsageTranscriptTextUsageDuration
+
+
+class _RealtimeTranscriptionTokenUsage(UsageTranscriptTextUsageTokens):
+    """Token usage shape accepted by Azure/xAI, which omit OpenAI's required token fields."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    type: Literal['tokens'] = 'tokens'
+
+
+RealtimeTranscriptionWireUsage = _RealtimeTranscriptionTokenUsage | UsageTranscriptTextUsageDuration
+_TRANSCRIPTION_USAGE_ADAPTER: TypeAdapter[RealtimeTranscriptionWireUsage] = TypeAdapter(RealtimeTranscriptionWireUsage)
+_FINITE_FLOAT_ADAPTER: TypeAdapter[float] = TypeAdapter(FiniteFloat)
+
+
+def _validate_transcription_usage(usage: object) -> RealtimeTranscriptionUsage | None:
+    if usage is None or usage == {}:
+        return None
+    return _TRANSCRIPTION_USAGE_ADAPTER.validate_python(usage)
 
 
 def _map_transcription_usage(usage: RealtimeTranscriptionUsage | None) -> RequestUsage | None:
@@ -297,11 +269,11 @@ def _map_transcription_usage(usage: RealtimeTranscriptionUsage | None) -> Reques
         ):
             if isinstance(raw, int) and not isinstance(raw, bool):
                 details[key] = raw
-    elif usage.seconds > 0:
+    elif (seconds := _FINITE_FLOAT_ADAPTER.validate_python(usage.seconds)) > 0:
         # `RunUsage.details` values are ints, so a fractional duration has to round. Sub-half-second
         # clips round to zero, which would drop billed transcription entirely — report the floor of
         # one second instead, so a short utterance is visible rather than free.
-        details['input_transcription_seconds'] = max(1, round(usage.seconds))
+        details['input_transcription_seconds'] = max(1, round(seconds))
     return RequestUsage(details=details) if details else None
 
 
@@ -607,12 +579,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             events.extend(done_events)
         event = self._map_event(data)
         if event_type == 'response.created':
-            response_data = data.get('response')
-            if response_data is not None and not is_str_dict(response_data):
-                raise ValueError('`response` must be an object')
-            created = ResponseCreatedEvent.construct(**data)
+            created = RESPONSE_CREATED_EVENT_ADAPTER.validate_python(data)
             self._response_active = True
-            self._active_response_id = created.response.id or None if is_str_dict(response_data) else None
+            self._active_response_id = created.response.id or None
             if self._cancel_sent and self._cancelled_response_id is None:
                 # A cancel raced ahead of this `response.created`: it was sent while the response the
                 # client asked for had no server-assigned id yet, so the suppression id could not be
@@ -620,15 +589,15 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # dropped instead of playing on after the barge-in.
                 self._cancelled_response_id = self._active_response_id
         elif event_type in AUDIO_DELTA_TYPES:
-            audio = ResponseAudioDeltaEvent.construct(**data)
             # Track the speaking item so a later `TruncateOutput` can name it.
-            if audio.item_id and isinstance(event, AudioDelta):
-                item_changed = (audio.item_id, audio.content_index or 0) != (
+            if isinstance(event, AudioDelta) and event.item_id:
+                content_index = TypeAdapter(int).validate_python(data.get('content_index', 0))
+                item_changed = (event.item_id, content_index) != (
                     self._current_item_id,
                     self._current_content_index,
                 )
-                self._current_item_id = audio.item_id
-                self._current_content_index = audio.content_index or 0
+                self._current_item_id = event.item_id
+                self._current_content_index = content_index
                 if item_changed:
                     self._generated_audio_bytes = len(event.data)
                 else:
@@ -640,12 +609,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # event, not the user's words: report it as the same recoverable frame error `__aiter__`
                 # would have raised rather than discarding the whole frame along with it.
                 try:
-                    _validate_usage_shape(data.get('usage'), transcription=True)
+                    usage = _validate_transcription_usage(data.get('usage'))
                 except ValueError as e:
                     events.append(_frame_error(e))
                 else:
-                    completed = ConversationItemInputAudioTranscriptionCompletedEvent.construct(**data)
-                    if (asr := _map_transcription_usage(completed.usage)) is not None:
+                    if (asr := _map_transcription_usage(usage)) is not None:
                         events.append(SessionUsageEvent(usage=asr, response_scoped=False))
         return events
 
@@ -659,13 +627,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         """
         events: list[RealtimeCodecEvent] = []
         try:
-            response_data = validate_response_data(data)
+            done = RESPONSE_DONE_EVENT_ADAPTER.validate_python(data)
         except ValueError:
             # A `response` payload of the wrong shape carries no id to reason about, so it is handled
             # exactly like a missing one below. The error itself is not swallowed: mapping the same
             # frame raises it again, and `__aiter__` reports it as a recoverable frame error.
-            response_data = {}
-        if not response_data:
             # A `response.done` with no usable `response` object is malformed, but it is still the only
             # terminal we will ever get for the response it was meant to close. Treating it as "no
             # information" leaves `_response_active` set forever, and every later `create_response()`
@@ -675,8 +641,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 self._pending_response = False
                 await self._request_response()
             return events, False
-        done = ResponseDoneEvent.construct(**data)
         response = done.response
+        function_call_only = bool(response.output) and all(item.type == 'function_call' for item in response.output)
+        finish_reason = (
+            'tool_call' if response.status == 'completed' and function_call_only else response_finish_reason(response)
+        )
         response_id = response.id
         # The cancelled response is now closed; stop suppressing its stragglers (its own usage still emits
         # below). A no-op for any other response.
@@ -723,26 +692,22 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # — but this `response.done` was still the terminal for its response, and bailing before the
         # state updates would leave `_response_active` held forever, queueing every later
         # `response.create` behind a response that already ended.
-        _validate_usage_shape(response_data.get('usage'))
         # Emit usage for every response (including intermediate function-call-only ones) so the session
         # accounts for all tokens. Only the active response may replay a pending request; a late completion
         # for a superseded response must not change current state. OpenAI nests usage under
         # `response.usage`; xAI Grok Voice reports the same shape at the top level of the `response.done`
         # frame (its `response.usage` is empty), so fall back to it.
-        top_level_usage = (done.model_extra or {}).get('usage')  # xAI frame-level provider extra.
-        _validate_usage_shape(top_level_usage)
-        usage = self._map_response_usage(response.usage) or self._map_response_usage(
-            RealtimeResponseUsage.construct(**top_level_usage) if is_str_dict(top_level_usage) else None
-        )
+        frame_usage = done.usage if isinstance(done, ProtocolResponseDoneEvent) else None
+        usage = self._map_response_usage(response.usage) or self._map_response_usage(frame_usage)
         if usage is not None:
             events.append(
                 SessionUsageEvent(
                     usage=usage,
                     provider_response_id=response_id or None,
-                    finish_reason=response_finish_reason(response),
+                    finish_reason=finish_reason,
                 )
             )
-        elif matches_active_response and response_finish_reason(response) == 'tool_call':
+        elif matches_active_response and finish_reason == 'tool_call':
             events.append(
                 SessionUsageEvent(
                     usage=RequestUsage(),
@@ -997,7 +962,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             ws = await opening.__aenter__()
             cm = opening
             created = await expect_event(ws, 'session.created', timeout=handshake_timeout)
-            session = SessionCreatedEvent.construct(**created).session
+            session = SessionCreatedEvent.model_validate(created).session
             model = session.model if isinstance(session, RealtimeSessionCreateRequest) else None
             if isinstance(model, str) and model:
                 server_model = model

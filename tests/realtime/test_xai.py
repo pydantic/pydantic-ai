@@ -58,9 +58,15 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.xai import XaiProvider
     from pydantic_ai.realtime import xai as rt_xai
-    from pydantic_ai.realtime.xai import XaiRealtimeConnection, XaiRealtimeModel, map_event
+    from pydantic_ai.realtime.xai import XaiRealtimeConnection, XaiRealtimeModel, map_event as _map_wire_event
+
+from .test_openai import sdk_frame
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='xai-sdk / websockets not installed')
+
+
+def map_event(frame: dict[str, Any]) -> object:
+    return _map_wire_event(sdk_frame(frame))
 
 
 def test_xai_public_exports_are_curated() -> None:
@@ -120,7 +126,11 @@ def test_map_input_transcription_updated_is_a_cumulative_partial() -> None:
 )
 def test_map_input_transcription_updated_tolerates_a_thin_frame(frame: dict[str, Any], expected: object) -> None:
     """The `.updated` frame has no SDK model behind it, so it is read defensively off the wire."""
-    assert map_event({'type': 'conversation.item.input_audio_transcription.updated', **frame}) == expected
+    if frame.get('item_id') == 7:
+        with pytest.raises(ValueError):
+            map_event({'type': 'conversation.item.input_audio_transcription.updated', **frame})
+    else:
+        assert map_event({'type': 'conversation.item.input_audio_transcription.updated', **frame}) == expected
 
 
 def test_map_input_transcription_completed_delegates_to_openai_codec() -> None:
@@ -220,9 +230,9 @@ def test_connection_map_event_override_matches_module() -> None:
     assert conn._map_event(  # pyright: ignore[reportPrivateUsage]
         {'type': 'conversation.item.input_audio_transcription.updated', 'transcript': 'x'}
     ) == InputTranscript(text='x', cumulative=True)
-    assert conn._map_event({'type': 'response.output_audio_transcript.delta', 'delta': 'hi'}) == OutputTranscript(  # pyright: ignore[reportPrivateUsage]
-        text='hi', is_final=False
-    )
+    assert conn._map_event(  # pyright: ignore[reportPrivateUsage]
+        sdk_frame({'type': 'response.output_audio_transcript.delta', 'delta': 'hi'})
+    ) == OutputTranscript(text='hi', is_final=False)
 
 
 @pytest.mark.anyio
@@ -427,8 +437,18 @@ class FakeWebSocket:
     close_reason: str = ''
 
     def __init__(self, incoming: list[Any]) -> None:
-        self._incoming = list(incoming)
+        self._incoming = [self._normalize_frame(frame) for frame in incoming]
         self.sent: list[str] = []
+
+    @staticmethod
+    def _normalize_frame(frame: Any) -> Any:
+        if not isinstance(frame, str):
+            return frame
+        try:
+            data = json.loads(frame)
+        except json.JSONDecodeError:
+            return frame
+        return json.dumps(sdk_frame(cast('dict[str, Any]', data))) if isinstance(data, dict) else frame
 
     async def recv(self) -> Any:
         return self._incoming.pop(0)

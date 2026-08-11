@@ -32,17 +32,16 @@ import json
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import quote
 
 try:
     import websockets
     from openai.types.realtime import (
         RealtimeResponseUsage,
-        RealtimeSessionCreateRequest,
         ResponseFunctionCallArgumentsDoneEvent,
-        SessionCreatedEvent,
     )
+    from pydantic import BaseModel
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -95,6 +94,27 @@ if TYPE_CHECKING:
 # of apps on `'auto'`.
 _AUTO_TRANSCRIPTION_MODEL = 'grok-transcribe'
 
+
+class _InputAudioTranscriptionUpdatedEvent(BaseModel):
+    """Typed xAI-only cumulative input-transcription event."""
+
+    type: Literal['conversation.item.input_audio_transcription.updated']
+    transcript: str | None = None
+    item_id: str | None = None
+
+
+class _XaiSession(BaseModel):
+    """Fields read from xAI's SDK-incompatible session-created payload."""
+
+    model: str | None = None
+
+
+class _XaiSessionCreatedEvent(BaseModel):
+    type: Literal['session.created']
+    event_id: str
+    session: _XaiSession
+
+
 __all__ = (
     'XaiRealtimeModel',
     'XaiRealtimeModelSettings',
@@ -138,19 +158,17 @@ def map_event(data: dict[str, Any]) -> RealtimeCodecEvent | None:
     """
     event_type = data.get('type')
     if event_type == 'conversation.item.input_audio_transcription.updated':
-        # xAI-only frame with no SDK model behind it, so it is read straight off the wire shape.
-        transcript = data.get('transcript')
-        item_id = data.get('item_id')
+        event = _InputAudioTranscriptionUpdatedEvent.model_validate(data)
         return InputTranscript(
-            text=transcript if isinstance(transcript, str) else '',
+            text=event.transcript or '',
             cumulative=True,
-            item_id=item_id if isinstance(item_id, str) else None,
+            item_id=event.item_id,
         )
     if event_type in ('conversation.created', 'conversation.item.added', 'conversation.item.created'):
         return map_conversation_event(data)
     event = _map_openai_event(data)
     if isinstance(event, ToolCall):
-        item_id = ResponseFunctionCallArgumentsDoneEvent.construct(**data).item_id
+        item_id = ResponseFunctionCallArgumentsDoneEvent.model_validate(data).item_id
         if item_id:
             event = replace(event, item_id=item_id)
     elif isinstance(event, InputTranscript):
@@ -412,8 +430,8 @@ class XaiRealtimeModel(RealtimeModel):
             ws = await opening.__aenter__()
             cm = opening
             created = await expect_event(ws, 'session.created', timeout=handshake_timeout)
-            session = SessionCreatedEvent.construct(**created).session
-            model = session.model if isinstance(session, RealtimeSessionCreateRequest) else None
+            session = _XaiSessionCreatedEvent.model_validate(created).session
+            model = session.model
             if isinstance(model, str) and model:
                 server_model = model
             if reconnect is not None:

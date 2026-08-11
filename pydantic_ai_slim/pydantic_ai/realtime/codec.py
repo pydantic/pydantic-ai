@@ -18,7 +18,7 @@ import wave
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, Sequence
 from dataclasses import KW_ONLY, dataclass
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, overload
 
 from typing_extensions import TypeAliasType, assert_never
 
@@ -583,6 +583,10 @@ async def seed_user_content(
     return result
 
 
+@overload
+def seed_speech_content(part: SpeechPart, *, provider_name: str, supports_audio: Literal[False]) -> str: ...
+@overload
+def seed_speech_content(part: SpeechPart, *, provider_name: str, supports_audio: bool) -> RealtimeSessionInput: ...
 def seed_speech_content(
     part: SpeechPart,
     *,
@@ -592,7 +596,10 @@ def seed_speech_content(
     """Return replayable content for a `SpeechPart`, preferring its transcript.
 
     Only retained user audio can be replayed, and only when the provider profile explicitly supports
-    it. Assistant audio cannot be inserted into any supported realtime history API.
+    it. Assistant audio cannot be inserted into any supported realtime history API. With
+    `supports_audio=False` the result is always a `str`: every branch that could yield audio raises
+    first, which is what lets assistant-side seeding paths (where replaying audio is impossible on
+    any provider) call this without a per-site audio case.
     """
     if part.transcript is not None:
         return part.transcript

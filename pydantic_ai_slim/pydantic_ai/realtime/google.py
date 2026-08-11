@@ -357,18 +357,16 @@ async def _seed_turns(
     """
     turns: list[genai_types.Content | genai_types.ContentDict] = []
     supports_images = profile.get('supports_seeding_images', False)
-    supports_audio = profile.get('supports_seeding_audio', False)
     for message in messages:
         if isinstance(message, ModelRequest):
             parts = await _seed_request_parts(
                 message.parts,
                 provider_name=provider_name,
                 supports_images=supports_images,
-                supports_audio=supports_audio,
             )
             role = 'user'
         else:
-            parts = _seed_response_parts(message.parts, provider_name=provider_name, supports_audio=supports_audio)
+            parts = _seed_response_parts(message.parts, provider_name=provider_name)
             role = 'model'
         if parts:
             turns.append(genai_types.Content(role=role, parts=parts))
@@ -380,7 +378,6 @@ async def _seed_request_parts(
     *,
     provider_name: str,
     supports_images: bool,
-    supports_audio: bool,
 ) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
     for part in message_parts:
@@ -395,8 +392,9 @@ async def _seed_request_parts(
                 )
             )
         elif isinstance(part, SpeechPart):
-            content = seed_speech_content(part, provider_name=provider_name, supports_audio=supports_audio)
-            assert isinstance(content, str)
+            # Gemini has no client-content channel for raw audio, so seeding never replays retained
+            # audio regardless of profile flags — the typed result is always a transcript string.
+            content = seed_speech_content(part, provider_name=provider_name, supports_audio=False)
             if content:
                 parts.append(genai_types.Part(text=content))
         elif isinstance(part, ToolReturnPart):
@@ -421,9 +419,7 @@ async def _seed_request_parts(
     return parts
 
 
-def _seed_response_parts(
-    message_parts: Sequence[ModelResponsePart], *, provider_name: str, supports_audio: bool
-) -> list[genai_types.Part]:
+def _seed_response_parts(message_parts: Sequence[ModelResponsePart], *, provider_name: str) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
     for part in message_parts:
         if isinstance(part, TextPart):
@@ -438,9 +434,9 @@ def _seed_response_parts(
         elif isinstance(part, (NativeToolCallPart, NativeToolReturnPart)):
             continue
         elif isinstance(part, SpeechPart):
-            content = seed_speech_content(part, provider_name=provider_name, supports_audio=supports_audio)
+            # Assistant audio can't be replayed on any provider; the typed result is a transcript string.
+            content = seed_speech_content(part, provider_name=provider_name, supports_audio=False)
             if content:
-                assert isinstance(content, str)
                 parts.append(genai_types.Part(text=content))
         elif isinstance(part, CompactionPart):
             # Provider-session-bound compaction state can't round-trip into another session; classic

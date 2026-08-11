@@ -11,7 +11,7 @@ import re
 import wave
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import Any, Literal, get_args, get_origin
+from typing import Any, Literal, cast, get_args, get_origin
 
 import pytest
 from inline_snapshot import snapshot
@@ -63,7 +63,7 @@ from pydantic_ai.realtime import (
 from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
     expect_event,
-    map_conversation_event,
+    map_conversation_event as _map_conversation_wire_event,
     realtime_websocket_url,
     replay_items,
 )
@@ -77,6 +77,7 @@ from pydantic_ai.realtime.codec import (
     CreateResponse,
     InputTranscript,
     OutputTranscript,
+    RealtimeCodecEvent,
     ResponseDone,
     SessionUsageEvent,
     ToolCall,
@@ -114,10 +115,103 @@ with try_import() as imports_successful:
         KnownOpenAIRealtimeVoiceName,
         OpenAIRealtimeConnection,
         OpenAIRealtimeModel,
-        map_event,
+        map_event as _map_wire_event,
     )
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed')
+
+
+def sdk_frame(frame: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
+    """Fill protocol bookkeeping on concise synthetic frames; semantic payloads stay test-owned."""
+    frame = dict(frame)
+    event_type = frame.get('type')
+    if event_type == 'session.created':
+        frame.setdefault('event_id', 'event')
+        frame.setdefault('session', {'type': 'realtime'})
+        if isinstance(frame['session'], dict):
+            cast('dict[str, Any]', frame['session']).setdefault('type', 'realtime')
+        return frame
+    if not isinstance(event_type, str):
+        return frame
+    if event_type in {'session.updated', 'rate_limits.updated'}:
+        return frame
+    frame.setdefault('event_id', 'event')
+    if event_type.startswith('response.') and event_type != 'response.done':
+        frame.setdefault('response_id', 'response')
+    if event_type == 'response.created':
+        frame.setdefault('response', {})
+    if event_type in {
+        'response.output_audio.delta',
+        'response.audio.delta',
+        'response.output_audio_transcript.delta',
+        'response.audio_transcript.delta',
+        'response.output_audio_transcript.done',
+        'response.audio_transcript.done',
+        'response.output_text.delta',
+        'response.output_text.done',
+    }:
+        frame.setdefault('content_index', 0)
+        frame.setdefault('output_index', 0)
+        frame.setdefault('item_id', '')
+    if event_type in {'response.output_audio_transcript.delta', 'response.audio_transcript.delta'}:
+        frame.setdefault('delta', '')
+    elif event_type in {'response.output_audio_transcript.done', 'response.audio_transcript.done'}:
+        frame.setdefault('transcript', '')
+    elif event_type == 'response.output_text.delta':
+        frame.setdefault('delta', '')
+    elif event_type == 'response.output_text.done':
+        frame.setdefault('text', '')
+    elif event_type == 'response.function_call_arguments.done':
+        frame.setdefault('arguments', '{}')
+        frame.setdefault('call_id', '')
+        frame.setdefault('item_id', '')
+        frame.setdefault('name', '')
+        frame.setdefault('output_index', 0)
+    elif event_type in {'input_audio_buffer.speech_started', 'input_audio_buffer.speech_stopped'}:
+        frame.setdefault('audio_start_ms' if event_type.endswith('started') else 'audio_end_ms', 0)
+        frame.setdefault('item_id', '')
+    elif event_type in {
+        'conversation.item.input_audio_transcription.delta',
+        'conversation.item.input_audio_transcription.completed',
+        'conversation.item.input_audio_transcription.failed',
+    }:
+        frame.setdefault('content_index', 0)
+        frame.setdefault('item_id', '')
+        if event_type.endswith('completed'):
+            frame.setdefault('usage', {'type': 'duration', 'seconds': 0})
+    elif event_type == 'error' and isinstance(error := frame.get('error'), dict):
+        error = cast('dict[str, Any]', error)
+        error.setdefault('message', '')
+        error.setdefault('type', '')
+        error.setdefault('code', None)
+        error.setdefault('event_id', None)
+        error.setdefault('param', None)
+    elif event_type in {'conversation.item.added', 'conversation.item.created'} and isinstance(
+        item := frame.get('item'), dict
+    ):
+        item = cast('dict[str, Any]', item)
+        item.setdefault('type', 'message')
+        if item['type'] == 'message':
+            item.setdefault('role', 'assistant')
+            item.setdefault('content', [])
+        elif item['type'] == 'function_call':
+            item.setdefault('name', '')
+            item.setdefault('arguments', '')
+    if event_type == 'conversation.created' and isinstance(conversation := frame.get('conversation'), dict):
+        conversation = cast('dict[str, Any]', conversation)
+        conversation.setdefault('id', '')
+        conversation.setdefault('object', 'realtime.conversation')
+    return frame
+
+
+def map_event(frame: dict[str, Any]) -> RealtimeCodecEvent | None:
+    return _map_wire_event(sdk_frame(frame))
+
+
+def map_conversation_event(
+    frame: dict[str, Any], *, replayed: bool | None = None
+) -> ConversationCreated | ConversationItemCreated | None:
+    return _map_conversation_wire_event(sdk_frame(frame), replayed=replayed)
 
 
 def _wav_bytes(pcm: bytes, sample_rate: int = 24000) -> bytes:
@@ -198,7 +292,7 @@ def test_map_transcription_usage() -> None:
     ],
 )
 def test_map_usage_rejects_malformed_constructed_details(usage: RealtimeResponseUsage) -> None:
-    with pytest.raises(ValueError, match='must be an object'):
+    with pytest.raises(ValueError):
         rt_openai._map_usage(usage)  # pyright: ignore[reportPrivateUsage]
 
 
@@ -259,7 +353,8 @@ def test_map_audio_delta() -> None:
 
 
 def test_map_audio_delta_non_string_delta() -> None:
-    assert map_event({'type': 'response.output_audio.delta', 'delta': 123}) is None
+    with pytest.raises(ValueError):
+        map_event({'type': 'response.output_audio.delta', 'delta': 123})
 
 
 def test_map_transcript_delta_and_done() -> None:
@@ -408,26 +503,22 @@ def test_map_response_done_mixed_output_is_turn_complete() -> None:
 
 
 def test_map_response_done_without_response_object() -> None:
-    assert map_event({'type': 'response.done'}) == RealtimeSessionErrorEvent(
-        message='`response.done.response` must be an object', recoverable=True
-    )
+    with pytest.raises(ValueError):
+        map_event({'type': 'response.done'})
 
 
 def test_map_response_done_failed_and_unknown_incomplete_reason() -> None:
     assert map_event(_response_done({'status': 'failed'})) == ResponseDone(
         interrupted=False, finish_reason='error', provider_details={'status': 'failed'}
     )
-    assert map_event(_response_done({'status': 'incomplete', 'status_details': {'reason': 'network'}})) == (
-        ResponseDone(
-            interrupted=False,
-            provider_details={'status': 'incomplete', 'finish_reason': 'network'},
-        )
-    )
+    with pytest.raises(ValueError):
+        map_event(_response_done({'status': 'incomplete', 'status_details': {'reason': 'network'}}))
 
 
 def test_map_conversation_item_without_identifiers_is_ignored() -> None:
     assert map_conversation_event({'type': 'conversation.item.created', 'item': {}}) is None
-    assert map_conversation_event({'type': 'conversation.item.created'}) is None
+    with pytest.raises(ValueError):
+        map_conversation_event({'type': 'conversation.item.created'})
 
 
 @pytest.mark.parametrize(
@@ -438,9 +529,10 @@ def test_map_conversation_item_without_identifiers_is_ignored() -> None:
     ],
 )
 def test_map_conversation_event_rejects_malformed_nested_object(frame: dict[str, Any]) -> None:
-    with pytest.raises(ValueError, match='must be an object'):
+    with pytest.raises(ValueError):
         map_conversation_event(frame)
-    assert map_conversation_event({'type': 'conversation.created'}) is None
+    with pytest.raises(ValueError):
+        map_conversation_event({'type': 'conversation.created'})
 
 
 # The conversation mapper is shared OpenAI-protocol surface, but only xAI opts into it (OpenAI itself
@@ -482,12 +574,13 @@ def test_map_error_event_with_message() -> None:
 
 def test_map_error_event_without_message_serializes_payload() -> None:
     assert map_event({'type': 'error', 'error': {'code': 'x'}}) == RealtimeSessionErrorEvent(
-        message=json.dumps({'code': 'x'}), code='x'
+        message=json.dumps({'message': '', 'type': '', 'code': 'x'}), code='x'
     )
 
 
 def test_map_error_event_non_dict_payload() -> None:
-    assert map_event({'type': 'error', 'error': 'plain'}) == RealtimeSessionErrorEvent(message='plain')
+    with pytest.raises(ValueError):
+        map_event({'type': 'error', 'error': 'plain'})
 
 
 def test_handshake_error_message_falls_back_to_repr() -> None:
@@ -645,7 +738,7 @@ def test_map_unhandled_event_returns_none() -> None:
         ({'type': 'error', 'error': {'message': 'bad'}}, RealtimeSessionErrorEvent('bad')),
         (
             {'type': 'conversation.item.input_audio_transcription.failed', 'error': {'message': 'bad'}},
-            RealtimeInputTranscriptionErrorEvent(message='bad'),
+            RealtimeInputTranscriptionErrorEvent(message='bad', content_index=0),
         ),
         (
             {
@@ -676,6 +769,7 @@ def test_map_unhandled_event_returns_none() -> None:
                 ),
                 type='server_error',
                 code='DeploymentNotFound',
+                content_index=0,
             ),
         ),
         (
@@ -691,6 +785,7 @@ def test_map_unhandled_event_returns_none() -> None:
                     'transcription.'
                 ),
                 code='DeploymentNotFound',
+                content_index=0,
             ),
         ),
     ],
@@ -717,8 +812,18 @@ class FakeWebSocket:
     close_reason: str = ''
 
     def __init__(self, incoming: list[Any]) -> None:
-        self._incoming = list(incoming)
+        self._incoming = [self._normalize_frame(frame) for frame in incoming]
         self.sent: list[str] = []
+
+    @staticmethod
+    def _normalize_frame(frame: Any) -> Any:
+        if not isinstance(frame, str):
+            return frame
+        try:
+            data = json.loads(frame)
+        except json.JSONDecodeError:
+            return frame
+        return json.dumps(sdk_frame(cast('dict[str, Any]', data))) if isinstance(data, dict) else frame
 
     async def recv(self) -> Any:
         return self._incoming.pop(0)
@@ -1179,8 +1284,8 @@ async def test_connect_surfaces_handshake_connection_close(monkeypatch: pytest.M
     ('frame', 'expected'),
     [
         pytest.param(b'\x00binary', 'expected a text frame, got bytes', id='binary'),
-        pytest.param('{not json', 'received a malformed frame: Expecting property name', id='invalid-json'),
-        pytest.param('[1, 2]', 'received a malformed frame: expected a JSON object, got list', id='not-an-object'),
+        pytest.param('{not json', 'received a malformed frame: 1 validation error', id='invalid-json'),
+        pytest.param('[1, 2]', 'received a malformed frame: 1 validation error', id='not-an-object'),
     ],
 )
 async def test_connect_surfaces_malformed_handshake_frame(
@@ -1340,7 +1445,11 @@ async def test_connection_iter_recovers_from_malformed_frame(monkeypatch: pytest
         'RealtimeSessionErrorEvent',
         'RealtimeSessionErrorEvent',
         *['RealtimeSessionErrorEvent', 'AudioDelta'] * len(malformed_nested_frames),
-        *['InputTranscript', 'RealtimeSessionErrorEvent', 'AudioDelta'] * len(malformed_transcription_frames),
+        *['InputTranscript', 'RealtimeSessionErrorEvent', 'AudioDelta'] * 3,
+        # `pydantic_core.from_json` rejects the non-standard `Infinity` token before event mapping.
+        'RealtimeSessionErrorEvent',
+        'AudioDelta',
+        *['InputTranscript', 'RealtimeSessionErrorEvent', 'AudioDelta'],
     ]
     errors = [event for event in events if isinstance(event, RealtimeSessionErrorEvent)]
     assert len(errors) == 3 + len(malformed_nested_frames) + len(malformed_transcription_frames)
@@ -2230,7 +2339,9 @@ async def test_response_done_without_response_object_is_recoverable() -> None:
     conn._response_active = True  # pyright: ignore[reportPrivateUsage]
     conn._pending_response = True  # pyright: ignore[reportPrivateUsage]
     events = await collect_codec_events(conn)
-    assert events == [RealtimeSessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)]
+    assert len(events) == 1
+    assert isinstance(events[0], RealtimeSessionErrorEvent)
+    assert 'validation errors for union[ResponseDoneEvent,ProtocolResponseDoneEvent]' in events[0].message
     assert ws.sent == [json.dumps({'type': 'response.create'})]
     assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]
     assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
@@ -2244,7 +2355,9 @@ async def test_response_done_without_response_object_sends_nothing_when_none_was
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     conn._response_active = True  # pyright: ignore[reportPrivateUsage]
     events = await collect_codec_events(conn)
-    assert events == [RealtimeSessionErrorEvent(message='`response.done.response` must be an object', recoverable=True)]
+    assert len(events) == 1
+    assert isinstance(events[0], RealtimeSessionErrorEvent)
+    assert 'validation errors for union[ResponseDoneEvent,ProtocolResponseDoneEvent]' in events[0].message
     assert ws.sent == []
     assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
 
@@ -3046,7 +3159,7 @@ class PushWebSocket:
             yield await self._q.get()
 
     def push(self, obj: dict[str, Any]) -> None:
-        self._q.put_nowait(json.dumps(obj))
+        self._q.put_nowait(json.dumps(sdk_frame(obj)))
 
     def sent_types(self) -> list[str]:
         return [json.loads(s).get('type') for s in self.sent]
