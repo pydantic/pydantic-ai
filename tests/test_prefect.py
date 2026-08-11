@@ -1007,8 +1007,8 @@ async def test_prefect_durability_rejects_rebuilt_capability_leaf_with_registere
 
     def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal model_called
-        model_called = True
-        return ModelResponse(parts=[TextPart(content='unexpected')])
+        model_called = True  # pragma: no cover
+        return ModelResponse(parts=[TextPart(content='unexpected')])  # pragma: no cover
 
     agent = Agent(
         FunctionModel(model_fn),
