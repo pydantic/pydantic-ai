@@ -153,6 +153,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     )
 
     _durable_unit_noun = 'activity'
+    _durable_unit_noun_plural = 'activities'
     _durable_container_noun = 'workflow'
     _tool_config_key = 'temporal'
 

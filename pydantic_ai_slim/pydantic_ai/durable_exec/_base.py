@@ -58,6 +58,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     _unsupported_runtime_toolset_kinds: ClassVar[frozenset[RuntimeToolsetKind]]
     _durable_unit_noun: ClassVar[str]
+    _durable_unit_noun_plural: ClassVar[str]
     _durable_container_noun: ClassVar[str]
     _tool_config_key: ClassVar[str | None] = None
 
@@ -86,7 +87,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f'An agent needs to have a unique `name` in order to be used with {self.engine_name} '
                 f'(or pass `name=` to `{type(self).__name__}`). The name is used to identify the '
-                f"agent's durable {self._durable_unit_noun}s."
+                f"agent's durable {self._durable_unit_noun_plural}."
             )
         bound = copy.copy(self)
         bound.name = self.name or agent.name or ''
@@ -226,7 +227,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
-                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
+                f"The ID will be used to identify the toolset's {self._durable_unit_noun_plural} within the "
                 f'{self._durable_container_noun}. Set the dynamic toolset ID with `DynamicToolset(id=...)`, '
                 "or, when it is contributed by a capability, set the capability's `id` (for example, "
                 "`DynamicCapability(..., id='user-tools')`). A capability function passed directly to "
@@ -243,7 +244,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f'Two toolsets have the same `id` {ts_id!r}. Toolset `id`s must be unique among all '
                 f"toolsets registered with the same agent, as they identify the toolset's "
-                f'{self._durable_unit_noun}s within the {self._durable_container_noun}.'
+                f'{self._durable_unit_noun_plural} within the {self._durable_container_noun}.'
             )
         wrapped = self._wrap_leaf_toolset(ts)
         if wrapped is None:
@@ -252,7 +253,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             raise UserError(
                 f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
                 f'need to have a unique `id` in order to be used with {self.engine_name}. '
-                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
+                f"The ID will be used to identify the toolset's {self._durable_unit_noun_plural} within the "
                 f'{self._durable_container_noun}.'
             )
         self._toolsets_by_id[ts_id] = wrapped
@@ -270,8 +271,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         def swap(ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             ts_id = ts.id
-            if ts_id is not None and ts_id in self._toolsets_by_id:
-                return self._toolsets_by_id[ts_id]
+            if ts_id is not None and (existing := self._toolsets_by_id.get(ts_id)) is not None:
+                if existing.wrapped is ts:
+                    return existing
+                raise UserError(
+                    f'Two toolsets have the same `id` {ts_id!r}. Toolset `id`s must be unique among all '
+                    f"toolsets registered with the same agent, as they identify the toolset's "
+                    f'{self._durable_unit_noun_plural} within the {self._durable_container_noun}.'
+                )
             return ts
 
         return toolset.visit_and_replace(swap)

@@ -81,6 +81,7 @@ from pydantic_ai.capabilities import (
     ProcessHistory,
     ResolveModelId,
     Toolset,
+    WebSearch,
     WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -7066,6 +7067,132 @@ def test_durability_same_toolset_instance_reused():
     assert bound is not None
     # 3 base activities + 1 for <agent> FunctionToolset + 1 (not 2) for the shared toolset
     assert len(bound.temporal_activities) == 5
+
+
+async def test_durability_fixed_purpose_capability_uses_its_default_id() -> None:
+    """A static provider-adaptive fallback keeps its registered wrapper across run capability assembly."""
+
+    def static_local_search(query: str) -> str:
+        return query  # pragma: no cover
+
+    def runtime_local_search(query: str) -> str:
+        return query  # pragma: no cover
+
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_default_web_search',
+        deps_type=type(None),
+        capabilities=[
+            WebSearch[None](native=False, local=static_local_search),
+            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        ],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    assert 'web_search' in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+
+    outside = await agent.run(
+        'outside',
+        capabilities=[
+            Instrumentation(),
+            WebSearch[None](native=False, local=runtime_local_search, id='runtime-web-search'),
+        ],
+    )
+    assert outside.output == 'Echo: outside'
+
+    with pytest.raises(UserError, match="Capability id 'web_search' is used by multiple capabilities"):
+        await agent.run('duplicate', capabilities=[WebSearch[None](native=False, local=runtime_local_search)])
+
+    @dataclass
+    class SkipRequest(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+    safe_agent = Agent(
+        _durability_fn_model,
+        name='durability_default_web_search_safe_runtime',
+        deps_type=type(None),
+        capabilities=[
+            SkipRequest(),
+            WebSearch[None](native=False, local=static_local_search),
+            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        ],
+    )
+    with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
+        inside = await safe_agent.run('inside', capabilities=[Instrumentation()])
+    assert inside.output == 'skipped'
+
+    with (
+        patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True),
+        pytest.raises(UserError, match='FunctionToolset cannot be passed to `run\\(toolsets=\\.\\.\\.\\)` at runtime'),
+    ):
+        await safe_agent.run('runtime', toolsets=[FunctionToolset([runtime_local_search], id='web_search')])
+
+
+async def test_durability_reuses_an_unchanged_leaf_from_a_replaced_capability() -> None:
+    """A fresh `for_run` capability owner can reuse its unchanged registered leaf."""
+
+    def lookup(query: str) -> str:
+        return query  # pragma: no cover
+
+    @dataclass
+    class ReplacedCapability(AbstractCapability[None]):
+        toolset: FunctionToolset[None]
+
+        def get_toolset(self) -> FunctionToolset[None]:
+            return self.toolset
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return replace(self)
+
+    capability = ReplacedCapability(toolset=FunctionToolset([lookup], id='reused-leaf'), id='reused-capability')
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_replaced_capability_reuses_leaf',
+        deps_type=type(None),
+        capabilities=[capability, TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+
+    assert (await agent.run('hi')).output == 'Echo: hi'
+
+
+async def test_durability_rejects_a_rebuilt_leaf_from_a_replaced_capability() -> None:
+    """A replacement cannot silently route a reconstructed leaf through the old durable wrapper."""
+
+    def construction_lookup(query: str) -> str:
+        return query  # pragma: no cover
+
+    def run_lookup(query: str) -> str:
+        return query  # pragma: no cover
+
+    @dataclass
+    class ReplacedCapability(AbstractCapability[None]):
+        toolset: FunctionToolset[None]
+
+        def get_toolset(self) -> FunctionToolset[None]:
+            return self.toolset
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return ReplacedCapability(
+                toolset=FunctionToolset([run_lookup], id='rebuilt-leaf'),
+                id='rebuilt-capability',
+            )
+
+    capability = ReplacedCapability(
+        toolset=FunctionToolset([construction_lookup], id='rebuilt-leaf'),
+        id='rebuilt-capability',
+    )
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_replaced_capability_rebuilds_leaf',
+        deps_type=type(None),
+        capabilities=[capability, TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+
+    with pytest.raises(UserError, match="Two toolsets have the same `id` 'rebuilt-leaf'"):
+        await agent.run('hi')
 
 
 def test_durability_activity_config_not_mutated():

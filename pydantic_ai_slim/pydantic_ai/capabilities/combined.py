@@ -21,10 +21,9 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
-from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
-from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
+from ._toolsets import get_capability_toolsets
 from .abstract import (
     AbstractCapability,
     AgentModel,
@@ -201,26 +200,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return None
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        toolsets: list[AbstractToolset[AgentDepsT]] = []
-        for capability in self.capabilities:
-            toolset = capability.get_toolset()
-            if toolset is None:
-                continue
-            elif isinstance(toolset, AbstractToolset):
-                # Pyright can't narrow Callable type aliases out of unions after isinstance check
-                toolsets.append(
-                    CapabilityOwnedToolset(
-                        wrapped=toolset,  # pyright: ignore[reportUnknownArgumentType]
-                        capability=capability,
-                    )
-                )
-            else:
-                toolsets.append(
-                    CapabilityOwnedToolset(
-                        wrapped=DynamicToolset[AgentDepsT](toolset_func=toolset),
-                        capability=capability,
-                    )
-                )
+        toolsets = get_capability_toolsets(self.capabilities)
         return CombinedToolset(toolsets) if toolsets else None
 
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:

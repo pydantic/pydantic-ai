@@ -51,6 +51,7 @@ from pydantic_ai.capabilities import (
     ProcessEventStream,
     ResolveModelId,
     Toolset,
+    WebSearch,
 )
 from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset
 from pydantic_ai.exceptions import (
@@ -2402,6 +2403,50 @@ def test_prefect_durability_same_toolset_instance_reused() -> None:
     bound = PrefectDurability.from_agent(agent)
     assert bound is not None
     assert sorted(bound._toolsets_by_id) == ['<agent>', 'shared_fn']  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_prefect_durability_fixed_purpose_capability_uses_its_default_id() -> None:
+    """A static provider-adaptive fallback keeps its registered task wrapper across run capability assembly."""
+
+    def static_local_search(query: str) -> str:
+        return query  # pragma: no cover
+
+    def runtime_local_search(query: str) -> str:
+        return query  # pragma: no cover
+
+    agent = Agent(
+        _durability_fn_model,
+        name='prefect_default_web_search',
+        deps_type=type(None),
+        capabilities=[WebSearch[None](native=False, local=static_local_search), PrefectDurability()],
+    )
+    bound = PrefectDurability.from_agent(agent)
+    assert bound is not None
+    assert 'web_search' in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
+
+    outside = await agent.run(
+        'outside',
+        capabilities=[
+            Instrumentation(),
+            WebSearch[None](native=False, local=runtime_local_search, id='runtime-web-search'),
+        ],
+    )
+    assert outside.output == 'Echo: outside'
+
+    with pytest.raises(UserError, match="Capability id 'web_search' is used by multiple capabilities"):
+        await agent.run('duplicate', capabilities=[WebSearch[None](native=False, local=runtime_local_search)])
+
+    @flow
+    async def run_inside_flow(runtime_toolset: bool = False) -> str:
+        if runtime_toolset:
+            result = await agent.run('runtime', toolsets=[FunctionToolset([runtime_local_search], id='web_search')])
+        else:
+            result = await agent.run('inside', capabilities=[Instrumentation()])
+        return result.output
+
+    assert await run_inside_flow() == 'Echo: inside'
+    with pytest.raises(UserError, match='FunctionToolset cannot be passed to `run\\(toolsets=\\.\\.\\.\\)` at runtime'):
+        await run_inside_flow(True)
 
 
 async def test_prefect_durability_outside_flow() -> None:
