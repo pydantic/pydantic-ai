@@ -32,6 +32,7 @@ from ...messages import (
     NativeToolReturnPart,
     RetryFeedbackPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -698,6 +699,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         provider_metadata=dump_provider_metadata(retry_feedback=retry_feedback_payload(part)),
                     )
                 )
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                pass  # Realtime audio parts are not rendered in the UI
             else:
                 assert_never(part)
 
@@ -868,6 +871,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         data=compaction_payload(part),
                     )
                 )
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                pass  # Realtime audio parts are not rendered in the UI
             else:
                 assert_never(part)
 

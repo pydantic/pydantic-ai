@@ -1357,7 +1357,7 @@ def test_messages_without_content(document_content: BinaryContent):
         ),
         # A tool-less legacy retry and the harness feedback that replaced it: both carry
         # model-visible prose, so both must honor `include_content=False` like every sibling part.
-        ModelRequest(parts=[RetryPromptPart('plain retry_prompt')], timestamp=IsDatetime()),
+        ModelRequest(parts=[RetryPromptPart('retry_prompt_no_tool')], timestamp=IsDatetime()),
         ModelRequest(
             parts=[RetryFeedbackPart(content='harness feedback', cause='model_retry')], timestamp=IsDatetime()
         ),

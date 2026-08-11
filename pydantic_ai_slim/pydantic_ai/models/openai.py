@@ -63,6 +63,7 @@ from ..messages import (
     PartStartEvent,
     RetryFeedbackPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -114,6 +115,7 @@ from . import (
     StreamedResponse,
     ToolVisibility,
     _trim_messages_before_compaction,  # pyright: ignore[reportPrivateUsage]
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unrendered_retry_feedback_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -1454,6 +1456,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 elif isinstance(item, CompactionPart):  # pragma: no cover
                     # Compaction parts are not sent back to the Chat Completions API.
                     pass
+                elif isinstance(item, SpeechPart):  # pragma: no cover
+                    # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                    raise _unconverted_speech_part_error()
                 else:
                     assert_never(item)
             return self._into_message_param()
@@ -1712,6 +1717,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 raise _unrendered_retry_feedback_error()
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, SpeechPart):
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
         if file_content:
@@ -3290,6 +3298,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             openai_messages.append(item)
                     elif isinstance(part, RetryFeedbackPart):  # pragma: no cover
                         raise _unrendered_retry_feedback_error()
+                    elif isinstance(part, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
@@ -3591,6 +3602,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     type='compaction',
                                 )
                             )
+                    elif isinstance(item, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
             else:

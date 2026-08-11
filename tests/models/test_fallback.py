@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timezone
@@ -780,6 +780,27 @@ async def test_all_failed_streaming() -> None:
 async def test_fallback_condition_override() -> None:
     def should_fallback(exc: Exception) -> bool:
         return False
+
+    fallback_model = FallbackModel(failure_model, success_model, fallback_on=should_fallback)
+    agent = Agent(model=fallback_model)
+    with pytest.raises(ModelHTTPError):
+        await agent.run('hello')
+
+
+async def test_fallback_condition_sync_def_returning_coroutine() -> None:
+    """A plain-`def` handler that *returns* a coroutine must be awaited, not treated as truthy.
+
+    `ExceptionHandler` allows `Callable[[Exception], Awaitable[bool]]`, which a plain `def`
+    returning a coroutine satisfies. Regression: dispatching on `is_async_callable(handler)`
+    classified such a handler as sync, so `handler(exc)` yielded an un-awaited coroutine — always
+    truthy — and fallback fired regardless of the handler's real (`False`) decision.
+    """
+
+    async def _async_returns_false() -> bool:
+        return False
+
+    def should_fallback(exc: Exception) -> Awaitable[bool]:
+        return _async_returns_false()
 
     fallback_model = FallbackModel(failure_model, success_model, fallback_on=should_fallback)
     agent = Agent(model=fallback_model)

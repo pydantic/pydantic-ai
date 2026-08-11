@@ -36,6 +36,7 @@ from ...messages import (
     NativeToolReturnPart,
     RetryFeedbackPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -776,6 +777,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         **retry_feedback_encrypted_value_kwargs(part, supported=use_encrypted_value),
                     )
                 )
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                pass  # Realtime audio parts are not rendered in AG-UI
             else:
                 assert_never(part)
 
@@ -913,6 +916,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         content=compaction_payload(part),
                     )
                 )
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                pass  # Realtime audio parts are not rendered in AG-UI
             else:
                 assert_never(part)
 

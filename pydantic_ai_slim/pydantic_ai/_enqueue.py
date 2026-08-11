@@ -19,6 +19,7 @@ from .messages import (
     ModelResponse,
     RetryFeedbackPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
     ToolReturnPart,
@@ -108,6 +109,7 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
                 RetryFeedbackPart,
                 ToolSearchReturnPart,
                 ToolAvailabilityDeltaPart,
+                SpeechPart,
             ),
         ):
             flush_content()

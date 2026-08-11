@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from pydantic_ai.messages import ModelMessage, ModelResponse
-    from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+    from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.settings import ModelSettings
 
@@ -281,13 +281,13 @@ def has_stale_message_json(
     return False
 
 
-def model_attributes(model: Model) -> dict[str, AttributeValue]:
+def provider_attributes(system: str, base_url: str | None = None) -> dict[str, AttributeValue]:
+    """Build the provider and server attributes shared by classic and realtime `chat` spans."""
     attributes: dict[str, AttributeValue] = {
-        GEN_AI_PROVIDER_NAME_ATTRIBUTE: model.system,  # New OTel standard attribute
-        GEN_AI_SYSTEM_ATTRIBUTE: model.system,  # Preserved for backward compatibility (deprecated)
-        GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
+        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,  # New OTel standard attribute
+        GEN_AI_SYSTEM_ATTRIBUTE: system,  # Preserved for backward compatibility (deprecated)
     }
-    if base_url := model.base_url:
+    if base_url:
         try:
             parsed = urlparse(base_url)
             # `urlparse` defers port validation to `.port`, so a malformed port raises on the read, not the parse.
@@ -300,6 +300,30 @@ def model_attributes(model: Model) -> dict[str, AttributeValue]:
             if port:  # pragma: no branch
                 attributes['server.port'] = port
 
+    return attributes
+
+
+def model_attributes(model: AbstractModel) -> dict[str, AttributeValue]:
+    return {
+        **provider_attributes(model.system, model.base_url),
+        GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
+    }
+
+
+def model_metric_attributes(
+    provider_name: str | None,
+    request_model: AttributeValue | None,
+    response_model: AttributeValue | None,
+) -> dict[str, AttributeValue]:
+    """Build the dimensions shared by classic and realtime per-response metrics."""
+    attributes: dict[str, AttributeValue] = {'gen_ai.operation.name': 'chat'}
+    if provider_name is not None:
+        attributes[GEN_AI_PROVIDER_NAME_ATTRIBUTE] = provider_name
+        attributes[GEN_AI_SYSTEM_ATTRIBUTE] = provider_name
+    if request_model is not None:
+        attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE] = request_model
+    if response_model is not None:
+        attributes['gen_ai.response.model'] = response_model
     return attributes
 
 
@@ -370,6 +394,41 @@ def build_tool_definitions(model_request_parameters: ModelRequestParameters) -> 
         tool_definitions.append(tool_def)
 
     return tool_definitions
+
+
+def response_attributes(
+    response: ModelResponse,
+    response_model: AttributeValue | None,
+    price_calculation: PriceCalculation | None = None,
+) -> dict[str, AttributeValue]:
+    """Build the `gen_ai.response.*`, usage, and cost span attributes for a completed response.
+
+    Shared between the classic model-request span (`open_model_request_span`) and the realtime
+    session's per-turn `chat` span so the two paths report the same shape and can't drift.
+    `response_model` is set only when known (always the case for a classic request; a realtime
+    session may not know its model name).
+    """
+    attributes: dict[str, AttributeValue] = {**response.usage.opentelemetry_attributes()}
+    if response_model is not None:
+        attributes['gen_ai.response.model'] = response_model
+    if price_calculation is not None:
+        attributes['operation.cost'] = float(price_calculation.total_price)
+    if response.provider_response_id is not None:
+        attributes['gen_ai.response.id'] = response.provider_response_id
+    if response.finish_reason is not None:
+        attributes['gen_ai.response.finish_reasons'] = [response.finish_reason]
+    return attributes
+
+
+def response_price_calculation(response: ModelResponse) -> PriceCalculation | None:
+    """Price a response, degrading any pricing-data failure to `None` (see `best_effort_price`)."""
+    return best_effort_price(
+        response.usage,
+        model_name=response.model_name,
+        provider_api_url=response.provider_url,
+        provider_name=response.provider_name,
+        genai_request_timestamp=response.timestamp,
+    )
 
 
 class _FinishModelRequestSpan(Protocol):
@@ -453,26 +512,14 @@ def open_model_request_span(
                 price_calculation: PriceCalculation | None = None
 
                 def _record_metrics() -> None:
-                    metric_attributes = {
-                        GEN_AI_PROVIDER_NAME_ATTRIBUTE: system,
-                        GEN_AI_SYSTEM_ATTRIBUTE: system,
-                        'gen_ai.operation.name': operation,
-                        'gen_ai.request.model': request_model,
-                        'gen_ai.response.model': response_model,
-                    }
+                    metric_attributes = model_metric_attributes(system, request_model, response_model)
                     settings.record_metrics(response, price_calculation, metric_attributes, time_to_first_chunk)
 
                 record_metrics = _record_metrics
 
                 # Compute cost before the `is_recording()` gate so `_record_metrics`
                 # always emits cost data, even when the span is dropped by sampling.
-                price_calculation = best_effort_price(
-                    response.usage,
-                    model_name=response.model_name,
-                    provider_api_url=response.provider_url,
-                    provider_name=response.provider_name,
-                    genai_request_timestamp=response.timestamp,
-                )
+                price_calculation = response_price_calculation(response)
 
                 if not span.is_recording():
                     return
@@ -485,16 +532,7 @@ def open_model_request_span(
                     message_json_cache=message_json_cache,
                 )
 
-                attributes_to_set: dict[str, Any] = {
-                    **response.usage.opentelemetry_attributes(),
-                    'gen_ai.response.model': response_model,
-                }
-                if price_calculation is not None:
-                    attributes_to_set['operation.cost'] = float(price_calculation.total_price)
-                if response.provider_response_id is not None:
-                    attributes_to_set['gen_ai.response.id'] = response.provider_response_id
-                if response.finish_reason is not None:
-                    attributes_to_set['gen_ai.response.finish_reasons'] = [response.finish_reason]
+                attributes_to_set = response_attributes(response, response_model, price_calculation)
                 if time_to_first_chunk is not None:
                     attributes_to_set['gen_ai.client.operation.time_to_first_chunk'] = time_to_first_chunk
                 span.set_attributes(attributes_to_set)
