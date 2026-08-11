@@ -1457,13 +1457,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 for capability, toolset in self._capability_toolset_occurrences:
                     construction_toolsets_by_capability.setdefault(id(capability), []).append(toolset)
                 for capability in resolved_base_capability.capabilities:
-                    if (toolsets := construction_toolsets_by_capability.get(id(capability))) is not None:
-                        cached_toolsets_by_capability.setdefault(id(capability), []).append(toolsets.pop(0))
+                    if (construction_toolsets := construction_toolsets_by_capability.get(id(capability))) is not None:
+                        cached_toolsets_by_capability.setdefault(id(capability), []).append(
+                            construction_toolsets.pop(0)
+                        )
 
             capability_toolsets: list[CapabilityOwnedToolset[AgentDepsT]] = []
             for capability in run_capability.capabilities:
-                if (toolsets := cached_toolsets_by_capability.get(id(capability))) is not None and toolsets:
-                    capability_toolsets.append(toolsets.pop(0))
+                if (
+                    cached_toolsets := cached_toolsets_by_capability.get(id(capability))
+                ) is not None and cached_toolsets:
+                    capability_toolsets.append(cached_toolsets.pop(0))
                 elif (toolset := normalize_capability_toolset(capability)) is not None:
                     capability_toolsets.append(toolset)
             cap_toolsets = [CombinedToolset(capability_toolsets)] if capability_toolsets else []
