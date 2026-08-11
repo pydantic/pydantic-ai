@@ -226,8 +226,8 @@ over, the model has said everything it is going to say, and it is the user's tur
 
 ```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import SpeechPart, SpeechPartDelta
-from pydantic_ai.realtime import PartDeltaEvent, PartEndEvent, TurnDetection
+from pydantic_ai.messages import PartDeltaEvent, PartEndEvent, SpeechPart, SpeechPartDelta
+from pydantic_ai.realtime import TurnDetection
 from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings
 
 agent = Agent(instructions='You are a helpful voice assistant.')

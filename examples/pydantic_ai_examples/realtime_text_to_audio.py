@@ -26,12 +26,8 @@ import wave
 
 import logfire
 
-from pydantic_ai import Agent
-from pydantic_ai.realtime import (
-    PartDeltaEvent,
-    RealtimeTurnCompleteEvent,
-    SpeechPartDelta,
-)
+from pydantic_ai import Agent, PartDeltaEvent, SpeechPartDelta
+from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured

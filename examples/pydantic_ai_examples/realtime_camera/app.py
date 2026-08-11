@@ -41,14 +41,19 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
-from pydantic_ai import Agent, BinaryContent, RunContext
+from pydantic_ai import (
+    Agent,
+    BinaryContent,
+    PartDeltaEvent,
+    PartEndEvent,
+    RunContext,
+    SpeechPartDelta,
+)
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import NativeToolReturnPart, TextPartDelta
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
-    PartDeltaEvent,
-    PartEndEvent,
     RealtimeError,
     RealtimeEvent,
     RealtimeInputSpeechStartEvent,
@@ -58,7 +63,6 @@ from pydantic_ai.realtime import (
     RealtimeSession,
     RealtimeTurnCompleteEvent,
     ReconnectPolicy,
-    SpeechPartDelta,
     TurnDetection,
     infer_realtime_model,
 )

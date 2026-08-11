@@ -5,9 +5,8 @@ import sys
 
 import pytest
 
-from pydantic_ai import Agent, realtime as realtime_module
+from pydantic_ai import Agent, messages as messages_module, realtime as realtime_module
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import DeferredToolRequestsEvent, DeferredToolResultsEvent
 from pydantic_ai.realtime import codec as realtime_codec, infer_realtime_model
 from pydantic_ai.realtime.azure import AzureRealtimeModel
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel
@@ -38,8 +37,23 @@ from pydantic_ai.realtime import *
 
 
 def test_realtime_event_exports_match_public_layers() -> None:
-    assert realtime_module.DeferredToolRequestsEvent is DeferredToolRequestsEvent
-    assert realtime_module.DeferredToolResultsEvent is DeferredToolResultsEvent
+    # The shared message/part events a session yields are not realtime-specific, so they are
+    # exported from `pydantic_ai.messages` and the root `pydantic_ai` — never re-exported here.
+    # (The `Realtime*Event` control-plane events also live in `pydantic_ai.messages`, for history
+    # serialization, but realtime is their home so they *are* exported here.)
+    shared_message_events = {
+        'SpeechPart',
+        'SpeechPartDelta',
+        'DeferredToolRequestsEvent',
+        'DeferredToolResultsEvent',
+        'FunctionToolCallEvent',
+        'FunctionToolResultEvent',
+        'PartDeltaEvent',
+        'PartEndEvent',
+        'PartStartEvent',
+    }
+    assert not shared_message_events & set(realtime_module.__all__)
+    assert all(hasattr(messages_module, name) for name in shared_message_events)
     assert 'SessionUsageEvent' not in realtime_module.__all__
     assert 'SessionUsageEvent' in realtime_codec.__all__
 
@@ -149,5 +163,5 @@ async def test_agent_realtime_session_infers_string_model() -> None:
 
     # A gateway route with no realtime support is rejected before any provider is built: Groq is a
     # gateway upstream but has no realtime model, so `gateway/groq` isn't a supported realtime route.
-    with pytest.raises(UserError, match='Unknown realtime model provider'):
+    with pytest.raises(UserError, match='cannot be routed through the Pydantic AI Gateway'):
         infer_realtime_model('gateway/groq:whisper-voice')

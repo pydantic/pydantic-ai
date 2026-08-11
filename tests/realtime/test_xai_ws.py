@@ -25,6 +25,8 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
     SpeechPart,
     SpeechPartDelta,
     TextPart,
@@ -33,8 +35,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.realtime import (
-    PartDeltaEvent,
-    PartStartEvent,
     RealtimeModelProfile,
     RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,

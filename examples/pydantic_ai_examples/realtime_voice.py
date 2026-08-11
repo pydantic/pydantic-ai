@@ -24,18 +24,20 @@ from functools import partial
 
 import logfire
 
-from pydantic_ai import Agent
-from pydantic_ai.realtime import (
+from pydantic_ai import (
+    Agent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    SpeechPart,
+    SpeechPartDelta,
+)
+from pydantic_ai.realtime import (
     RealtimeEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeSession,
-    SpeechPart,
-    SpeechPartDelta,
 )
 
 try:
