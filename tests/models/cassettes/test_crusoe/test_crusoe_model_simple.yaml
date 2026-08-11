@@ -26,7 +26,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1242'
+      - '1072'
       content-type:
       - application/json
       transfer-encoding:
@@ -39,23 +39,20 @@ interactions:
         message:
           annotations: null
           audio: null
-          content: 2 + 2 = 4
+          content: 2 + 2 = 4.
           function_call: null
           reasoning: |-
-            1.  **Analyze the Input:** The user is asking a simple arithmetic question: "What is 2 + 2?"
-            2.  **Process the Query:**
-                *   Identify the operation: Addition (+)
-                *   Identify the operands: 2 and 2
-                *   Calculate the result: 2 + 2 = 4
-            3.  **Formulate the Output:** State the answer clearly and concisely. "2 + 2 = 4" or "2 + 2 is 4".
-            4.  **Final Output Generation:** "2 + 2 = 4."
+            1.  **Analyze the Input:** The user is asking a basic arithmetic question: "What is 2 + 2?".
+            2.  **Perform the calculation:** 2 + 2 = 4.
+            3.  **Formulate the output:** State the answer clearly. "2 + 2 = 4." or "2 + 2 is 4."
+            4.  **Final Response:** Keep it simple and direct. "2 + 2 = 4."
           refusal: null
           role: assistant
         routed_experts: null
         stop_reason: 154827
         token_ids: null
-      created: 1786474267
-      id: chatcmpl-___prefill_addr_10.234.2.166:8998___decode_addr_10.234.3.102:8998_bdf99f19e2a4e611
+      created: 1786478328
+      id: chatcmpl-c2d8231e5ba8d627
       kv_transfer_params: null
       metrics: null
       model: zai/GLM-5.2
@@ -66,14 +63,14 @@ interactions:
       service_tier: null
       system_fingerprint: null
       usage:
-        completion_tokens: 138
+        completion_tokens: 110
         completion_tokens_details:
-          reasoning_tokens: 129
+          reasoning_tokens: 100
         prompt_tokens: 20
         prompt_tokens_details:
           cached_tokens: 0
           multimodal_tokens: null
-        total_tokens: 158
+        total_tokens: 130
     status:
       code: 200
       message: OK

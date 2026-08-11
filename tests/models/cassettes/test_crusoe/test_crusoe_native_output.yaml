@@ -42,7 +42,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1421'
+      - '1382'
       content-type:
       - application/json
       transfer-encoding:
@@ -55,23 +55,23 @@ interactions:
         message:
           annotations: null
           audio: null
-          content: '{   "city": "Paris", "country": "France" }'
+          content: "{   \n  \"city\": \"Paris\",  \n  \"country\": \"France\"  \n}"
           function_call: null
           reasoning: |-
-            1.  Identify the core entity and the question: The user is asking for the location of the "Eiffel Tower".
-            2.  Retrieve knowledge about the Eiffel Tower: It is a famous landmark.
-            3.  Identify its location: Paris, France.
-            4.  Formulate the answer: State clearly that the Eiffel Tower is located in Paris, France.
-            5.  (Optional but helpful): Add minor context, like it's on the Champ de Mars near the Seine River. Keep it concise as the user's prompt is very direct.
-
-            Drafting response: "The Eiffel Tower is located in Paris, France."
+            1.  Identify the core entity and question: The user is asking for the location of the "Eiffel Tower".
+            2.  Retrieve knowledge about the Eiffel Tower:
+                *   Entity: Eiffel Tower (Tour Eiffel)
+                *   Location: Paris, France
+                *   Specific details (optional but helpful): Champ de Mars, near the Seine River.
+            3.  Formulate the answer: State clearly that it is in Paris, France. Keep it concise and direct.
+            4.  Review the formulated answer: "The Eiffel Tower is located in Paris, France." This is accurate and directly answers the user's question.
           refusal: null
           role: assistant
         routed_experts: null
         stop_reason: null
         token_ids: null
-      created: 1786474271
-      id: chatcmpl-___prefill_addr_10.234.2.166:8998___decode_addr_10.234.10.122:8998_073b88c2579b22dc
+      created: 1786478331
+      id: chatcmpl-0b3c99015ab2ac08
       kv_transfer_params: null
       metrics: null
       model: zai/GLM-5.2
@@ -82,14 +82,14 @@ interactions:
       service_tier: null
       system_fingerprint: null
       usage:
-        completion_tokens: 149
+        completion_tokens: 157
         completion_tokens_details:
-          reasoning_tokens: 132
+          reasoning_tokens: 136
         prompt_tokens: 20
         prompt_tokens_details:
           cached_tokens: 0
           multimodal_tokens: null
-        total_tokens: 169
+        total_tokens: 177
     status:
       code: 200
       message: OK

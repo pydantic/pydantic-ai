@@ -41,7 +41,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1108'
+      - '1026'
       content-type:
       - application/json
       transfer-encoding:
@@ -56,21 +56,20 @@ interactions:
           audio: null
           content: null
           function_call: null
-          reasoning: The user wants to know the weather in Paris. I'll call the get_weather function with "Paris" as the city
-            parameter.
+          reasoning: The user wants to know the weather in Paris. I'll call the get_weather function with city "Paris".
           refusal: null
           role: assistant
           tool_calls:
           - function:
               arguments: '{"city": "Paris"}'
               name: get_weather
-            id: chatcmpl-tool-b0371df951ddb919
+            id: chatcmpl-tool-8f220238f5acc6b5
             type: function
         routed_experts: null
         stop_reason: 154829
         token_ids: null
-      created: 1786474269
-      id: chatcmpl-___prefill_addr_10.234.2.166:8998___decode_addr_10.234.3.102:8998_89a175c037bb81f6
+      created: 1786478330
+      id: chatcmpl-2e17f3f6baf385d6
       kv_transfer_params: null
       metrics: null
       model: zai/GLM-5.2
@@ -81,14 +80,14 @@ interactions:
       service_tier: null
       system_fingerprint: null
       usage:
-        completion_tokens: 38
+        completion_tokens: 34
         completion_tokens_details:
-          reasoning_tokens: 26
+          reasoning_tokens: 22
         prompt_tokens: 167
         prompt_tokens_details:
-          cached_tokens: 0
+          cached_tokens: 64
           multimodal_tokens: null
-        total_tokens: 205
+        total_tokens: 201
     status:
       code: 200
       message: OK
@@ -101,7 +100,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '822'
+      - '805'
       content-type:
       - application/json
       host:
@@ -112,18 +111,17 @@ interactions:
       - content: What is the weather in Paris?
         role: user
       - content: null
-        reasoning: The user wants to know the weather in Paris. I'll call the get_weather function with "Paris" as the city
-          parameter.
+        reasoning: The user wants to know the weather in Paris. I'll call the get_weather function with city "Paris".
         role: assistant
         tool_calls:
         - function:
             arguments: '{"city": "Paris"}'
             name: get_weather
-          id: chatcmpl-tool-b0371df951ddb919
+          id: chatcmpl-tool-8f220238f5acc6b5
           type: function
       - content: sunny, 25C
         role: tool
-        tool_call_id: chatcmpl-tool-b0371df951ddb919
+        tool_call_id: chatcmpl-tool-8f220238f5acc6b5
       model: zai/GLM-5.2
       stream: false
       tool_choice: auto
@@ -147,7 +145,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1031'
+      - '955'
       content-type:
       - application/json
       transfer-encoding:
@@ -162,14 +160,14 @@ interactions:
           audio: null
           content: The weather in Paris is currently **sunny** with a temperature of **25°C**. It's a beautiful day! ☀️
           function_call: null
-          reasoning: The weather in Paris is sunny and 25°C. I'll relay this information to the user.
+          reasoning: The weather in Paris is sunny and 25°C. I'll share this with the user.
           refusal: null
           role: assistant
         routed_experts: null
         stop_reason: 154827
         token_ids: null
-      created: 1786474270
-      id: chatcmpl-___prefill_addr_10.234.2.166:8998___decode_addr_10.234.3.102:8998_3bcdf81120fc6a2b
+      created: 1786478330
+      id: chatcmpl-a65cc790fdcf1318
       kv_transfer_params: null
       metrics: null
       model: zai/GLM-5.2
@@ -180,14 +178,14 @@ interactions:
       service_tier: null
       system_fingerprint: null
       usage:
-        completion_tokens: 50
+        completion_tokens: 49
         completion_tokens_details:
-          reasoning_tokens: 20
-        prompt_tokens: 215
+          reasoning_tokens: 19
+        prompt_tokens: 211
         prompt_tokens_details:
           cached_tokens: 64
           multimodal_tokens: null
-        total_tokens: 265
+        total_tokens: 260
     status:
       code: 200
       message: OK

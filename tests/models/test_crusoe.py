@@ -9,6 +9,9 @@ model, including families whose own profiles don't claim native structured outpu
 
 from __future__ import annotations as _annotations
 
+import re
+from typing import Any
+
 import pytest
 from pydantic import BaseModel
 
@@ -39,6 +42,28 @@ pytestmark = [
     pytest.mark.vcr,
 ]
 
+_INTERNAL_SERVING_ADDRESSES = re.compile(r'___prefill_addr_[\d.]+:\d+___decode_addr_[\d.]+:\d+_')
+
+
+@pytest.fixture(scope='module')
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
+    """Keep Crusoe's internal serving-cluster addresses out of recorded responses.
+
+    Crusoe builds the completion id out of the prefill and decode pod addresses
+    (`chatcmpl-___prefill_addr_10.x.x.x:PORT___decode_addr_10.x.x.x:PORT_<id>`). Nothing here
+    depends on the value, so there's no reason to publish their internal topology.
+    """
+
+    def scrub_response(response: dict[str, Any]) -> dict[str, Any]:
+        body = response.get('body', {})
+        if isinstance(string := body.get('string'), (bytes, str)):
+            decoded = string.decode() if isinstance(string, bytes) else string
+            scrubbed = _INTERNAL_SERVING_ADDRESSES.sub('', decoded)
+            body['string'] = scrubbed.encode() if isinstance(string, bytes) else scrubbed
+        return response
+
+    return {**vcr_config, 'before_record_response': scrub_response}
+
 
 async def test_crusoe_model_simple(allow_model_requests: None, crusoe_api_key: str):
     """Crusoe returns thinking content in the non-standard `reasoning` field.
@@ -62,21 +87,18 @@ async def test_crusoe_model_simple(allow_model_requests: None, crusoe_api_key: s
                 parts=[
                     ThinkingPart(
                         content="""\
-1.  **Analyze the Input:** The user is asking a simple arithmetic question: "What is 2 + 2?"
-2.  **Process the Query:**
-    *   Identify the operation: Addition (+)
-    *   Identify the operands: 2 and 2
-    *   Calculate the result: 2 + 2 = 4
-3.  **Formulate the Output:** State the answer clearly and concisely. "2 + 2 = 4" or "2 + 2 is 4".
-4.  **Final Output Generation:** "2 + 2 = 4."\
+1.  **Analyze the Input:** The user is asking a basic arithmetic question: "What is 2 + 2?".
+2.  **Perform the calculation:** 2 + 2 = 4.
+3.  **Formulate the output:** State the answer clearly. "2 + 2 = 4." or "2 + 2 is 4."
+4.  **Final Response:** Keep it simple and direct. "2 + 2 = 4."\
 """,
                         id='reasoning',
                         provider_name='crusoe',
                     ),
-                    TextPart(content='2 + 2 = 4'),
+                    TextPart(content='2 + 2 = 4.'),
                 ],
                 usage=RequestUsage(
-                    details={'reasoning_tokens': 129}, input_tokens=20, output_reasoning_tokens=129, output_tokens=138
+                    details={'reasoning_tokens': 100}, input_tokens=20, output_reasoning_tokens=100, output_tokens=110
                 ),
                 model_name='zai/GLM-5.2',
                 timestamp=IsDatetime(),
@@ -122,14 +144,18 @@ async def test_crusoe_tool_calling(allow_model_requests: None, crusoe_api_key: s
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='The user wants to know the weather in Paris. I\'ll call the get_weather function with "Paris" as the city parameter.',
+                        content='The user wants to know the weather in Paris. I\'ll call the get_weather function with city "Paris".',
                         id='reasoning',
                         provider_name='crusoe',
                     ),
                     ToolCallPart(tool_name='get_weather', args='{"city": "Paris"}', tool_call_id=IsStr()),
                 ],
                 usage=RequestUsage(
-                    details={'reasoning_tokens': 26}, input_tokens=167, output_reasoning_tokens=26, output_tokens=38
+                    details={'reasoning_tokens': 22},
+                    input_tokens=167,
+                    cache_read_tokens=64,
+                    output_reasoning_tokens=22,
+                    output_tokens=34,
                 ),
                 model_name='zai/GLM-5.2',
                 timestamp=IsDatetime(),
@@ -157,7 +183,7 @@ async def test_crusoe_tool_calling(allow_model_requests: None, crusoe_api_key: s
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="The weather in Paris is sunny and 25°C. I'll relay this information to the user.",
+                        content="The weather in Paris is sunny and 25°C. I'll share this with the user.",
                         id='reasoning',
                         provider_name='crusoe',
                     ),
@@ -166,11 +192,11 @@ async def test_crusoe_tool_calling(allow_model_requests: None, crusoe_api_key: s
                     ),
                 ],
                 usage=RequestUsage(
-                    details={'reasoning_tokens': 20},
-                    input_tokens=215,
+                    details={'reasoning_tokens': 19},
+                    input_tokens=211,
                     cache_read_tokens=64,
-                    output_reasoning_tokens=20,
-                    output_tokens=50,
+                    output_reasoning_tokens=19,
+                    output_tokens=49,
                 ),
                 model_name='zai/GLM-5.2',
                 timestamp=IsDatetime(),
