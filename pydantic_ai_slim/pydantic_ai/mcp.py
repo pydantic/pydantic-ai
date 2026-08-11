@@ -80,8 +80,8 @@ from ._mcp_compat import is_mcp_sdk_v2, mcp_field, mcp_optional_field, mcp_valid
 from .settings import ModelSettings
 
 _MCP_SDK_V2 = is_mcp_sdk_v2()
-_JSON_SCHEMA_ADAPTER = TypeAdapter[dict[str, Any]](dict[str, Any])
-_STOP_SEQUENCES_ADAPTER = TypeAdapter[list[str]](list[str])
+_JSON_SCHEMA_ADAPTER = TypeAdapter(dict[str, Any])
+_STOP_SEQUENCES_ADAPTER = TypeAdapter(list[str])
 
 
 class _ToolTask(Protocol):
@@ -98,44 +98,6 @@ def _load_call_tool_task() -> _CallToolTask | None:
     except ImportError:
         return None
     return cast(_CallToolTask, fastmcp_tasks.call_tool_task)  # pyright: ignore[reportUnknownMemberType]
-
-
-async def _call_tool_as_task(
-    client: FastMCPClient[Any],
-    call_tool_task: _CallToolTask | None,
-    name: str,
-    args: dict[str, Any],
-    metadata: dict[str, Any] | None,
-    *,
-    raise_on_error: bool,
-) -> CallToolResult:
-    if not _MCP_SDK_V2:
-        tool_task = await client.call_tool(
-            name=name,
-            arguments=args,
-            task=True,
-            meta=metadata,
-            raise_on_error=raise_on_error,
-        )
-    else:
-        if client.initialize_result is not None:
-            raise exceptions.UserError(
-                'Task execution is not supported by FastMCP 4 clients using legacy protocol mode — '
-                'call the tool without `use_task=True`, or connect over a modern session.'
-            )
-        if call_tool_task is None:
-            raise ImportError(
-                'FastMCP 4 task execution requires the `fastmcp-tasks` package, '
-                'you can use the `mcp-tasks` optional group — `pip install "pydantic-ai-slim[mcp-tasks]"`'
-            )
-        tool_task = await call_tool_task(
-            client,
-            name=name,
-            arguments=args,
-            meta=metadata,
-            raise_on_error=raise_on_error,
-        )
-    return await tool_task.result()
 
 
 __all__ = (
@@ -1376,6 +1338,31 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
+    async def _call_tool_as_task(
+        self, name: str, args: dict[str, Any], metadata: dict[str, Any] | None
+    ) -> CallToolResult:
+        """Run a tool call through the task path and wait for its completed result."""
+        raise_on_error = self.tool_error_behavior == 'error'
+        if _MCP_SDK_V2:
+            if self.client.initialize_result is not None:
+                raise exceptions.UserError(
+                    'Task execution is not supported by FastMCP 4 clients using legacy protocol mode — '
+                    'call the tool without `use_task=True`, or connect over a modern session.'
+                )
+            if self._call_tool_task is None:
+                raise ImportError(
+                    'FastMCP 4 task execution requires the `fastmcp-tasks` package, '
+                    'you can use the `mcp-tasks` optional group — `pip install "pydantic-ai-slim[mcp-tasks]"`'
+                )
+            tool_task = await self._call_tool_task(
+                self.client, name=name, arguments=args, meta=metadata, raise_on_error=raise_on_error
+            )
+        else:
+            tool_task = await self.client.call_tool(
+                name=name, arguments=args, task=True, meta=metadata, raise_on_error=raise_on_error
+            )
+        return await tool_task.result()
+
     async def direct_call_tool(
         self,
         name: str,
@@ -1399,7 +1386,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         Raises:
             ModelRetry: If a completed tool error occurs with `tool_error_behavior='retry'` (the default), or
                 if a protocol-level `McpError` occurs and `tool_error_behavior` is not `'error'`.
-            fastmcp.exceptions.ToolError or mcp.shared.exceptions.McpError: If an error occurs and
+            fastmcp.exceptions.ToolError or the MCP SDK's McpError: If an error occurs and
                 `tool_error_behavior='error'`.
             ToolFailed: If a completed tool error occurs and `tool_error_behavior='failed'`.
             UserError: If `use_task=True` and the FastMCP 4 client negotiated a legacy protocol
@@ -1409,14 +1396,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         async with self:
             try:
                 if use_task:
-                    result = await _call_tool_as_task(
-                        self.client,
-                        self._call_tool_task,
-                        name,
-                        args,
-                        metadata,
-                        raise_on_error=self.tool_error_behavior == 'error',
-                    )
+                    result = await self._call_tool_as_task(name, args, metadata)
                 else:
                     result = await self.client.call_tool(
                         name=name,
