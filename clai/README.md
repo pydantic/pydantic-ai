@@ -76,7 +76,7 @@ options:
   -t CODE_THEME, --code-theme CODE_THEME
                         Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.
   --no-stream           Disable streaming from the model
-  --traceback            Show full tracebacks for errors
+  --traceback           Show full tracebacks for errors
 ```
 
 For more information on how to use it, see the [CLI documentation](https://ai.pydantic.dev/cli/).
