@@ -4121,7 +4121,7 @@ async def test_bedrock_cache_point_with_no_prior_user_content_raises_error(
 async def test_bedrock_leading_cache_point_attaches_to_previous_user_message(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """A CachePoint leading a user prompt part marks a boundary at the end of the preceding user content."""
+    """A CachePoint that is first in its part puts its cache marker at the end of the previous user message."""
     model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='First question')]),
@@ -4143,7 +4143,7 @@ async def test_bedrock_leading_cache_point_attaches_to_previous_user_message(
 async def test_bedrock_leading_cache_point_after_tool_return_shares_the_turn(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """A tool return followed by a `[CachePoint, text]` part maps to one user message with the boundary between them.
+    """A tool return followed by a `[CachePoint, text]` part maps to one user message with the cache marker between them.
 
     This is the shape reported in https://github.com/pydantic/pydantic-ai/issues/7004
     (a reminder part injected behind a cache boundary after a tool call).
@@ -4184,7 +4184,7 @@ async def test_bedrock_leading_cache_point_after_tool_return_shares_the_turn(
 async def test_bedrock_leading_cache_point_replaces_existing_boundary_marker(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """A leading CachePoint meeting an already-marked boundary replaces the marker: the latest one wins."""
+    """When the previous user message already ends with a cache point, a leading CachePoint replaces it: the latest one wins."""
     model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -4214,7 +4214,7 @@ async def test_bedrock_leading_cache_point_replaces_existing_boundary_marker(
 async def test_bedrock_leading_cache_point_replaces_existing_marker_before_trailing_documents(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """An existing marker sitting before trailing documents is also replaced: the latest one wins."""
+    """A cache point sitting before trailing documents in the previous user message is also replaced: the latest one wins."""
     model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -4251,7 +4251,7 @@ async def test_bedrock_leading_cache_point_replaces_existing_marker_before_trail
 async def test_bedrock_leading_cache_point_with_video_only_preceding_content_is_skipped(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """When the preceding user content is only a video, the cache point is skipped (AWS rejects a cache point directly after a video)."""
+    """When the previous user message is only a video, the cache point is dropped (AWS rejects a cache point directly after a video)."""
     model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -4277,7 +4277,7 @@ async def test_bedrock_leading_cache_point_with_video_only_preceding_content_is_
 async def test_bedrock_cache_point_only_part_attaches_and_emits_no_message(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """A part holding only a CachePoint attaches the boundary and produces no message of its own."""
+    """A part containing only a CachePoint adds its marker to the previous user message and emits no message of its own."""
     model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
     messages: list[ModelMessage] = [
         ModelRequest(

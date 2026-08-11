@@ -1599,7 +1599,7 @@ class BedrockConverseModel(Model[BaseClient]):
         has_text = any('text' in block for block in content)
         if has_document and not has_text:
             content.insert(0, {'text': 'See attached document(s).'})
-        # A part holding only a leading CachePoint maps to no content of its own.
+        # A part that contained only a CachePoint has nothing left to send: emit no message.
         return [{'role': 'user', 'content': content}] if content else []
 
     @staticmethod
