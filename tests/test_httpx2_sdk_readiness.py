@@ -90,3 +90,13 @@ async def test_google_still_rejects_httpx2_client() -> None:
                     httpx_async_client=client,  # pyright: ignore[reportArgumentType]
                 ),
             )
+
+
+async def test_mistral_accepts_httpx2_client() -> None:
+    pytest.importorskip('mistralai')
+    from mistralai.client import Mistral
+
+    async with httpx2.AsyncClient() as client:
+        mistral_client = Mistral(api_key='test', async_client=client)  # pyright: ignore[reportArgumentType]
+
+        assert mistral_client.sdk_configuration.async_client is client
