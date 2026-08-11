@@ -166,6 +166,11 @@ def _realtime_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('XAI_API_KEY', 'mock-api-key')
     monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://mock.openai.azure.com/openai/v1')
     monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
+    # Voice Live is a distinct resource with its own credential set. Tests build their provider from the
+    # Azure OpenAI values above (Voice Live falls back to them), so clear any real `AZURE_VOICELIVE_*` a
+    # developer has exported — otherwise it takes precedence and breaks the fallback-URL assertions.
+    for _var in ('AZURE_VOICELIVE_ENDPOINT', 'AZURE_VOICELIVE_API_KEY', 'AZURE_VOICELIVE_API_VERSION'):
+        monkeypatch.delenv(_var, raising=False)
 
 
 def _record_mode(request: pytest.FixtureRequest) -> str | None:

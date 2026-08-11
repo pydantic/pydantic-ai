@@ -303,6 +303,35 @@ def test_azure_provider_reads_voice_live_env_prefix(monkeypatch: pytest.MonkeyPa
     assert provider.voice_live_api_version == '2026-04-10'
 
 
+def test_azure_provider_openai_client_reads_voice_live_env_prefix(monkeypatch: pytest.MonkeyPatch):
+    """The `openai_client` branch resolves Voice Live from `AZURE_VOICELIVE_*`, like the other branch.
+
+    Regression: `AzureProvider(openai_client=...)` passed the `voice_live_*` arguments straight through
+    without consulting the environment, so `AZURE_VOICELIVE_ENDPOINT` / `AZURE_VOICELIVE_API_KEY` were
+    ignored and Voice Live silently reused the Azure OpenAI client's resource.
+    """
+    monkeypatch.setenv('AZURE_VOICELIVE_ENDPOINT', 'https://my-voice-live.cognitiveservices.azure.com')
+    monkeypatch.setenv('AZURE_VOICELIVE_API_KEY', 'voice-live-key')
+    monkeypatch.setenv('AZURE_VOICELIVE_API_VERSION', '2026-04-10')
+
+    client = AsyncAzureOpenAI(
+        api_version='2024-12-01-preview',
+        azure_endpoint='https://ga-resource.openai.azure.com/',
+        api_key='ga-key',
+    )
+    provider = AzureProvider(openai_client=client)
+    assert provider.voice_live_endpoint == 'https://my-voice-live.cognitiveservices.azure.com'
+    assert provider.voice_live_api_key == 'voice-live-key'
+    assert provider.voice_live_api_version == '2026-04-10'
+
+    # Without the Voice Live environment, Voice Live falls back to the client's Azure OpenAI resource.
+    for name in ('AZURE_VOICELIVE_ENDPOINT', 'AZURE_VOICELIVE_API_KEY'):
+        monkeypatch.delenv(name)
+    provider = AzureProvider(openai_client=client)
+    assert provider.voice_live_endpoint == 'https://ga-resource.openai.azure.com'
+    assert provider.voice_live_api_key == 'ga-key'
+
+
 def test_azure_provider_voice_live_only_construction(monkeypatch: pytest.MonkeyPatch):
     """A Voice-Live-only provider constructs from its own arguments or environment alone.
 

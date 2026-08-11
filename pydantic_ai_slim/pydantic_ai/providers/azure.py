@@ -270,7 +270,16 @@ class AzureProvider(Provider[AsyncOpenAI]):
             # `api_key` raises its usual explanatory error instead of realtime sending the placeholder
             # as a credential and getting an opaque auth failure back.
             self._api_key = None if openai_client.api_key == _api_key_sentinel else openai_client.api_key or None
-            self._resolve_voice_live_credentials(voice_live_endpoint, voice_live_api_key, voice_live_api_version)
+            # Resolve the Voice Live endpoint/key from their own environment prefix here too, exactly as the
+            # `else` branch does before `_resolve_voice_live_credentials` (which expects them pre-resolved and
+            # only falls back to the Azure OpenAI values). Without this, `AzureProvider(openai_client=...)`
+            # would ignore `AZURE_VOICELIVE_ENDPOINT` / `AZURE_VOICELIVE_API_KEY` and silently point Voice Live
+            # at the Azure OpenAI client's resource.
+            self._resolve_voice_live_credentials(
+                voice_live_endpoint or os.getenv('AZURE_VOICELIVE_ENDPOINT'),
+                voice_live_api_key or os.getenv('AZURE_VOICELIVE_API_KEY'),
+                voice_live_api_version,
+            )
         else:
             # Azure AI Voice Live (used by `AzureRealtimeModel`) is a distinct resource with its own
             # credentials. Each set is resolved from its own sources — explicit argument, then that set's
