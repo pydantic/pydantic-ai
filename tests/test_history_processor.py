@@ -1,6 +1,6 @@
 import re
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from copy import deepcopy
 from dataclasses import replace
 from typing import Any
@@ -463,6 +463,149 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
                 usage=RequestUsage(input_tokens=54, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert result.new_messages() == result.all_messages()[-2:]
+
+
+async def test_sync_history_processor_returning_coroutine(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """A plain `def` (not `async def`) that returns a coroutine must have that coroutine awaited.
+
+    Such a processor is valid per the `HistoryProcessor` type (its members include
+    `Callable[[list[ModelMessage]], Awaitable[list[ModelMessage]]]`). It is not an
+    `is_async_callable`, so it runs in the executor; the returned coroutine must still be
+    awaited or the transformation never takes effect.
+    """
+
+    async def _filter_responses(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [msg for msg in messages if isinstance(msg, ModelRequest)]
+
+    def sync_processor_returning_coroutine(messages: list[ModelMessage]) -> Awaitable[list[ModelMessage]]:
+        # Plain `def`: returns the coroutine without awaiting it here.
+        return _filter_responses(messages)
+
+    agent = Agent(function_model, capabilities=[ProcessHistory(sync_processor_returning_coroutine)])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Previous question')]),
+        ModelResponse(parts=[TextPart(content='Previous answer')]),  # This should be filtered out
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run('New question', message_history=message_history)
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Previous question',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='New question',
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[UserPromptPart(content='New question', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+    assert result.new_messages() == result.all_messages()[-2:]
+
+
+async def test_sync_history_processor_with_context_returning_coroutine(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    """The plain-`def`-returning-coroutine shape must also be awaited for the with-`RunContext` variant."""
+
+    async def _prefix(ctx: RunContext[str], messages: list[ModelMessage]) -> list[ModelMessage]:
+        prefix = ctx.deps
+        return [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content=f'{prefix}: {part.content}') if isinstance(part, UserPromptPart) else part
+                    for part in msg.parts
+                ]
+            )
+            if isinstance(msg, ModelRequest)
+            else msg
+            for msg in messages
+        ]
+
+    def sync_context_processor_returning_coroutine(
+        ctx: RunContext[str], messages: list[ModelMessage]
+    ) -> Awaitable[list[ModelMessage]]:
+        # Plain `def`: returns the coroutine without awaiting it here.
+        return _prefix(ctx, messages)
+
+    agent = Agent(
+        function_model,
+        capabilities=[ProcessHistory(sync_context_processor_returning_coroutine)],
+        deps_type=str,
+    )
+    with capture_run_messages() as captured_messages:
+        result = await agent.run('test', deps='PREFIX')
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='PREFIX: test',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            )
+        ]
+    )
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='PREFIX: test',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=52, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
