@@ -1466,12 +1466,13 @@ class BedrockConverseModel(Model[BaseClient]):
     ) -> None:
         """Attach a cache point to the end of the last user message in `messages`.
 
-        A `CachePoint` leading a user prompt part marks a cache boundary right before that
-        part, i.e. at the end of the preceding user content. If that content already ends
-        with a cache point, the latest marker wins, matching the Anthropic mapper.
+        Used when a `CachePoint` is the first item of a part: everything the marker is
+        meant to cache lives in the messages already built, so the marker goes there.
+        If that message already ends with a cache point, the newest one replaces it,
+        matching the Anthropic mapper.
 
         Raises:
-            UserError: If the conversation contains no prior user message.
+            UserError: If there is no prior user message to attach the cache point to.
         """
         content: list[Any] | None = next(
             (
@@ -1575,10 +1576,9 @@ class BedrockConverseModel(Model[BaseClient]):
                         # Silently skip CachePoint for models that don't support prompt caching
                         continue
                     if not content:
-                        # A leading CachePoint marks a cache boundary right before this part, i.e. at
-                        # the end of the preceding user content, so attach it there. Each part maps to
-                        # its own message on Bedrock, so parts injected behind a cache boundary would
-                        # otherwise present the marker as the first block and fail.
+                        # A CachePoint means "cache everything before this point". This part has no
+                        # content yet, so everything before this point is the messages already built:
+                        # put the marker at the end of the last user message instead of raising.
                         # See https://github.com/pydantic/pydantic-ai/issues/7004.
                         self._attach_cache_point_to_last_user_message(prior_messages, self._get_cache_point(item.ttl))
                         continue
