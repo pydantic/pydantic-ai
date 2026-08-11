@@ -72,7 +72,6 @@ if TYPE_CHECKING:
         RealtimeSession,
         WebRTCAnswer,
     )
-    from pydantic_ai.tools import ToolDefinition
 
 
 T = TypeVar('T')
@@ -2082,10 +2081,12 @@ class _RealtimeSessionResolution(Generic[AgentDepsT]):
     model: RealtimeModel
     run_context: RunContext[AgentDepsT]
     tool_manager: ToolManager[AgentDepsT]
-    tool_defs: list[ToolDefinition]
     model_request_parameters: models.ModelRequestParameters
     model_settings: RealtimeModelSettings | None
     instructions: str | None
+    """Kept as its own field because `ModelRequestParameters` carries no instructions (they live on the
+    request `ModelRequest`); the advertised tools, by contrast, are read straight off
+    `model_request_parameters.function_tools`."""
     request_messages: list[_messages.ModelMessage]
     model_profile: RealtimeModelProfile
     instrumentation_settings: InstrumentationSettings | None
@@ -2177,7 +2178,7 @@ class AgentRealtime(Generic[AgentDepsT]):
             return await resolved.model.answer_webrtc_offer(
                 sdp_offer,
                 instructions=resolved.instructions,
-                tools=resolved.tool_defs,
+                tools=resolved.model_request_parameters.function_tools,
                 model_settings=resolved.model_settings,
             )
 
@@ -2219,7 +2220,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         ) as resolved:
             return await resolved.model.create_client_secret(
                 instructions=resolved.instructions,
-                tools=resolved.tool_defs,
+                tools=resolved.model_request_parameters.function_tools,
                 model_settings=resolved.model_settings,
                 expires_after_seconds=expires_after_seconds,
             )

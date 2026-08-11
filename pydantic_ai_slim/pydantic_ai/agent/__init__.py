@@ -3379,7 +3379,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                             model=model,
                             run_context=run_context,
                             tool_manager=ToolManager(FunctionToolset()),
-                            tool_defs=[],
                             model_request_parameters=models.ModelRequestParameters(),
                             model_settings=effective_model_settings,
                             instructions=None,
@@ -3484,9 +3483,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 model=model,
                 run_context=run_context,
                 tool_manager=tool_manager,
-                # The tools a session actually advertises, so signaling bakes the same list into the
-                # provider session that a sideband attaching later would push over the control channel.
-                tool_defs=model_request_parameters.function_tools,
                 model_request_parameters=model_request_parameters,
                 model_settings=effective_model_settings,
                 instructions=resolved_instructions or None,
@@ -3518,7 +3514,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model=model,
             run_context=run_context,
             tool_manager=ToolManager(FunctionToolset()),
-            tool_defs=[],
             model_request_parameters=models.ModelRequestParameters(),
             model_settings=effective_model_settings,
             instructions=None,
