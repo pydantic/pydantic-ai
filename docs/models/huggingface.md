@@ -99,5 +99,5 @@ agent = Agent(model)
 
 ## Streaming cancellation
 
-!!! warning "Transport cancellation"
+!!! note "Transport cancellation"
     [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] safely interrupts an active local stream pull, including one running in another task. `huggingface_hub.AsyncInferenceClient` keeps the HTTP response in a client-owned exit stack and exposes no documented per-stream transport handle, so closing the returned iterator does not guarantee immediate HTTP teardown or when remote generation and billing stop. See [huggingface/huggingface_hub#4224](https://github.com/huggingface/huggingface_hub/issues/4224).
