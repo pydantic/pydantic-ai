@@ -55,6 +55,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `zai` - installs the [Z.AI](models/zai.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
 * `snowflake` - installs the [Snowflake Cortex](models/snowflake.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
 * `crusoe` - installs the [Crusoe](models/crusoe.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
+* `cerebras` - installs the [Cerebras](models/cerebras.md) dependency `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
 * `huggingface` - installs [Hugging Face Model](models/huggingface.md) dependency `huggingface-hub` [PyPI ↗](https://pypi.org/project/huggingface-hub){:target="_blank"}
 * `sentence-transformers` - installs [Sentence Transformers Embedding Model](embeddings.md#sentence-transformers-local) dependency `sentence-transformers` [PyPI ↗](https://pypi.org/project/sentence-transformers){:target="_blank"}
 * `voyageai` - installs [VoyageAI Embedding Model](embeddings.md#voyageai) dependency `voyageai` [PyPI ↗](https://pypi.org/project/voyageai){:target="_blank"}
