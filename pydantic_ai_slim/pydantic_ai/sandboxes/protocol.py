@@ -1,65 +1,23 @@
 """Structural backend protocols for execution environments attached to an agent run.
 
 A *sandbox* is an environment — a subprocess jail, a container, a microVM, a remote worker —
-that an agent run can execute commands in and read/write files of. Providers implement the small
-[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol defined here. It requires only
-command execution and working-directory reporting; each additional capability
-(filesystem, background processes, streaming, byte-range reads) is a separate optional `Supports*` protocol,
-so a provider implements exactly the parts its platform supports and no more. Tools and capabilities
-receive the facade through the read-only
-[`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] field.
+that an agent run can execute commands in and read/write files of. Backends implement the
+small [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol (command execution and
+working-directory reporting); each additional capability (filesystem, background processes,
+streaming) is a separate optional `Supports*` protocol, so a backend implements exactly the
+parts its platform supports. Tools and capabilities consume sandboxes through the read-only
+[`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox] facade; identity and lifecycle
+are covered in the [sandbox documentation](../sandbox.md).
 
-Sandbox identity, reconnection, and lifecycle are documented in the
-[`references.py` module][pydantic_ai.sandboxes.references] and the
-[sandbox documentation](../sandbox.md).
+Contracts every implementation must honor (the rest are on the relevant members):
 
-The protocol describes the minimum a backend must provide, not the most it may provide:
-implementations are expected to offer richer functionality (reconnection, snapshotting,
-streaming limits) on their concrete types, and code written against the protocol must rely
-only on what is documented here. Once released, no protocol in this module may ever gain a
-new member: conformance is structural, so an implementation stops conforming the moment a
-member it lacks is added, silently breaking every existing backend. New operations must
-arrive on concrete types or as new, separate optional protocols, such as
-[`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem] and
-[`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] — never by adding
-members to an existing protocol.
-
-Every public type in this module — including the plain data carriers
-[`SandboxResult`][pydantic_ai.sandboxes.SandboxResult],
-[`SandboxOutputChunk`][pydantic_ai.sandboxes.SandboxOutputChunk], and
-[`SandboxFileEntry`][pydantic_ai.sandboxes.SandboxFileEntry] — is a protocol rather than a
-concrete class for the same reason: a sandbox library's existing native types conform as-is,
-with no pydantic-ai dependency or adapter layer. The carriers declare their members as
-*read-only properties* deliberately: a bare annotated protocol member demands a settable
-attribute, which frozen dataclass fields and properties fail to satisfy — declared read-only,
-plain attributes, dataclass fields (frozen included), and properties all conform.
-
-Contracts every implementation must honor:
-
-- **Optional operations raise `NotImplementedError`.** Not every backend can kill a process or
-  bound retained output. Implementations that can't must raise the builtin
-  `NotImplementedError` (from the call itself, not lazily) naming an alternative, and callers
-  must treat it as "use the documented fallback" — `timeout=` instead of `kill()`, bounding
-  output in-command instead of `output_limit=`. Never fake success.
-- **`timeout=` is a kill guarantee.** When the deadline passes, the implementation must
-  terminate the command and raise an exception that derives from the builtin `TimeoutError`.
-  Cancelling the awaiting task is *not* required to kill the remote command — `timeout=` and
-  `kill()` are the only guaranteed-termination paths.
+- **One environment.** `run` executes against the same filesystem that `fs` exposes: a file
+  written through either is visible to the other. Consumers (including the
+  [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade) rely on this to serve file operations
+  through whichever of the two paths is cheaper.
 - **Results are honest.** `exit_code` is the real process exit code; a non-zero exit is a
   normal result, not an exception. Infrastructure failures raise; they are never disguised as
   fake exit codes or empty output.
-- **One environment.** `run` executes against the same filesystem that `fs` exposes: a file
-  written through either is visible to the other. A backend whose command execution and file
-  access observe different state does not conform. Consumers (including the
-  [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade) rely on this to serve file operations
-  through whichever of the two paths is cheaper.
-- **Command/shell mismatches raise `TypeError`.** A `str` command without `shell=True`, or an
-  argv sequence with it, must be rejected with a `TypeError` — never shell-interpreted or
-  joined by guesswork. Since `str` is itself a `Sequence[str]`, the type checker cannot catch
-  the mismatch; this runtime rejection is what keeps it from becoming an injection vector.
-- **The protocol is not a security boundary.** Isolation comes from the environment the
-  implementation provides; [`Sandbox.resolve`][pydantic_ai.sandboxes.Sandbox.resolve] is a textual
-  convenience that does not confine paths.
 """
 
 from __future__ import annotations as _annotations
@@ -68,6 +26,10 @@ from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
+# These protocols are frozen once released: conformance is structural, so adding a member
+# would silently break every existing backend. New operations go on concrete types or on new
+# optional `Supports*` protocols. Data carriers declare read-only properties so that plain
+# attributes, frozen dataclass fields, and properties all conform.
 __all__ = (
     'SandboxBackend',
     'SandboxCommand',
@@ -94,12 +56,9 @@ an argv sequence with `shell=True`: implementations must reject either mismatch 
 class SandboxResult(Protocol):
     """The result of a completed command execution.
 
-    A protocol rather than a concrete class so implementations return their native result
-    objects unwrapped: any object carrying these attributes conforms, and richer provider
-    fields survive for callers that know the concrete type. "Native" here means the sandbox
-    library's own result type, not a raw provider SDK result: no provider bounds output
-    server-side, so `output_limit=` and the `*_dropped` counts can only be implemented in the
-    library layer, and raw SDK results conform only once that layer adds them.
+    A protocol rather than a concrete class: implementations return their native result
+    objects unwrapped, and richer provider fields survive for callers that know the concrete
+    type.
     """
 
     @property
@@ -176,11 +135,7 @@ class SandboxFileEntry(Protocol):
 
 @dataclass(frozen=True, kw_only=True)
 class FileEntry:
-    """The framework's own concrete `SandboxFileEntry` carrier, deliberately unexported.
-
-    Returned by the built-in filesystems (`LocalSandbox` and the `Sandbox` facade's shell
-    fallback); third-party backends return their own native entry types instead.
-    """
+    """Concrete `SandboxFileEntry` carrier used by the built-in filesystems."""
 
     name: str
     path: str
@@ -222,8 +177,7 @@ class SupportsStream(Protocol):
     """Optional live-output support for a sandbox process.
 
     Checked via `isinstance` against the process returned by
-    [`Sandbox.start`][pydantic_ai.sandboxes.Sandbox.start]. The runtime check is shallow, so
-    implementations must match this contract exactly and pin conformance statically.
+    [`Sandbox.start`][pydantic_ai.sandboxes.Sandbox.start].
     """
 
     def stream(self) -> AsyncIterator[SandboxOutputChunk]:
@@ -275,8 +229,7 @@ class SupportsFilesystem(Protocol):
 
     Checked via `isinstance` by the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade;
     [`Sandbox.fs`][pydantic_ai.sandboxes.Sandbox.fs] raises `NotImplementedError` when the
-    backend does not implement this. The runtime check is shallow, so implementations must
-    match this contract exactly and pin conformance statically.
+    backend does not implement this.
     """
 
     @property
@@ -289,9 +242,7 @@ class SupportsFilesystem(Protocol):
 class SupportsStart(Protocol):
     """Optional native background-process support for a sandbox backend.
 
-    Checked via `isinstance` by the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade. The runtime
-    check is shallow, so implementations must match this contract exactly and pin conformance
-    statically.
+    Checked via `isinstance` by the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade.
     """
 
     async def start(
@@ -337,11 +288,6 @@ class SandboxBackend(Protocol):
         Together with `sandbox_id`, this is the identity consumed by a
         [`SandboxProvider`][pydantic_ai.sandboxes.SandboxProvider]. Credentials and other
         worker-side configuration stay on the provider rather than in the identity.
-
-        The name is `provider` — not `provider_name` — by contract: conformance is
-        structural, and sandbox libraries already expose `provider` on their native types, so
-        the member name is shared with those libraries, and together with `sandbox_id` it
-        identifies the sandbox. Renaming it would silently break every existing implementation.
         """
         ...
 

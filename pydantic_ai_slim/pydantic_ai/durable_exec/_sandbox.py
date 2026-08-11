@@ -24,19 +24,10 @@ class SandboxProvidersCapability(AbstractCapability[Any]):
 def sandbox_suppliers(capability: AbstractCapability[Any]) -> list[AbstractCapability[Any]]:
     """The capabilities in the tree that override `get_sandbox`, in resolved-chain order.
 
-    `WrapperCapability.get_sandbox` is a pure forwarder and
-    `BaseDurabilityCapability.get_sandbox` only routes or suppresses the framework default
-    inside a durable context; neither is a user sandbox contribution. `apply()` visits a
-    wrapper's leaves only when it wraps a container, so a contributor behind a wrapper over a
-    single leaf is found by recursing explicitly; the identity set keeps the other case from
-    counting a leaf twice. A durability subclass that overrides `get_sandbox` itself is still
-    treated as a contributor.
-
-    The result is a chain-ordered list rather than a set because the *last* supplier is the one
-    that wins sandbox resolution.
-
-    The check is static, so a contributor only produced at run time by a dynamic capability
-    function is not visible here.
+    Ordered because the *last* supplier is the one that wins sandbox resolution. Wrapper
+    forwarding and the durability capability's own routing don't count as contributions. The
+    check is static: a contributor produced at run time by a dynamic capability function is
+    not visible here.
     """
     # Import lazily so loading this lightweight workflow guard does not pull the durability
     # capability's model/toolset import graph into Temporal workflow sandbox validation.

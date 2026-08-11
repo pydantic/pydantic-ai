@@ -1,10 +1,10 @@
 # Sandboxes
 
-Every run exposes a concrete [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade at
+Every run exposes a concrete `Sandbox` facade at
 `ctx.sandbox`. On POSIX, the default is a fresh per-run
-[`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] whose lazy temporary directory is removed
+`LocalSandbox` whose lazy temporary directory is removed
 when the run ends. Elsewhere, the default is
-[`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox], whose operations raise
+`UnavailableSandbox`, whose operations raise
 `UserError` with platform guidance.
 
 `LocalSandbox` executes host subprocesses and isolates nothing. Use it only for trusted
@@ -34,14 +34,9 @@ async def read_file(ctx: RunContext[None], path: str, offset: int = 1, limit: in
     return window.text + suffix
 ```
 
-[`Sandbox.read_file`][pydantic_ai.sandboxes.Sandbox.read_file] slices bounded windows with
-`sed` inside the sandbox (backends guarantee `run` and `fs` see the same files);
-otherwise it reads the full bytes and slices. [`Sandbox.fs`][pydantic_ai.sandboxes.Sandbox.fs]
-requires the backend to implement [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem]
-and [`Sandbox.start`][pydantic_ai.sandboxes.Sandbox.start] requires
-[`SupportsStart`][pydantic_ai.sandboxes.SupportsStart] — both raise `NotImplementedError` when
-the backend omits them. Keep approval, command restrictions, output limits, and path policy in
-the tool layer.
+`Sandbox.fs` requires the backend to implement `SupportsFilesystem` and `Sandbox.start`
+requires `SupportsStart` — both raise `NotImplementedError` when the backend omits them. Keep
+approval, command restrictions, output limits, and path policy in the tool layer.
 
 ## Resolution and lifecycle
 
@@ -82,7 +77,7 @@ Two ways to use it:
 - `ManagedSandbox(provider)` as a capability: the run creates a sandbox at start and destroys
   it at end, including on failure. No reference is ever handled by hand. Supported under
   `TemporalDurability` (both halves run as activities); DBOS and Prefect reject it.
-- `SandboxRef(provider, sandbox_id)` passed as `sandbox=` for a sandbox that outlives the run,
+- `SandboxRef(provider=..., sandbox_id=...)` passed as `sandbox=` for a sandbox that outlives the run,
   with the provider registered via `TemporalDurability(sandbox_providers=[...])`,
   `DBOSDurability(sandbox_providers=[...])`, or `PrefectDurability(sandbox_providers=[...])`.
 

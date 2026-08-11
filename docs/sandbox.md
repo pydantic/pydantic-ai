@@ -43,7 +43,9 @@ async def main() -> None:
 
 The framework attaches the environment; it deliberately ships no model-facing command or file
 tools. Applications decide which operations to expose and where to enforce approval, command,
-path, timeout, and output policies.
+path, timeout, and output policies. Keep policy (allow/deny lists, path rules, output budgets)
+in the tool layer and isolation in the sandbox. Denylists over free-form shell strings are
+security theater — if commands must be constrained, use argv form and validate arguments.
 
 ## Reading files
 
@@ -64,13 +66,8 @@ async def read_source(ctx: RunContext[None]) -> str:
     return window.text  # the same lines joined with "\n"
 ```
 
-Relative paths resolve against the backend's working directory. For a bounded window the facade
-slices with `sed` inside the sandbox so only the requested lines cross the wire — backends
-guarantee `run` and `fs` see the same files (see the
-[protocol contracts][pydantic_ai.sandboxes]). If the environment cannot slice (no usable `sed`,
-a non-POSIX shell), the facade reads the full bytes and slices itself. `total_lines` may be
-`None` on the sliced path when the window provably didn't reach EOF. For strict
-text decoding and writing, use
+Relative paths resolve against the backend's working directory. `total_lines` may be `None`
+when the read was served without reaching EOF. For strict text decoding and writing, use
 [`Sandbox.read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] and
 [`Sandbox.write_text()`][pydantic_ai.sandboxes.Sandbox.write_text].
 
@@ -89,15 +86,9 @@ capability contribution.
 ```python
 from my_sandboxes import make_docker_sandbox
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent
 
 agent = Agent('anthropic:claude-sonnet-5')
-
-
-@agent.tool
-async def execute(ctx: RunContext[None], command: str) -> str:
-    result = await ctx.sandbox.run(command, shell=True, timeout=60)
-    return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
 
 
 async def main() -> None:
@@ -216,12 +207,10 @@ Three protocol contracts matter to callers:
     [`resolve()`][pydantic_ai.sandboxes.Sandbox.resolve] only normalizes text: `..` can escape the
     base directory and symlinks are not inspected. Enforce confinement in the sandbox itself.
 
-[`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] is also the reference implementation. It is
-one page over `asyncio.subprocess` and `pathlib`, including process-group termination for the
-`timeout=` guarantee, environment overlays, command/shell validation, and clear
-`NotImplementedError`s for unsupported operations. Direct `LocalSandbox()` construction raises `NotImplementedError` on non-POSIX
-platforms. This is distinct from the run default, which attaches `UnavailableSandbox` there.
-Structural conformance needs no registration:
+[`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] is also the reference implementation: one
+page over `asyncio.subprocess` and `pathlib`. Direct `LocalSandbox()` construction raises
+`NotImplementedError` on non-POSIX platforms — distinct from the run default, which attaches
+`UnavailableSandbox` there. Structural conformance needs no registration:
 
 ```python
 from my_sandboxes import DockerSandbox
@@ -230,28 +219,6 @@ from pydantic_ai.sandboxes import SandboxBackend
 
 sandbox: SandboxBackend = DockerSandbox(image='python:3.13')
 ```
-
-## Building tools on the sandbox
-
-A tool reads `ctx.sandbox` directly:
-
-```python
-from pydantic_ai import Agent, RunContext
-
-agent = Agent('anthropic:claude-sonnet-5')
-
-
-@agent.tool
-async def execute(ctx: RunContext[None], command: str, timeout: float = 30.0) -> str:
-    """Run a shell command in the workspace."""
-    result = await ctx.sandbox.run(command, shell=True, timeout=min(timeout, 120.0))
-    output = result.stdout + (f'\n[stderr]\n{result.stderr}' if result.stderr else '')
-    return output if result.exit_code == 0 else f'[exit code: {result.exit_code}]\n{output}'
-```
-
-Keep policy (allow/deny lists, path rules, output budgets) in the tool layer; keep isolation in
-the sandbox. Denylists over free-form shell strings are security theater — if commands must be
-constrained, use argv form and validate arguments.
 
 ## Durable execution
 

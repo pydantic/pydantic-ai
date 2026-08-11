@@ -23,45 +23,15 @@ class ManagedSandbox(AbstractCapability[Any]):
 
     The run owns the lifecycle: the sandbox is created before any hook sees
     [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox] and destroyed after the last one,
-    including when the run fails. Users never handle a
-    [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]; pass one to the run instead when a sandbox
-    has to outlive a single run.
+    even when the run fails. When a sandbox has to outlive a single run, pass a
+    [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] to the run instead.
 
     The provider is also published through
     [`get_sandbox_providers`][pydantic_ai.capabilities.AbstractCapability.get_sandbox_providers],
-    so durable engines that carry the sandbox's identity across their I/O boundary can re-open it
-    without a second registration.
+    so durable engines can re-open the sandbox on a worker without a second registration.
 
-    ```python {title="managed_sandbox.py" test="skip"}
-    from my_sandboxes import SandboxClient
-
-    from pydantic_ai import Agent
-    from pydantic_ai.sandboxes import ManagedSandbox, SandboxBackend, SandboxProvider
-
-
-    class MySandboxProvider(SandboxProvider):
-        def __init__(self, client: SandboxClient):
-            self.client = client
-
-        @property
-        def provider(self) -> str:
-            return 'my-sandbox'
-
-        async def connect(self, sandbox_id: str) -> SandboxBackend:
-            return await self.client.connect(sandbox_id)
-
-        async def create(self) -> SandboxBackend:
-            return await self.client.create()
-
-        async def teardown(self, sandbox_id: str) -> None:
-            await self.client.destroy(sandbox_id)
-
-
-    agent = Agent(
-        'anthropic:claude-sonnet-5',
-        capabilities=[ManagedSandbox(MySandboxProvider(SandboxClient.from_environment()))],
-    )
-    ```
+    See [a sandbox per run](../sandbox.md#a-sandbox-per-run) for a full example, including
+    a custom [`SandboxProvider`][pydantic_ai.sandboxes.SandboxProvider] implementation.
     """
 
     sandbox_provider: SandboxProvider
@@ -69,15 +39,11 @@ class ManagedSandbox(AbstractCapability[Any]):
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
-        # Not spec-loadable: a provider holds live clients and worker-side credentials.
+        # Providers hold live clients and credentials, so this capability can't be loaded from a spec.
         return None
 
     async def _create_backend(self) -> SandboxBackend:
-        """Provision the run's sandbox, explaining a provider that cannot.
-
-        Shared with the durable integrations, which run creation inside a durable unit rather
-        than through `get_sandbox`, so both paths fail the same way.
-        """
+        """Provision the run's sandbox. Also called by the durable integrations, so both paths fail with the same error."""
         try:
             return await self.sandbox_provider.create()
         except NotImplementedError as error:
@@ -91,8 +57,8 @@ class ManagedSandbox(AbstractCapability[Any]):
         @asynccontextmanager
         async def managed_sandbox() -> AsyncGenerator[SandboxBackend]:
             backend = await self._create_backend()
-            # Always torn down, including when the run fails: the default `teardown()` is a no-op,
-            # so a provider that relies on its platform's idle timeout pays nothing for this.
+            # Tear down even when the run fails. The default `teardown()` is a no-op, so
+            # providers that rely on their platform's idle timeout pay nothing for this.
             try:
                 yield backend
             finally:

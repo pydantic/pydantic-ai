@@ -1,19 +1,7 @@
 """The default local implementation of the [sandbox backend protocol][pydantic_ai.sandboxes.SandboxBackend].
 
-[`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] runs commands as plain host
-subprocesses and touches the real filesystem through `pathlib` — it **isolates nothing**.
-It exists so the sandbox concept works out of the box for trusted workloads, tests, and
-development. A fresh instance is attached to every agent run by default on POSIX platforms,
-and the class doubles as the reference for implementing the protocol: the whole thing is one
-page over `asyncio.subprocess`.
-
-See the [sandbox documentation](../sandbox.md) for agent integration examples.
-
-It does not implement the optional `start()` protocol (use `run(timeout=...)` to bound
-commands), and `output_limit=` raises `NotImplementedError` (bound output in-command, e.g.
-`| tail -c 10000`). POSIX only — construction raises `NotImplementedError` elsewhere rather
-than shipping a broken kill guarantee. `timeout=` honors the protocol's contract: the whole
-process group is killed at the deadline and a `TimeoutError` subclass is raised.
+[`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] runs commands as plain host subprocesses —
+it **isolates nothing** — and doubles as the reference implementation of the protocol.
 """
 
 from __future__ import annotations as _annotations
@@ -109,17 +97,21 @@ class _LocalFilesystem:
 class LocalSandbox:
     """[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] over host subprocesses and the host filesystem.
 
-    Isolates nothing.
+    Isolates nothing: it exists so the sandbox concept works out of the box for trusted
+    workloads, tests, and development. A fresh instance is attached to every agent run by
+    default on POSIX platforms; construction raises `NotImplementedError` elsewhere, where
+    the timeout contract (kill the whole process group at the deadline) can't be honored.
+    `start()` is not implemented (use `run(timeout=...)` to bound commands) and neither is
+    `output_limit=` (bound output in-command, e.g. `| tail -c 10000`).
 
-    Implements the protocol *structurally* — deliberately no base class, like any
-    third-party implementation. Conformance is pinned by the type-checked assignment at
-    the bottom of this module.
+    Deliberately no base class: it conforms to the protocol structurally, like any
+    third-party backend would.
 
     Args:
-        root: The working directory commands run in and facade-relative paths resolve against.
-            Defaults to a fresh temporary directory (created on first use), which is
-            removed again when the sandbox is used as an async context manager. A
-            caller-supplied `root` is never removed.
+        root: The working directory commands run in and relative paths resolve against.
+            Defaults to a fresh temporary directory, created on first use and removed again
+            when the sandbox is used as an async context manager. A caller-supplied `root`
+            is never removed.
     """
 
     provider = 'local'
@@ -207,12 +199,10 @@ class LocalSandbox:
                 start_new_session=True,
             )
 
-        # The child is forked before the spawn coroutine's own awaits finish, so a cancellation
-        # delivered mid-spawn would leak the process group: asyncio's transport cleanup kills
-        # only the direct child, and a shell that backgrounded children may already have
-        # exited. Shield the spawn so the group can be killed once the handle exists. The
-        # wrapper returns a spawn failure instead of raising it: Python 3.14's `shield`
-        # reports an abandoned inner future's exception to the loop's exception handler.
+        # If we're cancelled mid-spawn, the child may already be forked with nobody holding a
+        # handle to kill its process group. Shield the spawn so we always get the handle back,
+        # and return spawn failures instead of raising them: on Python 3.14, `shield` reports
+        # an abandoned future's exception to the event loop's exception handler.
         async def guarded_spawn() -> asyncio.subprocess.Process | Exception:
             try:
                 return await spawn_coroutine
@@ -236,11 +226,9 @@ class LocalSandbox:
             # The contract: a timeout kills the command and raises a TimeoutError subclass.
             raise TimeoutError(f'command timed out after {timeout} seconds and was killed') from error
         finally:
-            # One teardown covers every exit path — timeout, cancellation of the awaiting
-            # task, any other failure. `returncode` is not enough to tell whether the process
-            # group is gone: a shell can exit while a background child keeps the stdout/stderr
-            # pipes (and therefore `communicate()`) open. Kill the group whenever communication
-            # did not finish, then reap the direct child even if signalling failed.
+            # Kill the group on every path where `communicate()` didn't finish — timeout,
+            # cancellation, any other failure. `returncode` alone can't tell us the group is
+            # gone: a shell can exit while a background child keeps the pipes open.
             if not communicated:
                 try:
                     self._kill(process)
@@ -257,7 +245,6 @@ class LocalSandbox:
     def _kill_abandoned_spawn(spawn: asyncio.Task[asyncio.subprocess.Process | Exception]) -> None:
         # The run that awaited this spawn was cancelled: nobody is left to receive a spawn
         # failure, and the loop's child watcher still reaps the direct child after the kill.
-        # Cancellation of the spawn task itself happens only at loop shutdown.
         if spawn.cancelled():  # pragma: no cover
             return
         outcome = spawn.result()
@@ -275,11 +262,10 @@ class LocalSandbox:
 
     @staticmethod
     def _kill(process: asyncio.subprocess.Process) -> None:
-        # `start_new_session=True` made the child the leader of a fresh group we own, and
-        # until the child is reaped its pgid cannot be reused — so "already exited" is the
-        # only benign failure here. If a hardened host denies `killpg`, kill the direct child
-        # as a best-effort fallback but still propagate the error: grandchildren may remain,
-        # so the caller must not be told that the whole-group guarantee was satisfied.
+        # The child leads its own process group (`start_new_session=True`), so "already
+        # exited" is the only benign failure. If a hardened host denies `killpg`, kill the
+        # direct child as a fallback but still raise: grandchildren may survive, and the
+        # caller must not believe the whole group was killed.
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -292,8 +278,6 @@ class LocalSandbox:
 
 
 if TYPE_CHECKING:
-    # LocalSandbox satisfies the SandboxBackend protocol structurally; this assignment makes the
-    # type checker verify full conformance — signatures included — which a
-    # `@runtime_checkable` isinstance check cannot.
+    # Pins full structural conformance — signatures included — which `isinstance` cannot check.
     _conforms: SandboxBackend = LocalSandbox()
     _filesystem_backend_conforms: SupportsFilesystem = LocalSandbox()

@@ -866,16 +866,7 @@ async def model_logic(  # noqa: C901
                 ]
             )
         elif m.content == 'Profile the script and fix the hot spot.':
-            assert any(t.name == 'execute' for t in info.function_tools)
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name='execute',
-                        args={'command': 'python -m cProfile app.py'},
-                        tool_call_id='pyd_ai_tool_call_id',
-                    )
-                ]
-            )
+            return ModelResponse(parts=[TextPart('Optimized the hot loop; the profile is clean now.')])
         elif m.content == 'Calculate the factorial of 15.':
             return ModelResponse(
                 parts=[
@@ -929,8 +920,6 @@ async def model_logic(  # noqa: C901
         assert isinstance(m.content, str) and not m.content.startswith('[exit '), m.content
         if 'Write fizzbuzz to fizzbuzz.py and run it.' in prompts:
             return ModelResponse(parts=[TextPart('fizzbuzz.py is written and runs clean.')])
-        if 'Profile the script and fix the hot spot.' in prompts:
-            return ModelResponse(parts=[TextPart('Optimized the hot loop; the profile is clean now.')])
     if (
         isinstance(m, RetryPromptPart)
         and isinstance(m.content, str)

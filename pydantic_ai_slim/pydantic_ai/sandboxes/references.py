@@ -27,18 +27,10 @@ class SandboxRef:
 class SandboxProvider(ABC):
     """Creates, reconnects to, and optionally destroys sandboxes for one provider.
 
-    Unlike the [backend and result protocols][pydantic_ai.sandboxes.SandboxBackend], this is an
-    ordinary abstract base class rather than a structural protocol. Structural typing is reserved
-    for objects a third-party sandbox library already has — its live environment handle, its
-    result and file-entry types — so they conform without depending on Pydantic AI. Provider glue
-    is the opposite: it is written *against* Pydantic AI, so inheriting costs nothing and buys
-    optional methods with real default behavior.
-
     [`connect`][pydantic_ai.sandboxes.SandboxProvider.connect] is the one required operation;
     [`create`][pydantic_ai.sandboxes.SandboxProvider.create] and
-    [`teardown`][pydantic_ai.sandboxes.SandboxProvider.teardown] follow the module's
-    "optional operations raise `NotImplementedError`" contract, so a provider implements exactly
-    the lifecycle its platform supports.
+    [`teardown`][pydantic_ai.sandboxes.SandboxProvider.teardown] have default implementations,
+    so a provider implements exactly the lifecycle its platform supports.
 
     Pass a provider to [`ManagedSandbox`][pydantic_ai.sandboxes.ManagedSandbox] to let a run own a
     sandbox's whole lifecycle, and/or register it on a durability capability so a
@@ -65,13 +57,9 @@ class SandboxProvider(ABC):
     async def create(self) -> SandboxBackend:
         """Provision a fresh sandbox and return a live backend for it.
 
-        The framework derives the new sandbox's identity from the backend's required
-        `provider`/`sandbox_id` members, so there is nothing to return alongside it.
-
-        Providers that cannot provision — because the environment is created out of band, by
-        an operator or another service — leave this unimplemented; the sandbox is then supplied
-        to the run directly, as a backend or as a
-        [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef].
+        Providers whose environments are created out of band — by an operator or another
+        service — leave this unimplemented; the sandbox is then supplied to the run directly,
+        as a backend or as a [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef].
         """
         raise NotImplementedError(
             f'Sandbox provider {self.provider!r} does not implement `create()`; pass an existing sandbox '
