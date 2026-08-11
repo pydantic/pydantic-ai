@@ -181,7 +181,13 @@ async def index() -> HTMLResponse:
 @app.post('/offer')
 async def offer(request: Request) -> JSONResponse:
     """Relay the browser's SDP offer to the provider, start the sideband, and return the SDP answer."""
-    sdp_offer = (await request.body()).decode('utf-8')
+    try:
+        sdp_offer = (await request.body()).decode('utf-8')
+    except UnicodeDecodeError:
+        # The SDP offer is untrusted signaling input; reject malformed bytes as a client error, not a 500.
+        raise HTTPException(
+            status_code=400, detail='Expected a UTF-8 SDP offer in the request body.'
+        ) from None
     if not sdp_offer.strip():
         raise HTTPException(
             status_code=400, detail='Expected an SDP offer in the request body.'
@@ -202,6 +208,13 @@ async def offer(request: Request) -> JSONResponse:
         raise HTTPException(
             status_code=504, detail='Timed out attaching the server-side session.'
         )
+    except asyncio.CancelledError:
+        # The client disconnected before receiving the answer, so it never got the `call_id` and can't
+        # call `/hangup`. Cancel the sideband and drop the call here to avoid leaking the provider
+        # connection and the background agent task.
+        call.task.cancel()
+        CALLS.pop(answer.session.call_id, None)
+        raise
     if call.attach_error is not None:
         raise HTTPException(
             status_code=502, detail='The server-side session failed to attach.'

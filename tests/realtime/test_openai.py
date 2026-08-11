@@ -3322,6 +3322,30 @@ async def test_sideband_cancel_clears_playback_once() -> None:
 
 
 @pytest.mark.anyio
+async def test_sideband_suppresses_playback_start_for_cancelled_response() -> None:
+    """A barge-in cancels a response whose `output_audio_buffer.started` is still in flight.
+
+    Accepting that start boundary would mark playback active and report the model as speaking for a
+    response the user already interrupted, so it is dropped like any other cancelled straggler. Its
+    matching stop boundary is still processed (it is never a straggler) so no playback state lingers.
+    """
+    ws = FakeWebSocket(
+        [
+            _playback('output_audio_buffer.started', response_id='resp-1'),
+            _playback('output_audio_buffer.stopped', response_id='resp-1'),
+        ]
+    )
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._active_response_id = 'resp-1'  # pyright: ignore[reportPrivateUsage]
+    await conn.send(CancelResponse())  # cancels resp-1 and suppresses its stragglers
+
+    # No `RealtimeOutputSpeechStartEvent` (and thus no paired end event): the start was suppressed.
+    assert await collect_codec_events(conn, sideband=True) == []
+    assert conn._output_audio_playing is False  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
 async def test_websocket_connection_ignores_provider_playback_boundaries() -> None:
     ws = FakeWebSocket([_playback('output_audio_buffer.started'), _playback('output_audio_buffer.stopped')])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]

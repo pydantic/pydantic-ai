@@ -102,7 +102,12 @@ Generation can finish before buffered media stops playing. Use
 [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent] for speaking
 indicators. [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] also clears the
 provider's outbound WebRTC audio buffer so barge-in stops playback. A clean sideband close means the
-browser hung up and ends iteration without a session error or reconnect attempt.
+browser hung up and ends iteration without a session error or reconnect attempt, even when a
+`reconnect` policy is set: the sideband is a control channel, so a normal close is the call ending.
+The close frame alone can't distinguish that from a WebSocket-terminating proxy closing the sideband
+cleanly mid-call (a restart or graceful rotation), which would also end the agent side while the
+browser keeps talking to the provider — drain such connections at the infrastructure layer rather
+than relying on the `reconnect` policy to cover them.
 
 The [realtime WebRTC example](../examples/realtime-webrtc.md) demonstrates the full FastAPI and
 browser flow. Gemini Live and xAI do not provide this sideband transport.

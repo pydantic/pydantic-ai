@@ -61,9 +61,15 @@ def _raise_for_status(response: httpx.Response, provider_name: str) -> None:
     unexpected model output, so they go through the standard HTTP exception hierarchy — callers can catch
     `ModelHTTPError`, read `status_code`, and apply their own retry policy — with the response body preserved.
     """
-    if response.is_error:
+    if not response.is_success:
+        # `not is_success` (not `is_error`) so a 3xx redirect is rejected too: the signaling flow reads
+        # a `call_id` from the `Location` header, and a redirect's `Location` would otherwise be mistaken
+        # for a created call. `headers` is forwarded so a 429's `Retry-After` reaches `retry_after`.
         raise ModelHTTPError(
-            status_code=response.status_code, model_name=provider_name, body=response.text.strip() or None
+            status_code=response.status_code,
+            model_name=provider_name,
+            body=response.text.strip() or None,
+            headers=response.headers,
         )
 
 
@@ -93,9 +99,15 @@ async def mint_client_secret(
             raise UnexpectedModelBehavior('Realtime client-secret response did not include a `value`.') from e
         raise UnexpectedModelBehavior('Realtime client-secret response did not include a numeric `expires_at`.') from e
     provider_details = data.model_dump(exclude={'value'})
+    try:
+        expires_at = datetime.fromtimestamp(data.expires_at, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError) as e:
+        # A numeric-but-unrepresentable `expires_at` (e.g. `10**100`) passes validation but overflows the
+        # platform's timestamp range; surface it as unexpected output rather than a raw OverflowError/OSError.
+        raise UnexpectedModelBehavior('Realtime client-secret response `expires_at` is out of range.') from e
     return RealtimeClientSecret(
         value=data.value,
-        expires_at=datetime.fromtimestamp(data.expires_at, tz=timezone.utc),
+        expires_at=expires_at,
         provider_details=provider_details or None,
     )
 

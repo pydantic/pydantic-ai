@@ -625,6 +625,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         data = loads_obj(raw)
         event_type = data.get('type')
         if event_type == _OUTPUT_SPEECH_START_FRAME:
+            if self._is_cancelled_straggler(event_type, data):
+                # A start boundary for a response cancelled on barge-in: don't mark playback active or
+                # report the model as speaking. Its matching stop/cleared boundary is still processed
+                # below (it is never a straggler) so any playback state is cleaned up.
+                return []
             self._output_audio_playing = True
             return [] if self._observes_output_audio else [RealtimeOutputSpeechStartEvent()]
         if event_type in _OUTPUT_SPEECH_END_FRAMES:

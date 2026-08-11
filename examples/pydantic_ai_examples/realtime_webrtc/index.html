@@ -90,12 +90,21 @@
 
       async function stop() {
         stopBtn.disabled = true;
-        if (callId) { await fetch('/hangup/' + callId, { method: 'POST' }); callId = null; }
-        if (pc) { pc.close(); pc = null; }
-        if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
-        audioEl.srcObject = null;
-        statusEl.textContent = 'Idle';
-        startBtn.disabled = false;
+        const hangupId = callId;
+        callId = null;
+        try {
+          // Server hangup is best effort: if the backend is unreachable, local cleanup must still run
+          // so the WebRTC connection closes and the microphone is released.
+          if (hangupId) await fetch('/hangup/' + hangupId, { method: 'POST' });
+        } catch (e) {
+          // Ignore: the finally block releases local resources regardless.
+        } finally {
+          if (pc) { pc.close(); pc = null; }
+          if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+          audioEl.srcObject = null;
+          statusEl.textContent = 'Idle';
+          startBtn.disabled = false;
+        }
       }
 
       startBtn.onclick = () => start().catch((e) => { statusEl.textContent = 'Failed: ' + e; stop(); });

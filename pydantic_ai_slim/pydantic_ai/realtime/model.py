@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 from abc import abstractmethod
 from collections.abc import Sequence
 from contextlib import AbstractAsyncContextManager
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol
 
@@ -63,8 +63,11 @@ class RealtimeClientSecret:
     (instructions, tools, voice, VAD) and expires quickly (OpenAI: about a minute).
     """
 
-    value: str
-    """The ephemeral secret to hand to the browser client."""
+    value: str = field(repr=False)
+    """The ephemeral secret to hand to the browser client.
+
+    Kept out of the `repr` so logging or inspecting the object doesn't leak the live token into logs.
+    """
     _: KW_ONLY
     expires_at: datetime
     """When the secret expires (timezone-aware UTC)."""

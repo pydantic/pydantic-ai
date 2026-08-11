@@ -365,6 +365,35 @@ async def test_create_client_secret_http_error() -> None:
     assert exc_info.value.body == 'invalid api key'
 
 
+async def test_create_client_secret_out_of_range_expires_at() -> None:
+    # A numeric-but-unrepresentable `expires_at` passes validation but overflows the platform's
+    # timestamp range, so it's surfaced as unexpected output rather than a raw OverflowError/OSError.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={'value': 'ek_x', 'expires_at': 10**100})
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
+    with pytest.raises(UnexpectedModelBehavior, match='out of range'):
+        await model.create_client_secret()
+
+
+async def test_signaling_http_error_preserves_retry_after() -> None:
+    # A 429 with a `Retry-After` header must carry the header through so callers can honor the delay.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, text='slow down', headers={'Retry-After': '30'})
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.create_client_secret()
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.retry_after == 30.0
+
+
+def test_client_secret_value_absent_from_repr() -> None:
+    # The live ephemeral token must not leak into logs via the dataclass repr.
+    secret = RealtimeClientSecret(value='ek_live_secret', expires_at=datetime.now(timezone.utc))
+    assert 'ek_live_secret' not in repr(secret)
+
+
 # --- WebRTC offer relay -----------------------------------------------------------------------------
 
 
@@ -418,6 +447,18 @@ async def test_answer_webrtc_offer_http_error() -> None:
         await model.answer_webrtc_offer(SAMPLE_SDP_OFFER)
     assert exc_info.value.status_code == 400
     assert exc_info.value.body == 'bad sdp'
+
+
+async def test_answer_webrtc_offer_rejects_redirect() -> None:
+    # A 3xx redirect is not a created call. Rejecting all non-2xx (not just 4xx/5xx) stops the redirect's
+    # `Location` from being mistaken for a `call_id` and returned as a bogus answer.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={'location': '/v1/realtime/calls/rtc_redirect'})
+
+    model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    assert exc_info.value.status_code == 302
 
 
 # --- Azure Microsoft Entra ID + endpoints -----------------------------------------------------------
