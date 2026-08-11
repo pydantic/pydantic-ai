@@ -46,12 +46,7 @@ with try_import() as imports_successful:
         SSETransport,
         StreamableHttpTransport,
     )
-    from fastmcp.exceptions import ToolError
-
-    if TYPE_CHECKING:
-        from mcp.shared.exceptions import McpError
-    else:
-        from fastmcp.exceptions import McpError
+    from fastmcp.exceptions import McpError, ToolError
     from fastmcp.prompts import Message
     from fastmcp.server import Context, FastMCP
 
