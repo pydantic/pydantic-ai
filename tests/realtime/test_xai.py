@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RealtimeSessionErrorEvent,
     SpeechPart,
     TextPart,
     UserPromptPart,
@@ -35,9 +36,10 @@ from pydantic_ai.realtime import (
     RealtimeSessionReconnectEvent,
     TurnDetection,
 )
-from pydantic_ai.realtime._base import ConversationCreated, ConversationItemCreated, RealtimeSessionErrorEvent
 from pydantic_ai.realtime.codec import (
     AudioDelta,
+    ConversationCreated,
+    ConversationItemCreated,
     InputTranscript,
     OutputTranscript,
     SessionUsageEvent,

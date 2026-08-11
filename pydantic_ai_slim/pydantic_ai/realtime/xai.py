@@ -54,25 +54,11 @@ except ImportError as _import_error:  # pragma: no cover
 
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
-from ..messages import ModelMessage
+from ..messages import ModelMessage, RealtimeSessionReconnectEvent
 from ..models import ModelRequestParameters
 from ..providers import infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._base import (
-    ConversationCreated,
-    ConversationItemCreated,
-    InputTranscript,
-    RealtimeCodecEvent,
-    RealtimeModel,
-    RealtimeModelProfileSpec,
-    RealtimeModelSettings,
-    RealtimeSessionReconnectEvent,
-    ReconnectPolicy,
-    ToolCall,
-    inject_trace_context,
-    resolve_advertised_tools,
-)
 from ._openai_protocol import (
     RealtimeHandshakeError,
     expect_event,
@@ -87,7 +73,19 @@ from ._openai_protocol import (
     tool_def_to_openai,
     turn_detection_config,
 )
+from .codec import (
+    ConversationCreated,
+    ConversationItemCreated,
+    InputTranscript,
+    RealtimeCodecEvent,
+    ToolCall,
+    inject_trace_context,
+    resolve_advertised_tools,
+)
+from .model import RealtimeModel
 from .openai import OpenAIRealtimeConnection, ServerVAD
+from .profiles import RealtimeModelProfileSpec
+from .settings import RealtimeModelSettings, ReconnectPolicy
 
 if TYPE_CHECKING:
     from ..providers.xai import XaiProvider

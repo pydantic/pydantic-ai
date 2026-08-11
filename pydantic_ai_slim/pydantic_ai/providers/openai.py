@@ -8,7 +8,7 @@ import httpx
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile, openai_realtime_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
 if TYPE_CHECKING:
@@ -58,26 +58,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
-        return {
-            'supports_image_input': True,
-            'supports_manual_turn_control': True,
-            'supports_interruption': True,
-            'supports_output_truncation': True,
-            'supports_session_seeding': True,
-            'supports_seeding_images': True,
-            'supports_seeding_audio': True,
-            # The realtime models keep talking while a tool call is outstanding — they're tuned to
-            # emit filler ("let me check that") rather than going silent — so there's no per-tool
-            # wire flag to set, unlike Gemini. The session already runs tools in the background and
-            # defers `response.create` while a response is active, so this is true end to end.
-            'supports_async_tool_calls': True,
-            'emits_input_speech_events': True,
-            'audio_input_sample_rate': 24000,
-            'audio_output_sample_rate': 24000,
-            # Reasoning effort is only accepted by the `gpt-realtime-2*` reasoning models; the GA
-            # `gpt-realtime` rejects it ("Unsupported option for this model").
-            'supports_thinking': model_name.startswith('gpt-realtime-2'),
-        }
+        return openai_realtime_model_profile(model_name)
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...

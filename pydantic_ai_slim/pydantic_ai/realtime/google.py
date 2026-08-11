@@ -57,6 +57,9 @@ from ..messages import (
     NativeToolReturnPart,
     PartEndEvent,
     PartStartEvent,
+    RealtimeResponseInterruptedEvent,
+    RealtimeSessionErrorEvent,
+    RealtimeSessionReconnectEvent,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -92,8 +95,7 @@ from ..providers.gateway import is_gateway_provider
 from ..settings import ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._base import (
-    DEFAULT_REALTIME_PROFILE,
+from .codec import (
     AudioDelta,
     AudioInput,
     ImageInput,
@@ -101,29 +103,22 @@ from ._base import (
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
-    RealtimeError,
     RealtimeInput,
-    RealtimeModel,
-    RealtimeModelProfile,
-    RealtimeModelProfileSpec,
-    RealtimeModelSettings,
-    RealtimeResponseInterruptedEvent,
-    RealtimeSessionErrorEvent,
-    RealtimeSessionReconnectEvent,
-    ReconnectPolicy,
     ResponseDone,
     SessionUsageEvent,
     TextInput,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
-    TurnDetection,
     inject_trace_context,
     reconnect_with_backoff,
     resolve_advertised_tools,
     seed_speech_content,
     seed_user_content,
 )
+from .model import RealtimeError, RealtimeModel
+from .profiles import DEFAULT_REALTIME_PROFILE, RealtimeModelProfile, RealtimeModelProfileSpec
+from .settings import RealtimeModelSettings, ReconnectPolicy, TurnDetection
 
 __all__ = (
     'GoogleRealtimeModel',

@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     PartEndEvent,
     PartStartEvent,
+    RealtimeSessionErrorEvent,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -57,13 +58,14 @@ from pydantic_ai.realtime import (
     RealtimeTurnCompleteEvent,
     TurnDetection,
 )
-from pydantic_ai.realtime._base import ImageInput, RealtimeSessionErrorEvent, TextInput
 from pydantic_ai.realtime.codec import (
     AudioDelta,
+    ImageInput,
     InputTranscript,
     OutputTranscript,
     ResponseDone,
     SessionUsageEvent,
+    TextInput,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -1694,7 +1696,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
         ),
         ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='spoken answer')]),
     ]
-    monkeypatch.setattr('pydantic_ai.realtime._base.download_item', download_image)
+    monkeypatch.setattr('pydantic_ai.realtime.codec.download_item', download_image)
     model = _model(session)
     async with _connect(model, 'x', messages=history) as conn:
         _ = [e async for e in conn]

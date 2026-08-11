@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
+    RealtimeSessionErrorEvent,
     SpeechPart,
     SpeechPartDelta,
     TextPart,
@@ -40,7 +41,6 @@ from pydantic_ai.realtime import (
     RealtimeTurnCompleteEvent,
     ReconnectPolicy,
 )
-from pydantic_ai.realtime._base import RealtimeSessionErrorEvent
 
 from ..conftest import IsDatetime, IsStr, try_import
 from .ws_cassettes import CassetteClose, CassetteMessage, RealtimeCassette

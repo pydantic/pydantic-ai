@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai.realtime import RealtimeError, RealtimeEvent, RealtimeSession, RealtimeSessionErrorEvent
-from pydantic_ai.realtime._base import RealtimeCodecEvent, RealtimeConnection
+from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection
 
 from .ws_cassettes import CassetteMessage, RealtimeCassette
 

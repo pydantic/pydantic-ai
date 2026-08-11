@@ -48,6 +48,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RealtimeSessionErrorEvent,
     RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
@@ -78,22 +79,15 @@ from pydantic_ai.realtime import (
     RealtimeTurnCompleteEvent,
     TranscriptUpdate,
 )
-from pydantic_ai.realtime._base import (
-    ConversationCreated,
-    ConversationItemCreated,
-    ImageInput,
-    RealtimeSessionErrorEvent,
-    TextInput,
-    resolve_advertised_tools,
-    seed_pcm_audio,
-    seed_speech_content,
-)
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     CancelResponse,
     ClearAudio,
     CommitAudio,
+    ConversationCreated,
+    ConversationItemCreated,
     CreateResponse,
+    ImageInput,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -101,10 +95,14 @@ from pydantic_ai.realtime.codec import (
     RealtimeInput,
     ResponseDone,
     SessionUsageEvent,
+    TextInput,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
     TruncateOutput,
+    resolve_advertised_tools,
+    seed_pcm_audio,
+    seed_speech_content,
 )
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tool_manager import ToolManager

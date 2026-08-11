@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RealtimeSessionErrorEvent,
     SpeechPart,
     SpeechPartDelta,
     TextPart,
@@ -34,7 +35,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.realtime import RealtimeModelProfile, RealtimeTurnCompleteEvent
-from pydantic_ai.realtime._base import RealtimeSessionErrorEvent
 from pydantic_ai.usage import RunUsage
 
 from ..conftest import IsDatetime, IsStr, try_import

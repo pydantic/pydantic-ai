@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile, grok_realtime_model_profile
 from pydantic_ai.providers import Provider
 
 if TYPE_CHECKING:
@@ -95,23 +95,7 @@ class XaiProvider(Provider[AsyncClient]):
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
-        return {
-            'supports_manual_turn_control': True,
-            'supports_interruption': True,
-            # Grok Voice always speaks: the API has no response-modality control, so an
-            # `output_modality='text'` session would silently come back as audio.
-            'supports_text_output': False,
-            'supports_session_seeding': True,
-            'supports_seeding_images': False,
-            'supports_seeding_audio': False,
-            # xAI puts `think` in the name of the voice models that take `reasoning.effort`, so match on
-            # that rather than pinning versions: `grok-voice-think-fast-2.0` shipped a week after 1.0,
-            # and a pinned list would have silently dropped reasoning for anyone who moved to it.
-            'supports_thinking': model_name == 'grok-voice-latest' or model_name.startswith('grok-voice-think-'),
-            'emits_input_speech_events': True,
-            'audio_input_sample_rate': 24000,
-            'audio_output_sample_rate': 24000,
-        }
+        return grok_realtime_model_profile(model_name)
 
     @overload
     def __init__(

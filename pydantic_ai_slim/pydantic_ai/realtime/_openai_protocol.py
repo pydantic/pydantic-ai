@@ -64,6 +64,10 @@ from ..messages import (
     ModelResponsePart,
     NativeToolCallPart,
     NativeToolReturnPart,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
+    RealtimeInputTranscriptionErrorEvent,
+    RealtimeSessionErrorEvent,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -79,26 +83,22 @@ from ..messages import (
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
-from ._base import (
+from .codec import (
     AudioDelta,
     ConversationCreated,
     ConversationItemCreated,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
-    RealtimeError,
-    RealtimeInputSpeechEndEvent,
-    RealtimeInputSpeechStartEvent,
-    RealtimeInputTranscriptionErrorEvent,
-    RealtimeModelProfile,
-    RealtimeSessionErrorEvent,
     ResponseDone,
     ToolCall,
-    TurnDetection,
     seed_pcm_audio,
     seed_speech_content,
     seed_user_content,
 )
+from .model import RealtimeError
+from .profiles import RealtimeModelProfile
+from .settings import TurnDetection
 
 if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection

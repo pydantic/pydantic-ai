@@ -11,8 +11,9 @@ from openai import AsyncOpenAI
 from ..exceptions import UserError
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
-from ._base import RealtimeModelProfileSpec, RealtimeModelSettings
 from .openai import OpenAIRealtimeConnection, OpenAIRealtimeModel
+from .profiles import RealtimeModelProfileSpec
+from .settings import RealtimeModelSettings
 
 __all__ = ('AzureRealtimeModel', 'AzureRealtimeConnection')
 

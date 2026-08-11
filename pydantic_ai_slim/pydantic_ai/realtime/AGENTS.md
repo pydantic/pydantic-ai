@@ -3,10 +3,14 @@
 Start with the architecture walkthrough in [docs/api/realtime.md](../../../docs/api/realtime.md)
 and the user-facing guides under [docs/realtime/](../../../docs/realtime/): a
 `RealtimeModel.connect()` opens a provider-specific `RealtimeConnection` (the *codec*, vocabulary in
-`_base.py`), and `RealtimeSession` (`_session.py`) wraps it — translating codec events into the
+`codec.py`), and `RealtimeSession` (`_session.py`) wraps it — translating codec events into the
 shared message/part vocabulary from `pydantic_ai.messages`, building ordinary `ModelMessage`
-history, and running the tool loop. The [models/ guidelines](../models/AGENTS.md) apply in spirit
-throughout.
+history, and running the tool loop. The provider-agnostic layout mirrors the request-response side:
+`model.py` holds the `RealtimeModel` ABC and `infer_realtime_model`, `settings.py` the settings
+vocabulary, `profiles.py` the `RealtimeModelProfile` type (per-provider tables live in
+`pydantic_ai/profiles/{google,openai,grok}.py` as `*_realtime_model_profile` helpers), and
+`codec.py` the connection layer; concrete providers live in `openai.py` / `azure.py` / `google.py` /
+`xai.py`. The [models/ guidelines](../models/AGENTS.md) apply in spirit throughout.
 
 ## Policy lives in the shared core, never in the session
 

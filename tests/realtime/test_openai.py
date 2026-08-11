@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
+    RealtimeSessionErrorEvent,
     RetryPromptPart,
     SpeechPart,
     SystemPromptPart,
@@ -58,14 +59,6 @@ from pydantic_ai.realtime import (
     RealtimeSessionReconnectEvent,
     TurnDetection,
 )
-from pydantic_ai.realtime._base import (
-    ConversationCreated,
-    ConversationItemCreated,
-    ImageInput,
-    RealtimeSessionErrorEvent,
-    TextInput,
-    merge_realtime_profile,
-)
 from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
     expect_event,
@@ -78,15 +71,20 @@ from pydantic_ai.realtime.codec import (
     CancelResponse,
     ClearAudio,
     CommitAudio,
+    ConversationCreated,
+    ConversationItemCreated,
     CreateResponse,
+    ImageInput,
     InputTranscript,
     OutputTranscript,
     ResponseDone,
     SessionUsageEvent,
+    TextInput,
     ToolCall,
     ToolResult,
     TruncateOutput,
 )
+from pydantic_ai.realtime.profiles import merge_realtime_profile
 from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -584,8 +582,11 @@ def test_map_unhandled_event_returns_none() -> None:
 @pytest.mark.parametrize(
     ('frame', 'expected'),
     [
-        ({'type': 'response.output_audio.delta', 'delta': 'AQI=', 'item_id': 'a'}, AudioDelta(b'\x01\x02', 'a')),
-        ({'type': 'response.audio.delta', 'delta': 'AQI=', 'item_id': 'a'}, AudioDelta(b'\x01\x02', 'a')),
+        (
+            {'type': 'response.output_audio.delta', 'delta': 'AQI=', 'item_id': 'a'},
+            AudioDelta(b'\x01\x02', item_id='a'),
+        ),
+        ({'type': 'response.audio.delta', 'delta': 'AQI=', 'item_id': 'a'}, AudioDelta(b'\x01\x02', item_id='a')),
         (
             {'type': 'response.output_audio_transcript.delta', 'delta': 'hel', 'item_id': 'a'},
             OutputTranscript('hel', is_final=False, item_id='a'),
@@ -602,8 +603,14 @@ def test_map_unhandled_event_returns_none() -> None:
             {'type': 'response.audio_transcript.done', 'transcript': 'hello', 'item_id': 'a'},
             OutputTranscript('hello', is_final=True, item_id='a'),
         ),
-        ({'type': 'response.output_text.delta', 'delta': 'hel'}, OutputTranscript('hel', False, output_text=True)),
-        ({'type': 'response.output_text.done', 'text': 'hello'}, OutputTranscript('hello', True, output_text=True)),
+        (
+            {'type': 'response.output_text.delta', 'delta': 'hel'},
+            OutputTranscript('hel', is_final=False, output_text=True),
+        ),
+        (
+            {'type': 'response.output_text.done', 'text': 'hello'},
+            OutputTranscript('hello', is_final=True, output_text=True),
+        ),
         (
             {'type': 'conversation.item.input_audio_transcription.delta', 'delta': 'hel', 'item_id': 'u'},
             InputTranscript('hel', is_final=False, item_id='u'),
@@ -623,13 +630,18 @@ def test_map_unhandled_event_returns_none() -> None:
                 'name': 'weather',
                 'arguments': '{}',
             },
-            ToolCall('call-1', 'weather', '{}', response_usage_follows=True),
+            ToolCall('call-1', tool_name='weather', args='{}', response_usage_follows=True),
         ),
         ({'type': 'input_audio_buffer.speech_started'}, RealtimeInputSpeechStartEvent()),
         ({'type': 'input_audio_buffer.speech_stopped'}, RealtimeInputSpeechEndEvent()),
         (
             {'type': 'response.done', 'response': {'id': 'r', 'status': 'completed', 'output': []}},
-            ResponseDone(False, 'r', 'stop', {'status': 'completed'}),
+            ResponseDone(
+                interrupted=False,
+                provider_response_id='r',
+                finish_reason='stop',
+                provider_details={'status': 'completed'},
+            ),
         ),
         ({'type': 'error', 'error': {'message': 'bad'}}, RealtimeSessionErrorEvent('bad')),
         (
@@ -1354,7 +1366,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
     async def download_image(*args: Any, **kwargs: Any) -> Any:
         return {'data': b'url-image', 'data_type': 'image/png'}
 
-    monkeypatch.setattr('pydantic_ai.realtime._base.download_item', download_image)
+    monkeypatch.setattr('pydantic_ai.realtime.codec.download_item', download_image)
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [
@@ -1514,7 +1526,7 @@ async def test_connect_seeds_multimodal_user_prompt_as_native_image(monkeypatch:
     async def download_image(*args: Any, **kwargs: Any) -> Any:
         return {'data': b'png', 'data_type': 'image/png'}
 
-    monkeypatch.setattr('pydantic_ai.realtime._base.download_item', download_image)
+    monkeypatch.setattr('pydantic_ai.realtime.codec.download_item', download_image)
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [
@@ -1803,7 +1815,7 @@ async def test_connect_rejects_image_url_returning_non_image(monkeypatch: pytest
     async def download_document(*args: Any, **kwargs: Any) -> Any:
         return {'data': b'not-image', 'data_type': 'application/pdf'}
 
-    monkeypatch.setattr('pydantic_ai.realtime._base.download_item', download_document)
+    monkeypatch.setattr('pydantic_ai.realtime.codec.download_item', download_document)
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/a.png')])])]

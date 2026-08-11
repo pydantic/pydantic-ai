@@ -57,38 +57,12 @@ if TYPE_CHECKING:
 from .._instrumentation import get_instructions
 from .._utils import is_str_dict
 from ..exceptions import UserError
-from ..messages import ModelMessage
+from ..messages import ModelMessage, RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent
 from ..models import ModelRequestParameters
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._base import (
-    AudioDelta,
-    AudioInput,
-    CancelResponse,
-    ClearAudio,
-    CommitAudio,
-    CreateResponse,
-    ImageInput,
-    InputTranscript,
-    RealtimeCodecEvent,
-    RealtimeConnection,
-    RealtimeInput,
-    RealtimeModel,
-    RealtimeModelProfileSpec,
-    RealtimeModelSettings,
-    RealtimeSessionErrorEvent,
-    RealtimeSessionReconnectEvent,
-    ReconnectPolicy,
-    SessionUsageEvent,
-    TextInput,
-    ToolResult,
-    TruncateOutput,
-    inject_trace_context,
-    reconnect_with_backoff,
-    resolve_advertised_tools,
-)
 from ._openai_protocol import (
     AUDIO_DELTA_TYPES,
     INPUT_TRANSCRIPT_DONE_TYPES,
@@ -111,6 +85,29 @@ from ._openai_protocol import (
     user_message_item,
     validate_response_data,
 )
+from .codec import (
+    AudioDelta,
+    AudioInput,
+    CancelResponse,
+    ClearAudio,
+    CommitAudio,
+    CreateResponse,
+    ImageInput,
+    InputTranscript,
+    RealtimeCodecEvent,
+    RealtimeConnection,
+    RealtimeInput,
+    SessionUsageEvent,
+    TextInput,
+    ToolResult,
+    TruncateOutput,
+    inject_trace_context,
+    reconnect_with_backoff,
+    resolve_advertised_tools,
+)
+from .model import RealtimeModel
+from .profiles import RealtimeModelProfileSpec
+from .settings import RealtimeModelSettings, ReconnectPolicy
 
 # `input_transcription_model='auto'` resolves to this — OpenAI's recommended realtime transcription model
 # ("For the lowest-latency streaming transcription path, use gpt-realtime-whisper"; it's natively streaming

@@ -8,7 +8,7 @@ import io
 import wave
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from threading import Lock as ThreadLock
 from time import time_ns
 from types import TracebackType
@@ -19,7 +19,7 @@ from anyio import Lock
 from opentelemetry import context as otel_context
 from opentelemetry.context import Context
 from opentelemetry.trace import Span, SpanKind, StatusCode, set_span_in_context
-from typing_extensions import assert_never
+from typing_extensions import TypeAliasType, assert_never
 
 from pydantic_graph._utils import get_traceparent
 
@@ -58,6 +58,13 @@ from ..messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RealtimeInputSpeechEndEvent,
+    RealtimeInputSpeechStartEvent,
+    RealtimeInputTranscriptionErrorEvent,
+    RealtimeResponseInterruptedEvent,
+    RealtimeSessionErrorEvent,
+    RealtimeSessionReconnectEvent,
+    RealtimeTurnCompleteEvent,
     RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
@@ -72,11 +79,9 @@ from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
 from ..tool_manager import ToolManager
 from ..usage import RequestUsage, RunUsage, UsageLimits
-from ._base import (
-    DEFAULT_AUDIO_SAMPLE_RATE,
+from .codec import (
     AudioDelta,
     AudioInput,
-    AudioRetention,
     CancelResponse,
     ClearAudio,
     CommitAudio,
@@ -88,35 +93,105 @@ from ._base import (
     OutputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
-    RealtimeError,
-    RealtimeEvent,
     RealtimeInput,
-    RealtimeInputSpeechEndEvent,
-    RealtimeInputSpeechStartEvent,
-    RealtimeInputTranscriptionErrorEvent,
-    RealtimeModelProfile,
-    RealtimeModelSettings,
-    RealtimeResponseInterruptedEvent,
-    RealtimeSessionErrorEvent,
     RealtimeSessionInput,
-    RealtimeSessionReconnectEvent,
-    RealtimeTurnCompleteEvent,
     ResponseDone,
     SessionUsageEvent,
     TextInput,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
-    TranscriptUpdate,
     TruncateOutput,
     seed_pcm_audio,
 )
+from .model import RealtimeError
+from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, RealtimeModelProfile
+from .settings import AudioRetention, RealtimeModelSettings
 
 if TYPE_CHECKING:
     from ..messages import AgentStreamEvent
     from ..models import ModelRequestParameters
     from ..models.instrumented import InstrumentationSettings
     from ..tools import DeferredToolRequests, DeferredToolResults
+
+# Session-level events (yielded by `RealtimeSession.__aiter__`).
+#
+# A session translates the low-level codec events into the shared message/part event vocabulary from
+# `pydantic_ai.messages`: `AudioDelta`/`OutputTranscript`/`InputTranscript` become `PartStartEvent` /
+# `PartDeltaEvent` / `PartEndEvent` for `SpeechPart`s, and `ToolCall` becomes a
+# `ToolCallPart` part (start/end) plus `FunctionToolCallEvent` / `FunctionToolResultEvent` around its
+# execution. Some control-plane events pass through unchanged.
+
+
+RealtimeEvent = TypeAliasType(
+    'RealtimeEvent',
+    PartStartEvent
+    | PartDeltaEvent
+    | PartEndEvent
+    | FunctionToolCallEvent
+    | FunctionToolResultEvent
+    | DeferredToolRequestsEvent
+    | DeferredToolResultsEvent
+    | RealtimeTurnCompleteEvent
+    | RealtimeInputSpeechStartEvent
+    | RealtimeResponseInterruptedEvent
+    | RealtimeInputSpeechEndEvent
+    | RealtimeInputTranscriptionErrorEvent
+    | RealtimeSessionReconnectEvent
+    | RealtimeSessionErrorEvent,
+)
+"""Union of events yielded by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession].
+
+This is a strict subset of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent].
+
+Content is streamed as the shared [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] /
+[`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent] / [`PartEndEvent`][pydantic_ai.messages.PartEndEvent]
+events (carrying [`SpeechPart`][pydantic_ai.messages.SpeechPart]s and
+[`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s), tool execution as
+[`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], inline deferred resolution
+as [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] /
+[`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent], and the rest as realtime
+control-plane events.
+"""
+
+
+@dataclass(frozen=True)
+class TranscriptUpdate:
+    """One incremental transcript update, carrying everything needed to render it.
+
+    Yielded by [`RealtimeSession.stream_transcripts(delta=True)`][pydantic_ai.realtime.RealtimeSession.stream_transcripts].
+    A realtime session is duplex, so both speakers' transcripts stream at the same time and a caption
+    UI needs to know not just *what* was said but *which* turn to put it in — otherwise two
+    consecutive turns by the same speaker run together.
+    """
+
+    index: int
+    """Identifies the turn this update belongs to, stable for the life of the session.
+
+    Use it as the key for whatever you render a turn into: every update with the same `index` belongs
+    to the same speech part.
+    """
+
+    speaker: Literal['user', 'assistant']
+    """Who is speaking."""
+
+    delta: str
+    """The text this update added, when it added any.
+
+    Empty when the provider *revised* the turn instead of extending it — speech recognition is
+    revisable, and a correction can't be expressed as an addition. Render `transcript` and this never
+    matters.
+    """
+
+    transcript: str
+    """The full transcript of this turn so far.
+
+    Render this, keyed on `index`, and captions are correct whatever the provider does: no
+    accumulating, no special case for a revision, and a dropped update (if a consumer fell behind)
+    self-corrects on the next one.
+    """
+
 
 # Realtime providers stream raw PCM audio, but retained history uses a WAV container so the sample
 # format is self-describing and portable to classic model adapters. Live `SpeechPartDelta.audio_chunk`
