@@ -416,9 +416,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         workflows: list[type[Any]] = []
         for wrapped in self._toolsets_by_id.values():
             activities.extend(toolset_temporal_activities(wrapped))
-            for wf in toolset_temporal_workflows(wrapped):
-                if wf not in workflows:
-                    workflows.append(wf)
+            # `_toolsets_by_id` holds one wrapper per toolset `id` and each wrapper builds its own
+            # per-toolset class, so no duplicates can arise here. Identical classes reaching one
+            # worker through multiple plugins are deduplicated by `_merge_temporal_workflows`.
+            workflows.extend(toolset_temporal_workflows(wrapped))
 
         self._temporal_activities = activities
         self._temporal_workflows = workflows

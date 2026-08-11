@@ -123,7 +123,14 @@ def temporalize_function_toolset(
     sanitized_toolset_id = re.sub(r'\W', '_', toolset_id)
     class_name = f'_ToolCallWorkflow_{sanitized_toolset_id}_{next(_tool_call_workflow_counter)}'
 
-    async def _run(self, params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
+    # `self` is deliberately left unannotated: Temporal only skips the first parameter when deriving
+    # the workflow's argument types if it's named `self` *and* has no annotation, so annotating it
+    # (even as `object`) shifts every argument type by one and `params` would arrive as a raw dict.
+    async def _run(
+        self,  # pyright: ignore[reportUnknownParameterType, reportMissingParameterType]
+        params: CallToolParams,
+        deps: AgentDepsT,
+    ) -> CallToolResult:
         # This workflow type is registered on the worker like any other, so any Temporal client with
         # permission to start workflows on this task queue could start it directly, supplying
         # arbitrary `CallToolParams` — bypassing the parent agent run, its tool preparation, and any
@@ -197,7 +204,11 @@ def temporalize_function_toolset(
     registered_workflow = cast(
         '_ChildWorkflowClass',
         workflow.defn(name=workflow_name)(
-            type(class_name, (), {'__qualname__': class_name, 'run': workflow.run(_run)})
+            type(
+                class_name,
+                (),
+                {'__qualname__': class_name, 'run': workflow.run(_run)},  # pyright: ignore[reportUnknownArgumentType]
+            )
         ),
     )
     # Sandboxed runners re-resolve the class via `from {__module__} import {__name__}`; make the
@@ -297,8 +308,8 @@ def temporalize_function_toolset(
         durable_registrations=[registered_activity],
         # The class is built per toolset, but harmless to list unconditionally (like
         # `registered_activity` above, whether or not any tool actually uses `child_workflow`);
-        # the collection point in `TemporalDurability` deduplicates before handing the list to the
-        # worker.
+        # the same class reaching one worker through multiple plugins is deduplicated when the
+        # plugins' lists are combined (see `_merge_temporal_workflows`).
         durable_container_registrations=[registered_workflow],
         durable_config=activity_config,
     )
