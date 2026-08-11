@@ -53,11 +53,9 @@ except ImportError as _fastmcp_import_error:  # pragma: no cover
         'or install the full `fastmcp` package directly.'
     ) from _fastmcp_import_error
 
-if TYPE_CHECKING:
-    from mcp.shared.exceptions import McpError
-else:
-    # SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has.
-    from fastmcp.exceptions import McpError
+# SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has,
+# but doesn't mark the re-export as public, so pyright must be told to allow the import.
+from fastmcp.exceptions import McpError  # pyright: ignore[reportPrivateImportUsage]
 
 # In-process MCP servers (`FastMCP` / `FastMCP1Server`) live in the *server* halves of fastmcp /
 # the MCP SDK respectively. The lightweight `[mcp]` install (`fastmcp-slim[client]`) does NOT ship
