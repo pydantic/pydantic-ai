@@ -1610,3 +1610,64 @@ def test_retry_prompt_tool_call_keeps_input_for_nested_errors():
     response = part.model_response()
     assert '"input": 42' in response
     assert '"name"' in response
+
+
+def test_retry_prompt_otel_include_content():
+    """Retry prompt parts honor `include_content` like every other message part, in both the
+    tool-call and non-tool branches, on both the event and message-part serialization paths."""
+    non_tool = RetryPromptPart(
+        content=[
+            {
+                'type': 'string_type',
+                'loc': ('items', 0, 'name'),
+                'msg': 'Input should be a valid string',
+                'input': 'model-generated value',
+            },
+        ],
+    )
+    tool = RetryPromptPart(tool_name='my_tool', tool_call_id='call_1', content='Try again')
+
+    with_content = InstrumentationSettings(include_content=True)
+    assert non_tool.otel_message_parts(with_content) == snapshot(
+        [
+            {
+                'type': 'text',
+                'content': """\
+1 validation error:
+```json
+[
+  {
+    "type": "string_type",
+    "loc": [
+      "items",
+      0,
+      "name"
+    ],
+    "msg": "Input should be a valid string",
+    "input": "model-generated value"
+  }
+]
+```
+
+Fix the errors and try again.""",
+            }
+        ]
+    )
+    assert non_tool.otel_event(with_content).body == {'content': non_tool.model_response(), 'role': 'user'}
+    assert tool.otel_message_parts(with_content) == snapshot(
+        [
+            {
+                'type': 'tool_call_response',
+                'id': 'call_1',
+                'name': 'my_tool',
+                'result': 'Try again\n\nFix the errors and try again.',
+            }
+        ]
+    )
+
+    without_content = InstrumentationSettings(include_content=False)
+    assert non_tool.otel_message_parts(without_content) == snapshot([{'type': 'text'}])
+    assert non_tool.otel_event(without_content).body == {'role': 'user'}
+    assert tool.otel_message_parts(without_content) == snapshot(
+        [{'type': 'tool_call_response', 'id': 'call_1', 'name': 'my_tool'}]
+    )
