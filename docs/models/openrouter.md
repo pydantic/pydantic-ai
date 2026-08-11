@@ -206,11 +206,11 @@ Pass the prompt list to `agent.run_sync(prompt)`. Everything before the `CachePo
 
 ## Web Search
 
-OpenRouter supports web search via its [plugins](https://openrouter.ai/docs/guides/features/plugins/web-search). You can enable it using the [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
+OpenRouter supports web search through its [Beta server tool](https://openrouter.ai/docs/guides/features/server-tools/web-search). Enable it with [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]. The model decides whether to search and may make zero or multiple searches for a request.
 
 ### Web Search Parameters
 
-You can customize the web search behavior using the `search_context_size` parameter on [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]:
+You can configure search context, approximate user location, domain filters, and a limit on searches with [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]:
 
 ```python
 from pydantic_ai import Agent
@@ -218,7 +218,12 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.openrouter import OpenRouterModel
 from pydantic_ai.native_tools import WebSearchTool
 
-tool = WebSearchTool(search_context_size='high')
+tool = WebSearchTool(
+    search_context_size='high',
+    user_location={'city': 'London', 'country': 'GB'},
+    allowed_domains=['pydantic.dev'],
+    max_uses=1,
+)
 model = OpenRouterModel('openai/gpt-4.1')
 agent = Agent(
     model,
@@ -226,3 +231,6 @@ agent = Agent(
 )
 result = agent.run_sync('What is the latest news in AI?')
 ```
+
+!!! note "Engine-specific parameters"
+    OpenRouter forwards these settings to its selected search engine, so their effect depends on that engine and its downstream provider. Native provider search ignores `search_context_size`; `user_location` works only with native search; and domain-filter support varies (native OpenAI ignores `excluded_domains`). The server tool can make zero or several searches when it is available to the model. `max_uses` caps a request when OpenRouter uses a non-native search engine or Anthropic's native search. Other native providers, including the OpenAI model in this example, ignore it. OpenRouter does not support [`WebSearchTool.external_web_access`][pydantic_ai.native_tools.WebSearchTool.external_web_access].

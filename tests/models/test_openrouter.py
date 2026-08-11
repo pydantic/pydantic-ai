@@ -1,4 +1,5 @@
 import datetime
+import json
 from collections.abc import AsyncIterable, Sequence
 from copy import deepcopy
 from decimal import Decimal
@@ -1072,44 +1073,94 @@ async def test_openrouter_supported_native_tools() -> None:
     assert WebSearchTool in supported
 
 
-async def test_openrouter_web_search_prepare_request(openrouter_api_key: str) -> None:
-    """Test that prepare_request injects web search plugins when WebSearchTool is present."""
-
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
-
-    model_request_parameters = ModelRequestParameters(
-        native_tools=[WebSearchTool(search_context_size='high')],
+async def test_openrouter_web_search_tool_request(allow_model_requests: None) -> None:
+    """`WebSearchTool` maps portable settings to an `openrouter:web_search` server tool."""
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('openai/gpt-4.1', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                WebSearchTool(
+                    search_context_size='high',
+                    user_location={'city': 'London', 'country': 'GB', 'region': 'England', 'timezone': 'Europe/London'},
+                    allowed_domains=['pydantic.dev'],
+                    blocked_domains=['example.com'],
+                    max_uses=2,
+                    external_web_access=False,
+                )
+            )
+        ],
     )
 
-    new_settings, _ = model.prepare_request(None, model_request_parameters)
+    result = await agent.run('hello')
 
-    assert new_settings is not None
-    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
-    assert 'plugins' in extra_body
-    assert extra_body['plugins'] == [{'id': 'web'}]
-    assert 'web_search_options' in extra_body
-    assert extra_body['web_search_options'] == {'search_context_size': 'high'}
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tools'] == [
+        {
+            'type': 'openrouter:web_search',
+            'parameters': {
+                'search_context_size': 'high',
+                'user_location': {
+                    'type': 'approximate',
+                    'city': 'London',
+                    'country': 'GB',
+                    'region': 'England',
+                    'timezone': 'Europe/London',
+                },
+                'allowed_domains': ['pydantic.dev'],
+                'excluded_domains': ['example.com'],
+                'max_uses': 2,
+            },
+        }
+    ]
+    assert kwargs['extra_body'] == {}
 
 
-async def test_openrouter_no_web_search_without_tool(openrouter_api_key: str) -> None:
-    """Test that no plugins are added when WebSearchTool is not present."""
+async def test_openrouter_web_search_tool_is_after_tool_cache_and_advisor(allow_model_requests: None) -> None:
+    """Server tools follow the cached function definition so the cache breakpoint remains stable."""
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        model_settings=OpenRouterModelSettings(openrouter_cache_tool_definitions=True),
+        capabilities=[
+            NativeTool(AdvisorTool(model='anthropic/claude-opus-4.8')),
+            NativeTool(WebSearchTool()),
+        ],
+    )
 
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+    @agent.tool_plain
+    def get_weather() -> str:
+        return 'sunny'
 
-    model_request_parameters = ModelRequestParameters()
+    result = await agent.run('hello')
 
-    new_settings, _ = model.prepare_request(None, model_request_parameters)
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tools'] == snapshot(
+        [
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'get_weather',
+                    'description': '',
+                    'parameters': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                },
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'openrouter:advisor',
+                'parameters': {'model': 'anthropic/claude-opus-4.8', 'forward_transcript': False},
+            },
+            {'type': 'openrouter:web_search', 'parameters': {'search_context_size': 'medium'}},
+        ]
+    )
 
-    assert new_settings is not None
-    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
-    assert 'plugins' not in extra_body
-    assert 'web_search_options' not in extra_body
 
-
-async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
-    """Test _openrouter_settings_to_openai_settings when WebSearchTool is configured."""
+async def test_openrouter_settings_to_openai_settings_does_not_add_web_search() -> None:
+    """`WebSearchTool` is converted to a server tool after OpenAI settings are prepared."""
     settings = OpenRouterModelSettings()
     model_request_parameters = ModelRequestParameters(
         native_tools=[WebSearchTool(search_context_size='high')],
@@ -1118,18 +1169,15 @@ async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
     result = _openrouter_settings_to_openai_settings(settings, model_request_parameters)
 
     extra_body = cast(dict[str, Any], result.get('extra_body', {}))
-    assert 'plugins' in extra_body
-    assert extra_body['plugins'] == [{'id': 'web'}]
-    assert 'web_search_options' in extra_body
-    assert extra_body['web_search_options'] == {'search_context_size': 'high'}
+    assert extra_body == {}
 
 
 async def test_openrouter_prepare_request_does_not_mutate_caller_settings() -> None:
-    """Repeated `prepare_request` calls must not mutate the caller's settings or duplicate plugins.
+    """Repeated `prepare_request` calls must not mutate the caller's settings.
 
     `merge_model_settings` can return the model's own `settings` by identity, so the converter's
-    `openrouter_` pops and `extra_body`/`plugins` appends would otherwise leak back onto the
-    caller's object across calls. This is an API-free preparation-path test (no provider request),
+    `openrouter_` pops and `extra_body` updates would otherwise leak back onto the caller's object
+    across calls. This is an API-free preparation-path test (no provider request),
     so it is a unit test rather than a VCR test despite the module-level `vcr` mark.
     """
     provider = OpenRouterProvider(api_key='mock-api-key')
@@ -1153,10 +1201,8 @@ async def test_openrouter_prepare_request_does_not_mutate_caller_settings() -> N
 
     first_extra_body = cast(dict[str, Any], first.get('extra_body', {}))
     second_extra_body = cast(dict[str, Any], second.get('extra_body', {}))
-    # Each prepared request appends exactly one web plugin beside the caller's own (no duplication),
-    # and the caller's `plugins` list itself is never appended to (covered by `settings == original`).
-    assert first_extra_body['plugins'] == [{'id': 'custom'}, {'id': 'web'}]
-    assert second_extra_body['plugins'] == [{'id': 'custom'}, {'id': 'web'}]
+    assert first_extra_body['plugins'] == [{'id': 'custom'}]
+    assert second_extra_body['plugins'] == [{'id': 'custom'}]
     # openrouter_* values are moved into extra_body without stripping the caller's originals.
     assert first_extra_body['models'] == ['vendor/model']
     assert first_extra_body['provider'] == {'only': ['provider']}
@@ -1525,28 +1571,38 @@ async def test_openrouter_advisor_tool_stream(allow_model_requests: None, openro
     assert stream.response.provider_details['server_tool_use'] == {'tool_calls_requested': 1, 'tool_calls_executed': 1}
 
 
-async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrouter_api_key: str) -> None:
-    """Test prepare_request loop continuation when first tool is not WebSearchTool."""
-    from unittest.mock import Mock
-
+async def test_openrouter_web_search_tool_usage(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """A recorded OpenRouter web search exposes its request count in provider details."""
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
 
-    non_web_tool = Mock(spec=[])
-    web_tool = WebSearchTool(search_context_size='medium')
+    result = await agent.run("Use web search to find Pydantic AI's GitHub repository and answer with its URL only.")
 
-    model_request_parameters = ModelRequestParameters(
-        native_tools=[non_web_tool, web_tool],
-    )
+    assert result.output
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is not None
+    raw_response = json.loads(vcr.responses[0]['body']['string'])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    assert raw_response['usage']['server_tool_use_details'] == {'web_search_requests': 1}
+    assert response.provider_details['server_tool_use'] == {'web_search_requests': 1}
 
-    with patch.object(model.__class__.__bases__[0], 'prepare_request', return_value=({}, model_request_parameters)):
-        new_settings, _ = model.prepare_request(None, model_request_parameters)
 
-    assert new_settings is not None
-    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
-    assert 'plugins' in extra_body
-    assert extra_body['plugins'] == [{'id': 'web'}]
-    assert extra_body['web_search_options'] == {'search_context_size': 'medium'}
+async def test_openrouter_web_search_tool_usage_stream(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """Streaming preserves the OpenRouter web-search request count from the final usage chunk."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
+
+    async with agent.run_stream(
+        "Use web search to find Pydantic AI's GitHub repository and answer with its URL only."
+    ) as stream:
+        assert await stream.get_output()
+
+    assert stream.response.provider_details is not None
+    assert stream.response.provider_details['server_tool_use'] == {'web_search_requests': 1}
 
 
 def test_openrouter_nested_provider_response() -> None:
