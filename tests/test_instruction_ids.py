@@ -32,6 +32,8 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -738,3 +740,35 @@ async def test_each_unidentified_source_gets_its_own_part():
         InstructionPart(content='From another anonymous capability.'),
         InstructionPart(content='Passed to this run.'),
     ]
+
+
+async def test_resuming_does_not_stamp_instructions_onto_a_mock_request():
+    """The rewrite lands on the message the echoed instructions came from, not on the trailing request.
+
+    A turn suspended after a tool round-trip leaves a tool-return-only request last, which carries
+    no instructions of its own — `_get_history_instructions` deliberately looks past it to the
+    request before. Stamping that trailing one would record instructions on a message that was sent
+    without any, and it is typically a message the caller handed in from a previous run.
+    """
+
+    def rewrite(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        request_context.model_request_parameters.instruction_parts = [InstructionPart(content='Managed instructions.')]
+        return request_context
+
+    agent = Agent(
+        FunctionModel(lambda _m, _i: ModelResponse(parts=[TextPart('done')])),
+        instructions='Agent instructions.',
+        capabilities=[Hooks[Any](before_model_request=rewrite)],
+    )
+
+    tool_returns = ModelRequest(parts=[ToolReturnPart(tool_name='t', content='ok', tool_call_id='1')])
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')], instructions='Agent instructions.'),
+        ModelResponse(parts=[ToolCallPart(tool_name='t', args={}, tool_call_id='1')]),
+        tool_returns,
+        ModelResponse(parts=[TextPart('paused')], state='suspended'),
+    ]
+    result = await agent.run(message_history=history)
+
+    assert tool_returns.instructions is None
+    assert rendered_instructions(result.all_messages()) == 'Managed instructions.'

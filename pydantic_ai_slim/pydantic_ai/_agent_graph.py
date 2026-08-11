@@ -21,6 +21,7 @@ from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     capture_current_context,
     get_instructions as _get_history_instructions,
+    get_instructions_source as _get_history_instructions_source,
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._tool_execution import process_tool_calls
@@ -1707,10 +1708,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             if isinstance(message := base_messages[index], _messages.ModelRequest):
                 ctx.deps.resumed_request = message
                 ctx.deps.resumed_request_index = index
-                # That request is also the one whose `instructions` this continuation is echoing
-                # back, so it's where a hook's rewrite has to land.
-                _apply_instruction_parts(message, model_request_parameters.instruction_parts)
                 break
+
+        # A hook's rewrite has to land on the message that records the instructions this
+        # continuation echoes back, which is the one they were read from — not necessarily the
+        # resumed request. A trailing tool-return-only request carries none of its own (which is
+        # why `_get_history_instructions` looks past it), so stamping that one would put
+        # instructions on a message that was sent without any. Falling back to the resumed request
+        # covers a hook adding instructions where the history had none to source.
+        instructions_target = _get_history_instructions_source(base_messages) or ctx.deps.resumed_request
+        if instructions_target is not None:
+            _apply_instruction_parts(instructions_target, model_request_parameters.instruction_parts)
 
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so
         # replace its contents (dropping the suspended response) rather than the reference;
