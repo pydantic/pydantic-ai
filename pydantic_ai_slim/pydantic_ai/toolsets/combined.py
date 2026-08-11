@@ -13,6 +13,7 @@ from .._utils import gather
 from ..exceptions import UserError
 from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
+from .wrapper import WrapperToolset
 
 
 @dataclass(kw_only=True)
@@ -35,17 +36,20 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     _exit_stack: AsyncExitStack | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
-        # Only the direct members are checked, rather than walking the tree with `apply()`, which
-        # would mean calling a method on every child on every construction — and the run loop
-        # reconstructs this per step. So the check catches ids a user registered side by side, not
-        # every id that can key a `toolset:<id>` instruction block: a toolset nested inside another
-        # `CombinedToolset` is only compared against that one's members, and one behind a
-        # `WrapperToolset` (`id` `None`, though it keys the instructions it passes through with the
-        # wrapped id) isn't compared at all — which is how two capabilities can each contribute a
-        # toolset with the same id. Blocks sharing a key are addressed together by an override
-        # rather than individually; see https://github.com/pydantic/pydantic-ai/issues/7385.
+        # Only the direct members are checked, rather than walking the tree with `apply()`: a nested
+        # `CombinedToolset` validates its own members when it is constructed. Walking would also mean
+        # calling a method on every child on every construction, which the run loop does per step.
         seen: dict[str, AbstractToolset[AgentDepsT]] = {}
-        for toolset in self.toolsets:
+        for member in self.toolsets:
+            # A wrapper's own `id` is `None` — it isn't itself a registered toolset — but the blocks
+            # it passes through are keyed with the *wrapped* toolset's id, and a capability's
+            # contributed toolset always arrives inside a `CapabilityOwnedToolset`. Unwrapping is
+            # what makes this cover every id that can key a `toolset:<id>` block rather than only the
+            # ones registered bare, and comparing the unwrapped instances keeps one toolset reached
+            # through two different wrappers a single entry instead of a false conflict.
+            toolset = member
+            while isinstance(toolset, WrapperToolset):
+                toolset = toolset.wrapped
             if (toolset_id := toolset.id) is None:
                 continue
             # `<...>` marks an id the framework assigns rather than the user (`<agent>` for an

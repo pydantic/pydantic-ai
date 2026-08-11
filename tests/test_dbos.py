@@ -118,7 +118,7 @@ except ImportError:  # pragma: lax no cover
 from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.capabilities import ProcessEventStream, ResolveModelId, SelectModel, Toolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._inline_snapshot import snapshot
@@ -958,22 +958,24 @@ async def test_capability_contributed_toolset_id_from_capability():
 
 async def test_capability_contributed_toolsets_with_colliding_derived_id():
     """Two genuinely different MCP servers whose URLs derive the same id would silently collide on the
-    per-run tool-defs cache key under DBOS (the second server returning the first's cached tools). The
-    DBOS wrapper guards against duplicate leaf ids at construction, telling the user to set explicit ids.
+    per-run tool-defs cache key under DBOS (the second server returning the first's cached tools).
 
     Both `MCP(url=...)` capabilities leave `cap.id=None` (so the agent-level capability-id uniqueness
     check passes), yet both derive `a.com-api` from their URLs' host + last path segment.
 
-    This isn't a VCR test: the collision is rejected during local `DBOSAgent` construction, before any
-    model or MCP request, so there's no network round-trip to record.
+    `DBOSAgent` never sees this one: the toolset-id uniqueness check rejects it while the plain
+    `Agent` is being built, which is strictly better than catching it here — every agent gets it, not
+    just the durable ones. It reaches that check because the contributed toolsets are siblings and it
+    unwraps the `CapabilityOwnedToolset` each arrives in.
+
+    This isn't a VCR test: the collision is rejected during local construction, before any model or
+    MCP request, so there's no network round-trip to record.
     """
     with pytest.raises(
         UserError,
         match=re.escape(
-            'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
-            "but more than one leaf toolset uses the id 'a.com-api'. "
-            "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
-            'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
+            "Two toolsets have the same `id` 'a.com-api'. "
+            'Toolset `id`s must be unique among all toolsets registered with the same agent.'
         ),
     ):
         DBOSAgent(  # pyright: ignore[reportDeprecated]
@@ -981,6 +983,35 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
                 model,
                 name='colliding_capability_agent',
                 capabilities=[MCP(url='https://a.com/api'), MCP(url='https://a.com/v2/api')],
+            )
+        )
+
+
+async def test_nested_toolsets_with_colliding_id():
+    """The DBOS guard still earns its place for a collision the framework check can't see.
+
+    Uniqueness is enforced among a `CombinedToolset`'s direct members, so a leaf nested inside
+    another `CombinedToolset` is never compared against its outer siblings. DBOS needs more than
+    that — the id keys the MCP server's step names across the whole workflow, whatever the toolset
+    tree looks like — so it walks the leaves itself and reports what the user has to change.
+    """
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
+            "but more than one leaf toolset uses the id 'dup'. "
+            "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
+            'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
+        ),
+    ):
+        DBOSAgent(  # pyright: ignore[reportDeprecated]
+            Agent(
+                model,
+                name='colliding_nested_agent',
+                toolsets=[
+                    CombinedToolset([MCPToolset('https://a.com/api', id='dup')]),
+                    MCPToolset('https://a.com/v2/api', id='dup'),
+                ],
             )
         )
 

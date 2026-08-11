@@ -32,7 +32,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.exceptions import (
     CallDeferred,
     ModelRetry,
@@ -1786,6 +1786,30 @@ def test_toolset_ids_must_be_unique_when_combined():
 
     shared = FunctionToolset(id='shared')
     Agent(toolsets=[shared, shared])
+
+
+def test_toolset_ids_must_be_unique_behind_a_wrapper():
+    """A wrapper reports no `id` of its own, but the id it hides is still what keys its blocks.
+
+    A capability's contributed toolset always arrives inside a `CapabilityOwnedToolset`, so without
+    unwrapping, two capabilities could each contribute a toolset with the same `id` and produce two
+    instruction blocks sharing one `toolset:<id>` key — the ambiguity this check exists to prevent.
+    """
+
+    class ToolsetCapability(Capability[Any]):
+        def __init__(self, instructions: str) -> None:
+            super().__init__()
+            self._toolset = FunctionToolset[Any](id='contributed', instructions=instructions)
+
+        def get_toolset(self) -> AbstractToolset[Any]:
+            return self._toolset
+
+    with pytest.raises(UserError, match="Two toolsets have the same `id` 'contributed'"):
+        Agent(capabilities=[ToolsetCapability('From A.'), ToolsetCapability('From B.')])
+
+    # The same toolset reached through two different wrappers is one toolset, not a conflict.
+    shared = FunctionToolset[Any](id='shared')
+    Agent(toolsets=[shared.filtered(lambda ctx, tool_def: True), shared.prefixed('p')])
 
 
 def test_agent_toolset_decorator_id():
