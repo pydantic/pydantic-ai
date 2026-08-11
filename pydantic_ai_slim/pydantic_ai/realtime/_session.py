@@ -1874,23 +1874,27 @@ class RealtimeSession:
     def _handle_reconnected(self, event: RealtimeSessionReconnectEvent) -> list[RealtimeEvent]:
         """Settle any in-flight state the reconnect did not actually carry, and report restoration honestly.
 
-        A provider that resumes natively (Gemini Live, xAI Grok Voice) continues the in-flight response
-        on the new connection, so `state_restored=True` holds as reported and there is nothing to
-        settle. A provider we reconnect by replaying local history (OpenAI, Azure OpenAI — where
-        `supports_session_seeding` is the mechanism) only restores *finalized* turns: the response and
-        tool calls that were in flight when the socket dropped are gone, and the fresh server-side
-        conversation knows nothing of them. Settle them here exactly as for a fully lost session — the
-        partial reply as an interrupted response, running tool calls as cancelled returns — so the
-        local history stays coherent and the turn ends (flushing anything queued behind it). Report
-        `state_restored=False` whenever something was actually in flight, so an app can branch on the
-        flag the same way on every provider; a drop with nothing in flight loses nothing and stays `True`.
+        A connection that resumes in-flight state (native resumption on xAI Grok Voice; Gemini Live,
+        which settles the cut turn in the connection itself) reports
+        [`reconnect_restores_in_flight_state`][pydantic_ai.realtime.codec.RealtimeConnection.reconnect_restores_in_flight_state],
+        so `state_restored=True` holds as reported and there is nothing more to settle. A connection we
+        reconnect by replaying local history (OpenAI, Azure OpenAI) only restores *finalized* turns: the
+        response and tool calls that were in flight when the socket dropped are gone, and the fresh
+        server-side conversation knows nothing of them. Settle them here exactly as for a fully lost
+        session — the partial reply as an interrupted response, running tool calls as cancelled returns —
+        so the local history stays coherent and the turn ends (flushing anything queued behind it).
+        Report `state_restored=False` whenever a response or tool call was actually in flight, so an app
+        can branch on the flag the same way on every provider; a drop with nothing in flight loses
+        nothing and stays `True`. Whether the settlement *emitted* events is not the test: an in-flight
+        response carried only by pending provider metadata is finalized into history without any.
         """
-        if event.state_restored and not self._profile.get('supports_session_seeding', False):
+        if event.state_restored and self._connection.reconnect_restores_in_flight_state:
             return [event]
-        lost = self._finalize_lost_state()
-        if lost:
+        lost_in_flight = self._response_in_flight or bool(self._pending_tool_calls)
+        events = self._finalize_lost_state()
+        if lost_in_flight:
             event = replace(event, state_restored=False)
-        return [*lost, event]
+        return [*events, event]
 
     def _finalize_lost_state(self) -> list[RealtimeEvent]:
         """Settle everything still open into history: user turns, an in-flight response, running tools.

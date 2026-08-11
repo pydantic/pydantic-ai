@@ -384,6 +384,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         return self._message_history
 
     @property
+    def reconnect_restores_in_flight_state(self) -> bool:
+        # Local replay restores only the finalized turns; the response and tool calls in flight when
+        # the socket dropped are gone, so the session settles them. (The xAI clone resumes natively and
+        # overrides this back to `True`.)
+        return False
+
+    @property
     def input_transcription_enabled(self) -> bool:
         return self._input_transcription_enabled
 
@@ -758,10 +765,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # not yet confirmed by its `response.created` (`_response_active` without `_response_started`)
             # — the answer the caller is waiting on, which `_pending_response` alone does not cover. A
             # response already streaming when it dropped is *not* re-asked: its partial reply is settled
-            # as interrupted, matching the state-lost contract of staying quiet until the next input.
-            # Sent inside this guard because the new socket can drop before the frame reaches it, which
-            # has to consume an attempt like any other failed reconnect.
-            replay_response = self._pending_response or (self._response_active and not self._response_started)
+            # as interrupted, matching the state-lost contract of staying quiet until the next input. Nor
+            # is one the caller cancelled (`_cancel_sent`) before it started: re-asking would resurrect a
+            # response a barge-in explicitly stopped. Sent inside this guard because the new socket can
+            # drop before the frame reaches it, which has to consume an attempt like any other failed
+            # reconnect.
+            replay_response = self._pending_response or (
+                self._response_active and not self._response_started and not self._cancel_sent
+            )
             self._clear_active_response()
             # A fresh socket also drops anything the old one was still holding for us.
             self._cancelled_response_id = None

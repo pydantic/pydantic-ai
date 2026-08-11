@@ -475,6 +475,13 @@ class FakeWebSocket:
 
 
 @pytest.mark.anyio
+def test_xai_connection_restores_in_flight_state_on_reconnect() -> None:
+    # xAI resumes the conversation server-side, so the session keeps its in-flight state rather than
+    # settling it (unlike the OpenAI base this connection is cloned from).
+    conn = XaiRealtimeConnection(FakeWebSocket([]))  # type: ignore[arg-type]
+    assert conn.reconnect_restores_in_flight_state is True
+
+
 async def test_response_done_maps_xai_usage_extras() -> None:
     done = json.dumps(
         {

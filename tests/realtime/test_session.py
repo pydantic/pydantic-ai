@@ -276,11 +276,13 @@ class FakeRealtimeConnection(RealtimeConnection):
         release: asyncio.Event | None = None,
         input_transcription_enabled: bool = True,
         model_name: str | None = None,
+        reconnect_restores_in_flight_state: bool = True,
     ) -> None:
         self._events = events
         self._release = release
         self._input_transcription_enabled = input_transcription_enabled
         self._model_name = model_name
+        self._reconnect_restores_in_flight_state = reconnect_restores_in_flight_state
         self.sent: list[RealtimeInput] = []
 
     @property
@@ -290,6 +292,10 @@ class FakeRealtimeConnection(RealtimeConnection):
     @property
     def input_transcription_enabled(self) -> bool:
         return self._input_transcription_enabled
+
+    @property
+    def reconnect_restores_in_flight_state(self) -> bool:
+        return self._reconnect_restores_in_flight_state
 
     async def send(self, content: RealtimeInput) -> None:
         self.sent.append(content)
@@ -3366,13 +3372,13 @@ _SETTLED_IN_FLIGHT = snapshot(
 
 
 @pytest.mark.parametrize(
-    ('supports_session_seeding', 'state_restored', 'expected_state_restored', 'expected'),
+    ('reconnect_restores_in_flight_state', 'state_restored', 'expected_state_restored', 'expected'),
     [
-        # Native resumption (Gemini Live, xAI): the provider genuinely continues the in-flight response
-        # on the new connection, so the two transcript halves belong to one response and nothing is
-        # settled. This is the only path that keeps `state_restored=True`.
+        # Native resumption (xAI; Gemini settles the cut turn in its own connection): the connection
+        # reports it restored the in-flight response, so the two transcript halves belong to one response
+        # and nothing is settled. This is the only path that keeps `state_restored=True`.
         pytest.param(
-            False,
+            True,
             True,
             True,
             snapshot(
@@ -3387,16 +3393,16 @@ _SETTLED_IN_FLIGHT = snapshot(
             id='native-resume-continues',
         ),
         # Local replay (OpenAI, Azure OpenAI): the connection reports `state_restored=True` because it
-        # replayed the *finalized* history, but the in-flight response the drop cut off is gone. The
-        # session settles it as an interrupted response and downgrades the user-facing flag to `False`,
-        # matching the fully-lost path so an app branches on the flag the same way everywhere.
-        pytest.param(True, True, False, _SETTLED_IN_FLIGHT, id='local-replay-settles-in-flight'),
+        # replayed the *finalized* history, but it does not restore in-flight state — the response the
+        # drop cut off is gone. The session settles it as an interrupted response and downgrades the
+        # user-facing flag to `False`, matching the fully-lost path so an app branches the same way.
+        pytest.param(False, True, False, _SETTLED_IN_FLIGHT, id='local-replay-settles-in-flight'),
         # Nothing restored at all: same settlement, flag already `False`.
-        pytest.param(True, False, False, _SETTLED_IN_FLIGHT, id='state-lost-settles-in-flight'),
+        pytest.param(False, False, False, _SETTLED_IN_FLIGHT, id='state-lost-settles-in-flight'),
     ],
 )
 async def test_reconnect_response_state(
-    supports_session_seeding: bool,
+    reconnect_restores_in_flight_state: bool,
     state_restored: bool,
     expected_state_restored: bool,
     expected: list[ModelMessage],
@@ -3407,9 +3413,10 @@ async def test_reconnect_response_state(
             RealtimeSessionReconnectEvent(state_restored=state_restored),
             OutputTranscript(text='after', is_final=True),
             ResponseDone(),
-        ]
+        ],
+        reconnect_restores_in_flight_state=reconnect_restores_in_flight_state,
     )
-    session = RealtimeSession(conn, profile=_profile(supports_session_seeding=supports_session_seeding))
+    session = RealtimeSession(conn)
     events = await collect_events(session)
     # The flag the app sees reflects what actually survived, not just what the connection replayed.
     assert [e.state_restored for e in events if isinstance(e, RealtimeSessionReconnectEvent)] == [
@@ -3427,9 +3434,10 @@ async def test_reconnect_while_idle_on_replay_provider_keeps_state_restored() ->
             RealtimeSessionReconnectEvent(state_restored=True),
             OutputTranscript(text='after', is_final=True),
             ResponseDone(),
-        ]
+        ],
+        reconnect_restores_in_flight_state=False,
     )
-    session = RealtimeSession(conn, profile=_profile(supports_session_seeding=True))
+    session = RealtimeSession(conn)
     events = await collect_events(session)
     assert [e.state_restored for e in events if isinstance(e, RealtimeSessionReconnectEvent)] == [True]
     assert session.new_messages() == snapshot(

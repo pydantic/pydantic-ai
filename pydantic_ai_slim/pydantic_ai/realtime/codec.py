@@ -435,6 +435,20 @@ class RealtimeConnection(ABC):
         """
         return True
 
+    @property
+    def reconnect_restores_in_flight_state(self) -> bool:
+        """Whether a reconnect continues the response and tool calls that were in flight when the socket dropped.
+
+        Otherwise it only brings back the finalized conversation. Native session resumption (xAI Grok Voice) restores the in-flight generation server-side, and
+        Gemini Live settles the cut turn in the connection before its
+        [`RealtimeSessionReconnectEvent`][pydantic_ai.messages.RealtimeSessionReconnectEvent], so in
+        both the [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] must not settle again and
+        trusts `state_restored`. Local replay (OpenAI, Azure OpenAI) restores only finalized turns, so
+        the session settles the interrupted turn itself and reports `state_restored=False`. Defaults to
+        `True`; the OpenAI connection overrides it.
+        """
+        return True
+
 
 __all__ = (
     # Connection ABC and the event/input unions it exchanges with a session.

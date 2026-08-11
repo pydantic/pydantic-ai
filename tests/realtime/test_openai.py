@@ -2982,6 +2982,12 @@ async def test_reconnect_replays_a_deferred_response_request() -> None:
     assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]
 
 
+def test_openai_connection_does_not_restore_in_flight_state_on_reconnect() -> None:
+    # OpenAI reconnects by replaying finalized history only, so the session settles the in-flight turn.
+    conn = OpenAIRealtimeConnection(FakeWebSocket([]))  # type: ignore[arg-type]
+    assert conn.reconnect_restores_in_flight_state is False
+
+
 @pytest.mark.anyio
 async def test_reconnect_re_solicits_a_response_that_never_started() -> None:
     # A `response.create` sent when idle goes out immediately (not deferred), so `_pending_response` is
@@ -3009,6 +3015,35 @@ async def test_reconnect_re_solicits_a_response_that_never_started() -> None:
     events = [e async for e in conn]
     assert [type(e).__name__ for e in events] == ['RealtimeSessionReconnectEvent', 'RealtimeSessionErrorEvent']
     assert replacement.sent == ['{"type":"response.create"}']
+
+
+@pytest.mark.anyio
+async def test_reconnect_does_not_re_solicit_a_cancelled_response() -> None:
+    # A response the caller cancelled (barge-in) before its `response.created` arrived is `_response_active`
+    # without `_response_started`, but `_cancel_sent` marks it stopped. Re-asking would resurrect a
+    # response the user explicitly interrupted, producing unwanted output after the barge-in, so it is
+    # not replayed on the fresh socket.
+    replacement = FakeWebSocket([])
+    replacements = iter([replacement])
+
+    async def dial() -> Any:
+        try:
+            return next(replacements)
+        except StopIteration:
+            raise OSError('server is down')
+
+    conn = OpenAIRealtimeConnection(
+        DroppingWebSocket([]),  # type: ignore[arg-type]
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1},
+    )
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._response_started = False  # pyright: ignore[reportPrivateUsage]
+    conn._cancel_sent = True  # pyright: ignore[reportPrivateUsage]
+
+    events = [e async for e in conn]
+    assert [type(e).__name__ for e in events] == ['RealtimeSessionReconnectEvent', 'RealtimeSessionErrorEvent']
+    assert 'response.create' not in replacement.sent
 
 
 @pytest.mark.anyio
