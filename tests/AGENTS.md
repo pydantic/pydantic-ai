@@ -63,8 +63,9 @@ async def test_feature(model: Model, stream: bool, request: pytest.FixtureReques
     Use the `request` fixture to access test parameter values.
 
     Use the `vcr` to make assertions about the HTTP requests if needed.
-    Another creative way of, for instance, asserting headers, is to use a patched httpx client fixture.
-    This spares us the overhead of parsing cassette fields, so it is to be preferred whenever optimal.
+    To assert what the code actually sent — headers included — take the `request_capture` fixture
+    instead. It reads the wire rather than the recording, so it is preferred whenever a transport
+    can be injected.
     """
     model_name = request.node.callspec.params['model']
     expected = EXPECTATIONS[(model_name, stream)]
@@ -136,7 +137,7 @@ For detailed workflows see `.claude/skills/testing-skill/SKILL.md`.
 
 Four mechanisms, and they are not interchangeable — pick by what the test's claim is about.
 
-**An httpx request hook — the boundary tap, and the first reach.** Give the provider an `httpx.AsyncClient` built with `event_hooks={'request': [...]}` and assert on what the hook collected; see `test_anthropic_code_execution_tool_container_reuse` in `tests/models/test_anthropic.py`. Event hooks run inside `AsyncClient.send`, above the transport VCR patches, so the hook fires on replay too and observes the request the live code actually built — a field the code stops sending fails the assertion instead of hiding behind a frozen recording. It costs the cassette nothing: matching is untouched, so fields that legitimately vary stay free to vary, and it sees what a cassette will not, headers included. The only requirement is a transport you can inject into, which is every provider taking `http_client`; a provider on another transport taps its own send-time event for the same reason — see `_capture_bedrock_request_headers` in `tests/models/test_bedrock.py`, a botocore `before-send` handler.
+**An httpx request hook — the boundary tap, and the first reach.** Request the `request_capture` fixture from `tests/models/conftest.py`, route the provider through `request_capture.client`, and assert on `request_capture.body(path_suffix)`; see `test_anthropic_code_execution_tool_container_reuse` in `tests/models/test_anthropic.py`. For an Anthropic model the `anthropic_model` factory does the routing, so `anthropic_model('claude-sonnet-4-5', capture=True)` is the whole setup. The fixture's client is an `httpx.AsyncClient` carrying an `event_hooks={'request': [...]}` recorder, and event hooks run inside `AsyncClient.send`, above the transport VCR patches, so the hook fires on replay too and observes the request the live code actually built — a field the code stops sending fails the assertion instead of hiding behind a frozen recording. It costs the cassette nothing: matching is untouched, so fields that legitimately vary stay free to vary, and it sees what a cassette will not, headers included (the cassette serializer strips `anthropic-*`, so the wire is the only place a test can assert beta gating). Snapshot a projection of the body rather than the body itself — `content_blocks`, `message_shape` and `cache_breakpoints`, also in `tests/models/conftest.py`, pin the fields a claim rests on without churning on unrelated conversation-shape changes. The only requirement is a transport you can inject into, which is every provider taking `http_client`; a provider on another transport taps its own send-time event for the same reason — see `_capture_bedrock_request_headers` in `tests/models/test_bedrock.py`, a botocore `before-send` handler.
 
 **Snapshot the request body — the review surface.** `single_request_body` in `tests/cassette_utils.py` decodes the request the *cassette* holds, so `assert single_request_body(vcr) == snapshot({...})` puts the whole outbound payload in the test body instead of leaving it buried in a long YAML. What it does not do is catch drift: the recording is frozen, so it keeps passing after the live code stops sending a field, and a recording can already disagree with what the code sends today. Its second job is at re-record time, where a changed payload surfaces as a snapshot diff. Where a hook is attached, snapshot what the hook captured instead — same review surface, and it is the request that is actually going out.
 
@@ -144,7 +145,7 @@ Four mechanisms, and they are not interchangeable — pick by what the test's cl
 
 **Capture the render — for claims no single exchange holds.** When the SDK client is mocked outright so nothing goes over the wire, or the claim is that two renderings are byte-identical rather than that one recorded request looked a certain way, capture what the adapter produces and assert against that; see `test_tool_availability_delta_and_the_tools_cache_section` in `tests/test_tool_availability_portability.py`, and `rendered_requests` in `tests/models/test_anthropic_mid_conversation_system.py` for the per-request form. Where the requests do go out over httpx, the boundary tap gets the same evidence without reaching into adapter internals.
 
-Default for a test that asserts an outbound field: attach the hook and assert on what it captured, snapshotting it when the whole payload is worth reviewing. Fall back to snapshotting the cassette body and matching on the field where no hook can be attached. Don't add field-by-field asserts alongside a snapshot — the snapshot already pins them.
+Default for a test that asserts an outbound field: take the capture fixture and assert on what it recorded, snapshotting a projection when the whole payload is worth reviewing. Fall back to snapshotting the cassette body and matching on the field where no hook can be attached. Don't add field-by-field asserts alongside a snapshot — the snapshot already pins them.
 
 ## Key Fixtures
 
@@ -184,6 +185,22 @@ async def test_something(model: Model):
 #### SSRF protection for URL downloads
 - `disable_ssrf_protection_for_vcr` - required for VCR tests that download URL content (`ImageUrl`, `AudioUrl`, `DocumentUrl`, `VideoUrl` with `force_download=True`)
 - An autouse guard raises a `RuntimeError` if a VCR test triggers SSRF validation without this fixture
+
+### From `models/conftest.py`
+
+Available to every test under `tests/models/`. See "Asserting what goes out on the wire" for when to reach for them.
+
+- `request_capture` - a `RequestCapture` whose `client` records every outbound request; read bodies with `.body(path_suffix)` / `.bodies(path_suffix)` and headers off `.headers`
+- `anthropic_model` - factory for `AnthropicModel`; `capture=True` routes it through `request_capture.client`
+  ```python
+  async def test_something(
+      allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+  ):
+      agent = Agent(anthropic_model('claude-sonnet-4-5', capture=True))
+      await agent.run('hello')
+      assert message_shape(request_capture.body('/v1/messages')) == snapshot([...])
+  ```
+- `content_blocks(body, block_type)`, `message_shape(body)`, `cache_breakpoints(body)` - plain functions, not fixtures; projections of a captured body to snapshot instead of the whole payload
 
 ## Assertion Helpers
 

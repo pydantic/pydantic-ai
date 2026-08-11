@@ -32,6 +32,7 @@ from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
 from ..exceptions import UserError
 from ..messages import (
+    STANDING_PROMPT_PLANTED_KEY,
     BaseToolCallPart,
     BaseToolReturnPart,
     BinaryImage,
@@ -132,6 +133,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'openrouter',
         'ovhcloud',
         'sambanova',
+        'snowflake',
         'together',
         'vercel',
         'zai',
@@ -1667,7 +1669,7 @@ def infer_model(  # noqa: C901
             return BedrockMantleChatModel(model_name, provider=provider)
         return BedrockMantleResponsesModel(model_name, provider=provider)
 
-    # OpenRouter, Cerebras, Ollama and Z.AI need to be checked before OpenAI,
+    # OpenRouter, Cerebras, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
@@ -1677,6 +1679,10 @@ def infer_model(  # noqa: C901
         from .cerebras import CerebrasModel
 
         return CerebrasModel(model_name, provider=provider)
+    elif model_kind == 'snowflake':
+        from .snowflake import SnowflakeModel
+
+        return SnowflakeModel(model_name, provider=provider)
     elif model_kind == 'ollama':
         from .ollama import OllamaModel
 
@@ -1946,7 +1952,11 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
 
 
 def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
-    messages: list[ModelMessage], system: str, *, requires_encrypted_content: bool = False
+    messages: list[ModelMessage],
+    system: str,
+    *,
+    requires_encrypted_content: bool = False,
+    standing_prompt_retained: bool = False,
 ) -> list[ModelMessage]:
     """Drop history before the latest same-provider compaction part the request will send.
 
@@ -1959,14 +1969,22 @@ def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
     part it wouldn't send must not act as a boundary either.
 
     The standing prompt survives via `_standing_prompt_request`; nothing else from the prefix does.
-    On OpenAI, re-inserting it is defense-in-depth rather than the sole carrier: the compaction blob
-    demonstrably retains leading `system` input items — even a latent directive that never fired
-    before the boundary governs post-compaction replies without the item being re-sent
-    (live-verified) — but that retention is an undocumented property of the encrypted blob, and a
-    blob whose compacted window never contained the standing prompt (e.g. a history started
-    elsewhere) can't supply it. On Anthropic it is load-bearing: the top-level `system` parameter is
-    rebuilt from the opening `SystemPromptPart`s on every request, so trimming them away would
-    silently drop the standing prompt from all subsequent requests.
+    `standing_prompt_retained` mirrors where the calling API carries the standing prompt: on
+    Anthropic the top-level `system` parameter is rebuilt from the opening `SystemPromptPart`s on
+    every request, so they must be re-inserted (`False`, the default) or the standing prompt is
+    silently dropped from all subsequent requests. On OpenAI Responses those parts render as
+    `system` input items *inside* the compacted window, and the compaction item demonstrably
+    retains them — a latent directive that never fired before the boundary still governs
+    post-compaction replies without the item being re-sent (live-verified) — so ordinary requests
+    pass `True` and skip re-sending what the model would receive twice. `True` is honored only for
+    a boundary part stamped with `STANDING_PROMPT_PLANTED_KEY`: retention presumes the compacted
+    window contained the standing prompt, which only our own compact call guarantees — an
+    externally produced or spliced-in item gets the standing prompt re-inserted as before.
+    Retention is also only reliable for a single hop: a directive carried solely by a previous
+    compaction item decayed when compacted again (live-verified), so the re-compaction call itself
+    passes `False` to plant the standing prompt explicitly in every freshly built window (and
+    stamps the result). Recovered instructions are re-sent either way — they travel as a
+    per-request parameter, never inside the window.
     The Messages API accepts a request whose messages start with the assistant compaction block
     (live-verified), and keeping e.g. the original first user message can 400 when it carries a
     `tool_result` whose `tool_use` was trimmed away — validation runs even on ignored content.
@@ -1985,24 +2003,34 @@ def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
             ):
                 continue
             tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]
-            return [*_standing_prompt_request(messages[:message_index]), *tail]
+            retained = standing_prompt_retained and bool(
+                part.provider_details and part.provider_details.get(STANDING_PROMPT_PLANTED_KEY)
+            )
+            return [
+                *_standing_prompt_request(messages[:message_index], include_system_parts=not retained),
+                *tail,
+            ]
     return messages
 
 
-def _standing_prompt_request(prefix: list[ModelMessage]) -> list[ModelRequest]:
+def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts: bool = True) -> list[ModelRequest]:
     """The standing prompt from a trimmed-away prefix, as a request of its own.
 
     System parts come from the first `ModelRequest` wherever it appears (a history may open with a
     `ModelResponse`), sliced by `_standing_system_prompt_count` — the same opening-parts rule the
-    hoisting adapters use. Instructions come from the latest prefix request that carried any: what
-    the instruction fallback for direct `Model.request()` callers would otherwise have recovered
-    from the dropped history; a kept-tail request with its own instructions still wins, being more
-    recent. Mid-conversation `SystemPromptPart`s render inline as conversation content, which the
-    compaction summary replaces, so they are deliberately not preserved.
+    hoisting adapters use; they are skipped entirely when the caller's compaction carrier already
+    retains them (see `_trim_messages_before_compaction`). Instructions come from the latest prefix
+    request that carried any: what the instruction fallback for direct `Model.request()` callers
+    would otherwise have recovered from the dropped history; a kept-tail request with its own
+    instructions still wins, being more recent. Mid-conversation `SystemPromptPart`s render inline
+    as conversation content, which the compaction summary replaces, so they are deliberately not
+    preserved.
     """
     first_request = next((m for m in prefix if isinstance(m, ModelRequest)), None)
     opening: Sequence[ModelRequestPart] = (
-        first_request.parts[: _standing_system_prompt_count(first_request)] if first_request else []
+        first_request.parts[: _standing_system_prompt_count(first_request)]
+        if first_request and include_system_parts
+        else []
     )
     instructions = next(
         (m.instructions for m in reversed(prefix) if isinstance(m, ModelRequest) and m.instructions is not None),
