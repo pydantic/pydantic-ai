@@ -50,10 +50,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     When any child returns a fresh instance from
     [`for_agent`][pydantic_ai.capabilities.AbstractCapability.for_agent] or
     [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run], the container is rebound
-    as a shallow copy holding the new children: subclass state is carried over verbatim and
-    `__init__`/`__post_init__` are not re-run. Compute values derived from `capabilities` on
-    access (e.g. via a property) rather than caching them at construction, so they can't go
-    stale across a rebind.
+    via `_rebound`: a shallow copy holding the new children, with subclass state carried over
+    verbatim and `__init__`/`__post_init__` not re-run. Compute values derived from `capabilities`
+    on access (e.g. via a property) rather than caching them at construction, so they can't go
+    stale across a rebind. `_instruction_sources` is the one thing that can't be — flattening
+    destroys what it records — so it's carried across by `_rebound` instead, and swapping children
+    any other way (`replace()`) silently rebuilds it from the flattened list.
     """
 
     capabilities: Sequence[AbstractCapability[AgentDepsT]]
@@ -70,21 +72,34 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 isinstance(capability, CombinedCapability)
                 and type(capability).get_instructions is CombinedCapability.get_instructions
             ):
-                instruction_sources.extend(capability.capabilities)
+                # Its own view, not its `capabilities`: those have already been flattened, so any
+                # container *it* retained would be splatted back out and its override lost. Every
+                # re-composition goes through here (`Agent.iter` re-combines the resolved layers
+                # whenever instrumentation or a run capability is present, and `replace()` re-runs
+                # `__post_init__`), so taking the flattened list would drop the override mid-run.
+                instruction_sources.extend(capability._instruction_sources)
             else:
                 instruction_sources.append(capability)
         self._instruction_sources = instruction_sources
         self.__normalize_capabilities()
 
-    def __rebind_instruction_sources(
-        self,
-        old_capabilities: Sequence[AbstractCapability[AgentDepsT]],
-        new_capabilities: Sequence[AbstractCapability[AgentDepsT]],
-    ) -> None:
+    def _rebound(self, new_capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> CombinedCapability[AgentDepsT]:
+        """A shallow copy holding `new_capabilities`, with the composition view carried across.
+
+        The only supported way to swap a container's children. `replace()` would re-run
+        `__post_init__`, which rebuilds `_instruction_sources` from the already-flattened
+        `capabilities` — and flattening is what drops a nested container that overrides
+        `get_instructions`, so rebuilding is exactly what loses it.
+        """
+        new_self = replace_no_init(self, capabilities=list(new_capabilities))
         # Keep ordinary sources aligned with their bound replacements while retained combined
         # overrides continue to represent the container that owns the public method.
-        replacements = {id(old): new for old, new in zip(old_capabilities, new_capabilities)}
-        self._instruction_sources = [replacements.get(id(source), source) for source in self._instruction_sources]
+        replacements = {id(old): new for old, new in zip(self.capabilities, new_capabilities)}
+        new_self._instruction_sources = [
+            replacements.get(id(source), source) for source in new_self._instruction_sources
+        ]
+        new_self.__normalize_capabilities()
+        return new_self
 
     # Name-mangled deliberately: this upholds a base-class invariant on rebinds, so a
     # subclass attribute of the same name must not be able to override it.
@@ -119,19 +134,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         new_caps = [capability.for_agent(agent) for capability in self.capabilities]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
-        new_self = replace_no_init(self, capabilities=new_caps)
-        new_self.__rebind_instruction_sources(self.capabilities, new_caps)
-        new_self.__normalize_capabilities()
-        return new_self
+        return self._rebound(new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         new_caps = await gather(*(c.for_run(ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
-        new_self = replace_no_init(self, capabilities=list(new_caps))
-        new_self.__rebind_instruction_sources(self.capabilities, new_caps)
-        new_self.__normalize_capabilities()
-        return new_self
+        return self._rebound(new_caps)
 
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
@@ -145,9 +154,34 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ]
         return instructions or None
 
+    def __ordered_instruction_sources(self) -> list[AbstractCapability[AgentDepsT]]:
+        """The composition view, in the order the ordering pass settled the leaves into.
+
+        Instruction blocks have always followed `capabilities`, which `__normalize_capabilities`
+        flattens *and* sorts, so a capability that asks to be `outermost` contributes its block
+        first however late it was registered. `_instruction_sources` is in registration order and
+        retains the containers flattening drops, so each source takes the position of its
+        earliest-placed leaf. Sorting the sources directly instead would re-run the ordering pass
+        over those retained containers and could raise `Conflicting positions` for one whose leaves
+        span two tiers -- the very case flattening exists to avoid.
+
+        Computed on access rather than stored, so a rebind can't leave it stale.
+        """
+        positions = {id(capability): index for index, capability in enumerate(self.capabilities)}
+
+        def position(source: AbstractCapability[AgentDepsT]) -> int:
+            # A source with no leaf among `capabilities` (nothing does this today) sorts last
+            # rather than first, so an unplaceable block can't displace a placed one.
+            return min(
+                (positions[id(leaf)] for leaf in collect_leaves(source) if id(leaf) in positions),
+                default=len(positions),
+            )
+
+        return sorted(self._instruction_sources, key=position)
+
     def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         instructions: list[SourcedInstruction[AgentDepsT]] = []
-        for capability in self._instruction_sources:
+        for capability in self.__ordered_instruction_sources():
             if capability.defer_loading is True:
                 continue
             if (
@@ -911,7 +945,7 @@ def bind_capabilities_tier(
     new_caps = [c.for_agent(agent) if is_innermost(c) == innermost else c for c in combined.capabilities]
     if all(new is old for new, old in zip(new_caps, combined.capabilities, strict=True)):
         return combined
-    return replace(combined, capabilities=new_caps)
+    return combined._rebound(new_caps)  # pyright: ignore[reportPrivateUsage]
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:

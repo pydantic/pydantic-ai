@@ -35,11 +35,15 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     _exit_stack: AsyncExitStack | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
-        # Only the direct members are checked, rather than walking the tree with `apply()`: a nested
-        # `CombinedToolset` validates its own members when it is constructed, and a wrapper reports
-        # the id of what it wraps, so every id that can key a `toolset:<id>` instruction block is
-        # still seen exactly once. Walking would also mean calling a method on every child on every
-        # construction, which the run loop does per step.
+        # Only the direct members are checked, rather than walking the tree with `apply()`, which
+        # would mean calling a method on every child on every construction — and the run loop
+        # reconstructs this per step. So the check catches ids a user registered side by side, not
+        # every id that can key a `toolset:<id>` instruction block: a toolset nested inside another
+        # `CombinedToolset` is only compared against that one's members, and one behind a
+        # `WrapperToolset` (`id` `None`, though it keys the instructions it passes through with the
+        # wrapped id) isn't compared at all — which is how two capabilities can each contribute a
+        # toolset with the same id. Blocks sharing a key are addressed together by an override
+        # rather than individually; see https://github.com/pydantic/pydantic-ai/issues/7385.
         seen: dict[str, AbstractToolset[AgentDepsT]] = {}
         for toolset in self.toolsets:
             if (toolset_id := toolset.id) is None:

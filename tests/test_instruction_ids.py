@@ -17,7 +17,14 @@ import pytest
 from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, ModelRequestContext
-from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, Hooks, WrapperCapability
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    CapabilityOrdering,
+    CombinedCapability,
+    Hooks,
+    WrapperCapability,
+)
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     InstructionPart,
@@ -658,4 +665,76 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 """,
             dynamic=True,
         ),
+    ]
+
+
+async def test_combined_capability_override_survives_re_composition():
+    """A run-level capability re-composes the tree; the container that owns the override is still there.
+
+    `Agent.iter` builds a fresh `CombinedCapability` over the resolved layers whenever anything is
+    contributed per run (also for auto-injected instrumentation), which re-derives the composition
+    view from the agent's already-flattened root. Rebuilding it from the flattened children would
+    splat the overriding container back out and send its children's blocks instead.
+    """
+
+    class OverriddenCombined(CombinedCapability[Any]):
+        id = 'group'
+
+        def get_instructions(self) -> str:
+            return 'Override.'
+
+    agent = Agent(
+        capabilities=[OverriddenCombined(capabilities=[Capability[Any](instructions='Child.', id='child')], id='group')]
+    )
+
+    assert await run_and_capture(agent, capabilities=[Capability[Any](instructions='Per run.', id='per_run')]) == [
+        InstructionPart(content='Override.', id='capability:group'),
+        InstructionPart(content='Per run.', id='capability:per_run'),
+    ]
+
+
+async def test_instruction_blocks_follow_the_capability_ordering():
+    """Blocks come out in the order the ordering pass settled the capabilities into, not registration order.
+
+    A capability that asks to be `outermost` wraps the others' hooks, and its instructions have
+    always led the prompt to match — `DeferredCapabilityLoader` puts its catalog block first this
+    way despite being appended last.
+    """
+
+    class Outermost(Capability[Any]):
+        def get_ordering(self) -> CapabilityOrdering | None:
+            return CapabilityOrdering(position='outermost')
+
+    agent = Agent(
+        capabilities=[
+            Capability[Any](instructions='Registered first.', id='first'),
+            Outermost(instructions='Registered last.', id='last'),
+        ]
+    )
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Registered last.', id='capability:last'),
+        InstructionPart(content='Registered first.', id='capability:first'),
+    ]
+
+
+async def test_each_unidentified_source_gets_its_own_part():
+    """Two sources that are both unaddressable are still two blocks, not one fused one.
+
+    They share an `id` of `None` — grouping on that alone would run an anonymous capability's
+    instructions together with the ones passed to this single run, which have nothing to do with
+    each other and don't even share a lifetime.
+    """
+
+    agent = Agent(
+        capabilities=[
+            Capability[Any](instructions='From an anonymous capability.'),
+            Capability[Any](instructions='From another anonymous capability.'),
+        ]
+    )
+
+    assert await run_and_capture(agent, instructions='Passed to this run.') == [
+        InstructionPart(content='From an anonymous capability.'),
+        InstructionPart(content='From another anonymous capability.'),
+        InstructionPart(content='Passed to this run.'),
     ]
