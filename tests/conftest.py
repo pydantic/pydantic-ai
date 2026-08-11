@@ -941,6 +941,11 @@ def zai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def crusoe_api_key() -> str:
+    return os.getenv('CRUSOE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def snowflake_account() -> str:
     return os.getenv('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
 

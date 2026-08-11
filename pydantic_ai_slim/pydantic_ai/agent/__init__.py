@@ -6,13 +6,18 @@ import dataclasses
 import functools
 import inspect
 import warnings
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from contextlib import (
+    AbstractAsyncContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    contextmanager,
+)
 from contextvars import ContextVar
 from copy import copy
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer
@@ -60,13 +65,14 @@ from ..capabilities import (
     ToolSearch as ToolSearchCap,
 )
 from ..capabilities._dynamic import wrap_capability_funcs
-from ..capabilities._ordering import has_capability_type
+from ..capabilities._ordering import find_capability, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities.abstract import leaf_capabilities
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
+from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
@@ -84,6 +90,7 @@ from ..tools import (
     SystemPromptFunc,
     Tool,
     ToolDefinition,
+    ToolDenied,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -104,11 +111,14 @@ from .abstract import (
     AbstractAgent,
     AgentMetadata,
     AgentModelSettings,
+    AgentRealtime,
     AgentRetries,
     AgentRunEvents,
     EventStreamHandler,
     EventStreamProcessor,
     RunOutputDataT,
+    _RealtimeSessionLifecycle,  # pyright: ignore[reportPrivateUsage]
+    _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
 )
 from .spec import AgentSpec, get_capability_registry
 from .wrapper import WrapperAgent
@@ -118,12 +128,22 @@ if TYPE_CHECKING:
 
     from pydantic_graph import GraphRunContext
 
+    from ..realtime import (
+        AudioRetention,
+        KnownRealtimeModelName,
+        RealtimeEvent as RealtimeEvent,
+        RealtimeModel,
+        RealtimeModelSettings,
+        RealtimeProviderSession,
+        RealtimeSession,
+    )
     from ..ui._web import ModelsParam
 
 __all__ = (
     'AbstractAgent',
     'Agent',
     'AgentModelSettings',
+    'AgentRealtime',
     'AgentRetries',
     'AgentRun',
     'AgentRunEvents',
@@ -141,6 +161,8 @@ __all__ = (
     'capture_run_messages',
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
+    'ToolDenied',
+    'RealtimeEvent',
 )
 
 
@@ -150,6 +172,176 @@ class _ResolvedAgentRetries:
 
     tools: int
     output: int
+
+
+@dataclasses.dataclass(frozen=True)
+class _RunLifecycle:
+    short_circuited: bool
+
+
+@asynccontextmanager
+async def _run_lifecycle_hooks(  # noqa: C901
+    run_capability: AbstractCapability[Any],
+    run_ctx: RunContext[Any],
+    *,
+    build_result: Callable[[], AgentRunResult[Any]],
+    finalize: Callable[[AgentRunResult[Any]], Awaitable[None]],
+    extract_error: Callable[[BaseException], BaseException] | None = None,
+    result_ready: Callable[[], bool] | None = None,
+    restore_context_on: AsyncExitStack | None = None,
+) -> AsyncGenerator[_RunLifecycle]:
+    """Dispatch run hooks around a caller-owned run body.
+
+    `restore_context_on` hands ownership of the propagated-ContextVar restore to the caller's exit
+    stack: registered before the caller pushes later entries (like its toolset), so restore happens
+    in LIFO order after those exit — resources entered inside the propagated context (e.g. the run
+    span set by `Instrumentation.wrap_run`) also *exit* inside it. Without it, this context manager
+    restores on its own exit.
+    """
+    # wrap_run cooperative hand-off protocol:
+    #
+    # 1. _do_run() calls before_run, sets _run_ready, then awaits _run_done.
+    # 2. wrap_run wraps _do_run via the capability middleware chain.
+    # 3. We await either _run_ready (handler started) or _wrap_task completion
+    #    (short-circuit: wrap_run returned without calling handler).
+    # 4. We yield to the caller to execute the run body.
+    # 5. When the caller finishes (or an error occurs), we set _run_done.
+    # 6. _do_run resumes: returns the result (success) or re-raises the error.
+    # 7. If wrap_run catches the error and returns a recovery result, we use it.
+    #    Otherwise the original error propagates.
+    _run_ready = asyncio.Event()
+    _run_done = asyncio.Event()
+    _run_error: BaseException | None = None
+    _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
+
+    async def _do_run() -> AgentRunResult[Any]:
+        nonlocal _wrap_context
+        await run_capability.before_run(run_ctx)
+        # Capture context vars set by wrap_run/before_run so they can be propagated to the
+        # caller's task, where the run body and any child tasks execute.
+        current_ctx = contextvars.copy_context()
+        _wrap_context = [
+            (var, current_ctx[var])
+            for var in current_ctx
+            if var not in outer_context or outer_context[var] is not current_ctx[var]
+        ]
+        _run_ready.set()
+        await _run_done.wait()
+        if _run_error is not None:
+            raise extract_error(_run_error) if extract_error is not None else _run_error
+        if result_ready is not None and not result_ready():  # pragma: no cover
+            # The caller finished without a result (e.g. `break` out of iteration): there is
+            # nothing to return, so park until the wrap task is cancelled below. Normally the
+            # cancellation is delivered at this task's resume point before this line runs, so
+            # it's only reached if a `wrap_run` implementation absorbed the cancellation.
+            await asyncio.Future[AgentRunResult[Any]]()
+        return build_result()
+
+    outer_context = contextvars.copy_context()
+    _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
+    # Wait for handler to start or wrap_run to complete (short-circuit).
+    _ready_waiter = asyncio.create_task(_run_ready.wait())
+    try:
+        await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
+    except BaseException as exc:
+        # Unblock `_do_run` before draining, mirroring the streaming handoff: if
+        # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
+        # cooperative cancellation) and returned, `_do_run` is parked on
+        # `_run_done.wait()`. Set `_run_error` so the survivor re-raises this error
+        # instead of asserting on a not-yet-produced result, then set `_run_done` so
+        # it can exit and `cancel_and_drain`'s gather can complete (it discards the
+        # survivor's exception). Harmless no-op when `_wrap_task` really died
+        # cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
+        _run_error = exc
+        _run_done.set()
+        await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
+        raise
+    else:
+        await _utils.cancel_and_drain(_ready_waiter)
+
+    # Propagate context vars set by wrap_run/before_run to the caller's task.
+    context_tokens: list[tuple[ContextVar[Any], contextvars.Token[Any]]] = []
+    # Indexing instead of tuple unpacking because pyright can't resolve types through
+    # nonlocal + Optional unpacking.
+    for cv_pair in _wrap_context or ():
+        context_tokens.append((cv_pair[0], cv_pair[0].set(cv_pair[1])))
+
+    def _restore_context_vars() -> None:
+        for var, token in context_tokens:
+            var.reset(token)
+
+    if restore_context_on is not None:
+        restore_context_on.callback(_restore_context_vars)
+
+    async def _finalize_result(result: AgentRunResult[Any]) -> None:
+        nonlocal _run_error
+        result = await run_capability.after_run(run_ctx, result=result)
+        # Every completion path funnels through here — including `wrap_run`/`on_run_error`
+        # recovering from the very `CancelledError` an external cancel delivered. If that
+        # cancellation is still pending on this task, re-assert it rather than let the run
+        # finalize as a success.
+        _utils.raise_if_cancelling()
+        await finalize(result)
+        _run_error = None
+
+    short_circuited = _wrap_task.done() and not _run_ready.is_set()
+    if short_circuited:
+        await _finalize_result(_wrap_task.result())
+
+    try:
+        try:
+            yield _RunLifecycle(short_circuited=short_circuited)
+        except BaseException as exc:
+            _run_error = extract_error(exc) if extract_error is not None else exc
+            # Don't attempt recovery for GeneratorExit/KeyboardInterrupt — awaiting
+            # `_wrap_task` during cleanup could delay shutdown.
+            if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
+                raise
+            # Don't re-raise yet — give wrap_run a chance to recover. If wrap_run catches
+            # the error from handler() and returns a recovery result, it is suppressed.
+        finally:
+            if not short_circuited:
+                _run_done.set()
+                if _run_error is None and (result_ready is None or result_ready()):
+                    await _finalize_result(await _wrap_task)
+                elif _run_error is not None:
+                    # Error path: await wrap_run to see if it recovers. `_do_run()` re-raises
+                    # `_run_error`; if wrap_run catches it and returns a result, recovery succeeds.
+                    try:
+                        await _finalize_result(await _wrap_task)
+                    except BaseException as wrap_exc:
+                        # Attach wrap_run's own errors as context so they're visible in tracebacks
+                        # (but don't mask the original). Skip CancelledError: it's expected
+                        # cancellation propagation, and setting __context__ on it causes hangs on
+                        # Python 3.10.
+                        if not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
+                            # Only fires for bugs in `wrap_run` implementations.
+                            _run_error.__context__ = wrap_exc  # pragma: no cover
+                # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is
+                # always still pending here.
+                elif not _wrap_task.done():  # pragma: no branch
+                    _wrap_task.cancel()
+                    try:
+                        await _wrap_task
+                    except (asyncio.CancelledError, BaseException):
+                        pass
+
+        # If wrap_run didn't recover, give on_run_error a chance.
+        if _run_error is not None:
+            try:
+                result = await run_capability.on_run_error(run_ctx, error=_run_error)
+            except BaseException as on_error_exc:
+                _run_error = on_error_exc
+            else:
+                await _finalize_result(result)
+
+        # If on_run_error didn't recover either, re-raise. In an @asynccontextmanager,
+        # not re-raising suppresses the exception.
+        if _run_error is not None:
+            raise _run_error
+    finally:
+        if restore_context_on is None:
+            _restore_context_vars()
 
 
 def _is_model(value: object) -> TypeIs[models.Model[Any]]:
@@ -1122,8 +1314,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # Resolve the root capability (override > agent default) up front: it's needed both for the
         # capability-supplied model fallback below and for run-time capability assembly further down.
-        override_cap = self._override_root_capability.get()
-        base_capability = self._effective_root_capability()
+        base_capability, base_is_override = self._base_run_capability()
 
         # Resolve spec contributions (additive at run time)
         resolved = self._resolve_spec(spec)
@@ -1177,14 +1368,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         override_output_retries = self._override_output_retries.get()
         if override_output_retries is not None:
             effective_output_retries = override_output_retries.value
-        override_tool_retries = self._override_tool_retries.get()
-        if override_tool_retries is not None:
-            effective_tool_retries = override_tool_retries.value
-
-        # Resolve the effective tool-retry default: override > run arg > spec > agent init default.
-        effective_tool_retries_resolved = (
-            effective_tool_retries if effective_tool_retries is not None else self._max_tool_retries
-        )
+        effective_tool_retries_resolved = self._resolve_tool_retries(effective_tool_retries)
 
         deps = self._get_deps(deps)
         usage = usage or _usage.RunUsage()
@@ -1196,7 +1380,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
-        extra_capabilities = [capability.for_agent(self) for capability in extra_capabilities]
+        extra_capabilities = self._bind_run_capabilities(extra_capabilities)
         model_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
         bootstrap_capability: AbstractCapability[AgentDepsT]
         if len(model_layers) > 1:
@@ -1376,132 +1560,51 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         state.metadata = self._get_metadata(initial_ctx, metadata)
         initial_ctx.metadata = state.metadata
 
-        # The capability layers resolved for this run: the base, then the extras. The
-        # Instrumentation capability is prepended (outermost) so its spans wrap everything,
-        # but only if the user hasn't already added one themselves.
-        run_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
-        if instrumentation_cap is not None and not has_capability_type(run_layers, InstrumentationCap):
-            run_layers.insert(0, instrumentation_cap)
+        # Resolve the capability layers and extract their per-run contributions. Shared with
+        # `realtime_session` via `_resolve_run_capabilities` so both wire capabilities up identically;
+        # this call site keeps the graph-only surroundings: the `InstrumentedModel` unwrap and
+        # instrumentation-settings resolution above, the deferred loader (`inject_deferred_loader=True`),
+        # the output toolset below, and the layered `get_model_settings` closure. Keep those in sync
+        # with the realtime call site.
+        resolved_caps = await self._resolve_run_capabilities(
+            initial_ctx,
+            base_capability=base_capability,
+            extra_capabilities=extra_capabilities,
+            instrumentation_cap=instrumentation_cap,
+            inject_deferred_loader=True,
+            base_is_override=base_is_override,
+        )
+        run_capability = resolved_caps.run_capability
+        capabilities_dict = resolved_caps.capabilities
+        cap_instructions = resolved_caps.instructions
+        cap_native_tools = resolved_caps.native_tools
+        cap_model_settings = resolved_caps.model_settings
+        cap_toolsets = resolved_caps.toolsets
 
-        # Per-run capability: resolve `for_run` on the layers directly instead of composing a
-        # `CombinedCapability` first and resolving that (which would gather over the same
-        # children): `override(native_tools=...)` below needs the *resolved* extras — their
-        # native tools may only materialize in `for_run`, e.g. from a capability function's
-        # returned capability — and the composed tree can't give them back. `CombinedCapability`
-        # re-flattens and re-sorts its children both at construction and on the `replace()`
-        # inside its `for_run`, erasing which resolved children formed which layer. Nor can the
-        # extras be re-resolved afterwards to peek at them: `for_run` is documented as called
-        # once per run and may have per-run side effects (e.g. the durable-exec integrations
-        # rely on this for deterministic replay). Composing from the resolved pieces below
-        # yields the same structure as resolving a pre-composed tree, since the same
-        # flatten-and-sort runs on the same resolved children either way. The base capability
-        # is a `CombinedCapability`, so composing it back as a layer here lets its leaves
-        # (which may span outermost and innermost tiers, e.g. `ToolSearch` and
-        # `TemporalDurability`) re-flatten into siblings for the ordering pass.
-        resolved_layers = await _utils.gather(*(cap.for_run(initial_ctx) for cap in run_layers))
-        model_layer_start = len(run_layers) - len(model_layers)
+        # Whether any capability's `for_run` swapped a model-layer contribution during resolution; the
+        # per-step model-selection block below keys off this. The model layers are the tail of the
+        # resolved layers (the `Instrumentation` capability, when injected, sits at the front).
+        resolved_layers = resolved_caps.resolved_layers
+        model_layer_start = len(resolved_layers) - len(model_layers)
         model_layers_unchanged = all(
             resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
         )
-        # The extras are the tail of `run_layers` (instrumentation, if added, is at the front).
-        # Slicing from the front avoids the `[-0:]` full-list pitfall when there are no extras.
-        resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
-        base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
-            initial_ctx,
-            [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
-        )
-        if len(resolved_layers) > 1:
-            run_capability = CombinedCapability(resolved_layers)
-        else:
-            run_capability = resolved_layers[0]
 
-        # Re-extract get_*() from the resolved capability if anything is contributed per-run
-        capabilities_dict = _build_run_capabilities(run_capability)
-        # Inject the loader only if a deferred capability is present AND `for_run` didn't already
-        # return one, mirroring the `has_capability_type` guard used for instrumentation above.
-        # Without it, a `for_run` result that already carries a loader would get double-wrapped
-        # (cf. https://github.com/pydantic/pydantic-ai/issues/5047) — a second loader toolset then errors on the reserved `load_capability` name.
-        if any(
-            capability.defer_loading is True for capability in capabilities_dict.values()
-        ) and not has_capability_type([run_capability], DeferredCapabilityLoader):
-            run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
-            capabilities_dict = _build_run_capabilities(run_capability)
-        # `toolset.for_run(initial_ctx)` below evaluates dynamic-toolset factories, which resolve
-        # against the run's registered capabilities (e.g. a `DynamicCapability`'s contributed
-        # toolset reuses the capability instance `for_run` already resolved).
-        initial_ctx.capabilities = capabilities_dict
-        cap_toolsets: list[AgentToolset[AgentDepsT]] | None
-
-        if run_capability is not base_capability or override_cap is not None:
-            source_cap = run_capability
-        else:
-            source_cap = None
-
-        if source_cap is not None:
-            cap_instructions = _instructions.normalize_instructions(source_cap.get_instructions())
-            cap_native_tools = list(source_cap.get_native_tools())
-            cap_model_settings = source_cap.get_model_settings()
-            cap_ts = source_cap.get_toolset()
-            cap_toolsets = [cap_ts] if cap_ts is not None else []
-        else:
-            cap_instructions = None  # use init-time defaults
-            cap_native_tools = self._cap_native_tools
-            cap_model_settings = self._cap_model_settings
-            cap_toolsets = None
-
-        # Native tool ids are validated per layer, from each layer's *resolved* form, since
-        # contributions from e.g. capability functions only materialize in `for_run`. Two
-        # conflicting definitions sharing a `unique_id` *within* a layer are ambiguous, while
-        # last-wins *across* layers is the intentional override mechanism. The base layer is the
-        # agent's own capabilities (validated at construction as a fail-fast for static
-        # conflicts, and re-checked here to cover dynamic contributions) or their
-        # `override(spec=...)` replacement; instrumentation contributes no native tools.
-        base_native_tools = [
-            tool
-            for cap in resolved_layers[: len(resolved_layers) - len(extra_capabilities)]
-            for tool in cap.get_native_tools()
-        ]
-        _validate_native_tool_ids(
-            base_native_tools,
-            source='override spec capabilities' if override_cap is not None else 'agent capabilities',
-        )
-        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
-            tool for cap in resolved_extras for tool in cap.get_native_tools()
-        ]
-        _validate_native_tool_ids(extra_native_tools, source='run capabilities')
-
-        # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
-        # preserving any additional per-run capability-contributed native tools (e.g. from
-        # `capabilities=[NativeTool(...)]`) on top.
-        if some_native_tools := self._override_native_tools.get():
-            _validate_native_tool_ids(some_native_tools.value, source='override native_tools')
-            cap_native_tools = [*some_native_tools.value, *extra_native_tools]
-
-        # Build model settings resolver using per-run capability
+        # Build model settings resolver using per-run capability. Shared with `realtime_session` via
+        # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
+        # base for a graph run). Resolved per model-request step here; once at connect in a session.
         def get_model_settings(run_context: RunContext[AgentDepsT]) -> ModelSettings | None:
-            # Resolve settings in layers, each merged on top of the previous.
-            # Before calling each callable, set run_context.model_settings so it
-            # can see the merged result of all previous layers.
-            merged = run_context.model.settings
-
-            run_context.model_settings = merged
-            resolved_agent = (
-                agent_model_settings(run_context) if callable(agent_model_settings) else agent_model_settings
+            # A capability can select a different model per step, so the base is the step's live
+            # `run_context.model` settings, not a captured initial model. A graph run always uses a
+            # request-response `Model` here; realtime has its own settings path and never reaches this.
+            # (Hoisted to a local first so pyright narrows cleanly after `RunContext.model` widened to
+            # `AbstractModel`; member access on the narrowed attribute directly trips a false positive.)
+            step_model = run_context.model
+            return _layer_model_settings(
+                run_context,
+                (agent_model_settings, cap_model_settings, run_model_settings),
+                base=step_model.settings if isinstance(step_model, models.Model) else None,
             )
-            merged = merge_model_settings(merged, resolved_agent)
-
-            # Capability settings (from custom capabilities that override get_model_settings), cached at init
-            run_context.model_settings = merged
-            cap_settings = cap_model_settings
-            resolved_cap = cap_settings(run_context) if callable(cap_settings) else cap_settings
-            merged = merge_model_settings(merged, resolved_cap)
-
-            run_context.model_settings = merged
-            resolved_run = run_model_settings(run_context) if callable(run_model_settings) else run_model_settings
-            merged = merge_model_settings(merged, resolved_run)
-
-            run_context.model_settings = merged
-            return merged
 
         # Build toolset with per-run capability contributions
         toolset = self._get_toolset(
@@ -1725,165 +1828,42 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Build RunContext for run lifecycle hooks
             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
 
-            # wrap_run cooperative hand-off protocol:
-            #
-            # 1. _do_run() calls before_run, sets _run_ready, then awaits _run_done.
-            # 2. wrap_run wraps _do_run via the capability middleware chain.
-            # 3. We await either _run_ready (handler started) or _wrap_task completion
-            #    (short-circuit: wrap_run returned without calling handler).
-            # 4. We yield agent_run to the caller for iteration.
-            # 5. When the caller finishes (or an error occurs), we set _run_done.
-            # 6. _do_run resumes: returns the result (success) or re-raises the error.
-            # 7. If wrap_run catches the error and returns a recovery result, we use it.
-            #    Otherwise the original error propagates.
-            _run_ready = asyncio.Event()
-            _run_done = asyncio.Event()
-            _run_error: BaseException | None = None
-            _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
-
-            async def _do_run() -> AgentRunResult[Any]:
-                nonlocal _wrap_context
-                await run_capability.before_run(run_ctx)
-                # Capture context vars set by wrap_run/before_run so
-                # they can be propagated to the outer task where
-                # agent_run.next() (and therefore node hooks) execute.
-                _current_ctx = contextvars.copy_context()
-                _wrap_context = [
-                    (var, _current_ctx[var])
-                    for var in _current_ctx
-                    if var not in _outer_context or _outer_context[var] is not _current_ctx[var]
-                ]
-                _run_ready.set()
-                await _run_done.wait()
-                if _run_error is not None:
-                    # Raise the original node error, not the potentially
-                    # transformed version from context manager __aexit__ chains.
-                    raise agent_run._node_error or _run_error  # pyright: ignore[reportPrivateUsage]
-                r = agent_run.result
-                assert r is not None
-                return r
-
-            _outer_context = contextvars.copy_context()
-            _wrap_task = asyncio.create_task(run_capability.wrap_run(run_ctx, handler=_do_run))
-            # Wait for handler to start or wrap_run to complete (short-circuit)
-            _ready_waiter = asyncio.create_task(_run_ready.wait())
-            try:
-                await asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)
-            except BaseException as exc:
-                # Unblock `_do_run` before draining, mirroring the streaming handoff: if
-                # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
-                # cooperative cancellation) and returned, `_do_run` is parked on
-                # `_run_done.wait()`. Set `_run_error` so the survivor re-raises this error
-                # instead of asserting on a not-yet-produced result, then set `_run_done` so
-                # it can exit and `cancel_and_drain`'s gather can complete (it discards the
-                # survivor's exception). Harmless no-op when `_wrap_task` really died
-                # cancelled — it's already unwinding. See https://github.com/pydantic/pydantic-ai/issues/6422.
-                _run_error = exc
-                _run_done.set()
-                await _utils.cancel_and_drain(_ready_waiter, _wrap_task)
-                raise
-            else:
-                await _utils.cancel_and_drain(_ready_waiter)
-
-            # Propagate context vars set by wrap_run/before_run to
-            # the outer task so that agent_run.next() (and therefore
-            # node hooks) can see them.
-            _context_tokens: list[tuple[ContextVar[Any], contextvars.Token[Any]]] = []
-            # Note: indexing instead of tuple unpacking because pyright
-            # can't resolve types through nonlocal + Optional unpacking.
-            for _cv_pair in _wrap_context or ():
-                _context_tokens.append((_cv_pair[0], _cv_pair[0].set(_cv_pair[1])))
-
-            # Register context var restore on the stack so it happens in LIFO order
-            # (after toolset exit, before graph run exit).
-            def _restore_context_vars() -> None:
-                for _var, _token in _context_tokens:
-                    _var.reset(_token)
-
-            stack.callback(_restore_context_vars)
-
-            # Enter toolset AFTER context vars are propagated so that
-            # toolset __aenter__/__aexit__ run inside the run span context
-            # (set by the Instrumentation capability's wrap_run).
-            await stack.enter_async_context(toolset)
-
-            async def _finalize_result(r: AgentRunResult[Any]) -> None:
-                """Call after_run, store the result override, and clear any pending error."""
-                nonlocal _run_error
-                r = await run_capability.after_run(run_ctx, result=r)
-                usage_limits.check_cost(r.usage)
-                # Every completion path funnels through here — including `wrap_run`/`on_run_error`
-                # recovering from the very `CancelledError` an external cancel delivered. If that
-                # cancellation is still pending on this task, re-assert it rather than let the run
-                # finalize as a success. A first-party request remains terminal even if a hook
-                # consumed the task's cancellation counter.
-                _utils.raise_if_cancelling()
+            async def _finalize_result(result: AgentRunResult[Any]) -> None:
+                usage_limits.check_cost(result.usage)
+                # A first-party cancellation request remains terminal even if a hook consumed the
+                # task's cancellation counter (past the helper's `raise_if_cancelling` backstop).
                 if graph_deps.cancellation.cancel_requested:
                     raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
-                agent_run._result_override = r  # pyright: ignore[reportPrivateUsage]
-                _run_error = None
+                agent_run._result_override = result  # pyright: ignore[reportPrivateUsage]
 
-            _short_circuited = _wrap_task.done() and not _run_ready.is_set()
-            if _short_circuited:
-                await _finalize_result(_wrap_task.result())
+            def _extract_error(error: BaseException) -> BaseException:
+                # Use the original node error if available, since context manager __aexit__ chains
+                # (GraphRun → anyio TaskGroup) may transform it into CancelledError or ExceptionGroup.
+                return agent_run._node_error or error  # pyright: ignore[reportPrivateUsage]
 
-            try:
-                yield agent_run
-            except BaseException as _exc:
-                # Use the original node error if available, since context manager
-                # __aexit__ chains (GraphRun → anyio TaskGroup) may transform
-                # the exception (e.g. into CancelledError or ExceptionGroup).
-                _run_error = agent_run._node_error or _exc  # pyright: ignore[reportPrivateUsage]
-                # Don't attempt recovery for GeneratorExit/KeyboardInterrupt —
-                # awaiting _wrap_task during cleanup could delay shutdown.
-                if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
-                    raise
-                # Don't re-raise yet — give wrap_run a chance to recover.
-                # If wrap_run catches the error from handler() and returns
-                # a recovery result, the exception will be suppressed.
-            finally:
-                if agent_run.result is not None:
-                    self._resolve_and_store_metadata(agent_run.ctx, metadata)
+            def _build_result() -> AgentRunResult[Any]:
+                result = agent_run.result
+                assert result is not None
+                return result
 
-                if not _short_circuited:
-                    _run_done.set()
-                    if _run_error is None and agent_run.result is not None:
-                        await _finalize_result(await _wrap_task)
-                    elif _run_error is not None:
-                        # Error path: await wrap_run to see if it recovers.
-                        # _do_run() re-raises _run_error; if wrap_run catches
-                        # it and returns a result, recovery succeeds.
-                        try:
-                            await _finalize_result(await _wrap_task)
-                        except BaseException as _wrap_exc:
-                            # Attach wrap_run's own errors as context so they're
-                            # visible in tracebacks (but don't mask the original).
-                            # Skip CancelledError: it's expected cancellation propagation,
-                            # and setting __context__ on it causes hangs on Python 3.10.
-                            if not isinstance(_wrap_exc, asyncio.CancelledError) and _wrap_exc is not _run_error:
-                                # Only fires for bugs in `wrap_run` implementations.
-                                _run_error.__context__ = _wrap_exc  # pragma: no cover
-                    # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is always still pending here.
-                    elif not _wrap_task.done():  # pragma: no branch
-                        _wrap_task.cancel()
-                        try:
-                            await _wrap_task
-                        except (asyncio.CancelledError, BaseException):
-                            pass
-
-            # If wrap_run didn't recover, give on_run_error a chance.
-            if _run_error is not None:
+            async with _run_lifecycle_hooks(
+                run_capability,
+                run_ctx,
+                build_result=_build_result,
+                finalize=_finalize_result,
+                extract_error=_extract_error,
+                result_ready=lambda: agent_run.result is not None,
+                # Restore on `stack` in LIFO order (after toolset exit, before graph run exit).
+                restore_context_on=stack,
+            ):
+                # Enter toolset AFTER context vars are propagated so that toolset
+                # __aenter__/__aexit__ run inside the run span context.
+                await stack.enter_async_context(toolset)
                 try:
-                    _result = await run_capability.on_run_error(run_ctx, error=_run_error)
-                except BaseException as _on_error_exc:
-                    _run_error = _on_error_exc
-                else:
-                    await _finalize_result(_result)
-
-            # If on_run_error didn't recover either, re-raise.
-            # In an @asynccontextmanager, not re-raising suppresses the exception.
-            if _run_error is not None:
-                raise _run_error
+                    yield agent_run
+                finally:
+                    if agent_run.result is not None:
+                        self._resolve_and_store_metadata(agent_run.ctx, metadata)
 
     def _get_metadata(
         self,
@@ -2743,6 +2723,35 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         override = self._override_root_capability.get()
         return override.value if override is not None else self._root_capability
 
+    def _resolve_tool_retries(self, retries: int | None = None) -> int:
+        """Resolve the effective tool-retry default: override > run/spec > agent default."""
+        override = self._override_tool_retries.get()
+        if override is not None:
+            return override.value
+        return retries if retries is not None else self._max_tool_retries
+
+    def _base_run_capability(self) -> tuple[CombinedCapability[AgentDepsT], bool]:
+        """The base capability layer for a run, plus whether it came from `override(root_capability=...)`.
+
+        `iter` and `realtime_session` both resolve the base layer through this so the override is honored
+        identically — KEEP the two call sites in sync (a realtime session that ignored the override would
+        silently drop a `with agent.override(root_capability=...):` block).
+        """
+        override_cap = self._override_root_capability.get()
+        return self._effective_root_capability(), override_cap is not None
+
+    def _bind_run_capabilities(
+        self, extra_capabilities: list[AbstractCapability[AgentDepsT]]
+    ) -> list[AbstractCapability[AgentDepsT]]:
+        """Bind per-run capabilities to this agent via `for_agent` before capability resolution.
+
+        `_resolve_run_capabilities` only ever calls `for_run`, so binding the per-run layer via
+        `for_agent` is the caller's responsibility. `iter` and `realtime_session` both MUST call this —
+        skipping it uses a capability that overrides `for_agent` (e.g. the durability capabilities)
+        unbound, a silent divergence. KEEP the two call sites in sync.
+        """
+        return [capability.for_agent(self) for capability in extra_capabilities]
+
     async def _resolve_model_selection(
         self,
         selection: ModelSelection,
@@ -2842,6 +2851,126 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return some_deps.value
         else:
             return deps
+
+    async def _resolve_run_capabilities(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        base_capability: AbstractCapability[AgentDepsT],
+        extra_capabilities: list[AbstractCapability[AgentDepsT]],
+        instrumentation_cap: InstrumentationCap | None,
+        inject_deferred_loader: bool,
+        base_is_override: bool,
+    ) -> _ResolvedRunCapabilities[AgentDepsT]:
+        """Resolve the per-run capability layers and extract their contributions.
+
+        Shared by [`iter`][pydantic_ai.agent.AbstractAgent.iter] / [`run`][pydantic_ai.agent.AbstractAgent.run]
+        and [`realtime_session`][pydantic_ai.agent.Agent.realtime_session] so both wire capabilities up
+        identically: the outermost `Instrumentation` injection, per-layer `for_run` resolution (never
+        composing first — see below), optional deferred-loader injection, and the native-tool /
+        instruction / model-settings / toolset contributions with `override(native_tools=...)` folded
+        in. Each caller keeps its own surrounding logic (instrumentation *settings* resolution,
+        model-settings layering, output toolset, the graph vs. the connection) and cross-references
+        this method so the two stay in sync.
+
+        `ctx` must already carry `metadata` (and, when instrumented, `tracer` / `trace_include_content`),
+        since capability `for_run` hooks observe it. `base_is_override` is whether `base_capability`
+        came from `override(root_capability=...)` (only the graph run supports that today), used solely
+        for the native-tool validation error's `source`.
+        """
+        run_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
+        # Prepend `Instrumentation` (outermost, so its spans wrap everything) unless the user already
+        # added one themselves — mirroring the explicit-capability-wins precedence.
+        if instrumentation_cap is not None and not has_capability_type(run_layers, InstrumentationCap):
+            run_layers.insert(0, instrumentation_cap)
+
+        # Resolve `for_run` per layer instead of composing a `CombinedCapability` first (which would
+        # gather over the same children): the `override(native_tools=...)` merge below needs the
+        # *resolved* extras — their native tools may only materialize in `for_run`, e.g. from a
+        # capability function's returned capability — and the composed tree re-flattens/re-sorts its
+        # children and can't hand them back. Nor can the extras be re-resolved afterwards to peek:
+        # `for_run` is documented as called once per run and may have per-run side effects (the
+        # durable-exec integrations rely on this for deterministic replay). Composing from the resolved
+        # pieces yields the same structure as resolving a pre-composed tree, since the same
+        # flatten-and-sort runs on the same resolved children either way.
+        resolved_layers = await _utils.gather(*(cap.for_run(ctx) for cap in run_layers))
+        # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
+        # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
+        resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
+        base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
+            ctx,
+            [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
+        )
+        run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
+
+        # Re-extract get_*() from the resolved capability if anything is contributed per-run.
+        capabilities = _build_run_capabilities(run_capability)
+        # Inject the loader only if a deferred capability is present AND `for_run` didn't already return
+        # one, or a second loader toolset then errors on the reserved `load_capability` name
+        # (cf. https://github.com/pydantic/pydantic-ai/issues/5047).
+        if inject_deferred_loader and (
+            any(capability.defer_loading is True for capability in capabilities.values())
+            and not has_capability_type([run_capability], DeferredCapabilityLoader)
+        ):
+            run_capability = CombinedCapability([run_capability, DeferredCapabilityLoader()])
+            capabilities = _build_run_capabilities(run_capability)
+
+        # Register the run's capabilities on the context so the `toolset.for_run(ctx)` each caller runs
+        # next evaluates dynamic-toolset factories against them (e.g. a `DynamicCapability`'s contributed
+        # toolset reuses the capability instance `for_run` already resolved).
+        ctx.capabilities = capabilities
+
+        # Only read contributions from the resolved tree when the run actually has capabilities beyond
+        # the plain agent default; otherwise fall back to the init-time snapshots.
+        if run_capability is not base_capability or base_is_override:
+            source_cap: AbstractCapability[AgentDepsT] | None = run_capability
+        else:
+            source_cap = None
+        if source_cap is not None:
+            instructions = _instructions.normalize_instructions(source_cap.get_instructions())
+            native_tools = list(source_cap.get_native_tools())
+            model_settings = source_cap.get_model_settings()
+            cap_toolset = source_cap.get_toolset()
+            toolsets: list[AgentToolset[AgentDepsT]] | None = [cap_toolset] if cap_toolset is not None else []
+        else:
+            instructions = None  # use init-time defaults
+            native_tools = self._cap_native_tools
+            model_settings = self._cap_model_settings
+            toolsets = None
+
+        # Native tool ids are validated per layer, from each layer's *resolved* form (contributions
+        # from e.g. capability functions only materialize in `for_run`). Conflicting definitions
+        # sharing a `unique_id` *within* a layer are ambiguous; last-wins *across* layers is the
+        # intentional override mechanism. Instrumentation contributes no native tools.
+        base_native_tools = [
+            tool
+            for cap in resolved_layers[: len(resolved_layers) - len(extra_capabilities)]
+            for tool in cap.get_native_tools()
+        ]
+        _validate_native_tool_ids(
+            base_native_tools,
+            source='override spec capabilities' if base_is_override else 'agent capabilities',
+        )
+        extra_native_tools: list[AgentNativeTool[AgentDepsT]] = [
+            tool for cap in resolved_extras for tool in cap.get_native_tools()
+        ]
+        _validate_native_tool_ids(extra_native_tools, source='run capabilities')
+
+        # `override(native_tools=...)` replaces the agent's *baseline* native tools while still
+        # preserving any additional per-run capability-contributed native tools on top.
+        if some_native_tools := self._override_native_tools.get():
+            _validate_native_tool_ids(some_native_tools.value, source='override native_tools')
+            native_tools = [*some_native_tools.value, *extra_native_tools]
+
+        return _ResolvedRunCapabilities(
+            run_capability=run_capability,
+            capabilities=capabilities,
+            instructions=instructions,
+            native_tools=native_tools,
+            model_settings=model_settings,
+            toolsets=toolsets,
+            resolved_layers=resolved_layers,
+        )
 
     def _get_instructions(
         self,
@@ -3020,6 +3149,567 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema = self._output_schema
 
         return schema
+
+    @asynccontextmanager
+    async def _resolve_realtime_session(  # noqa: C901
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        run_lifecycle: bool = False,
+    ) -> AsyncGenerator[_RealtimeSessionResolution[AgentDepsT]]:
+        """Resolve the agent configuration shared by realtime sessions and WebRTC signaling.
+
+        With `run_lifecycle`, the run-lifecycle hooks are dispatched around the resolved configuration
+        as well, so that they wrap the toolset — and the session the caller opens inside them — exactly
+        as `iter` does. Only [`_open_realtime_session`][pydantic_ai.agent.Agent._open_realtime_session]
+        asks for that: signaling only reads back the instructions and tools a session would advertise,
+        and is not itself a run.
+        """
+        from ..realtime import RealtimeModel, infer_realtime_model
+
+        if not isinstance(model, RealtimeModel):
+            model = infer_realtime_model(model)
+
+        deps = self._get_deps(deps)
+        # Resolved, not passed through: a session inherits the conversation it continues and mints a fresh
+        # id otherwise, so telemetry and a later handoff line up with a classic run — and `'new'` means
+        # "fork off this history" here too rather than becoming a literal id shared by every such session.
+        conversation_id = _agent_graph.resolve_conversation_id(conversation_id, message_history)
+        run_id = _agent_graph.resolve_run_id(run_id, message_history)
+        max_tool_retries = self._resolve_tool_retries()
+        run_context = RunContext[AgentDepsT](
+            deps=deps,
+            agent=self,
+            model=model,
+            usage=usage if usage is not None else _usage.RunUsage(),
+            # `RunContext.usage_limits` is documented as always set during a run. Unlike a classic run,
+            # an unset `usage_limits` enforces nothing here (limits are opt-in for a session — a whole
+            # conversation, where the classic 50-request default would cut a long voice conversation
+            # short), so the context carries an explicitly limitless `UsageLimits` rather than the
+            # classic default: what hooks read must match what the session enforces.
+            usage_limits=usage_limits if usage_limits is not None else _usage.UsageLimits(request_limit=None),
+            model_settings=None,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            # Seed `ctx.messages` from `message_history` like `iter` does, so dynamic `@agent.instructions`
+            # functions and capability `for_run` hooks see the prior conversation. KEEP IN SYNC with `iter`.
+            messages=list(message_history) if message_history else [],
+            max_retries=max_tool_retries,
+        )
+        # Both need the context that only exists once it's built, so they're assigned rather than passed —
+        # the graph does the same via `replace`. Without them a tool validated in a session sees a
+        # different Pydantic context, and a capability introspecting the chain sees none, than in a run.
+        run_context.validation_context = _agent_graph.build_validation_context(self._validation_context, run_context)
+
+        # Instrumentation: inject an `Instrumentation` capability (outermost) so tool spans flow through
+        # `ToolManager.handle_call`'s `wrap_tool_execute` hook — the single, canonical source of tool
+        # spans — exactly as `run`/`iter` do (via `_resolve_run_capabilities` below). A realtime model is
+        # a `RealtimeModel`, never an `InstrumentedModel`, so there's no wrapped model to unwrap; the
+        # settings come straight from `_resolve_instrumentation_settings()`. The helper skips injection if
+        # the user already supplied an `Instrumentation` capability (agent- or call-level).
+        extra_capabilities = self._bind_run_capabilities(wrap_capability_funcs(capabilities))
+        instrumentation_settings = self._resolve_instrumentation_settings()
+        instrumentation_cap = (
+            InstrumentationCap(settings=instrumentation_settings) if instrumentation_settings is not None else None
+        )
+
+        # The session-level `realtime` span and per-response `chat` spans are hand-managed by
+        # `RealtimeSession`; run-lifecycle hooks have no per-exchange boundary on which to build them.
+        # Drive them from the settings that
+        # will actually win: an explicit `Instrumentation` capability's (agent- or call-level) over the
+        # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
+        # tool spans.
+        explicit_instrumentation = find_capability(
+            [self._effective_root_capability(), *extra_capabilities], InstrumentationCap
+        )
+        session_instrumentation_settings = (
+            explicit_instrumentation.settings if explicit_instrumentation is not None else instrumentation_settings
+        )
+        # Mirror `iter`'s `RunContext`: expose the resolved tracer (a `NoOpTracer` when uninstrumented)
+        # and content-tracing flag, and resolve metadata before `for_run` so capability/toolset hooks see
+        # it (same ordering as the graph run).
+        run_context.tracer = (
+            session_instrumentation_settings.tracer if session_instrumentation_settings is not None else NoOpTracer()
+        )
+        run_context.trace_include_content = (
+            session_instrumentation_settings is not None and session_instrumentation_settings.include_content
+        )
+        if session_instrumentation_settings is not None:
+            run_context.instrumentation_version = session_instrumentation_settings.version
+        run_context.metadata = self._get_metadata(run_context, metadata)
+
+        # Resolve the capability layers and extract their contributions, exactly as `run`/`iter` do via
+        # the shared helpers (`_base_run_capability` honors `override(root_capability=...)` the same way).
+        # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, once-only model settings
+        # (below), and the `_keep_native` drop plus the shared native ↔ local-tool swap (below). Keep
+        # this in sync with the `iter` call site.
+        base_capability, base_is_override = self._base_run_capability()
+        resolved_caps = await self._resolve_run_capabilities(
+            run_context,
+            base_capability=base_capability,
+            extra_capabilities=extra_capabilities,
+            instrumentation_cap=instrumentation_cap,
+            inject_deferred_loader=True,
+            base_is_override=base_is_override,
+        )
+        run_capability = resolved_caps.run_capability
+        # Deferred capabilities load in a session the same way they do in a graph run: the catalog
+        # renders into the connect-time instructions and the loaded instructions come back as the
+        # `load_capability` tool's own result, which every provider supports. What no provider
+        # connection can do (yet) is advertise NEW tools mid-session — tools are fixed at connect —
+        # so a deferred capability whose loading would have to reveal tools can't be honored, and
+        # fails up front rather than silently loading less than it promised. The direct hook calls
+        # probe the same contributions extraction reads; their results are discarded.
+        undeliverable_capability_ids = [
+            capability_id
+            for capability_id, capability in run_context.capabilities.items()
+            if capability.defer_loading is True
+            and (capability.get_toolset() is not None or (capability.get_native_tools() or ()))
+        ]
+        if undeliverable_capability_ids:
+            formatted_ids = ', '.join(repr(capability_id) for capability_id in undeliverable_capability_ids)
+            raise exceptions.UserError(
+                'Realtime sessions cannot reveal tools mid-session, so deferred capabilities that '
+                'contribute tools or native tools are not supported; remove `defer_loading=True` '
+                f'from: {formatted_ids}.'
+            )
+        # `_resolve_run_capabilities` already registered `run_context.capabilities` for the toolset/connect
+        # `for_run` below, exactly as the graph run relies on. The root of that chain has to be published
+        # too, or the context contradicts itself: `capabilities` populated while `root_capability` is
+        # `None`, so anything delegating through the effective chain sees none of it.
+        run_context.root_capability = run_capability
+        # The state an `AgentRunResult` is built from when the session closes. `run_id` and
+        # `conversation_id` are the ones already resolved above, so the result, the run context, and
+        # every message the session stamps all agree.
+        result_state = _agent_graph.GraphAgentState(
+            message_history=[],
+            usage=run_context.usage,
+            run_id=run_id,
+            conversation_id=conversation_id,
+            metadata=run_context.metadata,
+        )
+
+        # Regular agent and capability model settings intentionally do not apply to realtime sessions.
+        # A future capability hook dedicated to realtime settings can add that behavior deliberately.
+        effective_model_settings: RealtimeModelSettings | None = model.settings.copy() if model.settings else None
+        if model_settings:
+            if effective_model_settings is None:
+                effective_model_settings = model_settings.copy()
+            else:
+                effective_model_settings.update(model_settings)
+        # Realtime settings are fixed at connect time, so the merged settings hold for the whole
+        # session — unlike a classic run, where this is re-stamped before each model request.
+        run_context.model_settings = effective_model_settings
+
+        # Native (provider built-in) tools, e.g. via `capabilities=[NativeTool(WebSearchTool())]`. Dynamic
+        # native-tool functions are resolved once against the connect-time context — like dynamic
+        # instructions, since a session's tool list is fixed from the moment the connection opens. The
+        # auto-injected optional `ToolSearchTool` is dropped (mirroring the graph's corpus-empty drop):
+        # there's no tool-search corpus and realtime providers don't support it. The helper already
+        # folded in `override(native_tools=...)` and any per-call capability native tools.
+        # KEEP IN SYNC with the graph's resolution in `_prepare_request_parameters`.
+        native_tools: list[AbstractNativeTool] = []
+        for native_tool in resolved_caps.native_tools:
+            if not isinstance(native_tool, AbstractNativeTool):
+                resolved_native = native_tool(run_context)
+                if inspect.isawaitable(resolved_native):
+                    resolved_native = await resolved_native
+                if resolved_native is None:
+                    continue
+                native_tool = resolved_native
+            if not (isinstance(native_tool, ToolSearchTool) and native_tool.optional):
+                native_tools.append(native_tool)
+        model_profile = model.profile
+
+        toolset = self._get_toolset(
+            output_toolset=None,
+            additional_toolsets=toolsets,
+            cap_toolsets=resolved_caps.toolsets,
+            run_capability=run_capability,
+        )
+        toolset = await toolset.for_run(run_context)
+
+        # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never
+        # will — so the session and the result standing in for it are handed back through this holder.
+        lifecycle_state = _RealtimeSessionLifecycle() if run_lifecycle else None
+
+        def _build_session_result() -> AgentRunResult[Any]:
+            assert lifecycle_state is not None and lifecycle_state.session is not None
+            return lifecycle_state.session._build_run_result(result_state)  # pyright: ignore[reportPrivateUsage]
+
+        async def _finalize_session_result(result: AgentRunResult[Any]) -> None:
+            assert lifecycle_state is not None
+            if lifecycle_state.session is None:
+                lifecycle_state.short_result = result
+            else:
+                lifecycle_state.session._result = result  # pyright: ignore[reportPrivateUsage]
+
+        yielded = False
+        async with AsyncExitStack() as session_stack:
+            if lifecycle_state is not None:
+                lifecycle = await session_stack.enter_async_context(
+                    _run_lifecycle_hooks(
+                        run_capability,
+                        run_context,
+                        build_result=_build_session_result,
+                        finalize=_finalize_session_result,
+                    )
+                )
+                if lifecycle.short_circuited:
+                    # Nothing below this is resolved: the toolset is never entered and the caller
+                    # yields a closed session in place of connecting. The empty `ToolManager` is the
+                    # one that session is built on. The `yielded` guard mirrors the normal path: if the
+                    # caller's body raises and the lifecycle hooks recover it (`on_run_error` runs even
+                    # after a short-circuit), the error is suppressed at the exit stack and execution
+                    # resumes below — without this, that clean resume would yield a second time and
+                    # `asynccontextmanager` would raise `RuntimeError: generator didn't stop after athrow()`.
+                    try:
+                        yield _RealtimeSessionResolution(
+                            model=model,
+                            run_context=run_context,
+                            tool_manager=ToolManager(FunctionToolset()),
+                            model_request_parameters=models.ModelRequestParameters(),
+                            model_settings=effective_model_settings,
+                            instructions=None,
+                            request_messages=[],
+                            model_profile=model_profile,
+                            instrumentation_settings=session_instrumentation_settings,
+                            conversation_id=conversation_id,
+                            run_id=run_id,
+                            lifecycle=lifecycle_state,
+                            short_circuited=True,
+                        )
+                    finally:
+                        yielded = True
+                    return
+            await session_stack.enter_async_context(toolset)
+            tool_manager = await ToolManager[AgentDepsT](
+                toolset, root_capability=run_capability, default_max_retries=max_tool_retries
+            ).for_run_step(run_context)
+            tool_defs = tool_manager.tool_defs
+
+            # Evaluate literal + dynamic instructions once, then fold in toolset-contributed
+            # instructions, mirroring the run/iter graph. Capability-contributed instructions come from
+            # the resolved capabilities (like `iter`), not just the init-time snapshot.
+            literal, instruction_functions = self._get_instructions(
+                additional_instructions=instructions, cap_instructions=resolved_caps.instructions
+            )
+            # Build `InstructionPart`s (static literal first, then dynamic functions, then dynamic toolset
+            # instructions) and join with the canonical `InstructionPart.join` — same double-newline
+            # separator and static-before-dynamic ordering as the graph run. KEEP IN SYNC with the graph's
+            # `_get_instructions` / `ModelRequestNode`.
+            instruction_parts: list[_messages.InstructionPart] = []
+            if literal:
+                instruction_parts.append(_messages.InstructionPart(content=literal, dynamic=False))
+            for fn in instruction_functions:
+                if text := await fn.run(run_context):
+                    instruction_parts.append(_messages.InstructionPart(content=text, dynamic=True))
+            instruction_parts.extend(
+                _instructions.normalize_toolset_instructions(await tool_manager.toolset.get_instructions(run_context))
+            )
+            resolved_instructions = _messages.InstructionPart.join(_messages.InstructionPart.sorted(instruction_parts))
+            request_messages = [
+                *(message_history or ()),
+                _messages.ModelRequest(parts=[], instructions=resolved_instructions or None),
+            ]
+            model_request_parameters = models.ModelRequestParameters(
+                function_tools=tool_defs,
+                native_tools=native_tools,
+            )
+            # Resolve `include_return_schema` exactly as `Model.prepare_request` does: return schemas
+            # are cleared on tools that didn't opt in, kept as-is for a model that renders them
+            # natively (Gemini Live's function-declaration `response` schema), and injected into the
+            # tool description elsewhere.
+            model_request_parameters = models.prepare_return_schemas(
+                model_request_parameters,
+                supports_tool_return_schema=model_profile.get('supports_tool_return_schema', False),
+            )
+            # Run the same native ↔ local-tool fallback swap the classic agent-run path applies (via
+            # `Model._resolve_request_tools`): drop an unsupported native tool when a local fallback
+            # (stamped `unless_native=...` by the capability's toolset) is present, drop the redundant
+            # local tool when the native tool IS supported, and raise the shared `UserError` (suggesting
+            # `local=...`) only when unsupported with no local fallback. Realtime models genuinely default
+            # to supporting no native tools, so the default here is `frozenset()`, not `SUPPORTED_NATIVE_TOOLS`.
+            # No `can_withhold_tool_schemas`/`tool_addition_mode`: a realtime connection can neither
+            # withhold a schema nor reveal a tool later, so every deferred unrevealed tool resolves
+            # to `'withheld'` in the visibility table.
+            model_request_parameters = models.resolve_request_tools(
+                model_request_parameters, model_profile.get('supported_native_tools', frozenset())
+            )
+            # A `defer_loading=True` tool is hidden until tool search reveals it, which a session whose
+            # tools are fixed at connect can never do — the model would be handed a `search_tools`
+            # affordance that finds the tool and then can't have it. Rejected up front for the same
+            # reason a deferred *capability* that contributes tools is (see `_resolve_run_capabilities`
+            # above), rather than silently advertising a search that leads nowhere.
+            deferred_tool_names = [tool.name for tool in model_request_parameters.function_tools if tool.defer_loading]
+            if deferred_tool_names:
+                formatted_names = ', '.join(repr(name) for name in deferred_tool_names)
+                raise exceptions.UserError(
+                    'Realtime sessions cannot reveal tools mid-session, so tools with '
+                    f'`defer_loading=True` are not supported; remove it from: {formatted_names}.'
+                )
+            # Realtime codecs read `function_tools` directly, so hidden tools are dropped from the
+            # connect-time advertisement entirely — the same physical removal this path applied
+            # before visibility became a resolved table.
+            model_request_parameters = dataclasses.replace(
+                model_request_parameters,
+                function_tools=model_request_parameters.declared_function_tools,
+            )
+
+            wrap_event_stream: (
+                Callable[
+                    [AsyncIterable[_messages.AgentStreamEvent]],
+                    AsyncIterable[_messages.AgentStreamEvent],
+                ]
+                | None
+            ) = (
+                (lambda stream: run_capability.wrap_run_event_stream(run_context, stream=stream))
+                if run_capability.has_wrap_run_event_stream
+                else None
+            )
+
+            resolution = _RealtimeSessionResolution(
+                model=model,
+                run_context=run_context,
+                tool_manager=tool_manager,
+                model_request_parameters=model_request_parameters,
+                model_settings=effective_model_settings,
+                instructions=resolved_instructions or None,
+                request_messages=request_messages,
+                model_profile=model_profile,
+                instrumentation_settings=session_instrumentation_settings,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                wrap_event_stream=wrap_event_stream,
+                lifecycle=lifecycle_state,
+            )
+            try:
+                yield resolution
+            finally:
+                yielded = True
+
+        if yielded:
+            # Reached on the normal path, and when the run-lifecycle hooks suppressed a caller-side
+            # error that `wrap_run`/`on_run_error` recovered — the caller sees a clean exit either way.
+            return
+        # Entering the toolset or resolving the session configuration failed after the run-lifecycle
+        # hooks were entered, and `wrap_run`/`on_run_error` recovered with a result: the hooks
+        # suppressed the error above with nothing yielded yet, which `asynccontextmanager` would
+        # report as `RuntimeError: generator didn't yield`. Yield the short-circuit resolution shape
+        # instead, so `_open_realtime_session` yields its closed placeholder session carrying the
+        # recovery result.
+        assert lifecycle_state is not None and lifecycle_state.short_result is not None
+        yield _RealtimeSessionResolution(
+            model=model,
+            run_context=run_context,
+            tool_manager=ToolManager(FunctionToolset()),
+            model_request_parameters=models.ModelRequestParameters(),
+            model_settings=effective_model_settings,
+            instructions=None,
+            request_messages=[],
+            model_profile=model_profile,
+            instrumentation_settings=session_instrumentation_settings,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            lifecycle=lifecycle_state,
+            short_circuited=True,
+        )
+
+    @asynccontextmanager
+    async def _open_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
+        provider_session: RealtimeProviderSession | None = None,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
+
+        Opens the realtime session and drives the agent's tools. Users go through
+        [`agent.realtime(model).session()`][pydantic_ai.agent.AbstractAgent.realtime]; see
+        [`realtime`][pydantic_ai.agent.AbstractAgent.realtime] for the parameter reference.
+        """
+        from ..realtime import RealtimeSession
+        from ..realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput
+
+        # A WebRTC sideband session doesn't own the audio transport: the browser streams audio to the
+        # provider directly, so the session disables its audio methods and retains no audio bytes.
+        owns_media = provider_session is None
+        if not owns_media and audio_retention != 'transcript_only':
+            # Reject an audio-retention request that can never be satisfied (no audio bytes flow here).
+            raise exceptions.UserError(
+                "A WebRTC sideband session can't retain audio: the browser exchanges audio with the "
+                'provider directly, so no audio bytes reach this connection. Leave `audio_retention` at '
+                "'transcript_only' (transcripts still build the conversation history)."
+            )
+
+        yielded = False
+        async with self._resolve_realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            message_history=message_history,
+            run_lifecycle=True,
+        ) as resolved:
+            lifecycle = resolved.lifecycle
+            assert lifecycle is not None
+
+            def _closed_session(result: AgentRunResult[Any]) -> RealtimeSession:
+                # The session is yielded closed, so `_ensure_not_closed` rejects every public
+                # entry point before the connection is touched; these raises are defense-in-depth
+                # for the abstract methods the base class requires.
+                class _SkippedRealtimeConnection(RealtimeConnection):
+                    async def send(self, content: RealtimeInput) -> None:
+                        raise exceptions.UserError(  # pragma: no cover
+                            'This realtime session was short-circuited before connecting.'
+                        )
+
+                    def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+                        raise exceptions.UserError(  # pragma: no cover
+                            'This realtime session was short-circuited before connecting.'
+                        )
+
+                session = RealtimeSession(
+                    _SkippedRealtimeConnection(),
+                    model=resolved.model,
+                    tool_manager=resolved.tool_manager,
+                    usage=resolved.run_context.usage,
+                    usage_limits=usage_limits,
+                    message_history=message_history,
+                    conversation_id=resolved.conversation_id,
+                    run_id=resolved.run_id,
+                    metadata=resolved.run_context.metadata,
+                )
+                session._result = result  # pyright: ignore[reportPrivateUsage]
+                session._closed = True  # pyright: ignore[reportPrivateUsage]
+                return session
+
+            if resolved.short_circuited:
+                assert lifecycle.short_result is not None
+                # `yielded` guard as in the normal path below: if the caller's body raises and the
+                # resolver's lifecycle hooks recover it, the error is suppressed at the `async with`
+                # above and execution resumes below. Without this, that resume would yield a second
+                # closed session and `asynccontextmanager` would raise `generator didn't stop after athrow()`.
+                try:
+                    yield _closed_session(lifecycle.short_result)
+                finally:
+                    yielded = True
+                return
+
+            if message_history and not resolved.model_profile.get('supports_session_seeding', False):
+                raise exceptions.UserError(
+                    f'The {resolved.model.model_name!r} realtime model does not support seeding a session with '
+                    '`message_history`.'
+                )
+
+            output_modality = (resolved.model_settings or {}).get('output_modality', 'audio')
+            # Unlike a setting the provider merely ignores, this one changes what the caller gets back:
+            # a model that can't do it either fails the handshake (Gemini) or answers with speech anyway
+            # (xAI), so it is rejected here rather than after a connection is open.
+            if output_modality == 'text' and not resolved.model_profile.get('supports_text_output', True):
+                raise exceptions.UserError(
+                    f"The {resolved.model.model_name!r} realtime model does not support `output_modality='text'`; "
+                    'it only generates audio. Read the spoken answer from the transcript on the '
+                    '`SpeechPart` instead.'
+                )
+
+            connection_manager = (
+                resolved.model.connect(
+                    messages=resolved.request_messages,
+                    model_settings=resolved.model_settings,
+                    model_request_parameters=resolved.model_request_parameters,
+                )
+                if provider_session is None
+                else resolved.model.connect_webrtc(
+                    provider_session,
+                    messages=resolved.request_messages,
+                    model_settings=resolved.model_settings,
+                    model_request_parameters=resolved.model_request_parameters,
+                )
+            )
+            async with connection_manager as connection:
+                session = RealtimeSession(
+                    connection,
+                    model=resolved.model,
+                    tool_manager=resolved.tool_manager,
+                    owns_media=owns_media,
+                    instrumentation=resolved.instrumentation_settings,
+                    # Fall back to 'agent' like the classic run span (see `capabilities/instrumentation.py`)
+                    # so the session span always carries an `agent_name`; backends that group runs by it
+                    # (e.g. Logfire's Runs view) would otherwise skip an unnamed agent's realtime session.
+                    agent_name=self.name or 'agent',
+                    usage=resolved.run_context.usage,
+                    usage_limits=usage_limits,
+                    audio_retention=audio_retention,
+                    retain_images_every_n=retain_images_every_n,
+                    retain_images_max=retain_images_max,
+                    message_history=message_history,
+                    conversation_id=resolved.conversation_id,
+                    run_id=resolved.run_id,
+                    instructions=resolved.instructions,
+                    metadata=resolved.run_context.metadata,
+                    agent_description=(
+                        self.render_description(resolved.run_context.deps)
+                        if resolved.instrumentation_settings is not None
+                        else None
+                    ),
+                    output_modality=output_modality,
+                    # Surfaced on the session span so the session's configured native tools and realtime
+                    # settings are inspectable, respecting `include_model_request_parameters`.
+                    model_request_parameters=resolved.model_request_parameters,
+                    model_settings=resolved.model_settings,
+                    wrap_event_stream=resolved.wrap_event_stream,
+                )
+                lifecycle.session = session
+                resolved.run_context.realtime_session = session
+                async with session:
+                    try:
+                        yield session
+                    finally:
+                        yielded = True
+
+        if yielded:
+            # Reached on the normal path, and when the run-lifecycle hooks suppressed a session error
+            # that `wrap_run`/`on_run_error` recovered — the caller sees a clean exit either way.
+            return
+        # Opening the connection or building the session failed and `wrap_run`/`on_run_error`
+        # recovered with a result: the resolver's lifecycle hooks suppressed the error with nothing
+        # yielded yet, which `asynccontextmanager` would report as `RuntimeError: generator didn't
+        # yield`. Yield the short-circuit path's closed placeholder carrying the recovery result.
+        assert lifecycle.short_result is not None
+        yield _closed_session(lifecycle.short_result)
 
     async def __aenter__(self) -> Self:
         """Enter the agent context.
@@ -3267,6 +3957,51 @@ def _validate_native_tool_ids(native_tools: Sequence[AgentNativeTool[Any]], *, s
                 f'Native tool id {tool.unique_id!r} maps to conflicting definitions in {source}. '
                 'Native tool ids must be unique within a capability layer.'
             )
+
+
+@dataclasses.dataclass
+class _ResolvedRunCapabilities(Generic[AgentDepsT]):
+    """The per-run capability state shared by `run`/`iter` and `realtime_session`.
+
+    Produced by [`Agent._resolve_run_capabilities`][]: the resolved capability tree plus the
+    contributions extracted from it (instructions, native tools, model settings, toolsets), so both a
+    graph run and a realtime session wire capabilities up identically. See the cross-references on the
+    two call sites for the surrounding logic each keeps to itself.
+    """
+
+    run_capability: AbstractCapability[AgentDepsT]
+    capabilities: dict[str, AbstractCapability[AgentDepsT]]
+    instructions: list[str | SystemPromptFunc[AgentDepsT]] | None
+    native_tools: list[AgentNativeTool[AgentDepsT]]
+    model_settings: AgentModelSettings[AgentDepsT] | None
+    toolsets: list[AgentToolset[AgentDepsT]] | None
+    resolved_layers: list[AbstractCapability[AgentDepsT]]
+    """Each run layer after `for_run`, in order (instrumentation first when injected). The graph run
+    compares the model-layer slice against its pre-resolution `model_layers` to detect whether any
+    capability changed the model contribution during resolution (`model_layers_unchanged`)."""
+
+
+def _layer_model_settings(
+    run_context: RunContext[AgentDepsT],
+    layers: Sequence[AgentModelSettings[AgentDepsT] | None],
+    *,
+    base: ModelSettings | None = None,
+) -> ModelSettings | None:
+    """Merge model-settings layers left-to-right, stamping `run_context.model_settings` before each.
+
+    Each layer is a static `ModelSettings`, a callable resolved against the run context, or `None`.
+    Stamping the merged-so-far onto `run_context.model_settings` before a callable layer runs lets it
+    observe the previous layers — the agent -> capability -> run order both `iter` (per model-request
+    step) and `realtime_session` (once, at connect) rely on. `base` is the model's own settings for a
+    graph run; a realtime model has none, so it defaults to `None`.
+    """
+    merged = base
+    run_context.model_settings = merged
+    for layer in layers:
+        resolved = layer(run_context) if callable(layer) else layer
+        merged = merge_model_settings(merged, resolved)
+        run_context.model_settings = merged
+    return merged
 
 
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:

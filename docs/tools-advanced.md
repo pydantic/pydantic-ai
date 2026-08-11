@@ -494,7 +494,7 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Provider | `'required'` | Specific tools | Notes |
 |----------|:------------:|:--------------:|-------|
 | OpenAI | ✓ | ✓ | Full support |
-| Anthropic | ⚠️ | ⚠️ | Not supported with thinking enabled |
+| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking; adaptive thinking is compatible |
 | Google | ✓ | ✓ | |
 | Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
@@ -512,7 +512,7 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 
 | Provider | Cache-breaking case |
 |----------|---------------------|
-| Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled |
+| Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
 | OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
 | Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled or on a model that doesn't support forcing |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |

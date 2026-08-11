@@ -1,12 +1,14 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import json
 import os
 import re
 import shutil
 import ssl
 import sys
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from inspect import FrameInfo
 from pathlib import Path
@@ -43,10 +45,22 @@ from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
 from pydantic_ai.embeddings.test import TestEmbeddingModel
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.realtime import RealtimeModel
+from pydantic_ai.realtime.codec import (
+    AudioDelta,
+    InputTranscript,
+    OutputTranscript,
+    RealtimeCodecEvent,
+    RealtimeConnection,
+    RealtimeInput,
+    ResponseDone,
+    ToolCall,
+    ToolResult,
+)
 
 from .conftest import TestEnv, try_import
 
@@ -131,6 +145,62 @@ def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
         pass
 
 
+class MockRealtimeConnection(RealtimeConnection):
+    """A scripted realtime connection for executable documentation examples.
+
+    The default script speaks one assistant turn. When the example's agent defines a
+    `check_availability` tool, the script plays a full spoken exchange instead — user turn, tool
+    round, assistant answer — so the quickstart's printed conversation is produced by the real
+    session/tool loop rather than pasted into the docs.
+    """
+
+    def __init__(self, function_tool_names: Sequence[str] = ()) -> None:
+        self._function_tool_names = function_tool_names
+        self._tool_result_received = asyncio.Event()
+
+    async def send(self, content: RealtimeInput) -> None:
+        if isinstance(content, ToolResult):
+            self._tool_result_received.set()
+
+    async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+        if 'check_availability' in self._function_tool_names:
+            yield InputTranscript(text='Hi! Do you have a table for two tomorrow night?', is_final=True)
+            yield ToolCall(
+                tool_call_id='call_1', tool_name='check_availability', args='{"day": "tomorrow", "party_size": 2}'
+            )
+            yield ResponseDone()
+            # A real provider only answers once the tool's result has been sent back.
+            await self._tool_result_received.wait()
+            yield AudioDelta(data=b'\x00\x00')
+            yield OutputTranscript(text='We do: 7 pm, table for two. Want me to book it?', is_final=True)
+            yield ResponseDone()
+        else:
+            yield AudioDelta(data=b'\x00\x00')
+            yield OutputTranscript(text='Hello from the realtime assistant.', is_final=True)
+            yield ResponseDone()
+
+
+@asynccontextmanager
+async def _mock_realtime_connect(
+    self: RealtimeModel,
+    *,
+    model_request_parameters: ModelRequestParameters,
+    **kwargs: Any,
+) -> AsyncGenerator[RealtimeConnection]:
+    yield MockRealtimeConnection([tool.name for tool in model_request_parameters.function_tools])
+
+
+def _patch_realtime_models(mocker: MockerFixture) -> None:
+    """Route realtime documentation examples through the scripted connection."""
+    from pydantic_ai.realtime.azure import AzureRealtimeModel
+    from pydantic_ai.realtime.google import GoogleRealtimeModel
+    from pydantic_ai.realtime.openai import OpenAIRealtimeModel
+    from pydantic_ai.realtime.xai import XaiRealtimeModel
+
+    for model_class in (OpenAIRealtimeModel, AzureRealtimeModel, GoogleRealtimeModel, XaiRealtimeModel):
+        mocker.patch.object(model_class, 'connect', new=_mock_realtime_connect)
+
+
 def _check_python_version(min_version: str | None, max_version: str | None) -> None:
     if min_version:
         min_info = tuple(int(v) for v in min_version.split('.'))
@@ -179,6 +249,7 @@ def test_docs_examples(
     mocker.patch('pydantic_evals.online.DEFAULT_CONFIG', OnlineEvalConfig())
 
     _patch_optional_mcp_modules(mocker)
+    _patch_realtime_models(mocker)
     try:
         mocker.patch('sentence_transformers.SentenceTransformer')
     except ModuleNotFoundError:
@@ -198,6 +269,7 @@ def test_docs_examples(
     env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
     env.set('CEREBRAS_API_KEY', 'testing')
     env.set('NEBIUS_API_KEY', 'testing')
+    env.set('CRUSOE_API_KEY', 'testing')
     env.set('HEROKU_INFERENCE_KEY', 'testing')
     env.set('FIREWORKS_API_KEY', 'testing')
     env.set('TOGETHER_API_KEY', 'testing')
@@ -809,6 +881,16 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart('The secret is safe with me')])
         elif m.content == 'What is the secret code?':
             return ModelResponse(parts=[TextPart('1234')])
+        elif m.content == 'Summarize the conversation.':
+            history_text = ' '.join(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+            )
+            if 'book a train' in history_text:
+                return ModelResponse(parts=[TextPart('- Book a train tomorrow.')])
+            return ModelResponse(parts=[TextPart('- The assistant greeted the user.')])
         elif m.content == 'Tell me a two-sentence story about an axolotl with an illustration.':
             return ModelResponse(
                 parts=[

@@ -53,6 +53,7 @@ from ..messages import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -85,6 +86,7 @@ if TYPE_CHECKING:
     from ..agent.abstract import AbstractAgent
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._abstract import AbstractModel as AbstractModel
 from ._known_model_names import KnownModelName as KnownModelName
 
 if TYPE_CHECKING:
@@ -122,6 +124,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'alibaba',
         'azure',
         'cerebras',
+        'crusoe',
         'deepseek',
         'fireworks',
         'github',
@@ -389,7 +392,7 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     """Usage accumulated by the run before this request step."""
 
 
-class Model(ABC, Generic[InterfaceClient]):
+class Model(AbstractModel, Generic[InterfaceClient]):
     """Abstract class for a model."""
 
     supported_tool_deferral_modes: ClassVar[frozenset[ToolDeferralMode]] = frozenset()
@@ -587,7 +590,9 @@ class Model(ABC, Generic[InterfaceClient]):
         model_settings = merge_model_settings(self.settings, model_settings)
 
         params = self.customize_request_parameters(model_request_parameters)
-        params = _prepare_return_schemas(params, self.profile)
+        params = prepare_return_schemas(
+            params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
+        )
 
         # Resolve unified thinking setting and strip from model_settings
         if model_settings and 'thinking' in model_settings:
@@ -680,7 +685,9 @@ class Model(ABC, Generic[InterfaceClient]):
         provider-agnostic exchange.
 
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
-        the profile's `supports_inline_system_prompts` is `False`.
+        the profile's `supports_inline_system_prompts` is `False`, and converts
+        `SpeechPart`s from realtime session history into `UserPromptPart`s /
+        `TextPart`s that any model can consume.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -696,6 +703,8 @@ class Model(ABC, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
+        messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
+
         supports_tool_addition = self.tool_addition_mode is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
         delta_parts = [
@@ -802,122 +811,12 @@ class Model(ABC, Generic[InterfaceClient]):
         return any(visibility == 'deferred' for visibility in (resolved.tool_visibility or {}).values())
 
     def _resolve_request_tools(self, params: ModelRequestParameters) -> ModelRequestParameters:
-        """Resolve native tools, their local fallbacks, and deferred-tool visibility for this model.
-
-        Three rules drive the per-tool filter:
-
-        1. `unless_native` matches a supported native tool → drop from wire.
-        2. `with_native` matches an *unsupported* native tool → shed `with_native`. The tool is
-           a member of a corpus the native tool would have managed; with that native tool absent
-           the membership means nothing, and an adapter deriving a wire flag from it would emit
-           the flag unpaired and earn a rejection.
-        3. `defer_loading` remains authored intent; this method resolves its provider representation
-           into `tool_visibility` exactly once.
-
-        On top of the filter, two narrower drops apply, kept independent:
-
-        * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
-          optional native tool is silently dropped (no error raised). It does NOT govern the
-          corpus-empty drop.
-        * The corpus-empty drop is specific to the framework-managed tool-search native tool's
-          corpus-management role: an *optional* `ToolSearchTool` is dropped when nothing is
-          searchable, since sending it with no corpus to search would waste a tool slot. A
-          non-optional `ToolSearchTool` stays — the user asked explicitly. Other native tools
-          don't have a corpus and aren't subject to this drop, so making `optional` a base-class
-          field doesn't accidentally cause e.g. `WebSearchTool(optional=True)` to be dropped here.
-        """
-        supported_types = self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-
-        supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
-        unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
-
-        supported_ids = {t.unique_id for t in supported_natives}
-        unsupported_ids = {t.unique_id for t in unsupported_natives}
-        optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
-        fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
-
-        without_fallback = unsupported_ids - fallback_ids - optional_ids
-        if without_fallback:
-            unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
-            supported_names = [t.__name__ for t in supported_types]
-            raise UserError(
-                f'Native tool(s) {unsupported_names} not supported by this model. '
-                f'Supported: {supported_names}. '
-                f'To use these tools with this model, provide a local fallback via '
-                f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
-                f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
-                f'MCP(local=True), ImageGeneration(local=my_func)). '
-                f'Some capabilities require an optional install group for the local fallback '
-                f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
-            )
-
-        # Drop an optional `ToolSearchTool` with nothing to search. `ToolSearchToolset` marks only
-        # the searchable deferred tools as corpus members, so a run whose deferred tools are all
-        # gated by on-demand capabilities arrives here with an empty corpus and no search surface
-        # is sent at all. The `isinstance` check confines this to `ToolSearchTool`: other native
-        # tools don't carry a corpus, so making `optional` a base-class field doesn't accidentally
-        # drop e.g. `WebSearchTool(optional=True)` here on absence of dependents.
-        corpus_ids = {t.with_native for t in params.function_tools if t.with_native}
-        supported_natives = [
-            t
-            for t in supported_natives
-            if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
-        ]
-
-        # Recomputed after the two steps above so it names the native tools this request really
-        # sends: rule 1 must not drop a local fallback for a native tool that just left.
-        supported_ids = {t.unique_id for t in supported_natives}
-
-        can_defer = self._can_withhold_tool_schemas(supported_natives)
-        tool_addition_mode = self.tool_addition_mode
-        tool_search_on_wire = any(isinstance(native, ToolSearchTool) for native in supported_natives)
-
-        function_tools: list[ToolDefinition] = []
-        visibility_by_name: dict[str, ToolVisibility] = {}
-        for t in params.function_tools:
-            # Rule 1: drop local fallback when the native tool is supported.
-            if t.unless_native and t.unless_native in supported_ids:
-                continue
-            # Rule 2: a corpus member whose native tool is unsupported can't be paired with it here.
-            if t.with_native and t.with_native not in supported_ids:
-                t = replace(t, with_native=None)
-            if not t.defer_loading:
-                visibility = 'visible'
-            else:
-                revealed = t.name in params.revealed_tool_names
-                corpus_member = t.with_native is not None and t.with_native in supported_ids
-                if corpus_member and can_defer:
-                    visibility = 'deferred'
-                elif revealed:
-                    if tool_addition_mode == 'with_definitions':
-                        visibility = 'via_history'
-                    elif can_defer:
-                        visibility = 'deferred'
-                    else:
-                        visibility = 'visible'
-                elif corpus_member:
-                    visibility = 'withheld'
-                elif tool_search_on_wire:
-                    # A hidden non-corpus tool must stay off any wire carrying a search surface,
-                    # since server-side search indexes the request's deferred tool declarations.
-                    visibility = 'withheld'
-                elif tool_addition_mode == 'with_definitions':
-                    visibility = 'withheld'
-                elif can_defer:
-                    # Capability-only Anthropic runs pre-advertise from turn one: with no search
-                    # surface there is nothing that can leak the hidden tool, and the stable
-                    # declaration avoids a reveal-time deferred-preamble transition.
-                    visibility = 'deferred'
-                else:
-                    visibility = 'withheld'
-            function_tools.append(t)
-            visibility_by_name[t.name] = visibility
-
-        return replace(
+        """Resolve native tools, their local fallbacks, and deferred-tool visibility for this model."""
+        return resolve_request_tools(
             params,
-            native_tools=supported_natives,
-            function_tools=function_tools,
-            tool_visibility=visibility_by_name,
+            self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS),
+            can_withhold_tool_schemas=self._can_withhold_tool_schemas,
+            tool_addition_mode=self.tool_addition_mode,
         )
 
     def _can_withhold_tool_schemas(self, native_tools: Sequence[AbstractNativeTool]) -> bool:
@@ -933,48 +832,6 @@ class Model(ABC, Generic[InterfaceClient]):
         if tool_deferral_mode == 'with_tool_search':
             return any(isinstance(t, ToolSearchTool) for t in native_tools)
         return False
-
-    @property
-    @abstractmethod
-    def model_name(self) -> str:
-        """The model name."""
-        raise NotImplementedError()
-
-    @property
-    def model_id(self) -> str:
-        """The fully qualified model name in `'provider:model_name'` format."""
-        return f'{self.system}:{self.model_name}'
-
-    @property
-    def label(self) -> str:
-        """Human-friendly display label for the model.
-
-        Handles common patterns:
-        - gpt-5 -> GPT 5
-        - claude-sonnet-4-5 -> Claude Sonnet 4.5
-        - gemini-2.5-pro -> Gemini 2.5 Pro
-        - meta-llama/llama-3-70b -> Llama 3 70b (OpenRouter style)
-        """
-        label = self.model_name
-        # Handle OpenRouter-style names with / (e.g., meta-llama/llama-3-70b)
-        if '/' in label:
-            label = label.split('/')[-1]
-
-        parts = label.split('-')
-        result: list[str] = []
-
-        for i, part in enumerate(parts):
-            if i == 0 and part.lower() == 'gpt':
-                result.append(part.upper())
-            elif part.replace('.', '').isdigit():
-                if result and result[-1].replace('.', '').isdigit():
-                    result[-1] = f'{result[-1]}.{part}'
-                else:
-                    result.append(part)
-            else:
-                result.append(part.capitalize())
-
-        return ' '.join(result)
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -1026,23 +883,6 @@ class Model(ABC, Generic[InterfaceClient]):
             resolved = merge_profile(resolved, ModelProfile(supported_native_tools=effective_tools))
 
         return resolved
-
-    @property
-    @abstractmethod
-    def system(self) -> str:
-        """The model provider, ex: openai.
-
-        Use to populate the `gen_ai.system` OpenTelemetry semantic convention attribute,
-        so should use well-known values listed in
-        https://opentelemetry.io/docs/specs/semconv/attributes-registry/gen-ai/#gen-ai-system
-        when applicable.
-        """
-        raise NotImplementedError()
-
-    @property
-    def base_url(self) -> str | None:
-        """The base URL for the provider API, if available."""
-        return None
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
@@ -1669,7 +1509,7 @@ def infer_model(  # noqa: C901
             return BedrockMantleChatModel(model_name, provider=provider)
         return BedrockMantleResponsesModel(model_name, provider=provider)
 
-    # OpenRouter, Cerebras, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
+    # OpenRouter, Cerebras, Crusoe, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
@@ -1679,6 +1519,10 @@ def infer_model(  # noqa: C901
         from .cerebras import CerebrasModel
 
         return CerebrasModel(model_name, provider=provider)
+    elif model_kind == 'crusoe':
+        from .crusoe import CrusoeModel
+
+        return CrusoeModel(model_name, provider=provider)
     elif model_kind == 'snowflake':
         from .snowflake import SnowflakeModel
 
@@ -1879,14 +1723,147 @@ def _customize_output_object(
     )
 
 
-def _prepare_return_schemas(params: ModelRequestParameters, profile: ModelProfile) -> ModelRequestParameters:
+def resolve_request_tools(
+    params: ModelRequestParameters,
+    supported_types: frozenset[type[AbstractNativeTool]],
+    *,
+    can_withhold_tool_schemas: Callable[[Sequence[AbstractNativeTool]], bool] | None = None,
+    tool_addition_mode: ToolAdditionMode | None = None,
+) -> ModelRequestParameters:
+    """Resolve native tools, their local fallbacks, and deferred-tool visibility for the given supported-native-tool set.
+
+    Three rules drive the per-tool filter:
+
+    1. `unless_native` matches a supported native tool → drop from wire.
+    2. `with_native` matches an *unsupported* native tool → shed `with_native`. The tool is
+       a member of a corpus the native tool would have managed; with that native tool absent
+       the membership means nothing, and an adapter deriving a wire flag from it would emit
+       the flag unpaired and earn a rejection.
+    3. `defer_loading` remains authored intent; this function resolves its provider representation
+       into `tool_visibility` exactly once. A caller without a `can_withhold_tool_schemas` answer
+       (the realtime session path) can't withhold schemas at all.
+
+    On top of the filter, two narrower drops apply, kept independent:
+
+    * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
+      optional native tool is silently dropped (no error raised). It does NOT govern the
+      corpus-empty drop.
+    * The corpus-empty drop is specific to the framework-managed tool-search native tool's
+      corpus-management role: an *optional* `ToolSearchTool` is dropped when nothing is
+      searchable, since sending it with no corpus to search would waste a tool slot. A
+      non-optional `ToolSearchTool` stays — the user asked explicitly. Other native tools
+      don't have a corpus and aren't subject to this drop, so making `optional` a base-class
+      field doesn't accidentally cause e.g. `WebSearchTool(optional=True)` to be dropped here.
+
+    This is a module-level function rather than a `Model` method so both the classic agent-run
+    path (via `Model._resolve_request_tools`, which passes its profile-derived
+    `_can_withhold_tool_schemas` and `tool_addition_mode`) and the realtime session path can
+    share it — `RealtimeModel` is not a `Model` subclass.
+    """
+    supported_natives = [t for t in params.native_tools if isinstance(t, tuple(supported_types))]
+    unsupported_natives = [t for t in params.native_tools if not isinstance(t, tuple(supported_types))]
+
+    supported_ids = {t.unique_id for t in supported_natives}
+    unsupported_ids = {t.unique_id for t in unsupported_natives}
+    optional_ids = {t.unique_id for t in unsupported_natives if t.optional}
+    fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
+
+    without_fallback = unsupported_ids - fallback_ids - optional_ids
+    if without_fallback:
+        unsupported_names = [type(t).__name__ for t in unsupported_natives if t.unique_id in without_fallback]
+        supported_names = [t.__name__ for t in supported_types]
+        raise UserError(
+            f'Native tool(s) {unsupported_names} not supported by this model. '
+            f'Supported: {supported_names}. '
+            f'To use these tools with this model, provide a local fallback via '
+            f'NativeOrLocalTool(native=..., local=...) or the `local` parameter '
+            f"of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
+            f'MCP(local=True), ImageGeneration(local=my_func)). '
+            f'Some capabilities require an optional install group for the local fallback '
+            f'(e.g. `pip install "pydantic-ai-slim[mcp]"` for MCP).'
+        )
+
+    # Drop an optional `ToolSearchTool` with nothing to search. `ToolSearchToolset` marks only
+    # the searchable deferred tools as corpus members, so a run whose deferred tools are all
+    # gated by on-demand capabilities arrives here with an empty corpus and no search surface
+    # is sent at all. The `isinstance` check confines this to `ToolSearchTool`: other native
+    # tools don't carry a corpus, so making `optional` a base-class field doesn't accidentally
+    # drop e.g. `WebSearchTool(optional=True)` here on absence of dependents.
+    corpus_ids = {t.with_native for t in params.function_tools if t.with_native}
+    supported_natives = [
+        t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
+    ]
+
+    # Recomputed after the two steps above so it names the native tools this request really
+    # sends: rule 1 must not drop a local fallback for a native tool that just left.
+    supported_ids = {t.unique_id for t in supported_natives}
+
+    can_defer = can_withhold_tool_schemas(supported_natives) if can_withhold_tool_schemas is not None else False
+    tool_search_on_wire = any(isinstance(native, ToolSearchTool) for native in supported_natives)
+
+    function_tools: list[ToolDefinition] = []
+    visibility_by_name: dict[str, ToolVisibility] = {}
+    for t in params.function_tools:
+        # Rule 1: drop local fallback when the native tool is supported.
+        if t.unless_native and t.unless_native in supported_ids:
+            continue
+        # Rule 2: a corpus member whose native tool is unsupported can't be paired with it here.
+        if t.with_native and t.with_native not in supported_ids:
+            t = replace(t, with_native=None)
+        if not t.defer_loading:
+            visibility = 'visible'
+        else:
+            revealed = t.name in params.revealed_tool_names
+            corpus_member = t.with_native is not None and t.with_native in supported_ids
+            if corpus_member and can_defer:
+                visibility = 'deferred'
+            elif revealed:
+                if tool_addition_mode == 'with_definitions':
+                    visibility = 'via_history'
+                elif can_defer:
+                    visibility = 'deferred'
+                else:
+                    visibility = 'visible'
+            elif corpus_member:
+                visibility = 'withheld'
+            elif tool_search_on_wire:
+                # A hidden non-corpus tool must stay off any wire carrying a search surface,
+                # since server-side search indexes the request's deferred tool declarations.
+                visibility = 'withheld'
+            elif tool_addition_mode == 'with_definitions':
+                visibility = 'withheld'
+            elif can_defer:
+                # Capability-only Anthropic runs pre-advertise from turn one: with no search
+                # surface there is nothing that can leak the hidden tool, and the stable
+                # declaration avoids a reveal-time deferred-preamble transition.
+                visibility = 'deferred'
+            else:
+                visibility = 'withheld'
+        function_tools.append(t)
+        visibility_by_name[t.name] = visibility
+
+    return replace(
+        params,
+        native_tools=supported_natives,
+        function_tools=function_tools,
+        tool_visibility=visibility_by_name,
+    )
+
+
+def prepare_return_schemas(
+    params: ModelRequestParameters, *, supports_tool_return_schema: bool
+) -> ModelRequestParameters:
     """Resolve return schemas: clear on tools that haven't opted in, inject into descriptions for non-native models.
 
     For tools with `include_return_schema=True` and a non-empty schema, models that natively support
     return schemas keep the schema as-is; other models get it injected into the tool description.
     Tools that haven't opted in have their `return_schema` cleared.
+
+    A module-level function taking the profile flag rather than a `Model` method so both the classic
+    path (via `Model.prepare_request`) and the realtime session path can share it — `RealtimeModel` is
+    not a `Model` subclass and carries its own profile type.
     """
-    inject = not profile.get('supports_tool_return_schema', False)
+    inject = not supports_tool_return_schema
     resolved: list[ToolDefinition] = []
     changed = False
     for td in params.function_tools:
@@ -1929,6 +1906,61 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
             elif tool_def.defer:
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
+
+
+def _convert_speech_parts(messages: list[ModelMessage], *, include_audio: bool) -> list[ModelMessage]:
+    """Convert `SpeechPart`s from realtime session history into parts any model can consume.
+
+    User-speaker parts become `UserPromptPart`s carrying the retained audio (when `include_audio` is
+    `True` and audio was retained) or the transcript text; assistant-speaker parts become `TextPart`s
+    carrying the transcript. Parts without usable content are dropped, as are messages left without
+    parts. Returns the original list when nothing changed so the identity check in `_make_request`
+    can skip the redundant `_clean_message_history` pass.
+    """
+    if not any(isinstance(part, SpeechPart) for message in messages for part in message.parts):
+        return messages
+
+    new_messages: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            request_parts: list[ModelRequestPart] = []
+            for part in message.parts:
+                if isinstance(part, SpeechPart):
+                    if include_audio and part.audio is not None:
+                        request_parts.append(UserPromptPart(content=[part.audio]))
+                    elif part.transcript:
+                        request_parts.append(UserPromptPart(content=part.transcript))
+                    # A part with neither retained audio nor transcript has nothing to send.
+                else:
+                    request_parts.append(part)
+            if request_parts:
+                new_messages.append(replace(message, parts=request_parts))
+        else:
+            # A barge-in cuts the model off mid-sentence, so the last speech part's transcript stops
+            # short. Without an inline `[Interrupted]` marker, a standard model reads the fragment as a
+            # complete utterance and may repeat itself. The marker is written here, on the way to the
+            # model, and never persisted: history keeps the interruption on `SpeechPart.interrupted_at_ms`.
+            last_speech = max(
+                (index for index, part in enumerate(message.parts) if isinstance(part, SpeechPart)),
+                default=None,
+            )
+            response_parts: list[ModelResponsePart] = []
+            for index, part in enumerate(message.parts):
+                if isinstance(part, SpeechPart):
+                    lines = [part.transcript] if part.transcript else []
+                    if part.interrupted_at_ms is not None:
+                        lines.append(f'[Interrupted after {part.interrupted_at_ms} ms]')
+                    elif message.state == 'interrupted' and index == last_speech:
+                        # The provider reported the interruption without an offset.
+                        lines.append('[Interrupted]')
+                    if lines:
+                        response_parts.append(TextPart(content='\n'.join(lines)))
+                    # Assistant audio without a transcript has nothing to send.
+                else:
+                    response_parts.append(part)
+            if response_parts:
+                new_messages.append(replace(message, parts=response_parts))
+    return new_messages
 
 
 def _standing_system_prompt_count(request: ModelRequest) -> int:
@@ -2096,6 +2128,28 @@ def _unsynthesized_tool_availability_delta_error() -> UserError:  # pyright: ign
         'Call `model.prepare_messages(messages)` first and pass the result — that projects the part '
         'into the tool-search exchange every model understands. `Agent` does this for you; a direct '
         '`Model.request()` or `Model.count_tokens()` call has to do it itself.'
+    )
+
+
+def _unconverted_speech_part_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
+    """The error for a realtime `SpeechPart` that reached an adapter unconverted.
+
+    `prepare_messages` turns every `SpeechPart` from realtime session history into the
+    `UserPromptPart`s / `TextPart`s any model can consume, so an adapter only sees one when that
+    conversion didn't run. Running a model through an agent always runs it, but
+    [`Model.request`][pydantic_ai.models.Model.request] and
+    [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens] are public and don't, so a caller
+    driving a model directly can reach this with a history that is otherwise perfectly valid. Hence
+    a `UserError` naming the missing step, rather than an assertion about an internal invariant.
+
+    Raising beats dropping the part: silently discarding it would erase the turn's speech — possibly
+    the entire user message — from what the model sees.
+    """
+    return UserError(
+        '`SpeechPart` cannot be sent to this model as-is. '
+        'Call `model.prepare_messages(messages)` first and pass the result — that converts realtime '
+        'speech into the text and audio parts every model understands. `Agent` does this for you; a '
+        'direct `Model.request()` or `Model.count_tokens()` call has to do it itself.'
     )
 
 
