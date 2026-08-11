@@ -78,6 +78,10 @@ exa = ["pydantic-ai-slim[exa]=={{ version }}"]
 web-fetch = ["pydantic-ai-slim[web-fetch]=={{ version }}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
 spec = ["pydantic-ai-slim[spec]=={{ version }}"]
+realtime = ["pydantic-ai-slim[realtime]=={{ version }}"]
+openai-realtime = ["pydantic-ai-slim[openai-realtime]=={{ version }}"]
+google-realtime = ["pydantic-ai-slim[google-realtime]=={{ version }}"]
+xai-realtime = ["pydantic-ai-slim[xai-realtime]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -106,7 +110,10 @@ members = [
 ]
 
 [tool.uv]
+# `exclude-newer` relative durations need >= 0.9.17, `exclude-newer-package` `false` needs >= 0.9.25
+required-version = ">=0.9.25"
 default-groups = ["dev", "lint", "docs"]
+exclude-newer = "7 days"
 constraint-dependencies = [
     "ray>=2.55.0",
     "authlib>=1.6.7",
@@ -140,9 +147,20 @@ constraint-dependencies = [
     "transformers>=5.5.0",
 ]
 
+[tool.uv.exclude-newer-package]
+# These are our own packages, not worth defending from supply chain attacks on them.
+pydantic = false
+pydantic-core = false
+pydantic-extra-types = false
+pydantic-settings = false
+pydantic-handlebars = false
+genai-prices = false
+logfire = false
+logfire-api = false
+
 [dependency-groups]
 dev = [
-    "anyio>=4.5.0",
+    "anyio>=4.7.0",
     "asgi-lifespan>=2.1.0",
     "devtools>=0.12.2",
     "coverage[toml]>=7.10.7",
@@ -164,7 +182,7 @@ dev = [
     "pytest-xdist>=3.6.1",
     # Needed for PyCharm users
     "pip>=26.1",
-    "genai-prices>=0.0.69",
+    "genai-prices>=0.1.0",
     "brotli>=1.2.0",
     # Tests use `FastMCP(...)` in-process servers via fastmcp's server module — the user-facing
     # `[mcp]` extra ships `fastmcp-slim[client]` which lacks server support, so devs need the full
@@ -212,6 +230,11 @@ include = [
     ".github/scripts/test_pydantic_ai_runner.py",
     ".github/scripts/issue_pr_attention_monitor.py",
     ".github/scripts/test_issue_pr_attention_monitor.py",
+    ".github/scripts/agentic_workflow_guard.py",
+    ".github/scripts/test_agentic_workflow_guard.py",
+    ".github/scripts/agent_spend_report.py",
+    ".github/scripts/test_agent_spend_report.py",
+    ".github/scripts/test_protect_github_dir.py",
 ]
 
 [tool.ruff.lint]
@@ -266,6 +289,9 @@ quote-style = "single"
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
+".github/scripts/test_agentic_workflow_guard.py" = ["D"]
+".github/scripts/test_agent_spend_report.py" = ["D"]
+".github/scripts/test_protect_github_dir.py" = ["D"]
 
 [tool.pyright]
 pythonVersion = "3.10"
@@ -295,7 +321,7 @@ venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
 executionEnvironments = [
-    { root = "tests", reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = "tests", extraPaths = ["examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     # `extraPaths` lets pyright resolve the shim package (which sits next to
     # the test file, not under the project root) the same way the runtime
     # `sys.path.insert(...)` at the top of the test does.
@@ -304,6 +330,7 @@ executionEnvironments = [
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
+    "examples/pydantic_ai_examples/realtime_voice.py",       # optional, untyped `sounddevice` audio dep
     "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
 
@@ -370,6 +397,7 @@ omit = [
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
+    "tests/kw_only_walker.py",  # only ever runs in a coverage-free subprocess, so it is unmeasurable by construction
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
 ]
 branch = true

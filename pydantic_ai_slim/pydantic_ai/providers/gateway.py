@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import os
 import re
+import weakref
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx
@@ -19,6 +20,9 @@ if TYPE_CHECKING:
 
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers.anthropic import AsyncAnthropicClient
+
+
+_gateway_providers: weakref.WeakSet[Provider[Any]] = weakref.WeakSet()
 
 
 @overload
@@ -133,7 +137,8 @@ def gateway_provider(
         api_key: The API key to use for authentication. If not provided, the `PYDANTIC_AI_GATEWAY_API_KEY`
             environment variable will be used if available.
         base_url: The base URL to use for the Gateway. If not provided, the `PYDANTIC_AI_GATEWAY_BASE_URL`
-            environment variable will be used if available. Otherwise, defaults to `https://gateway.pydantic.dev/proxy`.
+            environment variable will be used if available. Otherwise, it is inferred from the API key's
+            region, e.g. `https://gateway-us.pydantic.dev/proxy`.
         http_client: The HTTP client to use for the Gateway.
     """
     api_key = api_key or os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', os.getenv('PAIG_API_KEY'))
@@ -158,11 +163,13 @@ def gateway_provider(
     if canonical == 'bedrock':
         from .bedrock import BedrockProvider
 
-        return BedrockProvider(
+        provider = BedrockProvider(
             api_key=api_key,
             base_url=base_url,
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
+        _gateway_providers.add(provider)
+        return provider
 
     own_http_client = http_client is None
     http_client = http_client or create_async_http_client()
@@ -177,6 +184,7 @@ def gateway_provider(
         if own_http_client:
             provider._own_http_client = http_client  # pyright: ignore[reportPrivateUsage]
             provider._http_client_factory = _http_client_factory  # pyright: ignore[reportPrivateUsage]
+        _gateway_providers.add(provider)
         return provider
 
     if canonical in ('openai', 'openai-chat', 'openai-responses'):
@@ -203,9 +211,46 @@ def gateway_provider(
         # land here via `normalize_gateway_provider`.
         from .google_cloud import GoogleCloudProvider
 
-        return _with_http_client(GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client))
+        provider = GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client)
+        _set_google_ws_gateway_auth(provider.client, api_key)
+        return _with_http_client(provider)
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
+
+
+def is_gateway_provider(provider: Provider[Any]) -> bool:
+    """Whether `provider` routes requests through the Pydantic AI Gateway.
+
+    True for any provider created by `gateway_provider(...)`, whether it reached the caller as the
+    `gateway/<name>` string (resolved via `infer_provider`) or as a `gateway_provider(...)` instance.
+    """
+    try:
+        return provider in _gateway_providers
+    except TypeError:
+        # A `Provider` is free to be an ordinary `@dataclass`, which sets `__hash__ = None` and makes
+        # the set lookup raise rather than answer. It can't be one of ours either way — everything in
+        # here was put there by `gateway_provider(...)` — so the answer is simply no.
+        return False
+
+
+def _set_google_ws_gateway_auth(client: GoogleClient, api_key: str) -> None:
+    """Set the gateway bearer auth as a static header on the Google client so it reaches the Live WebSocket.
+
+    The gateway authenticates on `Authorization: Bearer <key>`, which its `httpx` request hook adds to REST
+    calls. That hook can't cover the Gemini Live handshake: `google-genai` dials the WebSocket with the
+    `websockets` library, bypassing the provider's `httpx` client. The SDK forwards
+    `client._api_client._http_options.headers` to *both* REST and the Live handshake, so setting the bearer
+    there once — permanently — is what carries it onto the WebSocket. REST then carries it too, which is
+    redundant with the httpx request hook but harmless: it's the same value, and the hook already leaves a
+    pre-existing `Authorization` header untouched.
+
+    Guarded with `getattr` chains: a custom/fake client without the SDK's private HTTP options simply skips
+    this, and a pre-existing `Authorization` header is left in place.
+    """
+    raw_headers = getattr(getattr(getattr(client, '_api_client', None), '_http_options', None), 'headers', None)
+    if not isinstance(raw_headers, dict) or 'Authorization' in raw_headers:
+        return
+    raw_headers['Authorization'] = f'Bearer {api_key}'
 
 
 class _GatewayRequestHook:

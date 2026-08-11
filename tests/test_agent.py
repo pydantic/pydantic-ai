@@ -64,7 +64,7 @@ from pydantic_ai._output import (
     PromptedOutput,
     TextOutput,
 )
-from pydantic_ai.agent import AgentRunResult, WrapperAgent
+from pydantic_ai.agent import AbstractAgent, AgentRunResult, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Hooks,
@@ -88,6 +88,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
 from pydantic_ai.providers import Provider
+from pydantic_ai.realtime import RealtimeModelSettings
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
@@ -102,7 +103,7 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
-    from pydantic_ai.providers.github import GitHubProvider
+    from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
@@ -125,7 +126,7 @@ else:
         from pydantic_ai.providers.crusoe import CrusoeProvider
         from pydantic_ai.providers.deepseek import DeepSeekProvider
         from pydantic_ai.providers.fireworks import FireworksProvider
-        from pydantic_ai.providers.github import GitHubProvider
+        from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
         from pydantic_ai.providers.heroku import HerokuProvider
         from pydantic_ai.providers.moonshotai import MoonshotAIProvider
         from pydantic_ai.providers.nebius import NebiusProvider
@@ -194,6 +195,40 @@ requires_task_cancelling = pytest.mark.skipif(
 # near-instantly; the timeout only exists to fail fast on a genuine hang, since no global pytest timeout is
 # configured. `timeout=1` was too tight under heavy xdist load and flaked (#5399), so allow generous headroom.
 READINESS_WAIT_TIMEOUT = 10
+
+
+def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
+    """`run_sync` must replace a closed thread-current event loop.
+
+    This uses `TestModel` rather than VCR because the failure occurs while scheduling the
+    coroutine, before any model request is made.
+    """
+    agent = Agent(TestModel(custom_output_text='success'))
+    result = agent.run_sync('Hello')
+    replacement_loop = asyncio.get_event_loop()
+
+    assert result.output == 'success'
+    assert replacement_loop is not closed_event_loop
+    assert not replacement_loop.is_closed()
+
+    agent.run_sync('Hello again')
+    assert asyncio.get_event_loop() is replacement_loop
+    assert not asyncio.all_tasks(replacement_loop)
+
+
+def test_run_sync_creates_missing_event_loop(missing_event_loop: asyncio.AbstractEventLoop):
+    """`run_sync` must create and install an event loop when the thread has none.
+
+    This uses `TestModel` rather than VCR because the behavior occurs before any
+    model request is made.
+    """
+    result = Agent(TestModel(custom_output_text='success')).run_sync('Hello')
+    replacement_loop = asyncio.get_event_loop()
+
+    assert result.output == 'success'
+    assert replacement_loop is not missing_event_loop
+    assert not replacement_loop.is_closed()
+    assert not asyncio.all_tasks(replacement_loop)
 
 
 def test_result_tuple():
@@ -4593,6 +4628,17 @@ async def test_agent_name():
     assert my_agent.name == 'my_agent'
 
 
+def test_agent_name_inferred_from_realtime():
+    # `realtime()` infers the agent name from the calling frame like `run`/`iter`, so an unnamed agent's
+    # realtime session span is labelled with the variable name rather than a generic fallback.
+    my_realtime_agent = Agent('test')
+
+    assert my_realtime_agent.name is None
+
+    my_realtime_agent.realtime('openai:gpt-realtime')
+    assert my_realtime_agent.name == 'my_realtime_agent'
+
+
 async def test_agent_name_already_set():
     my_agent = Agent('test', name='fig_tree')
 
@@ -8164,6 +8210,7 @@ def test_binary_content_serializable():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': 'test',
                 'provider_name': 'test',
@@ -8238,6 +8285,7 @@ def test_image_url_serializable_missing_media_type():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': 'test',
                 'timestamp': IsStr(),
@@ -8318,6 +8366,7 @@ def test_image_url_serializable():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': 'test',
                 'timestamp': IsStr(),
@@ -8940,6 +8989,7 @@ async def test_azure_provider_lifecycle_closes_client():
     assert http_client.is_closed
 
 
+@pytest.mark.filterwarnings('ignore:`GitHubProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning')
 @pytest.mark.parametrize(
     'provider_factory',
     [
@@ -8958,7 +9008,7 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: CrusoeProvider(api_key='t'), marks=[requires_openai], id='crusoe'),
         pytest.param(lambda: DeepSeekProvider(api_key='t'), marks=[requires_openai], id='deepseek'),
         pytest.param(lambda: FireworksProvider(api_key='t'), marks=[requires_openai], id='fireworks'),
-        pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),
+        pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),  # pyright: ignore[reportDeprecated]
         pytest.param(lambda: HerokuProvider(api_key='t'), marks=[requires_openai], id='heroku'),
         pytest.param(lambda: LiteLLMProvider(api_key='t'), marks=[requires_litellm], id='litellm'),
         pytest.param(lambda: MoonshotAIProvider(api_key='t'), marks=[requires_openai], id='moonshotai'),
@@ -10270,6 +10320,16 @@ async def test_wrapper_agent():
     assert run.result.output == snapshot(Foo(a=0, b='a'))
     assert test_model.last_model_request_parameters is not None
     assert [t.name for t in test_model.last_model_request_parameters.function_tools] == snapshot(['bar'])
+
+
+async def test_abstract_agent_system_prompt_parts_default_is_empty():
+    """A custom `AbstractAgent` subclass that doesn't resolve system prompts inherits an empty default.
+
+    `Agent` and `WrapperAgent` both override `system_prompt_parts`, so the base default is only reached
+    by a third-party subclass; call it directly on an agent to pin that documented behavior.
+    """
+    agent = Agent('test')
+    assert await AbstractAgent.system_prompt_parts(agent) == []
 
 
 async def test_thinking_only_response_retry():
@@ -12665,7 +12725,7 @@ class TestCallableAgentLevelSettings:
 
     def test_callable_sees_model_settings_from_model(self):
         """The callable should see `ctx.model_settings` set to the model's base settings."""
-        seen_settings: list[ModelSettings | None] = []
+        seen_settings: list[ModelSettings | RealtimeModelSettings | None] = []
 
         def dynamic_settings(ctx: RunContext) -> ModelSettings:
             seen_settings.append(ctx.model_settings)
@@ -12692,7 +12752,7 @@ class TestCallableRunLevelSettings:
 
     def test_callable_run_sees_merged_agent_settings(self):
         """Run-level callable should see merged model+agent settings via ctx.model_settings."""
-        seen_settings: list[ModelSettings | None] = []
+        seen_settings: list[ModelSettings | RealtimeModelSettings | None] = []
 
         def run_settings(ctx: RunContext) -> ModelSettings:
             seen_settings.append(ctx.model_settings)

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -31,10 +31,12 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -59,6 +61,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -96,6 +100,7 @@ try:
         ImageConfigDict,
         MediaResolution,
         Modality,
+        ModalityTokenCount,
         ModelArmorConfigDict,
         Part,
         PartDict,
@@ -308,6 +313,9 @@ class GoogleModelSettings(ModelSettings, total=False):
     Mutually exclusive with `google_safety_settings`: Vertex AI rejects a request that sets both,
     since Model Armor replaces the built-in safety filters for that request.
 
+    Note: Model Armor screening — both prompt and response — is only applied for non-streaming
+    requests. Google's API ignores `modelArmorConfig` for streaming requests (`streamGenerateContent`).
+
     See the [Model Armor docs](https://cloud.google.com/security-command-center/docs/model-armor-overview) for use cases and limitations.
     """
 
@@ -418,6 +426,18 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
             'X-Vertex-AI-LLM-Shared-Request-Type': 'priority',
         }
     assert_never(service_tier)  # pragma: no cover
+
+
+def _thinking_effort_to_level(thinking: ThinkingEffort) -> Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']:
+    """Normalize unified thinking effort to a Gemini thinking level."""
+    level_by_effort: dict[ThinkingEffort, Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']] = {
+        'minimal': 'MINIMAL',
+        'low': 'LOW',
+        'medium': 'MEDIUM',
+        'high': 'HIGH',
+        'xhigh': 'HIGH',  # Gemini has no `xhigh`; map it to the highest level.
+    }
+    return level_by_effort[thinking]
 
 
 @dataclass(init=False)
@@ -709,7 +729,7 @@ class GoogleModel(Model[Client]):
         """
         native_tools, image_config = self._get_native_tools(model_request_parameters)
 
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
@@ -726,8 +746,8 @@ class GoogleModel(Model[Client]):
                 # Breaks caching, but Google doesn't support AUTO mode with allowed_function_names
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             else:
-                # Use ANY mode with allowed_function_names to force one of the specified tools
-                allowed_function_names = list(tool_names)
+                # Ignore names that are not currently available.
+                allowed_function_names = [name for name in tool_defs if name in tool_names]
         else:
             tool_choice_mode = resolved_tool_choice
 
@@ -737,9 +757,19 @@ class GoogleModel(Model[Client]):
         # which happens when only native tools (e.g. web search) are configured, so only set it when there
         # are function tools.
         if tool_defs:
-            function_calling_config: FunctionCallingConfigDict = {
-                'mode': function_calling_config_modes[tool_choice_mode]
-            }
+            mode = function_calling_config_modes[tool_choice_mode]
+            # `VALIDATED` is `AUTO` with API-side schema enforcement (see
+            # https://github.com/pydantic/pydantic-ai/issues/5366); it needs no schema rewrites,
+            # so we default supported models to it as a safe silent improvement. A caller opts out per tool with
+            # `strict=False` (`tool_defs` spans function and output tools). Only `AUTO` is upgraded; `ANY`/`NONE`
+            # have different semantics.
+            if (
+                mode == FunctionCallingConfigMode.AUTO
+                and self.profile.get('google_supports_strict_tool_definition', False)
+                and not any(tool_def.strict is False for tool_def in tool_defs.values())
+            ):
+                mode = FunctionCallingConfigMode.VALIDATED
+            function_calling_config: FunctionCallingConfigDict = {'mode': mode}
             if allowed_function_names:
                 function_calling_config['allowed_function_names'] = allowed_function_names
             tool_config['function_calling_config'] = function_calling_config
@@ -827,14 +857,9 @@ class GoogleModel(Model[Client]):
         if profile.get('google_supports_thinking_level', False):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
-            level_map: dict[ThinkingEffort, str] = {
-                'minimal': 'MINIMAL',
-                'low': 'LOW',
-                'medium': 'MEDIUM',
-                'high': 'HIGH',
-                'xhigh': 'HIGH',  # no higher level available
-            }
-            return ThinkingConfigDict(include_thoughts=True, thinking_level=cast(Any, level_map[thinking]))
+            return ThinkingConfigDict(
+                include_thoughts=True, thinking_level=cast(Any, _thinking_effort_to_level(thinking))
+            )
         else:
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
@@ -899,7 +924,7 @@ class GoogleModel(Model[Client]):
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
         http_options: HttpOptionsDict = {'headers': headers}
-        if timeout := model_settings.get('timeout'):
+        if (timeout := model_settings.get('timeout')) is not None:
             if isinstance(timeout, int | float):
                 http_options['timeout'] = int(1000 * timeout)
             else:
@@ -1070,6 +1095,11 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
+                    elif isinstance(part, ToolAvailabilityDeltaPart):
+                        raise _unsynthesized_tool_availability_delta_error()
+                    elif isinstance(part, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
 
@@ -1671,6 +1701,9 @@ def _content_model_response(
         elif isinstance(item, CompactionPart):  # pragma: no cover
             # Compaction parts are not sent back to models that don't support compaction.
             part = None
+        elif isinstance(item, SpeechPart):  # pragma: no cover
+            # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+            raise _unconverted_speech_part_error()
         else:
             assert_never(item)
 
@@ -1924,23 +1957,65 @@ def _metadata_as_usage(
     metadata = response.usage_metadata
     if metadata is None:
         return existing_usage or usage.RequestUsage()
+    return _usage_metadata_as_usage(
+        prompt_token_count=metadata.prompt_token_count,
+        output_token_count=metadata.candidates_token_count,
+        cached_content_token_count=metadata.cached_content_token_count,
+        thoughts_token_count=metadata.thoughts_token_count,
+        tool_use_prompt_token_count=metadata.tool_use_prompt_token_count,
+        prompt_tokens_details=metadata.prompt_tokens_details,
+        cache_tokens_details=metadata.cache_tokens_details,
+        output_tokens_details=metadata.candidates_tokens_details,
+        tool_use_prompt_tokens_details=metadata.tool_use_prompt_tokens_details,
+        output_details_prefix='candidates',
+        extract_data=response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
+        provider=provider,
+        provider_url=provider_url,
+        existing_usage=existing_usage,
+    )
+
+
+def _usage_metadata_as_usage(
+    *,
+    prompt_token_count: int | None,
+    output_token_count: int | None,
+    cached_content_token_count: int | None,
+    thoughts_token_count: int | None,
+    tool_use_prompt_token_count: int | None,
+    prompt_tokens_details: Sequence[ModalityTokenCount] | None,
+    cache_tokens_details: Sequence[ModalityTokenCount] | None,
+    output_tokens_details: Sequence[ModalityTokenCount] | None,
+    tool_use_prompt_tokens_details: Sequence[ModalityTokenCount] | None,
+    output_details_prefix: Literal['candidates', 'response'],
+    extract_data: dict[str, Any],
+    provider: str,
+    provider_url: str,
+    existing_usage: usage.RequestUsage | None = None,
+) -> usage.RequestUsage:
+    """Map the usage metadata shared by Gemini generate-content and Live responses.
+
+    Live names two fields differently (`responseTokenCount` / `responseTokensDetails` where
+    generate-content says `candidates*`), so the caller passes the counts in and names the output
+    detail keys with `output_details_prefix`. `extract_data` is the raw response payload
+    [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract] reads for the typed fields; it
+    speaks the generate-content field names, so a Live caller translates before handing it over.
+    """
     details: dict[str, int] = {}
-    if cached_content_token_count := metadata.cached_content_token_count:
+    if cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count
 
-    if thoughts_token_count := (metadata.thoughts_token_count or 0):
+    if thoughts_token_count:
         details['thoughts_tokens'] = thoughts_token_count
 
-    if tool_use_prompt_token_count := metadata.tool_use_prompt_token_count:
+    if tool_use_prompt_token_count:
         details['tool_use_prompt_tokens'] = tool_use_prompt_token_count
 
     for prefix, metadata_details in [
-        ('prompt', metadata.prompt_tokens_details),
-        ('cache', metadata.cache_tokens_details),
-        ('candidates', metadata.candidates_tokens_details),
-        ('tool_use_prompt', metadata.tool_use_prompt_tokens_details),
+        ('prompt', prompt_tokens_details),
+        ('cache', cache_tokens_details),
+        (output_details_prefix, output_tokens_details),
+        ('tool_use_prompt', tool_use_prompt_tokens_details),
     ]:
-        assert getattr(metadata, f'{prefix}_tokens_details') is metadata_details
         if not metadata_details:
             continue
         for detail in metadata_details:
@@ -1955,7 +2030,7 @@ def _metadata_as_usage(
         details = {**existing_usage.details, **details}
 
     new_usage = usage.RequestUsage.extract(
-        response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
+        extract_data,
         provider=provider,
         provider_url=provider_url,
         provider_fallback='google',

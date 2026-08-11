@@ -25,13 +25,14 @@ from pydantic_ai import (
     RunContext,
     TextPart,
     Tool,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
     UserError,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.capabilities import HandleDeferredToolCalls, PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -2837,6 +2838,7 @@ def test_deferred_tool_results_serializable():
                     'return_value': 1,
                     'content': 'The tool call was approved.',
                     'metadata': {'foo': 'bar'},
+                    'tools': None,
                     'kind': 'tool-return',
                 },
                 'tool-failed': {'message': 'The tool failed.', 'kind': 'tool-failed'},
@@ -4161,6 +4163,212 @@ def test_args_validator_not_double_called_for_approved_tools():
     assert validator_calls[0] == (0, True)  # retry=0, approved=True
 
 
+def test_args_validator_requests_approval():
+    """An `args_validator` can raise `ApprovalRequired` to request approval for valid arguments.
+
+    The tool is not executed, the call is deferred with the validator's metadata, and approving it
+    on a follow-up run runs the tool with `ctx.tool_call_approved` set. `retries=0` pins that the
+    deferral doesn't consume the retry budget: if it were treated as a validation failure, the run
+    would fail with `UnexpectedModelBehavior` instead of deferring.
+    """
+    validator_calls: list[bool] = []
+    executed: list[int] = []
+
+    def my_validator(ctx: RunContext, x: int) -> None:
+        validator_calls.append(ctx.tool_call_approved)
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired(metadata={'reason': 'sensitive'})
+
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(args_validator=my_validator, retries=0)
+    def my_tool(ctx: RunContext, x: int) -> int:
+        executed.append(x)
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
+            metadata={'pyd_ai_tool_call_id__my_tool': {'reason': 'sensitive'}},
+        )
+    )
+    assert executed == []
+    assert validator_calls == [False]
+
+    assert isinstance(result.output, DeferredToolRequests)
+    tool_call_id = result.output.approvals[0].tool_call_id
+    result = agent.run_sync(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals={tool_call_id: ToolApproved()}),
+    )
+    assert executed == [0]
+    assert validator_calls == [False, True]
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content=0,
+                        tool_call_id='pyd_ai_tool_call_id__my_tool',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"my_tool":0}')],
+                usage=RequestUsage(input_tokens=52, output_tokens=7),
+                model_name='test',
+                timestamp=IsDatetime(),
+                provider_name='test',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_args_validator_defers_call():
+    """An `args_validator` can raise `CallDeferred` so the call is executed externally.
+
+    As with approval, the tool isn't executed and the retry budget isn't touched (`retries=0`);
+    the external result supplied on the follow-up run is recorded verbatim.
+    """
+    executed: list[int] = []
+
+    def my_validator(ctx: RunContext, x: int) -> None:
+        raise CallDeferred(metadata={'job_id': 'abc'})
+
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(args_validator=my_validator, retries=0)
+    def my_tool(ctx: RunContext, x: int) -> int:  # pragma: no cover
+        executed.append(x)
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
+            metadata={'pyd_ai_tool_call_id__my_tool': {'job_id': 'abc'}},
+        )
+    )
+    assert executed == []
+
+    assert isinstance(result.output, DeferredToolRequests)
+    tool_call_id = result.output.calls[0].tool_call_id
+    result = agent.run_sync(
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(calls={tool_call_id: 'done externally'}),
+    )
+    assert executed == []
+    assert result.all_messages()[-2].parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='my_tool',
+                content='done externally',
+                tool_call_id='pyd_ai_tool_call_id__my_tool',
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+
+
+def test_args_validator_deferral_metadata_not_merged_for_already_deferred_kinds():
+    """Pins current behavior: a tool that's already deferred by kind ignores the deferral's metadata.
+
+    A `requires_approval=True` (or external) tool is collected as deferred by its kind without being
+    executed, so neither its `args_validator` nor its function body can contribute
+    `ApprovalRequired(metadata=...)` to `DeferredToolRequests.metadata` — the validator case behaves
+    exactly like the pre-existing tool-body case, both asserted here. Only tools deferred *by* the
+    deferral itself (a plain function tool) carry metadata through.
+    """
+    executed: list[str] = []
+
+    def my_validator(ctx: RunContext, x: int) -> None:
+        raise ApprovalRequired(metadata={'from': 'validator'})
+
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool(requires_approval=True, args_validator=my_validator)
+    def validator_defers(ctx: RunContext, x: int) -> int:  # pragma: no cover
+        executed.append('validator_defers')
+        return x
+
+    @agent.tool(requires_approval=True)
+    def body_defers(ctx: RunContext, x: int) -> int:  # pragma: no cover
+        executed.append('body_defers')
+        raise ApprovalRequired(metadata={'from': 'body'})
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[
+                ToolCallPart(
+                    tool_name='validator_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__validator_defers'
+                ),
+                ToolCallPart(tool_name='body_defers', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__body_defers'),
+            ]
+        )
+    )
+    assert isinstance(result.output, DeferredToolRequests)
+    assert result.output.metadata == {}  # neither the validator's nor the body's metadata
+    assert executed == []
+
+
+def test_args_validator_approval_resolved_inline_by_capability():
+    """A validator's `ApprovalRequired` is resolvable inline by a `HandleDeferredToolCalls` handler."""
+    requests: list[DeferredToolRequests] = []
+    executed: list[int] = []
+
+    def handle_deferred(ctx: RunContext, reqs: DeferredToolRequests) -> DeferredToolResults:
+        requests.append(reqs)
+        return reqs.build_results(approve_all=True)
+
+    def my_validator(ctx: RunContext, x: int) -> None:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired()
+
+    agent = Agent(TestModel(), capabilities=[HandleDeferredToolCalls(handler=handle_deferred)])
+
+    @agent.tool(args_validator=my_validator)
+    def my_tool(ctx: RunContext, x: int) -> int:
+        executed.append(x)
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('{"my_tool":0}')
+    assert executed == [0]
+    assert requests == snapshot(
+        [
+            DeferredToolRequests(
+                approvals=[
+                    ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
+                ]
+            )
+        ]
+    )
+
+
 def test_args_validator_single_base_model_arg():
     """`args_validator` works when a tool has a single BaseModel parameter.
 
@@ -4573,7 +4781,7 @@ def test_include_return_schema_via_capability():
     result = agent.run_sync('test')
     request = message(result.all_messages(), ModelRequest)
     # The tool description should contain the return schema since the capability enables it
-    tool_parts = [p for p in request.parts if hasattr(p, 'content')]
+    tool_parts = [p for p in request.parts if not isinstance(p, ToolAvailabilityDeltaPart)]
     assert any('Return schema' in str(p.content) for p in tool_parts) or True  # TestModel may not inject
 
 
@@ -4666,9 +4874,8 @@ def test_include_return_schema_warning_empty_schema():
 
 
 def test_prepare_return_schemas():
-    """_prepare_return_schemas resolves and injects return schemas in a single pass."""
-    from pydantic_ai.models import ModelRequestParameters, _prepare_return_schemas
-    from pydantic_ai.profiles import ModelProfile
+    """`prepare_return_schemas` resolves and injects return schemas in a single pass."""
+    from pydantic_ai.models import ModelRequestParameters, prepare_return_schemas
     from pydantic_ai.tools import ToolDefinition
 
     td_with_schema = ToolDefinition(
@@ -4690,8 +4897,7 @@ def test_prepare_return_schemas():
     )
 
     # Non-native model: opted-in tool gets schema injected into description, non-opted-in gets cleared
-    profile_no_native = ModelProfile(supports_tool_return_schema=False)
-    result = _prepare_return_schemas(params, profile_no_native)
+    result = prepare_return_schemas(params, supports_tool_return_schema=False)
     assert result.function_tools[0].return_schema is None
     assert 'Return schema:' in (result.function_tools[0].description or '')
     assert 'A tool' in (result.function_tools[0].description or '')
@@ -4699,8 +4905,7 @@ def test_prepare_return_schemas():
     assert 'Return schema:' not in (result.function_tools[1].description or '')
 
     # Native model: opted-in tool keeps schema, non-opted-in gets cleared
-    profile_native = ModelProfile(supports_tool_return_schema=True)
-    result = _prepare_return_schemas(params, profile_native)
+    result = prepare_return_schemas(params, supports_tool_return_schema=True)
     assert result.function_tools[0].return_schema == {'type': 'string'}
     assert result.function_tools[1].return_schema is None
 
@@ -4709,7 +4914,7 @@ def test_prepare_return_schemas():
     params_no_desc = ModelRequestParameters(
         function_tools=[td_no_desc], output_tools=[], output_mode='auto', output_object=None
     )
-    result = _prepare_return_schemas(params_no_desc, profile_no_native)
+    result = prepare_return_schemas(params_no_desc, supports_tool_return_schema=False)
     assert result.function_tools[0].description is not None
     assert result.function_tools[0].description.startswith('Return schema:')
 

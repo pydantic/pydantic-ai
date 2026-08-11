@@ -11,6 +11,7 @@ from .. import (
     models,
     usage as _usage,
 )
+from .._cancel import CancellationToken
 from .._json_schema import JsonSchema
 from ..capabilities import AgentCapability
 from ..output import OutputDataT, OutputSpec
@@ -29,6 +30,7 @@ from .abstract import AbstractAgent, AgentMetadata, AgentModelSettings, AgentRet
 
 if TYPE_CHECKING:
     from ..capabilities import CombinedCapability
+    from ..realtime import AudioRetention, KnownRealtimeModelName, RealtimeModel, RealtimeModelSettings, RealtimeSession
     from .spec import AgentSpec
 
 
@@ -124,6 +126,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -148,6 +151,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -172,6 +176,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: AgentModelSettings[AgentDepsT] | None = None,
         usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
         usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
@@ -229,7 +234,9 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                 CallToolsNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
-                        usage=RequestUsage(input_tokens=56, output_tokens=7),
+                        usage=RequestUsage(
+                            cost=Decimal('0.000196'), input_tokens=56, output_tokens=7
+                        ),
                         model_name='gpt-5.2',
                         timestamp=datetime.datetime(...),
                         run_id='...',
@@ -256,6 +263,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
             usage_limits: Optional limits on model request count or token usage.
+            cancellation_token: Token used to cancel this run from another task or thread.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             metadata: Optional metadata to attach to this run.
             retries: Override the agent-level retry budgets for this run. Pass an `int` to override both the
@@ -282,6 +290,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             deps=deps,
             model_settings=model_settings,
             usage_limits=usage_limits,
+            cancellation_token=cancellation_token,
             usage=usage,
             metadata=metadata,
             retries=retries,
@@ -291,6 +300,51 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             spec=spec,
         ) as run:
             yield run
+
+    @asynccontextmanager
+    async def _open_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        audio_retention: AudioRetention = 'transcript_only',
+        retain_images_every_n: int = 1,
+        retain_images_max: int | None = 100,
+    ) -> AsyncGenerator[RealtimeSession]:
+        """Open a realtime session on the wrapped agent. See [`Agent.realtime`][pydantic_ai.agent.Agent.realtime].
+
+        Note that realtime sessions do not route through [`iter()`][pydantic_ai.agent.AbstractAgent.iter]
+        (there is no graph run to iterate), so a wrapper that enforces policy by overriding `iter()`
+        must also override this method to gate realtime sessions.
+        """
+        async with self.wrapped._open_realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            message_history=message_history,
+            audio_retention=audio_retention,
+            retain_images_every_n=retain_images_every_n,
+            retain_images_max=retain_images_max,
+        ) as session:
+            yield session
 
     @contextmanager
     def override(
@@ -303,6 +357,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         native_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
         spec: dict[str, Any] | AgentSpec | None = None,
@@ -320,6 +375,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             tools: The tools to use instead of the tools registered with the agent.
             native_tools: The native tools to use instead of the agent's configured native tools.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
+                per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
                 When set, any per-run `model_settings` argument is ignored.
             retries: The retry budgets to use instead of the agent-level configuration. Pass an `int` to
@@ -339,6 +396,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             tools=tools,
             native_tools=native_tools,
             instructions=instructions,
+            metadata=metadata,
             model_settings=model_settings,
             spec=spec,
             **forward_kwargs,

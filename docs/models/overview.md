@@ -13,6 +13,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Hugging Face](huggingface.md)
 * [Mistral](mistral.md)
 * [OpenRouter](openrouter.md)
+* [Snowflake Cortex](snowflake.md)
 * [Z.AI](zai.md)
 
 ## OpenAI-compatible Providers
@@ -24,7 +25,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Crusoe](openai.md#crusoe)
 - [DeepSeek](openai.md#deepseek)
 - [Fireworks AI](openai.md#fireworks-ai)
-- [GitHub Models](openai.md#github-models)
+- [GitHub Models](openai.md#github-models) (retired, deprecated)
 - [Heroku](openai.md#heroku-ai)
 - [LiteLLM](openai.md#litellm)
 - [Nebius AI Studio](openai.md#nebius-ai-studio)
@@ -284,7 +285,7 @@ print(response.all_messages())
     ),
     ModelResponse(
         parts=[TextPart(content='The capital of France is Paris.')],
-        usage=RequestUsage(input_tokens=56, output_tokens=7),
+        usage=RequestUsage(cost=Decimal('0.000273'), input_tokens=56, output_tokens=7),
         model_name='claude-sonnet-4-5',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -410,6 +411,8 @@ The `fallback_on` parameter accepts:
 - A list mixing all of the above: `[ModelAPIError, exc_handler, response_handler]`
 
 Handler type is auto-detected by inspecting type hints on the first parameter. If the first parameter is hinted as [`ModelResponse`][pydantic_ai.messages.ModelResponse], it's a response handler. Otherwise (including untyped handlers and lambdas), it's an exception handler.
+
+As the hints are resolved at runtime, every annotated type in the handler signature must be imported at runtime rather than only under `if TYPE_CHECKING:`. If any annotation can't be resolved, a [`UserError`][pydantic_ai.exceptions.UserError] is raised instead of the handler being silently treated as an exception handler.
 
 #### Finish Reason Example
 

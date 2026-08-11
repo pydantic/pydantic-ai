@@ -730,6 +730,13 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     `None` (default) inherits the agent's retry count at runtime. Set explicitly to override.
     """
 
+    prefer_tasks: bool
+    """Whether to prefer task-augmented execution (SEP-1686) for tools that support it optionally.
+
+    Defaults to `True`. Tools that require task-augmented execution always use it, while tools that
+    forbid it never do.
+    """
+
     cache_tools: bool
     """Whether to cache the list of tools across `get_tools()` calls.
 
@@ -818,6 +825,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         max_retries: int | None = None,
         tool_error_behavior: Literal['retry', 'error', 'failed'] = 'retry',
         process_tool_call: ProcessToolCallback | None = None,
+        prefer_tasks: bool = True,
         cache_tools: bool = True,
         cache_resources: bool = True,
         cache_prompts: bool = True,
@@ -857,6 +865,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] so the model can see the error.
             process_tool_call: Hook to wrap tool calls. See
                 [`ProcessToolCallback`][pydantic_ai.mcp.ProcessToolCallback].
+            prefer_tasks: Whether to prefer task-augmented execution (SEP-1686) for tools that
+                support it optionally. Tools that require task-augmented execution always use it,
+                while tools that forbid it never do.
             cache_tools: Whether to cache the list of tools. See
                 [`MCPToolset.cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools].
             cache_resources: Whether to cache the list of resources. See
@@ -978,6 +989,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self.tool_error_behavior = tool_error_behavior
         self.process_tool_call = process_tool_call
+        self.prefer_tasks = prefer_tasks
         self.cache_tools = cache_tools
         self.cache_resources = cache_resources
         self.cache_prompts = cache_prompts
@@ -1137,34 +1149,37 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             return tools
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        max_retries = self.max_retries if self.max_retries is not None else ctx.max_retries
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in await self.list_tools():
             task_support = mcp_tool.execution.taskSupport if mcp_tool.execution else None
-            tools[mcp_tool.name] = ToolsetTool[AgentDepsT](
-                toolset=self,
-                tool_def=ToolDefinition(
+            tools[mcp_tool.name] = self.tool_for_tool_def(
+                ToolDefinition(
                     name=mcp_tool.name,
                     description=mcp_tool.description,
                     parameters_json_schema=mcp_tool.inputSchema,
                     metadata={
                         'meta': mcp_tool.meta,
                         'annotations': mcp_tool.annotations.model_dump() if mcp_tool.annotations else None,
-                        'task': task_support in ('required', 'optional'),
+                        'task': task_support == 'required' or (task_support == 'optional' and self.prefer_tasks),
                     },
                     return_schema=mcp_tool.outputSchema or None,
                     include_return_schema=self.include_return_schema,
                 ),
-                max_retries=max_retries,
-                args_validator=TOOL_SCHEMA_VALIDATOR,
+                ctx=ctx,
             )
         return tools
 
-    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+    def tool_for_tool_def(self, tool_def: ToolDefinition, *, ctx: RunContext[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
+        """Build the tool to call for a tool definition that was already prepared elsewhere.
+
+        Args:
+            tool_def: The prepared tool definition to build the tool from.
+            ctx: The run context used to resolve the tool's retry budget.
+        """
         return ToolsetTool[AgentDepsT](
             toolset=self,
             tool_def=tool_def,
-            max_retries=self.max_retries if self.max_retries is not None else 1,
+            max_retries=self.max_retries if self.max_retries is not None else ctx.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
@@ -1275,8 +1290,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         ctx: RunContext[Any],
         tool: ToolsetTool[Any],
     ) -> Any:
-        # Server-side task-augmented execution per MCP SEP-1686 is governed entirely by the tool's
-        # `execution.taskSupport`: 'required'/'optional' → task path; 'forbidden' or absent → regular path.
+        # `get_tools()` resolves the server's `execution.taskSupport` and the client's
+        # `prefer_tasks` preference into the effective task path for this tool.
         use_task = bool((tool.tool_def.metadata or {}).get('task'))
         if self.process_tool_call is not None:
             return await self.process_tool_call(

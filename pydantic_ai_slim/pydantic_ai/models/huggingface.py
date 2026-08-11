@@ -29,10 +29,12 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -48,6 +50,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
 from ._tool_choice import resolve_tool_choice
@@ -351,7 +355,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         Returns a tuple of (tools, tool_choice).
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         tool_choice: Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None
         if resolved_tool_choice in ('auto', 'required'):
@@ -378,7 +382,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         tools = [HuggingFaceModel._map_tool_definition(r) for r in tool_defs.values()]
         return tools, tool_choice
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
         """Just maps a `pydantic_ai.Message` to a `huggingface_hub.ChatCompletionInputMessage`."""
@@ -407,6 +411,9 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     elif isinstance(item, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
                         pass
+                    elif isinstance(item, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
                 message_param = ChatCompletionInputMessage(role='assistant')
@@ -487,6 +494,11 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                             'content': part.model_response(),
                         }
                     )
+            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
         if file_content:

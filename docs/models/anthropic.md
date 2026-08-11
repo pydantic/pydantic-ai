@@ -494,6 +494,35 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
 
+## Mid-conversation system messages
+
+Adding an instruction to the agent's `system_prompt` partway through a long session rewrites the front of the prompt, which invalidates every cached prefix behind it. Anthropic avoids that by accepting a system message *inside* the conversation, at the instruction's own position in the history rather than ahead of it, so everything cached up to that point stays cached.
+
+Any [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] outside the first [`ModelRequest`][pydantic_ai.messages.ModelRequest] is a mid-conversation instruction — whether it came from a stored `message_history` or from [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] during a run. There's nothing extra to turn on:
+
+```python {title="mid_conversation_system_prompt.py"}
+from pydantic_ai import Agent, RunContext, SystemPromptPart
+
+agent = Agent('anthropic:claude-opus-4-8', system_prompt='You are a code reviewer.')
+
+
+@agent.tool
+def require_type_annotations(ctx: RunContext[None]) -> str:
+    ctx.enqueue(SystemPromptPart(content='Every suggestion must include explicit type annotations.'))
+    return 'rule added'
+```
+
+Keeping the instruction in place leaves the prefix ahead of it reusable, but it doesn't enable caching on its own — that still comes from [`anthropic_cache`](#automatic-caching), `anthropic_cache_messages`, or an explicit [`CachePoint`][pydantic_ai.messages.CachePoint]. A `CachePoint` at the end of an enqueued batch caches everything before it in that batch, the instruction included. One with more content after it caches up to where you put it and leaves the instruction outside: the instruction is sent after the content it accompanies, so it can't be inside a boundary that content is outside of.
+
+Support varies by model and by transport — the [Microsoft Foundry](#microsoft-foundry) integration doesn't serve the role, and some Claude models accept the entry without acting on it. Anthropic's [mid-conversation system messages docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages) have the current list. Pydantic AI picks the rendering that works for the model and transport you're using, falling back to a `<system>`-tagged user message at the same position, so the instruction applies where you put it either way.
+
+The difference between the two shows up on instructions a model *should* be wary of taking from its user: given the native entry, Claude will lift a restriction its top-level prompt set, and given the identical text in a `<system>` tag it refuses. For an instruction with nothing to distrust, such as a change of format, both work.
+
+See [mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts) for how these behave across providers, how to phrase one, and why untrusted content doesn't belong in one.
+
+!!! note "Placement"
+    Anthropic requires a system message to sit between a user turn and the model's reply, so Pydantic AI nudges the position when a history doesn't already satisfy that: an instruction arriving with no user content alongside it gets a minimal `.` user message to follow, and one that would land ahead of another user turn moves to just before the reply it governs. Neither changes which turn the instruction applies to — only where it sits on the wire.
+
 ## Fast mode
 
 Fast mode provides higher output tokens per second and is currently supported on **Claude Opus 4.6**, **Claude Opus 4.7**, **Claude Opus 4.8**, and **Claude Opus 5**. It is a research preview. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it; Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta. On unsupported models, `anthropic_speed='fast'` is ignored with a `UserWarning`. For pricing, rate limits, and the latest list of supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
@@ -517,16 +546,20 @@ agent = Agent(
 
 ## Forced tool choice
 
-Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while thinking is enabled. **Claude Fable 5** and the **Claude Mythos** models reject a forced tool choice unconditionally — even without thinking — so Pydantic AI marks them with [`anthropic_supports_forced_tool_choice=False`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_forced_tool_choice].
+Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while [extended thinking](../capabilities/thinking.md#anthropic) is enabled — [adaptive thinking](../capabilities/thinking.md#adaptive-thinking-effort) is compatible with forcing. **Claude Fable 5** and the **Claude Mythos** models reject a forced tool choice unconditionally — even without thinking — so Pydantic AI marks them with [`anthropic_supports_forced_tool_choice=False`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_forced_tool_choice].
 
 On a model that doesn't support forcing:
 
 - An explicit `tool_choice='required'` (or a list of tool names) raises a [`UserError`][pydantic_ai.exceptions.UserError]; use `tool_choice='auto'` instead.
-- A `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back softly to `'auto'`, with the available tools filtered to the requested set so the model can still only pick from them. Filtering the tool definitions invalidates Anthropic's prompt cache, since the cached prefix includes the tool array.
+- A `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back softly to `'auto'`. If the resolved choice named a single tool, the available tool list is filtered to that tool while `tool_choice` remains `'auto'`, which invalidates Anthropic's prompt cache since the cached prefix includes the tool array. The model may therefore answer with text instead of calling it; when an output tool is required, Pydantic AI retries with a prompt to call a tool.
+
+Because [Tool Output](../output.md#tool-output) resolves to a forced tool choice, extended thinking is also incompatible with it: a bare structured `output_type` switches to [Native Output](../output.md#native-output) (or [Prompted Output](../output.md#prompted-output) on models without JSON schema support), and an explicit `ToolOutput(...)` raises a [`UserError`][pydantic_ai.exceptions.UserError]. Adaptive thinking keeps Tool Output, except on the models above that reject forcing outright — whenever a thinking setting is configured, those behave as they always have: a bare structured `output_type` switches away from Tool Output, and an explicit `ToolOutput(...)` raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
 ## Message Compaction
 
 Anthropic supports [automatic context compaction](https://docs.anthropic.com/en/docs/build-with-claude/compaction) to manage long conversations. When input tokens exceed a configured threshold, the API automatically generates a summary that replaces older messages while preserving context.
+
+After compaction, subsequent requests send only the compacted window, from the latest compaction block onward, which reduces request size — the API ignores earlier content either way. The standing system prompt is unaffected: it's sent as the separate `system` parameter, which compaction doesn't replace.
 
 The easiest way to enable compaction is with the [`AnthropicCompaction`][pydantic_ai.models.anthropic.AnthropicCompaction] capability:
 

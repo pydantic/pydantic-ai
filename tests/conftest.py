@@ -9,7 +9,7 @@ import re
 import secrets
 import sys
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
@@ -412,6 +412,53 @@ def event_loop() -> Iterator[None]:
     asyncio.set_event_loop(new_loop)
     yield
     new_loop.close()
+
+
+class UndrivableEventLoop(asyncio.AbstractEventLoop):
+    """An event loop that inherits `AbstractEventLoop`'s unimplemented `run_until_complete()`.
+
+    This is how Temporal's workflow event loop behaves: it subclasses `asyncio.AbstractEventLoop` and never
+    implements `run_until_complete()`, so calling that raises a bare `NotImplementedError` from CPython.
+    """
+
+
+@contextmanager
+def undrivable_event_loop() -> Generator[None]:
+    """Make the current event loop one that can't be driven by the caller."""
+    previous = asyncio.get_event_loop()
+    asyncio.set_event_loop(UndrivableEventLoop())
+    try:
+        yield
+    finally:
+        asyncio.set_event_loop(previous)
+
+
+@pytest.fixture
+def closed_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    original_loop = asyncio.get_event_loop()
+    closed_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(closed_loop)
+    closed_loop.close()
+
+    try:
+        yield closed_loop
+    finally:
+        asyncio.get_event_loop().close()
+        asyncio.set_event_loop(original_loop)
+
+
+@pytest.fixture
+def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    """Empty the thread's event loop slot, yielding the loop that was installed before."""
+    original_loop = asyncio.get_event_loop()
+    asyncio.set_event_loop(None)
+
+    try:
+        yield original_loop
+    finally:
+        with suppress(RuntimeError):
+            asyncio.get_event_loop().close()
+        asyncio.set_event_loop(original_loop)
 
 
 @pytest.fixture(autouse=True)
@@ -893,6 +940,16 @@ def zai_api_key() -> str:
     return os.getenv('ZAI_API_KEY', 'mock-api-key')
 
 
+@pytest.fixture(scope='session')
+def snowflake_account() -> str:
+    return os.getenv('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
+
+
+@pytest.fixture(scope='session')
+def snowflake_token() -> str:
+    return os.getenv('SNOWFLAKE_TOKEN', 'mock-api-key')
+
+
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
 def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]:
     """xAI provider fixture backed by protobuf cassettes.
@@ -912,7 +969,7 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]
 
     cassette_name = sanitize_filename(request.node.name, 240)
     test_module = cast(str, request.node.fspath.basename.replace('.py', ''))
-    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
+    cassette_path = Path(request.node.fspath).parent / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
     record_mode: str | None
     try:
         # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).

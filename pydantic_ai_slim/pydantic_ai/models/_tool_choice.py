@@ -53,6 +53,29 @@ def resolve_tool_choice(  # noqa: C901
 
     available_tools = set(model_request_parameters.tool_defs.keys())
 
+    def _filter_hidden_tools(chosen_tool_names: set[str], *, has_output_fallback: bool = False) -> set[str]:
+        # Only `'withheld'` names are absent from the wire. A `'deferred'` declaration sits in the
+        # `tools` collection and a `'via_history'` definition travels on the tool-addition channel,
+        # and OpenAI honors `tool_choice` forcing for both, so neither counts as hidden here.
+        hidden_tool_names = {
+            tool.name
+            for tool in model_request_parameters.function_tools
+            if model_request_parameters.visibility_of(tool.name) == 'withheld'
+        }
+        filtered = chosen_tool_names - hidden_tool_names
+        # At least one *available* name must survive: hidden names are filtered here, and
+        # unknown names pass through by design (dynamic tool availability, see
+        # `_check_invalid_tools`) — but a choice left with only unknown names would force the
+        # provider toward tools it was never sent. A `ToolOrOutput` choice whose output tools
+        # remain usable degrades to those instead of failing.
+        if chosen_tool_names and not (filtered & available_tools) and not has_output_fallback:
+            raise UserError(
+                f'No tool in `tool_choice` is currently available: {sorted(chosen_tool_names)}. '
+                'Hidden tools must be revealed with tool search, `load_capability`, or '
+                '`ToolReturn.tools` before they can be forced.'
+            )
+        return filtered
+
     def _check_invalid_tools(chosen_tool_names: set[str], available_tools: set[str], *, available_label: str) -> None:
         invalid = chosen_tool_names - available_tools
         if not invalid:
@@ -103,12 +126,26 @@ def resolve_tool_choice(  # noqa: C901
                 '`tool_choice` was set to "required", but no function tools are defined. '
                 'Please define function tools or change `tool_choice` to "auto" or "none".'
             )
+        if all(
+            model_request_parameters.visibility_of(tool.name) == 'withheld'
+            for tool in model_request_parameters.function_tools
+        ):
+            # Nothing would reach the wire: the provider would see `required` alongside an empty
+            # `tools` list and either reject the request or silently degrade.
+            raise UserError(
+                '`tool_choice` was set to "required", but every function tool is hidden until revealed. '
+                'Reveal tools with tool search, `load_capability`, or `ToolReturn.tools`, '
+                'or change `tool_choice`.'
+            )
         return 'required'
 
     # list[str]: required, restricted to these tools
     elif isinstance(function_tool_choice, list):
         chosen_set = set(function_tool_choice)
         _check_invalid_tools(chosen_set, available_tools, available_label='Available tools')
+        # A deferred declaration or a tool-addition definition is already on the wire and remains
+        # callable; only tools absent from the wire cannot be forced by name.
+        chosen_set = _filter_hidden_tools(chosen_set)
 
         if chosen_set == available_tools:
             return 'required'
@@ -132,6 +169,7 @@ def resolve_tool_choice(  # noqa: C901
             all_function_tool_names,
             available_label='Available function tools',
         )
+        chosen_function_set = _filter_hidden_tools(chosen_function_set, has_output_fallback=bool(output_tool_names))
 
         allowed_tools = chosen_function_set | output_tool_names
         mode: Literal['auto', 'required'] = 'auto' if allow_direct_output else 'required'

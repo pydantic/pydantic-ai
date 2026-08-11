@@ -15,7 +15,7 @@ install: .uv .pre-commit ## Install the package, dependencies, and pre-commit fo
 	# harness is kept out of the lock (its pydantic-ai-slim dep collides with the
 	# workspace member under lowest-direct), so install it out-of-band; --no-deps
 	# because pydantic-ai-slim is already present. See .github/workflows/ci.yml.
-	uv pip install --no-deps "pydantic-ai-harness==0.7.0" "pydantic-monty==0.0.16"
+	uv pip install --no-deps "pydantic-ai-harness==0.7.0"
 	pre-commit install --install-hooks
 
 .PHONY: install-all-python
@@ -86,10 +86,11 @@ update-examples: ## Update documentation examples
 update-vcr-tests: ## Update tests using VCR that hit LLM APIs; note you'll need to set API keys as appropriate
 	uv run -m pytest --record-mode=rewrite tests
 
-# `--no-strict` so you can build the docs without fixing all warnings
+# Strict (from mkdocs.yml) so warnings — e.g. broken cross-links — fail the build in CI instead of
+# slipping onto the live site. Use `make docs-serve` to iterate without fixing every warning first.
 .PHONY: docs
 docs: ## Build the documentation
-	uv run mkdocs build --no-strict
+	uv run mkdocs build
 
 # `--no-strict` so you can build the docs without fixing all warnings
 .PHONY: docs-serve
