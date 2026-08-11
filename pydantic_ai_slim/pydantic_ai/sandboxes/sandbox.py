@@ -1,11 +1,10 @@
 """The user-facing sandbox facade.
 
-Sandbox providers implement the small
+Sandbox backends implement the small
 [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] protocol and typically also
 [`SupportsFilesystem`][pydantic_ai.sandboxes.SupportsFilesystem]. This facade owns
-model-facing semantics such as decoding and windowed file reads, with optional acceleration
-through extension protocols. Capabilities and user tools consume it through
-[`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
+model-facing semantics such as decoding and windowed file reads. Capabilities and user tools
+consume it through [`RunContext.sandbox`][pydantic_ai.tools.RunContext.sandbox].
 """
 
 from __future__ import annotations as _annotations
@@ -107,7 +106,6 @@ class Sandbox:
         self._ref = ref
         self._resolver = resolver
         self._deferred_filesystem: _DeferredFilesystem | None = None
-        self._working_dir: str | None = None
 
     @functools.cached_property
     def _connect_lock(self) -> anyio.Lock:
@@ -243,9 +241,7 @@ class Sandbox:
 
     async def working_dir(self) -> str:
         """The sandbox's default working directory (absolute POSIX path)."""
-        if self._working_dir is None:
-            self._working_dir = await (await self._ensure_backend()).working_dir()
-        return self._working_dir
+        return await (await self._ensure_backend()).working_dir()
 
     async def resolve(self, path: str, *, base: str | None = None) -> str:
         """Resolve a possibly-relative path to an absolute POSIX path.
@@ -291,16 +287,11 @@ class Sandbox:
         return _window_from_data(data, offset, limit)
 
     async def _read_file_via_shell(self, path: str, offset: int, limit: int) -> FileWindow | None:
-        """Produce a line window by slicing inside the sandbox, so only the window crosses the wire.
+        """Slice a line window with `sed` inside the sandbox, so only the window crosses the wire.
 
-        Backends honor the one-environment contract (`run` and `fs` see the same files), so
-        `sed` output *is* the file window, at the same decode-replace lossiness as the
-        filesystem path. Returns `None` whenever the environment cannot slice — `run()`
-        failing or unsupported, no `sed`, a non-POSIX shell, or a missing file (non-zero
-        exit) — and the caller falls back to a filesystem read, which stays the
-        authoritative source of errors. `total_lines` is only reported when the slice
-        provably reached EOF with a non-empty window; an empty result cannot distinguish a
-        short file from an offset past EOF, so it stays `None`.
+        Returns `None` on any failure (no usable `sed`, `run()` unsupported, missing file);
+        the caller falls back to a full filesystem read, which stays the authoritative source
+        of errors. `total_lines` is only reported when the slice provably reached EOF.
         """
         try:
             # argv, never shell=True: the path is an argument, not shell-interpreted text.
@@ -341,6 +332,5 @@ def _split_lines(text: str) -> tuple[str, ...]:
 
 
 if TYPE_CHECKING:
-    # Sandbox satisfies the SandboxBackend protocol structurally; this assignment makes the
-    # type checker verify full conformance, including signatures.
+    # Pins full structural conformance — signatures included — which `isinstance` cannot check.
     _conforms: SandboxBackend = Sandbox.__new__(Sandbox)

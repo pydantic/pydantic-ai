@@ -285,6 +285,22 @@ async def test_owned_root_context_manager_reuse_creates_a_fresh_root():
     assert not second.exists()
 
 
+async def test_facade_follows_backend_across_root_recreation():
+    """A `Sandbox` facade held across exit and re-entry must follow the backend to its fresh
+    root instead of resurrecting the deleted one (which would also leak it on disk)."""
+    backend = LocalSandbox()
+    facade = Sandbox(backend)
+    async with backend:
+        first = Path(await facade.working_dir())
+    async with backend:
+        await facade.write_text('probe.txt', 'hi')
+        second = Path(await facade.working_dir())
+        assert second != first
+        assert not first.exists()
+        assert (await facade.run(['cat', 'probe.txt'])).stdout == 'hi'
+    assert not second.exists()
+
+
 async def test_env_overlays_the_host_environment(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
     result = await sandbox.run('echo "$GREETING:$PATH"', shell=True, env={'GREETING': 'hi'})
@@ -371,17 +387,18 @@ async def test_list_dir_symlink_sizes_match_stat(tmp_path: Path):
     assert entries['broken.txt'].size is None
 
 
-async def test_unused_default_sandbox_creates_no_directory():
-    async with LocalSandbox() as sandbox:
-        pass  # never used: the lazy default root was never created
-    assert sandbox._root is None  # pyright: ignore[reportPrivateUsage]
+def fail_mkdtemp(*args: Any, **kwargs: Any) -> str:
+    # Trap: tests using this pass exactly when it is never called.
+    raise AssertionError('unused default sandbox created a temporary directory')  # pragma: no cover
+
+
+async def test_unused_default_sandbox_creates_no_directory(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr('pydantic_ai.sandboxes.local.tempfile.mkdtemp', fail_mkdtemp)
+    async with LocalSandbox():
+        pass  # never used: the lazy default root must never be created
 
 
 async def test_unused_agent_default_creates_no_directory(monkeypatch: pytest.MonkeyPatch):
-    def fail_mkdtemp(*args: Any, **kwargs: Any) -> str:
-        # Trap: the test passes exactly when this is never called.
-        raise AssertionError('unused default sandbox created a temporary directory')  # pragma: no cover
-
     monkeypatch.setattr('pydantic_ai.sandboxes.local.tempfile.mkdtemp', fail_mkdtemp)
     result = await Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')]))).run('go')
     assert result.output == 'done'
