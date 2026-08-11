@@ -169,6 +169,8 @@ async def test_audio_in_server_vad_turn(
     model = AzureRealtimeModel(
         'gpt-realtime', provider=provider, settings=AzureRealtimeModelSettings(azure_voice_live=True)
     )
+    # `gpt-realtime` is served by both APIs, so it carries no `azure_realtime_apis` constraint;
+    # `azure_voice_live=True` selected Voice Live here.
     assert model.profile == RealtimeModelProfile(
         supports_image_input=True,
         supports_manual_turn_control=True,

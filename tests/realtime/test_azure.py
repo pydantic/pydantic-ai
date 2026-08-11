@@ -21,9 +21,11 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.azure import (
         AzureRealtimeConnection,
         AzureRealtimeModel,
+        AzureRealtimeModelProfile,
         AzureRealtimeModelSettings,
         SemanticVAD,
         ServerVAD,
+        _default_azure_realtime_apis,  # pyright: ignore[reportPrivateUsage]
         _map_voice_live_event,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.realtime.codec import OutputTranscript
@@ -87,6 +89,88 @@ async def test_voice_live_url_and_auth_headers() -> None:
         'wss://resource.services.ai.azure.com/voice-live/realtime?api-version=2026-04-10&model=gpt+realtime'
     )
     assert await model._auth_headers() == {'api-key': 'azure-key'}  # pyright: ignore[reportPrivateUsage]
+
+
+def _azure_provider() -> AzureProvider:
+    return AzureProvider(
+        azure_endpoint='https://resource.services.ai.azure.com',
+        api_version='2026-04-10',
+        api_key='azure-key',
+        voice_live_endpoint='https://voice.services.ai.azure.com',
+        voice_live_api_key='voice-key',
+    )
+
+
+@pytest.mark.parametrize(
+    'model_name,azure_voice_live,expected',
+    [
+        # Served by both APIs: defaults to the GA path, `azure_voice_live=True` selects Voice Live.
+        ('gpt-realtime', None, 'ga'),
+        ('gpt-realtime', True, 'voice_live'),
+        ('gpt-realtime-mini', None, 'ga'),
+        ('gpt-realtime-1.5', True, 'voice_live'),
+        # GA-only: defaults to GA, `azure_voice_live=True` is rejected before connecting.
+        ('gpt-realtime-2', None, 'ga'),
+        ('gpt-realtime-2', True, 'error'),
+        ('gpt-4o-realtime-preview', True, 'error'),
+        ('gpt-realtime-translate', True, 'error'),
+        # Voice-Live-only: auto-routed to Voice Live whether or not the setting is passed.
+        ('phi4-mm-realtime', None, 'voice_live'),
+        ('azure-realtime', None, 'voice_live'),
+        ('gpt-5', None, 'voice_live'),  # cascade chat model, served only through Voice Live
+        ('gpt-4.1-mini', None, 'voice_live'),
+        # Unrecognized (e.g. a future model): GA by default, Voice Live only when asked.
+        ('gpt-realtime-3', None, 'ga'),
+        ('gpt-realtime-3', True, 'voice_live'),
+    ],
+)
+def test_azure_realtime_api_routing(model_name: str, azure_voice_live: bool | None, expected: str) -> None:
+    settings = AzureRealtimeModelSettings(azure_voice_live=azure_voice_live) if azure_voice_live is not None else None
+    model = AzureRealtimeModel(model_name, provider=_azure_provider(), settings=settings)
+    if expected == 'error':
+        with pytest.raises(UserError, match='cannot be used with it'):
+            model._realtime_url(settings)  # pyright: ignore[reportPrivateUsage]
+    else:
+        url = model._realtime_url(settings)  # pyright: ignore[reportPrivateUsage]
+        assert ('/voice-live/realtime' in url) == (expected == 'voice_live')
+
+
+def test_azure_realtime_profile_override_routes_unconventional_deployment() -> None:
+    # A deployment named after nothing recognizable is unknown (GA-default), but a `profile=` override
+    # naming its serving APIs makes routing and validation work — the documented escape hatch.
+    provider = _azure_provider()
+    assert AzureRealtimeModel('my-voice-bot', provider=provider)._realtime_url() == (  # pyright: ignore[reportPrivateUsage]
+        'wss://resource.services.ai.azure.com/openai/v1/realtime?model=my-voice-bot'
+    )
+    voice_live_only = AzureRealtimeModelProfile(azure_realtime_apis=frozenset({'voice_live'}))
+    model = AzureRealtimeModel('my-voice-bot', provider=provider, profile=voice_live_only)
+    assert '/voice-live/realtime' in model._realtime_url()  # pyright: ignore[reportPrivateUsage]
+    # A Voice-Live-only model can't do GA-style browser WebRTC, so the profile drops the flag.
+    assert model.profile.get('supports_webrtc') is False
+
+
+def test_azure_realtime_apis_default_absent_for_unknown_model() -> None:
+    model = AzureRealtimeModel('gpt-realtime-3', provider=_azure_provider())
+    assert 'azure_realtime_apis' not in model.profile
+
+
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        # A version number is matched at a boundary, so `gpt-realtime-2` (GA-only) does not swallow a
+        # date-suffixed `gpt-realtime` deployment (served by both, hence unconstrained).
+        ('gpt-realtime-2', frozenset({'azure_openai'})),
+        ('gpt-realtime-2-2026-05-07', frozenset({'azure_openai'})),
+        ('gpt-realtime-2025-08-28', None),
+        # Cascade families cover their point releases (`.`-delimited) as well as `-`-suffixed variants.
+        ('gpt-5.2-chat', frozenset({'voice_live'})),
+        ('gpt-4o-mini', frozenset({'voice_live'})),
+        # A GA-only `-realtime` variant is matched before the bare cascade name it also starts with.
+        ('gpt-4o-realtime-preview', frozenset({'azure_openai'})),
+    ],
+)
+def test_azure_realtime_apis_name_boundary_matching(model_name: str, expected: frozenset[str] | None) -> None:
+    assert _default_azure_realtime_apis(model_name) == expected
 
 
 def test_voice_live_session_config_options() -> None:

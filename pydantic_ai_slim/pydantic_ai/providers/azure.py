@@ -153,8 +153,8 @@ class AzureProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
-        # TODO(voice-live): Add an Azure realtime model-to-path profile map once Azure and maintainers
-        # agree which models are GA-only, Voice-Live-only, or supported by both paths.
+        # The GA-vs-Voice-Live serving API is stamped by `AzureRealtimeModel.profile`, which (unlike this
+        # static provider method) can also read the session settings that select between the two.
         return OpenAIProvider.realtime_model_profile(model_name)
 
     @classmethod
