@@ -255,7 +255,7 @@ def temporalize_function_toolset(
                     # the run and `tool_call_id` was assigned by the (replayed) model response, so a
                     # replay of the parent derives the same child ID and reattaches instead of starting
                     # a duplicate. Always user-overridable since it's spread first in the merge.
-                    default_id = f'{workflow.info().workflow_id}--{ctx.tool_call_id}'
+                    default_id = f'{workflow.info().workflow_id}--{workflow.uuid4()}--{ctx.tool_call_id}'
                     # `child_workflow_config` is the capability-level base from `TemporalDurability`;
                     # per-tool metadata always wins, same merge convention as the activity branch.
                     merged: ChildWorkflowConfig = {
