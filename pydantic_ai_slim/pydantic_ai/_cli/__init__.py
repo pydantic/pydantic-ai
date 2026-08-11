@@ -323,7 +323,7 @@ def _run_chat_command(
         except KeyboardInterrupt:
             pass
         except Exception as e:
-            _render_error(console, e, show_traceback=args.traceback)
+            _render_error(Console(stderr=True), e, show_traceback=args.traceback)
             return 1
         return 0
 

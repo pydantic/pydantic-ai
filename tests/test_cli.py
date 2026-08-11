@@ -230,10 +230,11 @@ def test_cli_prompt_error(
         args.insert(0, '--traceback')
 
     assert cli(args) == 1
-    output = capfd.readouterr().out
-    assert 'RuntimeError: request failed' in output
-    assert ('Traceback (most recent call last)' in output) is show_traceback
-    assert ('ValueError: provider detail' in output) is show_traceback
+    captured = capfd.readouterr()
+    assert 'RuntimeError: request failed' not in captured.out
+    assert 'RuntimeError: request failed' in captured.err
+    assert ('Traceback (most recent call last)' in captured.err) is show_traceback
+    assert ('ValueError: provider detail' in captured.err) is show_traceback
 
 
 @pytest.mark.parametrize('show_traceback', [True, False])
