@@ -3043,7 +3043,7 @@ async def test_reconnect_does_not_re_solicit_a_cancelled_response() -> None:
 
     events = [e async for e in conn]
     assert [type(e).__name__ for e in events] == ['RealtimeSessionReconnectEvent', 'RealtimeSessionErrorEvent']
-    assert 'response.create' not in replacement.sent
+    assert not any(json.loads(frame).get('type') == 'response.create' for frame in replacement.sent)
 
 
 @pytest.mark.anyio
@@ -3071,7 +3071,7 @@ async def test_reconnect_does_not_re_solicit_a_response_that_was_streaming() -> 
 
     events = [e async for e in conn]
     assert [type(e).__name__ for e in events] == ['RealtimeSessionReconnectEvent', 'RealtimeSessionErrorEvent']
-    assert 'response.create' not in replacement.sent
+    assert not any(json.loads(frame).get('type') == 'response.create' for frame in replacement.sent)
 
 
 @pytest.mark.anyio

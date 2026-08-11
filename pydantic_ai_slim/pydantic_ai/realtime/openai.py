@@ -763,15 +763,20 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             # rather than leaving the session waiting for a turn that can never start. Two shapes qualify:
             # one deferred behind a now-dead active response (`_pending_response`), and one solicited but
             # not yet confirmed by its `response.created` (`_response_active` without `_response_started`)
-            # — the answer the caller is waiting on, which `_pending_response` alone does not cover. A
-            # response already streaming when it dropped is *not* re-asked: its partial reply is settled
-            # as interrupted, matching the state-lost contract of staying quiet until the next input. Nor
-            # is one the caller cancelled (`_cancel_sent`) before it started: re-asking would resurrect a
-            # response a barge-in explicitly stopped. Sent inside this guard because the new socket can
-            # drop before the frame reaches it, which has to consume an attempt like any other failed
-            # reconnect.
+            # — the answer the caller is waiting on, which `_pending_response` alone does not cover. That
+            # second case is only ours to re-ask on a local-replay connection: one that restores in-flight
+            # state (`reconnect_restores_in_flight_state`, e.g. the inherited xAI clone) has the server
+            # resume that response itself, so re-asking would duplicate it. A response already streaming
+            # when it dropped is *not* re-asked either: its partial reply is settled as interrupted,
+            # matching the state-lost contract of staying quiet until the next input. Nor is one the
+            # caller cancelled (`_cancel_sent`) before it started: re-asking would resurrect a response a
+            # barge-in explicitly stopped. Sent inside this guard because the new socket can drop before
+            # the frame reaches it, which has to consume an attempt like any other failed reconnect.
             replay_response = self._pending_response or (
-                self._response_active and not self._response_started and not self._cancel_sent
+                not self.reconnect_restores_in_flight_state
+                and self._response_active
+                and not self._response_started
+                and not self._cancel_sent
             )
             self._clear_active_response()
             # A fresh socket also drops anything the old one was still holding for us.
