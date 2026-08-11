@@ -1509,7 +1509,9 @@ async def test_run_stream_cancel_during_debounce_from_another_task():
                 stream=_utils.PeekableAsyncStream(source()),
             )
 
-    agent = Agent(CancellableModel())
+    model = CancellableModel()
+    assert model.model_id == 'test:cancellable'
+    agent = Agent(model)
 
     async with agent.run_stream('hello') as result:
         stream = result.stream_text(delta=True)
