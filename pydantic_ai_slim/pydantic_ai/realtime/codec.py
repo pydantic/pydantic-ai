@@ -30,6 +30,8 @@ from ..messages import (
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
+    RealtimeOutputSpeechEndEvent,
+    RealtimeOutputSpeechStartEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
@@ -339,6 +341,8 @@ RealtimeCodecEvent = TypeAliasType(
     | RealtimeInputSpeechStartEvent
     | RealtimeResponseInterruptedEvent
     | RealtimeInputSpeechEndEvent
+    | RealtimeOutputSpeechStartEvent
+    | RealtimeOutputSpeechEndEvent
     | RealtimeInputTranscriptionErrorEvent
     | SessionUsage
     | RealtimeSessionReconnectEvent

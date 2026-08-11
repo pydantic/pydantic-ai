@@ -12,8 +12,9 @@ agent can look up an order, check availability, or act on the logged-in user's d
 tools and dependencies a text agent would use. The call itself becomes ordinary message history
 that you can [hand to `Agent.run()`](history.md#handing-off-to-a-text-agent) for summarization or
 structured follow-up, the same code runs against [four providers](#provider-support), and usage
-limits and [Logfire](../logfire.md) tracing are built in. Your application owns audio capture and
-playback; Pydantic AI runs the provider-agnostic agent loop.
+limits and [Logfire](../logfire.md) tracing are built in. Your application owns the audio transport —
+bridged through your backend, or [browser-direct over WebRTC](deployment.md#browser-webrtc-server-sideband)
+on OpenAI and Azure — while Pydantic AI runs the provider-agnostic agent loop.
 
 ## Quickstart
 
@@ -106,8 +107,10 @@ device ↔ media bridge ↔ RealtimeSession ↔ provider
 ```
 
 The *media bridge* is whatever moves audio between the user's device and your backend — a browser
-WebSocket, a WebRTC connection, or a telephony bridge. It's how you deploy this beyond a local
-microphone; see [Connecting a frontend](deployment.md) for each shape.
+WebSocket or a telephony bridge. It's how you deploy this beyond a local microphone; see
+[Connecting a frontend](deployment.md) for each shape. On OpenAI and Azure the browser can instead
+exchange media with the provider directly over [WebRTC](deployment.md#browser-webrtc-server-sideband),
+with your backend running this same loop over a control-plane sideband rather than a media bridge.
 
 ## Learn by task
 
@@ -139,12 +142,12 @@ All providers implement the same [`RealtimeModel`][pydantic_ai.realtime.Realtime
 Provider pages are the canonical source for installation, model names, settings, feature support,
 and quirks:
 
-| Provider | Audio output | Image input | Text output | Async tool calls | [Thinking](../capabilities/thinking.md) | State-restoring reconnect |
-| --- | :---: | :---: | :---: | :---: | :---: | :---: |
-| [OpenAI](openai.md) | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*` models | Replays local history |
-| [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*` models | Replays local history |
-| [Google Gemini](gemini.md) | ✓ | ✓ | ✗ | Opt-in, native-audio models | ✓ | ✓, when enabled |
-| [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | `grok-voice-latest` and `-think-` models | ✓ |
+| Provider | Audio output | Image input | Text output | [Browser WebRTC](deployment.md#browser-webrtc-server-sideband) | Async tool calls | [Thinking](../capabilities/thinking.md) | State-restoring reconnect |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| [OpenAI](openai.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*` models | Replays local history |
+| [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*` models | Replays local history |
+| [Google Gemini](gemini.md) | ✓ | ✓ | ✗ | ✗ | Opt-in, native-audio models | ✓ | ✓, when enabled |
+| [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | ✗ | `grok-voice-latest` and `-think-` models | ✓ |
 
 For portable branching, inspect [`RealtimeModel.profile`][pydantic_ai.realtime.RealtimeModel.profile]
 or [`RealtimeSession.profile`][pydantic_ai.realtime.RealtimeSession.profile]: the
@@ -240,19 +243,24 @@ reasoning.
 
 ## Other ways to build voice
 
-Not every voice product needs the realtime agent loop:
+The same realtime loop deploys to a browser or phone over [WebRTC or a WebSocket
+relay](deployment.md) without changing the agent code. If the realtime agent loop isn't the right
+fit for a product, two alternatives sit outside it:
 
-| Path | Best for | Where Pydantic AI fits |
-| --- | --- | --- |
-| **Native speech-to-speech with Pydantic AI** | Low-latency voice agents with server-side tools and shared history | Runs the complete realtime agent described here |
-| **Browser talks directly to the provider** | Provider-native, UI-only experiences using an ephemeral token | Native WebRTC transport is [coming to Pydantic AI](deployment.md) ([#6676](https://github.com/pydantic/pydantic-ai/pull/6676)); until then, the provider SDK owns the media session and gives up the server-side agent loop |
-| **Batch STT → text agent → TTS** | Text-model choice, structured output, or independent speech components | Compose a standard [agent](../agent.md) with chosen speech-to-text and text-to-speech services |
+- **Batch STT → text agent → TTS.** Compose a standard [agent](../agent.md) with your own
+  speech-to-text and text-to-speech services when you want a specific text model, structured output,
+  or independently chosen speech components.
+- **Browser directly to the provider.** A provider-native, UI-only experience using an ephemeral
+  token: the provider's own SDK owns the session, so there is no server-side agent loop, tools, or
+  shared history — unlike the [WebRTC sideband](deployment.md#browser-webrtc-server-sideband), where
+  the browser owns the media but your backend still runs the agent. Pydantic AI can still power
+  separate backend workflows.
 
 ## Limitations
 
 | Limitation | Tracking |
 | --- | --- |
-| Sessions run server-side over WebSocket; browser-direct WebRTC and SIP are not built in yet. | [#6676](https://github.com/pydantic/pydantic-ai/pull/6676), [#6642](https://github.com/pydantic/pydantic-ai/pull/6642) |
+| SIP is not built in; bridge telephony through a provider such as Twilio. | [Connecting a frontend](deployment.md#siptelephony-bridge) |
 | New tools cannot be advertised mid-session, so `defer_loading=True` tools and tool-contributing capabilities are [rejected](capabilities.md#deferred-capability-loading). | [#7288](https://github.com/pydantic/pydantic-ai/issues/7288) |
 | Realtime-specific exchange hooks are not yet available; use supported [tool hooks](capabilities.md) and [session events](events.md). | [#7190](https://github.com/pydantic/pydantic-ai/issues/7190), [#7191](https://github.com/pydantic/pydantic-ai/issues/7191) |
 | Provider resumption handles cannot be persisted and resumed in another process. | [#7302](https://github.com/pydantic/pydantic-ai/issues/7302) |

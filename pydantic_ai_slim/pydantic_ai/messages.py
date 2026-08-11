@@ -4102,6 +4102,48 @@ class RealtimeInputSpeechEndEvent:
 
 
 @dataclass(repr=False)
+class RealtimeOutputSpeechStartEvent:
+    """The provider started playing the model's audio to the listener.
+
+    Only reported where the provider, rather than your code, holds the audio on its way to the
+    listener: on a [WebRTC sideband](../realtime/lifecycle.md#browser-webrtc) the media flows
+    browser ↔ provider, so the session never sees audio and this is its only signal that the model has
+    become audible. An ordinary session owns the audio and knows when it starts playing it, so no
+    provider reports this there.
+
+    This is about *playback*, not generation: the provider produces audio faster than it plays it, so
+    this can arrive well after the audio itself was generated.
+    """
+
+    _: KW_ONLY
+
+    event_kind: Literal['realtime_output_speech_start'] = 'realtime_output_speech_start'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RealtimeOutputSpeechEndEvent:
+    """The provider stopped playing the model's audio to the listener.
+
+    The counterpart to
+    [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent], and the
+    honest end of a spoken turn: because the provider generates audio far ahead of playing it, it is
+    still talking long after
+    [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] reports the response
+    finished. Drive a "speaking" indicator from this pair rather than from turn completion.
+    """
+
+    _: KW_ONLY
+
+    event_kind: Literal['realtime_output_speech_end'] = 'realtime_output_speech_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class RealtimeInputTranscriptionErrorEvent:
     """The provider failed to transcribe a user audio input turn, but the session continues.
 
@@ -4199,6 +4241,8 @@ RealtimeSessionEvent = Annotated[
     RealtimeTurnCompleteEvent
     | RealtimeInputSpeechStartEvent
     | RealtimeInputSpeechEndEvent
+    | RealtimeOutputSpeechStartEvent
+    | RealtimeOutputSpeechEndEvent
     | RealtimeResponseInterruptedEvent
     | RealtimeInputTranscriptionErrorEvent
     | RealtimeSessionReconnectEvent

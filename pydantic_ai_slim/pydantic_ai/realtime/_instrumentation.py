@@ -86,6 +86,9 @@ class SessionInstrumentation:
         self._session_span_attributes: dict[str, Any] | None = None
         # The `chat {model}` span for the response currently being assembled (see `ensure_chat_span`).
         self.chat_span: Span | None = None
+        # The `speak {model}` span covering how long the model is actually audible (see
+        # `start_playback_span`). Only a sideband reports playback, so it stays `None` elsewhere.
+        self.playback_span: Span | None = None
 
     def start_session_span(self) -> None:
         """Open the session-wide span, the realtime analog of the classic agent-run span.
@@ -318,6 +321,35 @@ class SessionInstrumentation:
                     response.model_name or self.model_name,
                 ),
             )
+
+    def start_playback_span(self) -> None:
+        """Open a `speak {model}` span covering how long the model is actually audible.
+
+        Distinct from the `chat`/`turn complete` spans, which measure *generation*: the provider produces
+        audio far faster than it plays, so a response can be complete while the listener still has many
+        seconds of speech to hear. That gap is what makes a barge-in feel broken, so it's worth its own
+        span. Only opened where the provider reports playback (a WebRTC sideband), so an ordinary
+        session's trace is unchanged.
+        """
+        settings = self.settings
+        if settings is None or self.playback_span is not None:
+            return
+        context = self.context
+        assert context is not None
+        self.playback_span = settings.tracer.start_span(
+            f'speak {self.model_name}' if self.model_name else 'speak',
+            context=context,
+            attributes={
+                _REALTIME_SPAN_ATTRIBUTE: True,
+                'logfire.msg': f'speak {self.model_name}' if self.model_name else 'speak',
+            },
+        )
+
+    def end_playback_span(self) -> None:
+        """Close the `speak` span when the model stops being audible."""
+        if (span := self.playback_span) is not None:
+            self.playback_span = None
+            span.end()
 
     def set_output_type(self, output_type: Literal['speech', 'text']) -> None:
         """Update telemetry from the response content the provider actually emitted."""

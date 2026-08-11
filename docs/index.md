@@ -50,7 +50,7 @@ Provides the ability to [stream](output.md#streamed-results) structured output c
 Provides a powerful way to define [graphs](graph.md) using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
 
 12. **Realtime Voice**:
-Build [speech-to-speech agents](realtime/overview.md) on native realtime models (OpenAI Realtime, Gemini Live, and xAI Grok Voice) over a persistent bidirectional audio connection, with the same tools, capabilities, and observability as any other agent.
+Build [speech-to-speech agents](realtime/overview.md) on native realtime models (OpenAI Realtime, Azure OpenAI, Gemini Live, and xAI Grok Voice) over a persistent bidirectional audio connection — in the browser over WebRTC or bridged through your backend — with the same tools, capabilities, and observability as any other agent.
 
 Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
 
