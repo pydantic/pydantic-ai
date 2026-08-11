@@ -33,6 +33,11 @@ Note that a shared `MCPToolset` instance connects to the server as a single iden
 
 The [Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-http) transport is the recommended way to connect to a remote MCP server.
 
+Pydantic AI delegates Streamable HTTP protocol-version negotiation and wire behavior to FastMCP. In
+particular, the [`2026-07-28 Streamable HTTP revision`](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports)
+is POST-only and removes protocol-level sessions. Use a FastMCP/MCP SDK version that supports the
+revision required by your server; `MCPToolset` does not emulate a newer protocol over an older client.
+
 !!! note
     A Streamable HTTP `MCPToolset` requires an MCP server to be running and accepting HTTP connections before running the agent. Running the server is not managed by Pydantic AI.
 
