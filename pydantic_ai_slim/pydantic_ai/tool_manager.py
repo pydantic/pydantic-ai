@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Generator
+from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -44,6 +44,12 @@ ParallelExecutionMode = Literal['parallel', 'sequential', 'parallel_ordered_even
 _parallel_execution_mode_ctx_var: ContextVar[ParallelExecutionMode] = ContextVar(
     'parallel_execution_mode', default='parallel'
 )
+
+InlineDeferredResultHandler = Callable[[DeferredToolRequests, DeferredToolResults], Awaitable[None]]
+"""Internal callback for observing a deferred call that a capability resolved inline."""
+
+ToolValidationHandler = Callable[[bool], Awaitable[None]]
+"""Internal callback for observing a tool call's argument-validation result."""
 
 
 @dataclass
@@ -947,6 +953,8 @@ class ToolManager(Generic[AgentDepsT]):
         approved: bool = False,
         metadata: Any = None,
         wrap_validation_errors: bool = True,
+        on_inline_deferred: InlineDeferredResultHandler | None = None,
+        on_validate: ToolValidationHandler | None = None,
     ) -> ToolDenied | ToolReturn[Any] | Any:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
@@ -968,6 +976,8 @@ class ToolManager(Generic[AgentDepsT]):
                 retry-budget state is left untouched — useful for nested callers (e.g.
                 sandboxed tool dispatch) where the call shouldn't consume the agent's
                 retry budget and the raw exception is what the caller wants to surface.
+            on_inline_deferred: Internal callback invoked when a capability resolves a deferred call inline.
+            on_validate: Internal callback invoked with the argument-validation outcome before execution.
 
         Returns:
             The tool's return value on success — possibly a [`ToolReturn`][pydantic_ai.messages.ToolReturn]
@@ -990,16 +1000,53 @@ class ToolManager(Generic[AgentDepsT]):
             CallDeferred / ApprovalRequired: No handler resolved the call, or the
                 approved tool re-raised a deferral.
         """
-        validated = await self.validate_tool_call(
-            call,
-            approved=approved,
-            metadata=metadata,
-            wrap_validation_errors=wrap_validation_errors,
-        )
         try:
+            validated = await self.validate_tool_call(
+                call,
+                approved=approved,
+                metadata=metadata,
+                wrap_validation_errors=wrap_validation_errors,
+            )
+        except BaseException:
+            # Any exceptional exit, not just the retry-budget `UnexpectedModelBehavior`: a realtime
+            # session blocks on this callback to learn the call's fate, so a hook raising something
+            # unexpected would strand it forever. Max-retries callers always pass `on_validate`.
+            if on_validate is not None:  # pragma: no branch
+                await on_validate(False)
+            raise
+        if on_validate is not None:
+            await on_validate(validated.args_valid)
+        # A tool can be deferred *declaratively* through `ToolDefinition.kind` — `requires_approval=True`
+        # makes it `'unapproved'`, an external tool `'external'` — as well as by raising. The graph
+        # pipeline classifies by kind *before* it executes anything (`_tool_execution._collect_deferred_calls`),
+        # so such a tool never runs unresolved. This method executes first and reacts to what was raised,
+        # so without the same classification a `requires_approval=True` tool would simply run: approval
+        # silently skipped, and a `HandleDeferredToolCalls` handler never consulted. Read the kind off the
+        # shared `ToolDefinition.defer` so the two paths can't drift apart again.
+        #
+        # Invalid arguments still take the execution path, which raises the validation error as a retry —
+        # matching the graph, which only collects a deferred call once its arguments validate. A deferral
+        # already raised during validation carries the caller's metadata, so it stays with the path below.
+        try:
+            if (
+                not approved
+                and validated.args_valid
+                and validated.deferral is None
+                and (deferred_tool := validated.tool) is not None
+                and deferred_tool.tool_def.defer
+            ):
+                # Convert the *declarative* deferral into the raised one, right where every caller
+                # passes, so the single resolution path below handles both forms identically and a
+                # future caller inherits the gate for free.
+                raise CallDeferred() if deferred_tool.tool_def.kind == 'external' else ApprovalRequired()
             return await self.execute_tool_call(validated, wrap_validation_errors=wrap_validation_errors)
         except (CallDeferred, ApprovalRequired) as exc:
-            return await self._resolve_single_deferred(call, exc, wrap_validation_errors=wrap_validation_errors)
+            return await self._resolve_single_deferred(
+                call,
+                exc,
+                wrap_validation_errors=wrap_validation_errors,
+                on_inline_deferred=on_inline_deferred,
+            )
 
     async def resolve_deferred_tool_calls(
         self,
@@ -1015,7 +1062,7 @@ class ToolManager(Generic[AgentDepsT]):
             no handler is available or the handler declined to handle the requests.
         """
         if self.root_capability is None or self.ctx is None:
-            return None  # pragma: no cover
+            return None
         return await self.root_capability.handle_deferred_tool_calls(self.ctx, requests=requests)
 
     async def _resolve_single_deferred(
@@ -1024,6 +1071,7 @@ class ToolManager(Generic[AgentDepsT]):
         exc: CallDeferred | ApprovalRequired,
         *,
         wrap_validation_errors: bool = True,
+        on_inline_deferred: InlineDeferredResultHandler | None = None,
     ) -> ToolDenied | ToolReturn[Any] | Any:
         """Resolve a single deferred tool call inline using the capability handler.
 
@@ -1076,6 +1124,9 @@ class ToolManager(Generic[AgentDepsT]):
         tool_call_result = deferred_results.to_tool_call_results().get(call.tool_call_id)
         if tool_call_result is None:
             raise exc
+
+        if on_inline_deferred is not None:
+            await on_inline_deferred(requests, deferred_results)
 
         if isinstance(tool_call_result, ToolDenied):
             # Surface the denial as a return value, not an exception. Callers must

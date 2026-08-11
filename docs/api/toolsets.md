@@ -11,6 +11,7 @@
         - FunctionToolset
         - IncludeReturnSchemasToolset
         - DeferredLoadingToolset
+        - DynamicToolset
         - PrefixedToolset
         - RenamedToolset
         - SetMetadataToolset

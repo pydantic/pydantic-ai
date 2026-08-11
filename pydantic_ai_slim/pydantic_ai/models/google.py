@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -31,6 +31,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -60,6 +61,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -98,6 +100,7 @@ try:
         ImageConfigDict,
         MediaResolution,
         Modality,
+        ModalityTokenCount,
         ModelArmorConfigDict,
         Part,
         PartDict,
@@ -423,6 +426,18 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
             'X-Vertex-AI-LLM-Shared-Request-Type': 'priority',
         }
     assert_never(service_tier)  # pragma: no cover
+
+
+def _thinking_effort_to_level(thinking: ThinkingEffort) -> Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']:
+    """Normalize unified thinking effort to a Gemini thinking level."""
+    level_by_effort: dict[ThinkingEffort, Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']] = {
+        'minimal': 'MINIMAL',
+        'low': 'LOW',
+        'medium': 'MEDIUM',
+        'high': 'HIGH',
+        'xhigh': 'HIGH',  # Gemini has no `xhigh`; map it to the highest level.
+    }
+    return level_by_effort[thinking]
 
 
 @dataclass(init=False)
@@ -842,14 +857,9 @@ class GoogleModel(Model[Client]):
         if profile.get('google_supports_thinking_level', False):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
-            level_map: dict[ThinkingEffort, str] = {
-                'minimal': 'MINIMAL',
-                'low': 'LOW',
-                'medium': 'MEDIUM',
-                'high': 'HIGH',
-                'xhigh': 'HIGH',  # no higher level available
-            }
-            return ThinkingConfigDict(include_thoughts=True, thinking_level=cast(Any, level_map[thinking]))
+            return ThinkingConfigDict(
+                include_thoughts=True, thinking_level=cast(Any, _thinking_effort_to_level(thinking))
+            )
         else:
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
@@ -1087,6 +1097,9 @@ class GoogleModel(Model[Client]):
                             )
                     elif isinstance(part, ToolAvailabilityDeltaPart):
                         raise _unsynthesized_tool_availability_delta_error()
+                    elif isinstance(part, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
 
@@ -1688,6 +1701,9 @@ def _content_model_response(
         elif isinstance(item, CompactionPart):  # pragma: no cover
             # Compaction parts are not sent back to models that don't support compaction.
             part = None
+        elif isinstance(item, SpeechPart):  # pragma: no cover
+            # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+            raise _unconverted_speech_part_error()
         else:
             assert_never(item)
 
@@ -1941,23 +1957,65 @@ def _metadata_as_usage(
     metadata = response.usage_metadata
     if metadata is None:
         return existing_usage or usage.RequestUsage()
+    return _usage_metadata_as_usage(
+        prompt_token_count=metadata.prompt_token_count,
+        output_token_count=metadata.candidates_token_count,
+        cached_content_token_count=metadata.cached_content_token_count,
+        thoughts_token_count=metadata.thoughts_token_count,
+        tool_use_prompt_token_count=metadata.tool_use_prompt_token_count,
+        prompt_tokens_details=metadata.prompt_tokens_details,
+        cache_tokens_details=metadata.cache_tokens_details,
+        output_tokens_details=metadata.candidates_tokens_details,
+        tool_use_prompt_tokens_details=metadata.tool_use_prompt_tokens_details,
+        output_details_prefix='candidates',
+        extract_data=response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
+        provider=provider,
+        provider_url=provider_url,
+        existing_usage=existing_usage,
+    )
+
+
+def _usage_metadata_as_usage(
+    *,
+    prompt_token_count: int | None,
+    output_token_count: int | None,
+    cached_content_token_count: int | None,
+    thoughts_token_count: int | None,
+    tool_use_prompt_token_count: int | None,
+    prompt_tokens_details: Sequence[ModalityTokenCount] | None,
+    cache_tokens_details: Sequence[ModalityTokenCount] | None,
+    output_tokens_details: Sequence[ModalityTokenCount] | None,
+    tool_use_prompt_tokens_details: Sequence[ModalityTokenCount] | None,
+    output_details_prefix: Literal['candidates', 'response'],
+    extract_data: dict[str, Any],
+    provider: str,
+    provider_url: str,
+    existing_usage: usage.RequestUsage | None = None,
+) -> usage.RequestUsage:
+    """Map the usage metadata shared by Gemini generate-content and Live responses.
+
+    Live names two fields differently (`responseTokenCount` / `responseTokensDetails` where
+    generate-content says `candidates*`), so the caller passes the counts in and names the output
+    detail keys with `output_details_prefix`. `extract_data` is the raw response payload
+    [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract] reads for the typed fields; it
+    speaks the generate-content field names, so a Live caller translates before handing it over.
+    """
     details: dict[str, int] = {}
-    if cached_content_token_count := metadata.cached_content_token_count:
+    if cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count
 
-    if thoughts_token_count := (metadata.thoughts_token_count or 0):
+    if thoughts_token_count:
         details['thoughts_tokens'] = thoughts_token_count
 
-    if tool_use_prompt_token_count := metadata.tool_use_prompt_token_count:
+    if tool_use_prompt_token_count:
         details['tool_use_prompt_tokens'] = tool_use_prompt_token_count
 
     for prefix, metadata_details in [
-        ('prompt', metadata.prompt_tokens_details),
-        ('cache', metadata.cache_tokens_details),
-        ('candidates', metadata.candidates_tokens_details),
-        ('tool_use_prompt', metadata.tool_use_prompt_tokens_details),
+        ('prompt', prompt_tokens_details),
+        ('cache', cache_tokens_details),
+        (output_details_prefix, output_tokens_details),
+        ('tool_use_prompt', tool_use_prompt_tokens_details),
     ]:
-        assert getattr(metadata, f'{prefix}_tokens_details') is metadata_details
         if not metadata_details:
             continue
         for detail in metadata_details:
@@ -1972,7 +2030,7 @@ def _metadata_as_usage(
         details = {**existing_usage.details, **details}
 
     new_usage = usage.RequestUsage.extract(
-        response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
+        extract_data,
         provider=provider,
         provider_url=provider_url,
         provider_fallback='google',
