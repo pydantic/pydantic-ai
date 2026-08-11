@@ -1681,15 +1681,16 @@ def infer_model(  # noqa: C901
             message += f". Did you mean '{suggested_name}'?"
         raise UserError(message)
 
-    try:
-        provider = provider_factory(provider_name)
-    except ValueError:
-        if provider_factory is not infer_provider:
-            raise
-        message = f'Unknown model: {model}'
-        if suggested_name := _suggest_known_model_name(model, model_name):
-            message += f". Did you mean '{suggested_name}'?"
-        raise UserError(message) from None
+    if provider_factory is infer_provider:
+        try:
+            infer_provider_class(provider_name)
+        except ValueError:
+            message = f'Unknown model: {model}'
+            if suggested_name := _suggest_known_model_name(model, model_name):
+                message += f". Did you mean '{suggested_name}'?"
+            raise UserError(message) from None
+
+    provider = provider_factory(provider_name)
 
     model_kind = provider_name
     if model_kind.startswith('gateway/'):

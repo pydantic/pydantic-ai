@@ -330,6 +330,14 @@ def test_infer_model_preserves_custom_provider_factory_error():
         infer_model('openai:gpt-5', provider_factory)
 
 
+def test_infer_model_preserves_provider_initialization_error():
+    with (
+        patch.object(openai.OpenAIProvider, '__init__', side_effect=ValueError('provider initialization error')),
+        pytest.raises(ValueError, match='provider initialization error'),
+    ):
+        infer_model('openai:gpt-5')
+
+
 @pytest.mark.parametrize(
     ('model_id', 'expected'),
     [
