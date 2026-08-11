@@ -505,6 +505,103 @@ async def run_agent(request: Request) -> Response:
     )
 ```
 
+## Channels
+
+The agent you exposed over AG-UI above doesn't have to live behind a web app: the same server can power a bot in Slack and other messaging platforms. The [CopilotKit Channels SDK](https://docs.copilotkit.ai/slack/pydantic-ai) connects any AG-UI agent to messaging platforms, with threads, tool calls, and rich interactive messages handled natively in the channel — a web frontend and a Slack bot are just two clients of the same endpoint.
+
+!!! note
+    Platform setup (Slack app creation, scopes, adapter options) is maintained in the [CopilotKit Channels documentation](https://docs.copilotkit.ai/slack/pydantic-ai). This section shows how a channel fits together with a Pydantic AI agent.
+
+### How it fits together
+
+Nothing about your Pydantic AI server changes: it keeps serving the agent over AG-UI exactly as shown in [Usage](#usage). What you add is a separate long-running Node process built with [`@copilotkit/channels`](https://www.npmjs.com/package/@copilotkit/channels): it connects to the platform, listens for messages, and when the bot is messaged it runs your agent over AG-UI and streams the reply back into the channel.
+
+```
+Slack / Teams / Discord  ──►  channel process (Node)  ──►  Pydantic AI server (AG-UI)
+```
+
+Channels are runtime-driven: rather than starting the channel yourself, you attach it to a `CopilotRuntime` configured with [CopilotKit Intelligence](https://docs.copilotkit.ai/slack/pydantic-ai), the managed channel runner (free tier available) that starts the channel and owns its lifecycle. Your process keeps the agent logic and — with a direct adapter like the Slack one below — the platform tokens; Intelligence handles registration, health, and reconnects. The SDK and adapters are MIT-licensed, and as an alternative to the managed runner you can build and operate your own channel runner on the SDK's lower-level primitives, with no Intelligence dependency — a supported path where your team owns lifecycle, state, persistence, concurrency, and retries.
+
+Install the Channels SDK (which includes every platform adapter) and the CopilotKit runtime, along with the AG-UI client for Pydantic AI:
+
+```bash
+npm install @copilotkit/channels @copilotkit/runtime @ag-ui/pydantic-ai
+```
+
+Then point a channel at your server using `PydanticAIAgent` from [`@ag-ui/pydantic-ai`](https://www.npmjs.com/package/@ag-ui/pydantic-ai). The `agent` option accepts a single agent or a per-thread factory; use the factory so each conversation gets its own instance keyed by thread:
+
+```ts {title="channel.ts"}
+import { createChannel } from '@copilotkit/channels';
+import { slack } from '@copilotkit/channels/slack';
+import { CopilotRuntime, CopilotKitIntelligence } from '@copilotkit/runtime/v2';
+import { createCopilotNodeListener } from '@copilotkit/runtime/v2/node';
+import { PydanticAIAgent } from '@ag-ui/pydantic-ai';
+
+const channel = createChannel({
+  name: 'support-bot', // project-unique Intelligence Channel name
+  identifyUser: 'platform',
+  // A fresh agent per conversation, pointed at your AG-UI server.
+  agent: (threadId) => {
+    const agent = new PydanticAIAgent({ url: 'http://localhost:8000/' });
+    agent.threadId = threadId;
+    return agent;
+  },
+  adapters: [
+    slack({
+      botToken: process.env.SLACK_BOT_TOKEN!, // xoxb-…
+      appToken: process.env.SLACK_APP_TOKEN!, // xapp-… (Socket Mode)
+    }),
+  ],
+});
+
+// Mentions and DMs both start a turn; runAgent streams the reply into the thread.
+channel.onMessage(async ({ thread }) => {
+  await thread.runAgent();
+});
+
+// The runtime owns the channel's lifecycle — there is no `channel.start()`.
+const runtime = new CopilotRuntime({
+  agents: {}, // the channel supplies its own agent; no web-facing agents needed
+  intelligence: new CopilotKitIntelligence({
+    apiKey: process.env.COPILOTKIT_INTELLIGENCE_API_KEY!, // free tier available
+  }),
+  channels: [channel],
+});
+
+// Creating the listener starts the channel's connection.
+const listener = createCopilotNodeListener({ runtime });
+await listener.channels.ready(); // so a broken config fails startup loudly
+```
+
+Run the channel process alongside the [stand-alone ASGI app](#stand-alone-asgi-app) from above:
+
+```bash
+uvicorn ag_ui_app:app  # terminal 1 — Pydantic AI server
+npx tsx channel.ts     # terminal 2 — channel process
+```
+
+Message the bot and it runs your agent, streaming the reply back into the platform thread. The agent receives ordinary AG-UI run input and emits ordinary AG-UI events; the platform mechanics stay behind the adapter, so the same agent runs unchanged across every channel. Rich messages are written as JSX and rendered to each platform's native format (Block Kit on Slack, for example), so an interactive card degrades gracefully where a platform has no equivalent.
+
+Channels describe the conversation to the agent — the platform, the requesting user, a channel's standing instructions — through AG-UI `context` entries. The [Context](#context) section above shows how to consume these safely: deliver them to the model as data, and derive authority only from what your server authenticates.
+
+### Slack
+
+Slack runs over Socket Mode, which opens an outbound WebSocket to Slack, so no public URL or tunnel is required during development. Set the Slack credentials in the channel process's environment:
+
+- `SLACK_BOT_TOKEN`: Bot User OAuth token (`xoxb-...`).
+- `SLACK_APP_TOKEN`: App-level token with the `connections:write` scope (`xapp-...`).
+
+The `COPILOTKIT_INTELLIGENCE_API_KEY` used by the runtime is platform-independent and comes from your CopilotKit dashboard.
+
+For the full Slack app walkthrough, see the [CopilotKit Slack guide for Pydantic AI](https://docs.copilotkit.ai/slack/pydantic-ai).
+
+### Other platforms
+
+Adapters for Microsoft Teams, Discord, Telegram, and WhatsApp ship in the same package (`@copilotkit/channels/teams`, `@copilotkit/channels/discord`, etc.): add the matching adapter to the `adapters` array — a single process can serve several platforms at once — and the agent code stays the same. See the [CopilotKit Channels documentation](https://docs.copilotkit.ai/slack/pydantic-ai) for the current platform list and per-platform setup.
+
+!!! note
+    By default, interactive actions and per-thread state live in memory and reset when the channel process restarts. Back the channel with a persistent action and state store so buttons and per-thread state survive restarts and span multiple instances — see the [CopilotKit Channels documentation](https://docs.copilotkit.ai/slack/pydantic-ai) for the store configuration.
+
 ## Examples
 
 For more examples see
