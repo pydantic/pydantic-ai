@@ -26,6 +26,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -166,7 +167,10 @@ class FunctionModel(Model):
         response.model_name = self._model_name
         # Add usage data if not already present
         if not response.usage.has_values():  # pragma: no branch
-            response.usage = _estimate_usage(chain(messages, [response]))
+            response.usage = _estimate_usage(
+                chain(messages, [response]),
+                allow_tool_availability_deltas=self.tool_addition_mode is not None,
+            )
         return response
 
     @asynccontextmanager
@@ -395,10 +399,16 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # noqa: C901
+def _estimate_usage(  # noqa: C901
+    messages: Iterable[ModelMessage], *, allow_tool_availability_deltas: bool = False
+) -> usage.RequestUsage:
     """Very rough guesstimate of the token usage associated with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
+
+    `allow_tool_availability_deltas` mirrors the calling model's profile: a delta part is
+    legitimately present when the profile advertises a native tool-addition channel, and a
+    contract violation (`prepare_messages` was skipped) otherwise.
     """
     # there seem to be about 50 tokens of overhead for both Gemini and OpenAI calls, so add that here ¯\_(ツ)_/¯
     request_tokens = 50
@@ -412,8 +422,15 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # 
                     request_tokens += _estimate_string_tokens(part.model_response_str())
                 elif isinstance(part, RetryPromptPart):
                     request_tokens += _estimate_string_tokens(part.model_response())
-                elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
-                    raise _unsynthesized_tool_availability_delta_error()
+                elif isinstance(part, ToolAvailabilityDeltaPart):
+                    if not allow_tool_availability_deltas:
+                        raise _unsynthesized_tool_availability_delta_error()
+                    request_tokens += _estimate_string_tokens(' '.join(part.tools_added))
+                elif isinstance(part, SpeechPart):
+                    # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
+                    # user speech can arrive unconverted; estimate from the transcript like the
+                    # response side below rather than undercounting the turn to zero.
+                    request_tokens += _estimate_string_tokens(part.content)
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):
@@ -430,6 +447,8 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:  # 
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):
                     pass
+                elif isinstance(part, SpeechPart):
+                    response_tokens += _estimate_string_tokens(part.content)
                 else:
                     assert_never(part)
         else:

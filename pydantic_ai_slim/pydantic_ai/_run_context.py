@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+import sys
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -17,9 +18,11 @@ from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from .exceptions import UserError
 
 if TYPE_CHECKING:
+    from ._cancel import RunCancellation
     from .agent import Agent
     from .capabilities.abstract import AbstractCapability
-    from .models import Model
+    from .models import AbstractModel
+    from .realtime import RealtimeModelSettings, RealtimeSession
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -38,8 +41,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     deps: RunContextAgentDepsT
     """Dependencies for the agent."""
-    model: Model
-    """The model used in this run."""
+    model: AbstractModel
+    """The active model, which is a `RealtimeModel` during a realtime session."""
     usage: RunUsage
     """LLM usage associated with the run."""
     usage_limits: UsageLimits | None = None
@@ -106,7 +109,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
     """
     metadata: dict[str, Any] | None = None
     """Metadata associated with this agent run, if configured."""
-    model_settings: ModelSettings | None = None
+    model_settings: ModelSettings | RealtimeModelSettings | None = None
     """The resolved model settings for the current run step.
 
     Populated before each model request, after all model settings layers
@@ -114,6 +117,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Available in model request hooks (`before_model_request`, `wrap_model_request`,
     `after_model_request`). Currently `None` in tool hooks, output validators,
     and during agent construction.
+
+    During a realtime session this holds the merged
+    [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] the session was opened
+    with, for the whole session (realtime settings are fixed at connect time).
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.
@@ -123,6 +130,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`enqueue`][pydantic_ai.tools.RunContext.enqueue] would have nowhere to drain to and so raises.
     Managed by the framework: read it if useful, but use [`enqueue`][pydantic_ai.tools.RunContext.enqueue]
     to add messages rather than mutating it directly.
+    """
+
+    _cancellation: RunCancellation | None = field(default=None, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The run's cancellation controller, used by [`cancel`][pydantic_ai.tools.RunContext.cancel].
+    Holds a live task reference, so it is runtime-only: `None` in synthetic contexts that aren't
+    backed by a running agent, and not available across durable-execution serialization boundaries
+    (e.g. inside a Temporal activity).
     """
 
     _event_stream_buffer: list[_messages.AgentStreamEvent] | None = field(default=None, repr=False)
@@ -155,6 +171,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     Not available in `TemporalRunContext` — it is not serializable across
     Temporal activity boundaries.
+    """
+
+    realtime_session: RealtimeSession | None = field(default=None, repr=False)
+    """The [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] this run is, once it is connected.
+
+    `None` in classic runs, and during the parts of a realtime run that precede the connection:
+    `before_run`, `wrap_run` before `handler()` starts the session, and instruction resolution.
+    Use [`realtime`][pydantic_ai.tools.RunContext.realtime] to detect a realtime run in those
+    stages. Tools and hooks that run during the live session can use it to e.g.
+    [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] playback or
+    [`send()`][pydantic_ai.realtime.RealtimeSession.send] follow-up content.
     """
 
     root_capability: AbstractCapability[RunContextAgentDepsT] | None = None
@@ -199,6 +226,19 @@ class RunContext(Generic[RunContextAgentDepsT]):
     (always-visible plus these).
     Managed by the framework: safe to read, but don't mutate it directly.
     """
+
+    @property
+    def realtime(self) -> bool:
+        """Whether this run is a realtime session, i.e. `model` is the connected `RealtimeModel`.
+
+        Reliable from `before_run` through session close, including instruction resolution — unlike
+        [`realtime_session`][pydantic_ai.tools.RunContext.realtime_session], which is only set once
+        the session is connected. The class is looked up through `sys.modules` rather than imported:
+        if the realtime package was never imported, no realtime model can exist, and a classic run
+        should not pay for (or cycle into) that import.
+        """
+        realtime = sys.modules.get('pydantic_ai.realtime')
+        return realtime is not None and isinstance(self.model, realtime.RealtimeModel)
 
     @property
     def last_attempt(self) -> bool:
@@ -272,7 +312,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         for the reveal state sent through the model-request pipeline.
         """
         if isinstance(tool, str):
-            if self.tool_manager is None:
+            if self.tool_manager is None or self.tool_manager.tools is None:
+                # Same live-state condition as `available_tool_names`: mid-`get_tools` the
+                # manager exists but its tool set isn't resolved yet, so fall back to history.
                 return tool in self.available_tool_names
             tool_def = self.tools.get(tool)
             if tool_def is None:
@@ -329,8 +371,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end).
+                    or a redirect if the agent would otherwise end). In a realtime session, an active
+                    assistant response is allowed to finish before the content is sent; otherwise it
+                    is sent immediately.
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+                    In a realtime session, this means after the next response completes.
 
         Returns:
             The `enqueue_id` of the queued message, echoed on the
@@ -352,6 +397,37 @@ class RunContext(Generic[RunContextAgentDepsT]):
             return None
         self.pending_messages.append(pending)
         return pending.enqueue_id
+
+    def cancel(self) -> None:
+        """Cancel the agent run this context belongs to.
+
+        Safe to call from anywhere a `RunContext` is available — tools, `event_stream_handler`s,
+        and capability hooks. This *requests* cancellation: it returns normally, and the calling
+        code keeps running until its next `await`, where the cancellation is delivered — so the
+        caller can still do cleanup, but its return value (e.g. a tool's result) is discarded. The
+        run then stops what it is doing (the in-flight model request is torn down, sibling tool
+        tasks are cancelled and drained, a suspended server-side job is best-effort cancelled) and
+        ends with [`RunCancelled`][pydantic_ai.exceptions.RunCancelled], preserving everything that
+        completed before the cancellation took effect in message history. Idempotent; a no-op once
+        the run has finished. Cancellation is terminal: capability hooks may observe it and clean
+        up, but cannot recover the run to success.
+
+        Raises:
+            UserError: If this `RunContext` isn't backed by a running agent (e.g. the synthetic
+                context from `Agent.system_prompt_parts`, or across a durable-execution
+                serialization boundary such as a Temporal activity).
+        """
+        # Read via `__dict__` because `TemporalRunContext.__getattribute__` raises a
+        # serialize-it-yourself `UserError` for absent fields, which would be misleading here:
+        # the controller holds a live task reference and can never cross an activity boundary.
+        cancellation: RunCancellation | None = self.__dict__.get('_cancellation')
+        if cancellation is None:
+            raise UserError(
+                '`cancel` is only available during an agent run (from tools, event stream handlers, '
+                'or capability hooks) in the same process as the run itself. '
+                'This `RunContext` has no run to cancel.'
+            )
+        cancellation.cancel()
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

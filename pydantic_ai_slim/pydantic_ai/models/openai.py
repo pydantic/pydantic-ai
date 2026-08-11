@@ -15,7 +15,7 @@ from collections.abc import (
 )
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Any, Literal, cast, get_args, overload
 
@@ -40,6 +40,7 @@ from .._utils import (
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import SuspendedResponseExpired, UserError
 from ..messages import (
+    STANDING_PROMPT_PLANTED_KEY,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -61,6 +62,7 @@ from ..messages import (
     NativeToolSearchReturnPart,
     PartStartEvent,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -101,7 +103,7 @@ from ..profiles.openai import (
     validate_openai_profile,
 )
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings, ThinkingLevel
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from . import (
     Model,
@@ -111,6 +113,8 @@ from . import (
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
     ToolVisibility,
+    _trim_messages_before_compaction,  # pyright: ignore[reportPrivateUsage]
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -886,6 +890,15 @@ def _resolve_openai_service_tier(
     return OMIT
 
 
+def _resolve_prompt_cache_retention(
+    default_settings: ModelSettings | None, model_settings: ModelSettings | None
+) -> timedelta | None:
+    settings = merge_model_settings(default_settings, model_settings) or {}
+    if settings.get('openai_prompt_cache_retention') == '24h':
+        return timedelta(hours=24)
+    return None
+
+
 @dataclass(init=False)
 class OpenAIChatModel(Model[AsyncOpenAI]):
     """A model that uses the OpenAI API.
@@ -944,6 +957,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def model_name(self) -> OpenAIModelName:
         """The model name."""
         return self._model_name
+
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Resolve the extended prompt cache retention requested by OpenAI settings."""
+        return _resolve_prompt_cache_retention(self.settings, model_settings)
 
     @property
     def system(self) -> str:
@@ -1437,6 +1454,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 elif isinstance(item, CompactionPart):  # pragma: no cover
                     # Compaction parts are not sent back to the Chat Completions API.
                     pass
+                elif isinstance(item, SpeechPart):  # pragma: no cover
+                    # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                    raise _unconverted_speech_part_error()
                 else:
                     assert_never(item)
             return self._into_message_param()
@@ -1693,6 +1713,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     )
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, SpeechPart):
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
         if file_content:
@@ -1944,6 +1967,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The model name."""
         return self._model_name
 
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Resolve the extended prompt cache retention requested by OpenAI settings."""
+        return _resolve_prompt_cache_retention(self.settings, model_settings)
+
     @property
     def system(self) -> str:
         """The model provider."""
@@ -2027,7 +2054,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not isinstance(compaction, ResponseCompactionItem):  # pragma: no cover
             raise UnexpectedModelBehavior(f'Last item in response is not a compaction, got: {compaction.type}')
 
-        part = _map_compaction_item(compaction, self.system)
+        # This compact call's input window explicitly planted the standing prompt (see
+        # `_responses_compact`), so the minted part carries the provenance stamp that lets the
+        # trim rely on the item's retention instead of re-sending the standing prompt.
+        part = _map_compaction_item(compaction, self.system, standing_prompt_planted=True)
         return ModelResponse(
             parts=[part],
             usage=_map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
@@ -2055,10 +2085,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_settings.get('openai_previous_response_id'), messages, allow_no_new_messages=True
         )
 
+        # Same ordering rule as `_build_responses_request_params`: the introduced-tools derivation
+        # and the mapping must both see the trimmed history, and re-compacting only compacts the
+        # current effective window rather than content an earlier compaction already replaced.
+        # `standing_prompt_retained=False` (here and in the mapping below): blob-of-blob retention
+        # decayed in probing, so the window sent for re-compaction plants the standing prompt
+        # explicitly rather than relying on the previous compaction item to carry it forward.
+        messages = _trim_messages_before_compaction(
+            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=False
+        )
         instructions, openai_messages = await self._map_messages(
             messages,
             model_settings,
             model_request_parameters,
+            standing_prompt_retained=False,
         )
         if instructions_override is not None:
             instructions = instructions_override
@@ -2491,22 +2531,52 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         profile: OpenAIModelProfile,
     ) -> _ResponsesRequestParams:
         """Build typed request parameters shared by Responses API calls."""
+        # Deliberately a separate variable: `messages` itself stays untrimmed for
+        # `_resolve_server_side_state`, which recovers conversation/response IDs from responses the
+        # trim would drop; `_map_messages` applies the same idempotent trim to whatever slice that
+        # resolution hands it.
+        trimmed_messages = _trim_messages_before_compaction(
+            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=True
+        )
+        # Call-time import mirroring `models/__init__.py`'s `_tool_search` import: the toolsets
+        # package imports `messages` while adapters load, so a module-level import would cycle.
+        from ..toolsets._tool_search import parse_discovered_tools
+
+        # A reveal whose `additional_tools` carrier sits before the compaction boundary is trimmed
+        # with it, while the tool's `'via_history'` visibility still promises a history item — so it
+        # would vanish from the request entirely. Until reveal state itself becomes boundary-aware
+        # (#7225 derives it from the post-compaction window, which makes this branch inert), such a
+        # tool is redeclared in `tools` with its schema: the compaction turn rebuilds the prefix
+        # anyway, so the declaration costs nothing extra.
+        post_trim_revealed = parse_discovered_tools(trimmed_messages)
+        wire_request_parameters = model_request_parameters
+        lost_reveals = {
+            name
+            for name, visibility in (model_request_parameters.tool_visibility or {}).items()
+            if visibility == 'via_history' and name not in post_trim_revealed
+        }
+        if lost_reveals:
+            tool_visibility: dict[str, ToolVisibility] = {
+                **(model_request_parameters.tool_visibility or {}),
+                **dict.fromkeys(sorted(lost_reveals), 'visible'),
+            }
+            wire_request_parameters = replace(model_request_parameters, tool_visibility=tool_visibility)
         history_declared_tool_names = {
             tool.name
-            for tool in model_request_parameters.function_tools
-            if model_request_parameters.visibility_of(tool.name) == 'via_history'
+            for tool in wire_request_parameters.function_tools
+            if wire_request_parameters.visibility_of(tool.name) == 'via_history'
         }
-        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, model_request_parameters)
+        function_tools, tool_choice = self._get_responses_tool_choice(model_settings, wire_request_parameters)
         extra_native_tools = model_settings.get('openai_native_tools', ())
         tools: list[responses.ToolParam] = (
-            self._get_native_tools(model_request_parameters) + list(extra_native_tools) + function_tools
+            self._get_native_tools(wire_request_parameters) + list(extra_native_tools) + function_tools
         )
         if not tools and not history_declared_tool_names:
             tool_choice = None
 
         previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
 
-        instructions, openai_messages = await self._map_messages(messages, model_settings, model_request_parameters)
+        instructions, openai_messages = await self._map_messages(messages, model_settings, wire_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
@@ -3105,6 +3175,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         messages: list[ModelMessage],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
+        *,
+        standing_prompt_retained: bool = True,
     ) -> tuple[str | Omit, list[responses.ResponseInputItemParam]]:
         """Maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam` i.e. the OpenAI Responses API input format.
 
@@ -3116,6 +3188,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Raw CoT is sent back to improve model performance in multi-turn conversations.
 
         """
+        # `standing_prompt_retained=True` on ordinary requests: the compaction item retains the
+        # window's leading `system` items (single hop, live-verified), so re-sending them would
+        # duplicate the standing prompt. The re-compaction path passes `False`: retention decayed
+        # across a second compaction in probing, so each freshly built window plants it explicitly.
+        messages = _trim_messages_before_compaction(
+            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=standing_prompt_retained
+        )
         profile = self.profile
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
@@ -3213,6 +3292,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 output=part.model_response(),
                             )
                             openai_messages.append(item)
+                    elif isinstance(part, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
@@ -3506,7 +3588,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             item.provider_name == self.system
                             and item.provider_details
                             and 'encrypted_content' in item.provider_details
-                        ):  # pragma: no branch
+                        ):
                             openai_messages.append(
                                 ResponseCompactionItemParamParam(
                                     id=item.id,
@@ -3514,6 +3596,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                     type='compaction',
                                 )
                             )
+                    elif isinstance(item, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
             else:
@@ -4597,7 +4682,8 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
       [OpenAI's server-side auto-compaction](https://developers.openai.com/api/docs/guides/compaction)
       via the `context_management` field on the regular `/responses` request.
       The server triggers compaction when input tokens cross a threshold,
-      and the compacted item is returned alongside the normal response.
+      and the compacted item is returned alongside the normal response. On
+      subsequent requests, only that item and the content after it are sent.
       Compatible with [`openai_previous_response_id='auto'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]
       and server-side conversation state.
 
@@ -4833,13 +4919,26 @@ def _support_tool_forcing(
         return True
 
 
-def _map_compaction_item(item: ResponseCompactionItem, system: str) -> CompactionPart:
-    """Convert an OpenAI `ResponseCompactionItem` to a `CompactionPart`."""
+def _map_compaction_item(
+    item: ResponseCompactionItem, system: str, *, standing_prompt_planted: bool = False
+) -> CompactionPart:
+    """Convert an OpenAI `ResponseCompactionItem` to a `CompactionPart`.
+
+    `standing_prompt_planted` stamps the part as minted by our own `responses.compact` call,
+    whose input window explicitly plants the standing prompt — the provenance that lets the trim
+    rely on the compaction item's retention instead of re-sending the standing prompt (see
+    `_trim_messages_before_compaction`). Compaction items arriving in ordinary responses are left
+    unstamped: their window may itself have relied on an earlier item's retention, and retention
+    is only reliable for a single hop.
+    """
+    provider_details = item.model_dump()
+    if standing_prompt_planted:
+        provider_details[STANDING_PROMPT_PLANTED_KEY] = True
     return CompactionPart(
         content=None,
         id=item.id,
         provider_name=system,
-        provider_details=item.model_dump(),
+        provider_details=provider_details,
     )
 
 

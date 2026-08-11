@@ -30,6 +30,7 @@ from ...messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -49,9 +50,15 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolResults, ToolDenied
 from .. import MessagesBuilder, UIAdapter
-from .._adapter import resolve_allow_uploaded_files, tool_availability_delta_from_payload
+from .._adapter import (
+    compaction_part_from_payload,
+    compaction_payload,
+    resolve_allow_uploaded_files,
+    tool_availability_delta_from_payload,
+)
 from ._event_stream import VercelAIEventStream
 from ._utils import (
+    COMPACTION_DATA_TYPE,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     apply_message_metadata,
     dump_message_metadata,
@@ -103,7 +110,7 @@ if TYPE_CHECKING:
     from ...usage import RunUsage, UsageLimits
     from .. import UIEventStream
     from .._adapter import DispatchDepsT, DispatchOutputDataT
-    from .._event_stream import OnCompleteFunc
+    from .._event_stream import OnCancelFunc, OnCompleteFunc
 
 __all__ = ['VercelAIAdapter']
 
@@ -221,6 +228,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         toolsets: Sequence[AbstractToolset[DispatchDepsT]] | None = None,
         capabilities: Sequence[AbstractCapability[DispatchDepsT]] | None = None,
         on_complete: OnCompleteFunc[BaseChunk] | None = None,
+        on_cancel: OnCancelFunc[BaseChunk] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
@@ -254,6 +262,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             toolsets=toolsets,
             capabilities=capabilities,
             on_complete=on_complete,
+            on_cancel=on_cancel,
             manage_system_prompt=manage_system_prompt,
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
@@ -418,6 +427,13 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 provider_details=provider_meta.get('provider_details'),
                             )
                         )
+                    elif isinstance(part, DataUIPart):
+                        if (
+                            part.type == COMPACTION_DATA_TYPE
+                            and _is_str_dict(part.data)
+                            and (compaction_part := compaction_part_from_payload(part.data)) is not None
+                        ):
+                            builder.add(compaction_part)
                     elif isinstance(part, ToolUIPart | DynamicToolUIPart):
                         if isinstance(part, DynamicToolUIPart):
                             tool_name = part.tool_name
@@ -654,6 +670,8 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 else:
                     # Non-tool retries (e.g., output validation errors) become user text
                     user_ui_parts.append(TextUIPart(text=part.model_response(), state='done'))
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                pass  # Realtime audio parts are not rendered in the UI
             else:
                 assert_never(part)
 
@@ -817,8 +835,15 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                         )
             elif isinstance(part, ToolCallPart):
                 ui_parts.extend(cls._dump_tool_call_part(part, tool_results, sdk_version))
-            elif isinstance(part, CompactionPart):  # pragma: no cover
-                pass  # Compaction parts are not rendered in the UI
+            elif isinstance(part, CompactionPart):
+                ui_parts.append(
+                    DataUIPart(
+                        type=COMPACTION_DATA_TYPE,
+                        data=compaction_payload(part),
+                    )
+                )
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                pass  # Realtime audio parts are not rendered in the UI
             else:
                 assert_never(part)
 

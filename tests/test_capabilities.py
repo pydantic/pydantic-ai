@@ -1294,6 +1294,38 @@ def test_model_json_schema_with_capabilities():
                         'openai:o4-mini-deep-research',
                         'openai:o4-mini-deep-research-2025-06-26',
                         'test',
+                        'snowflake:claude-4-sonnet',
+                        'snowflake:claude-fable-5',
+                        'snowflake:claude-haiku-4-5',
+                        'snowflake:claude-opus-4-5',
+                        'snowflake:claude-opus-4-6',
+                        'snowflake:claude-opus-4-7',
+                        'snowflake:claude-opus-4-8',
+                        'snowflake:claude-opus-5',
+                        'snowflake:claude-sonnet-4-5',
+                        'snowflake:claude-sonnet-4-6',
+                        'snowflake:claude-sonnet-5',
+                        'snowflake:deepseek-r1',
+                        'snowflake:llama3.1-405b',
+                        'snowflake:llama3.1-70b',
+                        'snowflake:llama3.1-8b',
+                        'snowflake:llama4-maverick',
+                        'snowflake:mistral-7b',
+                        'snowflake:mistral-large',
+                        'snowflake:mistral-large2',
+                        'snowflake:openai-gpt-4.1',
+                        'snowflake:openai-gpt-5',
+                        'snowflake:openai-gpt-5-6-luna',
+                        'snowflake:openai-gpt-5-6-sol',
+                        'snowflake:openai-gpt-5-6-terra',
+                        'snowflake:openai-gpt-5-chat',
+                        'snowflake:openai-gpt-5-mini',
+                        'snowflake:openai-gpt-5-nano',
+                        'snowflake:openai-gpt-5.1',
+                        'snowflake:openai-gpt-5.2',
+                        'snowflake:openai-gpt-5.4',
+                        'snowflake:openai-gpt-5.5',
+                        'snowflake:snowflake-llama-3.3-70b',
                         'xai:grok-3',
                         'xai:grok-3-fast',
                         'xai:grok-3-fast-latest',
@@ -4894,6 +4926,19 @@ def test_run_context_available_tool_names_includes_discovered_before_tool_manage
     ctx.discovered_tool_names = {'discovered_tool'}
 
     assert ctx.tools == {}
+    assert ctx.available_tool_names == {'discovered_tool'}
+    assert ctx.is_tool_available('discovered_tool')
+    assert not ctx.is_tool_available('unknown_tool')
+
+
+def test_run_context_is_tool_available_falls_back_while_tools_unresolved() -> None:
+    """Mid-`get_tools` the manager exists but its tool set is `None`; the name form must take
+    the same history fallback as `available_tool_names` instead of reporting `False`."""
+    ctx = _build_run_context()
+    ctx.tool_manager = ToolManager(FunctionToolset())
+    ctx.discovered_tool_names = {'discovered_tool'}
+
+    assert ctx.tool_manager.tools is None
     assert ctx.available_tool_names == {'discovered_tool'}
     assert ctx.is_tool_available('discovered_tool')
     assert not ctx.is_tool_available('unknown_tool')

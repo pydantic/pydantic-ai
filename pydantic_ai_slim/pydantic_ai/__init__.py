@@ -1,9 +1,11 @@
 from importlib.metadata import version as _metadata_version
 
+from ._cancel import CancellationToken
 from .agent import (
     Agent,
     AgentModelSettings,
     AgentRetries,
+    AgentRunEvents,
     CallToolsNode,
     EndStrategy,
     InstrumentationSettings,
@@ -39,6 +41,7 @@ from .exceptions import (
     ModelHTTPError,
     ModelRetry,
     PydanticAIDeprecationWarning,
+    RunCancelled,
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
@@ -56,6 +59,7 @@ from .messages import (
     AudioUrl,
     BaseToolCallPart,
     BaseToolReturnPart,
+    BinaryAudio,
     BinaryContent,
     BinaryImage,
     CachePoint,
@@ -96,6 +100,8 @@ from .messages import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    SpeechPart,
+    SpeechPartDelta,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -117,7 +123,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
-from .models import ModelRequestContext, ModelResolutionContext, ModelSelectionContext
+from .models import AbstractModel, ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
     AdvisorTool,
@@ -176,6 +182,7 @@ __all__ = (
     '__version__',
     # agent
     'Agent',
+    'CancellationToken',
     'AgentModelSettings',
     'AgentRetries',
     'AgentSpec',
@@ -210,6 +217,7 @@ __all__ = (
     'ModelHTTPError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
+    'RunCancelled',
     'MessageHistoryMutatedWarning',
     'PydanticAIDeprecationWarning',
     'SkipModelRequest',
@@ -224,8 +232,11 @@ __all__ = (
     'AudioFormat',
     'AudioMediaType',
     'AudioUrl',
+    'SpeechPart',
+    'SpeechPartDelta',
     'BaseToolCallPart',
     'BaseToolReturnPart',
+    'BinaryAudio',
     'BinaryContent',
     'NativeToolCallPart',
     'NativeToolReturnPart',
@@ -343,6 +354,7 @@ __all__ = (
     # format_prompt
     'format_as_xml',
     # models
+    'AbstractModel',
     'ModelRequestContext',
     'ModelResolutionContext',
     'ModelSelectionContext',
@@ -356,6 +368,7 @@ __all__ = (
     'UsageLimits',
     # run
     'AgentRun',
+    'AgentRunEvents',
     'AgentRunResult',
     'AgentRunResultEvent',
 )
