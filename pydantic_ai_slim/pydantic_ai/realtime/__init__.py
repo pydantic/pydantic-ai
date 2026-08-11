@@ -28,7 +28,7 @@ from ..messages import (
     RealtimeTurnCompleteEvent,
 )
 from ._session import RealtimeEvent, RealtimeSession, TranscriptUpdate
-from .codec import AudioInput, ImageInput, RealtimeSessionInput, TextInput
+from .codec import RealtimeSessionInput
 from .model import KnownRealtimeModelName, RealtimeError, RealtimeModel, infer_realtime_model
 from .profiles import RealtimeModelProfile, RealtimeModelProfileSpec
 from .settings import (
@@ -40,14 +40,14 @@ from .settings import (
 )
 
 __all__ = (
-    # Realtime session ABCs, models, settings, inputs, and the control-plane events a session yields.
-    # The shared message/part events a session also yields (`SpeechPart`, `PartStartEvent`,
-    # `FunctionToolCallEvent`, ...) live in `pydantic_ai.messages` and the root `pydantic_ai`.
+    # Realtime session ABCs, models, settings, and the control-plane events a session yields.
+    # Session input reuses the shared message vocabulary (`str`, `BinaryContent`, `BinaryImage`,
+    # `BinaryAudio`), and the shared message/part events a session also yields (`SpeechPart`,
+    # `PartStartEvent`, `FunctionToolCallEvent`, ...) likewise live in `pydantic_ai.messages` and the
+    # root `pydantic_ai`.
     # The lower-level codec vocabulary (`RealtimeConnection`, codec events, turn-control verbs, and the
     # profile helpers) lives in [`pydantic_ai.realtime.codec`][pydantic_ai.realtime.codec].
-    'AudioInput',
     'AudioRetention',
-    'ImageInput',
     'RealtimeInputSpeechStartEvent',
     'RealtimeInputSpeechEndEvent',
     'RealtimeInputTranscriptionErrorEvent',
@@ -64,7 +64,6 @@ __all__ = (
     'ReconnectPolicy',
     'RealtimeSessionErrorEvent',
     'RealtimeSessionReconnectEvent',
-    'TextInput',
     'TranscriptUpdate',
     'RealtimeTurnCompleteEvent',
     'TurnDetection',

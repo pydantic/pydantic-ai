@@ -21,7 +21,9 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import (
     AudioUrl,
+    BinaryAudio,
     BinaryContent,
+    BinaryImage,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -49,7 +51,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
-    AudioInput,
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
@@ -74,12 +75,10 @@ from pydantic_ai.realtime.codec import (
     ConversationCreated,
     ConversationItemCreated,
     CreateResponse,
-    ImageInput,
     InputTranscript,
     OutputTranscript,
     ResponseDone,
     SessionUsageEvent,
-    TextInput,
     ToolCall,
     ToolResult,
     TruncateOutput,
@@ -1918,7 +1917,7 @@ async def test_connect_seed_skips_compaction_parts(monkeypatch: pytest.MonkeyPat
 async def test_connection_send_audio() -> None:
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
-    await conn.send(AudioInput(data=b'\x01\x02'))
+    await conn.send(BinaryAudio(data=b'\x01\x02', media_type='audio/pcm'))
     event = json.loads(ws.sent[0])
     assert event['type'] == 'input_audio_buffer.append'
     assert base64.b64decode(event['audio']) == b'\x01\x02'
@@ -1928,7 +1927,7 @@ async def test_connection_send_audio() -> None:
 async def test_connection_send_text() -> None:
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
-    await conn.send(TextInput(text='hello'))
+    await conn.send('hello')
     create = json.loads(ws.sent[0])
     assert create['item']['content'][0]['text'] == 'hello'
     assert json.loads(ws.sent[1]) == {'type': 'response.create'}
@@ -2001,7 +2000,7 @@ async def test_connection_send_tool_result_unsupported_media_raises_with_nothing
 async def test_connection_send_image() -> None:
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
-    await conn.send(ImageInput(data=b'\x01\x02', media_type='image/png'))
+    await conn.send(BinaryImage(data=b'\x01\x02', media_type='image/png'))
     item = json.loads(ws.sent[0])
     assert item['type'] == 'conversation.item.create'
     content = item['item']['content'][0]
@@ -3139,7 +3138,7 @@ async def test_late_cancelled_response_done_does_not_clear_new_response() -> Non
     ws.push({'type': 'response.created', 'response': {'id': 'resp_old'}})
     await _settle()
     await conn.send(CancelResponse())
-    await conn.send(TextInput(text='new turn'))
+    await conn.send('new turn')
     ws.push({'type': 'response.done', 'response': {'id': 'resp_old', 'status': 'cancelled', 'output': []}})
     await _settle()
     ws.push({'type': 'response.created', 'response': {'id': 'resp_new'}})

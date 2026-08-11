@@ -32,6 +32,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
+    BinaryAudio,
     BinaryContent,
     BinaryImage,
     DeferredToolRequestsEvent,
@@ -65,7 +66,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
-    AudioInput,
     RealtimeError,
     RealtimeEvent,
     RealtimeInputSpeechEndEvent,
@@ -87,7 +87,6 @@ from pydantic_ai.realtime.codec import (
     ConversationCreated,
     ConversationItemCreated,
     CreateResponse,
-    ImageInput,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -95,7 +94,6 @@ from pydantic_ai.realtime.codec import (
     RealtimeInput,
     ResponseDone,
     SessionUsageEvent,
-    TextInput,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -559,7 +557,7 @@ async def test_send_only_session_still_runs_tools() -> None:
             await ran.wait()
             while len(conn.sent) < 2:
                 await asyncio.sleep(0)
-    assert [type(sent).__name__ for sent in conn.sent] == ['TextInput', 'ToolResult']
+    assert [type(sent).__name__ for sent in conn.sent] == ['str', 'ToolResult']
 
 
 async def test_close_discards_buffered_view_items() -> None:
@@ -2405,22 +2403,22 @@ async def test_send_helpers_forward_to_connection() -> None:
     await session.send_audio(b'\x01\x02')
     await session.send('hello')
     await session.send(BinaryImage(data=b'\xff\xd8', media_type='image/jpeg'))
-    await session.send(AudioInput(data=b'\x03'))
+    await session.send(BinaryAudio(data=b'\x03', media_type='audio/pcm'))
     assert conn.sent == [
-        AudioInput(data=b'\x01\x02'),
-        TextInput(text='hello'),
-        ImageInput(data=b'\xff\xd8', media_type='image/jpeg'),
-        AudioInput(data=b'\x03'),
+        BinaryAudio(data=b'\x01\x02', media_type='audio/pcm'),
+        'hello',
+        BinaryImage(data=b'\xff\xd8', media_type='image/jpeg'),
+        BinaryAudio(data=b'\x03', media_type='audio/pcm'),
     ]
 
 
 async def test_send_dispatches_through_bookkeeping_helpers() -> None:
-    # `send(TextInput(...))` must route through `send_text`, so the user turn lands in history rather
+    # `send(<str>)` must route through the text-turn path, so the user turn lands in history rather
     # than bypassing it (the raw pass-through used to skip all session bookkeeping).
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner)
-    await session.send(TextInput(text='hello'))
-    assert conn.sent == [TextInput(text='hello')]
+    await session.send('hello')
+    assert conn.sent == ['hello']
     assert session.new_messages() == snapshot(
         [ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsDatetime())], timestamp=IsDatetime())]
     )
@@ -2439,10 +2437,10 @@ async def test_send_accepts_plain_content() -> None:
 
     assert conn.sent == snapshot(
         [
-            TextInput(text='hello'),
-            ImageInput(data=b'image', media_type='image/png'),
-            AudioInput(data=b'\x01\x02\x03\x04'),
-            AudioInput(data=b'\xaa\xbb'),
+            'hello',
+            BinaryImage(data=b'image', media_type='image/png'),
+            BinaryAudio(data=b'\x01\x02\x03\x04', media_type='audio/pcm'),
+            BinaryAudio(data=b'\xaa\xbb', media_type='audio/pcm'),
         ]
     )
     assert session.new_messages() == snapshot(
@@ -2467,7 +2465,7 @@ async def test_send_accepts_sequence() -> None:
 
     await session.send(['look at this', BinaryImage(data=b'image', media_type='image/png')])
 
-    assert conn.sent == [TextInput(text='look at this'), ImageInput(data=b'image', media_type='image/png')]
+    assert conn.sent == ['look at this', BinaryImage(data=b'image', media_type='image/png')]
 
 
 async def test_image_history_retention_samples_and_round_trips() -> None:
@@ -2478,7 +2476,7 @@ async def test_image_history_retention_samples_and_round_trips() -> None:
     for image in images:
         await session.send(image)
 
-    assert conn.sent == [ImageInput(data=image.data, media_type='image/png') for image in images]
+    assert conn.sent == [BinaryImage(data=image.data, media_type='image/png') for image in images]
     assert session.all_messages() == [
         ModelRequest(parts=[UserPromptPart(content=[images[0]], timestamp=IsDatetime())], timestamp=IsDatetime()),
         ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())], timestamp=IsDatetime()),
@@ -2492,7 +2490,7 @@ async def test_failed_unretained_image_send_has_nothing_to_take_back() -> None:
     # there is no phantom history to roll back; the failure still propagates.
     class _SecondImageSendFails(FakeRealtimeConnection):
         async def send(self, content: RealtimeInput) -> None:
-            if isinstance(content, ImageInput) and self.sent:
+            if isinstance(content, BinaryImage) and self.sent:
                 raise RuntimeError('send failed')
             await super().send(content)
 
@@ -2527,7 +2525,7 @@ async def test_image_history_cap_evicts_oldest() -> None:
         await session.send(image)
 
     # Every frame still reached the provider; only the local record is bounded.
-    assert conn.sent == [ImageInput(data=image.data, media_type='image/png') for image in images]
+    assert conn.sent == [BinaryImage(data=image.data, media_type='image/png') for image in images]
     assert session.all_messages() == [
         ModelRequest(parts=[UserPromptPart(content=[images[2]], timestamp=IsDatetime())], timestamp=IsDatetime()),
         ModelRequest(parts=[UserPromptPart(content=[images[3]], timestamp=IsDatetime())], timestamp=IsDatetime()),
@@ -2555,7 +2553,7 @@ async def test_image_history_cap_zero_retains_nothing() -> None:
 
     await session.send(image)
 
-    assert conn.sent == [ImageInput(data=image.data, media_type='image/png')]
+    assert conn.sent == [BinaryImage(data=image.data, media_type='image/png')]
     assert session.all_messages() == []
 
 
@@ -2589,11 +2587,11 @@ async def test_send_rejects_raw_bytes_with_audio_hint() -> None:
 
 
 async def test_send_enforces_model_profile_guard() -> None:
-    # `send(ImageInput(...))` must enforce the same `supports_image_input` guard as `send_image`.
+    # `send(BinaryImage(...))` must enforce the same `supports_image_input` guard as `send_image`.
     conn = FakeRealtimeConnection([])
     session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_image_input=False))
     with pytest.raises(UserError, match='does not support image input'):
-        await session.send(ImageInput(data=b'\xff', media_type='image/jpeg'))
+        await session.send(BinaryImage(data=b'\xff', media_type='image/jpeg'))
     assert conn.sent == []
 
 
@@ -2639,7 +2637,7 @@ async def test_send_during_response_is_recorded_after_response() -> None:
 
     class MidResponseConnection(RealtimeConnection):
         async def send(self, content: RealtimeInput) -> None:
-            assert content == TextInput(text='next turn')
+            assert content == 'next turn'
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield OutputTranscript(text='first ', item_id='assistant-1')
@@ -2736,7 +2734,7 @@ async def test_failed_sends_leave_no_phantom_history_or_audio() -> None:
     with pytest.raises(RuntimeError, match='send failed'):
         await session.send('question')
     with pytest.raises(RuntimeError, match='send failed'):
-        await session.send(TextInput(text='typed question'))
+        await session.send('typed question')
     with pytest.raises(RuntimeError, match='send failed'):
         await session.send_audio(b'\xaa\xbb')
     conn.fail = False
@@ -2962,7 +2960,7 @@ async def test_concurrent_image_and_text_history_matches_wire_order() -> None:
 
     class _PausedImageConnection(FakeRealtimeConnection):
         async def send(self, content: RealtimeInput) -> None:
-            if isinstance(content, ImageInput):
+            if isinstance(content, BinaryImage):
                 image_send_started.set()
                 await release_image.wait()
             await super().send(content)
@@ -2976,7 +2974,7 @@ async def test_concurrent_image_and_text_history_matches_wire_order() -> None:
     release_image.set()
     await asyncio.gather(image_task, text_task)
 
-    assert [type(frame) for frame in conn.sent] == [ImageInput, TextInput]
+    assert [type(frame) for frame in conn.sent] == [BinaryImage, str]
     image_request, text_request = session.new_messages()
     assert isinstance(image_request, ModelRequest)
     assert isinstance(text_request, ModelRequest)
@@ -3004,7 +3002,7 @@ async def test_interrupt_truncate_and_cancel_cannot_be_split() -> None:
     truncate = kinds.index('TruncateOutput')
     assert kinds[truncate + 1] == 'CancelResponse', f'a frame was interleaved into the transaction: {kinds}'
     # The concurrent sends still all got through, just never in the middle.
-    assert kinds.count('TextInput') == 3
+    assert kinds.count('str') == 3
 
 
 async def test_image_input_guard() -> None:
@@ -3497,7 +3495,7 @@ async def test_queued_message_flushes_when_reconnect_closes_orphaned_turn() -> N
 
     # The orphaned reply is closed as interrupted, the turn ends, and the queued prompt goes out.
     assert any(isinstance(e, RealtimeTurnCompleteEvent) for e in events)
-    assert [item.text for item in conn.sent if isinstance(item, TextInput)] == ['queued for the boundary']
+    assert [item for item in conn.sent if isinstance(item, str)] == ['queued for the boundary']
     responses = [m for m in session.all_messages() if isinstance(m, ModelResponse)]
     assert responses[-1].state == 'interrupted'
 
@@ -4443,8 +4441,8 @@ async def test_asap_enqueue_waits_for_active_response_to_complete() -> None:
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
         _ = [event async for event in session]
 
-    assert not any(isinstance(item, TextInput) for item in conn.sent_before_response_complete)
-    assert [item.text for item in conn.sent if isinstance(item, TextInput)] == ['follow-up context']
+    assert not any(isinstance(item, str) for item in conn.sent_before_response_complete)
+    assert [item for item in conn.sent if isinstance(item, str)] == ['follow-up context']
 
 
 @pytest.mark.parametrize(
@@ -4463,7 +4461,7 @@ async def test_agent_realtime_session_delivers_enqueued_text(priority: Literal['
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
         _ = [event async for event in session]
 
-    assert [type(item).__name__ for item in conn.sent] == ['ToolResult', 'TextInput']
+    assert [type(item).__name__ for item in conn.sent] == ['ToolResult', 'str']
     call_response, tool_return, followup = session.new_messages()
     assert isinstance(call_response, ModelResponse) and isinstance(call_response.parts[0], ToolCallPart)
     assert isinstance(tool_return, ModelRequest) and isinstance(tool_return.parts[0], ToolReturnPart)
@@ -4485,7 +4483,7 @@ class _ConcurrentEnqueueConnection(FakeRealtimeConnection):
 
     async def send(self, content: RealtimeInput) -> None:
         self.sent.append(content)
-        if isinstance(content, TextInput) and content.text == 'first':
+        if content == 'first':
             self.first_send_started.set()
             while not self.second_enqueued.is_set():
                 await asyncio.sleep(0)
@@ -4514,7 +4512,7 @@ async def test_sync_tool_enqueue_during_drain_is_not_lost() -> None:
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
         _ = [event async for event in session]
 
-    assert [item.text for item in conn.sent if isinstance(item, TextInput)] == ['first', 'second']
+    assert [item for item in conn.sent if isinstance(item, str)] == ['first', 'second']
     prompts = [
         part.content
         for message in session.new_messages()
@@ -4740,7 +4738,7 @@ async def test_tool_completion_drains_messages_deferred_until_usage_arrives(monk
         ordered_events=False,
     )
 
-    assert TextInput('after tool') in conn.sent
+    assert 'after tool' in conn.sent
 
 
 async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -4750,9 +4748,9 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(monkeypatch: 
     # unretrieved-task-exception warning at GC, silently losing the enqueued follow-up.
     class _FailingDrain(FakeRealtimeConnection):
         async def send(self, content: RealtimeInput) -> None:
-            if isinstance(content, TextInput):
+            if isinstance(content, str):
                 raise RuntimeError('drain send failed')
-            # This test only drives the drain's `TextInput` send.
+            # This test only drives the drain's text-turn send.
             await super().send(content)  # pragma: no cover
 
     conn = _FailingDrain([])
@@ -5515,7 +5513,7 @@ async def test_agent_realtime_session_send_audio() -> None:
     model = FakeRealtimeModel(conn)
     async with agent.realtime(model).session() as session:
         await session.send_audio(b'\xab\xcd')
-    assert conn.sent == [AudioInput(data=b'\xab\xcd')]
+    assert conn.sent == [BinaryAudio(data=b'\xab\xcd', media_type='audio/pcm')]
 
 
 # --- parity with run/iter: instructions, toolsets, usage, usage_limits, capabilities, metadata ---
@@ -5680,7 +5678,7 @@ async def test_when_idle_enqueue_after_pump_finishes_is_delivered() -> None:
                 break
             await asyncio.sleep(0)
 
-    assert conn.sent == [TextInput('late idle message')]
+    assert conn.sent == ['late idle message']
 
 
 def test_finalized_response_terminal_does_not_begin_another_response(monkeypatch: pytest.MonkeyPatch) -> None:

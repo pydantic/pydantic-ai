@@ -57,7 +57,13 @@ if TYPE_CHECKING:
 from .._instrumentation import get_instructions
 from .._utils import is_str_dict
 from ..exceptions import UserError
-from ..messages import ModelMessage, RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent
+from ..messages import (
+    BinaryAudio,
+    BinaryImage,
+    ModelMessage,
+    RealtimeSessionErrorEvent,
+    RealtimeSessionReconnectEvent,
+)
 from ..models import ModelRequestParameters
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
@@ -87,18 +93,15 @@ from ._openai_protocol import (
 )
 from .codec import (
     AudioDelta,
-    AudioInput,
     CancelResponse,
     ClearAudio,
     CommitAudio,
     CreateResponse,
-    ImageInput,
     InputTranscript,
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
     SessionUsageEvent,
-    TextInput,
     ToolResult,
     TruncateOutput,
     inject_trace_context,
@@ -397,25 +400,25 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     async def send(self, content: RealtimeInput) -> None:
         """Send content to the OpenAI Realtime API.
 
-        Accepts `AudioInput` (PCM16, 24kHz, mono), `TextInput`, `ImageInput`, `ToolResult`, and the
-        control verbs `CommitAudio`, `ClearAudio`, `CreateResponse`, `CancelResponse`, and
-        `TruncateOutput`.
+        Accepts `BinaryAudio` (raw PCM16, 24kHz, mono), a `str` text turn, `BinaryImage`,
+        `ToolResult`, and the control verbs `CommitAudio`, `ClearAudio`, `CreateResponse`,
+        `CancelResponse`, and `TruncateOutput`.
         """
-        if isinstance(content, AudioInput):
+        if isinstance(content, BinaryAudio):
             await self._send_event(
                 {
                     'type': 'input_audio_buffer.append',
                     'audio': base64.b64encode(content.data).decode('ascii'),
                 }
             )
-        elif isinstance(content, TextInput):
+        elif isinstance(content, str):
             await self._send_event(
                 {
                     'type': 'conversation.item.create',
                     'item': {
                         'type': 'message',
                         'role': 'user',
-                        'content': [{'type': 'input_text', 'text': content.text}],
+                        'content': [{'type': 'input_text', 'text': content}],
                     },
                 }
             )
@@ -446,10 +449,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             if item:
                 await self._send_event({'type': 'conversation.item.create', 'item': item})
             await self._request_response()
-        elif isinstance(content, ImageInput):
+        elif isinstance(content, BinaryImage):
             # An image is added as conversation context (like a video frame), not a turn of its own,
             # so it doesn't trigger a response — drive that with audio (VAD) or `CreateResponse`.
-            data_uri = f'data:{content.media_type};base64,{base64.b64encode(content.data).decode("ascii")}'
+            data_uri = content.data_uri
             await self._send_event(
                 {
                     'type': 'conversation.item.create',

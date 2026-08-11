@@ -7,6 +7,7 @@ from typing import Literal
 
 from typing_extensions import TypeAliasType, TypedDict
 
+from .._utils import dataclasses_no_defaults_repr
 from ..settings import ThinkingLevel, ToolChoice
 
 AudioRetention = TypeAliasType('AudioRetention', Literal['transcript_only', 'input_audio', 'output_audio', 'all'])
@@ -32,7 +33,7 @@ into the user's part unless that output is present in the microphone input itsel
 """
 
 
-@dataclass
+@dataclass(repr=False)
 class TurnDetection:
     """Cross-provider automatic voice-activity detection (VAD) knobs.
 
@@ -57,6 +58,8 @@ class TurnDetection:
     silence_duration_ms: int | None = None
     """Silence required to mark the end of speech, in milliseconds. Honored by OpenAI, xAI, and
     Gemini."""
+
+    __repr__ = dataclasses_no_defaults_repr
 
 
 class RealtimeModelSettings(TypedDict, total=False):
@@ -200,7 +203,7 @@ not listed here still works — this is just an autocomplete aid, like
 """
 
 
-@dataclass
+@dataclass(repr=False)
 class ReconnectPolicy:
     """How to recover when a realtime connection drops mid-session.
 
@@ -237,3 +240,5 @@ class ReconnectPolicy:
     """Maximum backoff delay in seconds."""
     jitter: bool = True
     """Whether to apply random jitter to each backoff delay to avoid thundering herds."""
+
+    __repr__ = dataclasses_no_defaults_repr

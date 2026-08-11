@@ -41,10 +41,12 @@ from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
 )
-from .._utils import aclose_all, cancel_and_drain, fill_run_metadata
+from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata
 from ..exceptions import ApprovalRequired, CallDeferred, RunCancelled, ToolFailedError, ToolRetryError, UserError
 from ..messages import (
+    BinaryAudio,
     BinaryContent,
+    BinaryImage,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     FinishReason,
@@ -81,14 +83,12 @@ from ..tool_manager import ToolManager
 from ..usage import RequestUsage, RunUsage, UsageLimits
 from .codec import (
     AudioDelta,
-    AudioInput,
     CancelResponse,
     ClearAudio,
     CommitAudio,
     ConversationCreated,
     ConversationItemCreated,
     CreateResponse,
-    ImageInput,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -97,7 +97,6 @@ from .codec import (
     RealtimeSessionInput,
     ResponseDone,
     SessionUsageEvent,
-    TextInput,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -156,7 +155,7 @@ control-plane events.
 """
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class TranscriptUpdate:
     """One incremental transcript update, carrying everything needed to render it.
 
@@ -191,6 +190,8 @@ class TranscriptUpdate:
     accumulating, no special case for a revision, and a dropped update (if a consumer fell behind)
     self-corrects on the next one.
     """
+
+    __repr__ = dataclasses_no_defaults_repr
 
 
 # Realtime providers stream raw PCM audio, but retained history uses a WAV container so the sample
@@ -1098,14 +1099,13 @@ class RealtimeSession:
         fill_run_metadata(request, run_id=self._run_id, conversation_id=self._conversation_id)
         return request
 
-    async def send(
-        self, content: RealtimeSessionInput | str | BinaryContent | Sequence[RealtimeSessionInput | str | BinaryContent]
-    ) -> None:
+    async def send(self, content: RealtimeSessionInput | Sequence[RealtimeSessionInput]) -> None:
         """Feed content into the session.
 
-        Accepts a precise [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput] (audio,
-        image, or text), plain text as a `str`, image/audio
-        [`BinaryContent`][pydantic_ai.messages.BinaryContent], or a sequence of these inputs, dispatched
+        Accepts the shared message vocabulary: plain text as a `str`, image/audio
+        [`BinaryContent`][pydantic_ai.messages.BinaryContent] (including
+        [`BinaryImage`][pydantic_ai.messages.BinaryImage] and
+        [`BinaryAudio`][pydantic_ai.messages.BinaryAudio]), or a sequence of these inputs, dispatched
         in order. Text and retained images are recorded in session history; audio is recorded later
         through its transcript and/or `audio_retention`. `retain_images_every_n=1` records every image,
         while larger values keep the first image and then one of every `N`; `retain_images_max` bounds
@@ -1123,7 +1123,7 @@ class RealtimeSession:
             request = self._new_request([UserPromptPart(content=content)])
             self._record_sent_request(request)
             try:
-                await self._send_frame(TextInput(text=content))
+                await self._send_frame(content)
             except BaseException:
                 self._pending_response_requests -= 1
                 self._remove_sent_request(request)
@@ -1149,20 +1149,6 @@ class RealtimeSession:
                     f'Unsupported binary media type {content.media_type!r} for `session.send()`. '
                     'Send an image, WAV audio, or raw PCM (`audio/pcm`); for a raw PCM byte stream use `send_audio()`.'
                 )
-        elif isinstance(content, AudioInput):
-            await self.send_audio(content.data)
-        elif isinstance(content, TextInput):
-            self._reserve_response_request()
-            request = self._new_request([UserPromptPart(content=content.text)])
-            self._record_sent_request(request)
-            try:
-                await self._send_frame(content)
-            except BaseException:
-                self._pending_response_requests -= 1
-                self._remove_sent_request(request)
-                raise
-        elif isinstance(content, ImageInput):
-            await self._send_image(BinaryContent(data=content.data, media_type=content.media_type))
         elif isinstance(content, (CommitAudio, ClearAudio, CreateResponse, CancelResponse, TruncateOutput)):
             # Turn-control verbs are connection-level vocabulary, excluded from `RealtimeSessionInput`.
             # Direct callers to the dedicated methods, which apply the model-profile capability guards.
@@ -1193,7 +1179,10 @@ class RealtimeSession:
             request = self._new_request([UserPromptPart(content=[content])])
             self._record_sent_request(request)
         try:
-            await self._send_frame(ImageInput(data=content.data, media_type=content.media_type))
+            # Callers guard on `is_image`, so the narrowed type only re-tags a plain `BinaryContent`.
+            image = BinaryContent.narrow_type(content)
+            assert isinstance(image, BinaryImage)
+            await self._send_frame(image)
         except BaseException:
             # `None` when this image wasn't the one retained by the sampling policy: nothing recorded,
             # so nothing to take back.
@@ -1254,7 +1243,7 @@ class RealtimeSession:
             previous_length = len(self._input_audio)
             self._input_audio.extend(data)
         try:
-            await self._send_frame(AudioInput(data=data))
+            await self._send_frame(BinaryAudio(data=data, media_type='audio/pcm'))
         except BaseException:
             self._user_turn_active = user_turn_was_active
             if previous_length is not None and len(self._input_audio) == previous_length + len(data):

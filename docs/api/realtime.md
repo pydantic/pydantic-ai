@@ -50,11 +50,11 @@ provider-specific (see [Concurrent tool execution](../realtime/tools.md#concurre
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic concurrent tool dispatch. |
 
 **Inputs** — [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send] accepts session content
-only: plain `str`, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent], a sequence of
-these, or a precise [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput] —
-[`AudioInput`][pydantic_ai.realtime.AudioInput],
-[`TextInput`][pydantic_ai.realtime.TextInput], or
-[`ImageInput`][pydantic_ai.realtime.ImageInput]. Turn-taking and interruption go through the dedicated
+only, in the shared message vocabulary ([`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput]):
+plain `str`, image/audio [`BinaryContent`][pydantic_ai.messages.BinaryContent] (including
+[`BinaryImage`][pydantic_ai.messages.BinaryImage] and
+[`BinaryAudio`][pydantic_ai.messages.BinaryAudio]), or a sequence of
+these. Turn-taking and interruption go through the dedicated
 [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] methods (`commit_audio()`, `clear_audio()`,
 `create_response()`, `interrupt()`), not `send()`.
 
@@ -68,7 +68,9 @@ run concurrently with each other and with the session's raw event iterator.
 live view; [`RealtimeSession.closed`][pydantic_ai.realtime.RealtimeSession.closed] exposes its state.
 
 The low-level [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send] accepts the
-superset [`RealtimeInput`][pydantic_ai.realtime.codec.RealtimeInput], which additionally includes the
+normalized [`RealtimeInput`][pydantic_ai.realtime.codec.RealtimeInput] — a `str` text turn, a raw-PCM
+[`BinaryAudio`][pydantic_ai.messages.BinaryAudio] chunk, or a
+[`BinaryImage`][pydantic_ai.messages.BinaryImage] frame — which additionally includes the
 turn-control verbs ([`CommitAudio`][pydantic_ai.realtime.codec.CommitAudio],
 [`ClearAudio`][pydantic_ai.realtime.codec.ClearAudio],
 [`CreateResponse`][pydantic_ai.realtime.codec.CreateResponse],

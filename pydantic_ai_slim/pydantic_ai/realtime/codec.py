@@ -22,10 +22,13 @@ from typing import Any, ClassVar, Literal
 
 from typing_extensions import TypeAliasType, assert_never
 
+from .. import _utils
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
+    BinaryAudio,
     BinaryContent,
+    BinaryImage,
     CachePoint,
     DocumentUrl,
     FinishReason,
@@ -81,48 +84,22 @@ def resolve_advertised_tools(
     return tools, resolved
 
 
-# Input content types (fed into the connection via `send`).
+# Input content types (fed into the connection via `send`). Session content reuses the shared message
+# vocabulary — `str` for a text turn, `BinaryAudio`/`BinaryImage` from `pydantic_ai.messages` for
+# audio and image frames — so only the wire-level `ToolResult` and the turn-control verbs are
+# codec-specific types.
 
 
-@dataclass
-class AudioInput:
-    """A chunk of audio data to stream to the model."""
-
-    data: bytes
-    """Raw mono PCM16 audio bytes, at the model's
-    [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]."""
-
-
-@dataclass
-class ImageInput:
-    """An image frame to send to the model (e.g. for Gemini Live video).
-
-    Not every provider accepts image input. [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send]
-    checks the model profile and raises [`UserError`][pydantic_ai.exceptions.UserError] when images are
-    unsupported, as does a direct low-level connection asked for an input it can't send.
-    """
-
-    data: bytes
-    """Raw image bytes."""
-    _: KW_ONLY
-    media_type: str = 'image/jpeg'
-    """The image media type. Named to match [`BinaryContent.media_type`][pydantic_ai.messages.BinaryContent]."""
-
-
-@dataclass
-class TextInput:
-    """A text message to send to the model as a complete turn.
-
-    Useful for text-only conversations or for injecting text context alongside audio.
-    """
-
-    text: str
-    """The message text."""
-
-
-@dataclass
+@dataclass(repr=False)
 class ToolResult:
-    """The result of a tool call, to send back to the model."""
+    """The result of a tool call, rendered for the wire and sent back to the model.
+
+    Built and sent by [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] after it settles a
+    call: the string-only realtime tool channel and the retry/failure error-key wrapping mean the
+    session renders the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] or
+    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] it records in history down to this flat
+    shape, so every provider sends exactly the same rendering.
+    """
 
     tool_call_id: str
     """Identifier of the `ToolCall` this result answers."""
@@ -131,6 +108,8 @@ class ToolResult:
     """The tool's output, rendered as a string."""
     content: Sequence[UserContent] | None = None
     """Additional user content to send after the tool output when the provider supports it."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 @dataclass
@@ -157,7 +136,7 @@ class CancelResponse:
     """Cancel the model's in-progress response (maps to the provider's response-cancel)."""
 
 
-@dataclass
+@dataclass(repr=False)
 class TruncateOutput:
     """Truncate the model's current audio output at `audio_end_ms`.
 
@@ -169,33 +148,44 @@ class TruncateOutput:
     audio_end_ms: int
     """Milliseconds of the current output audio that were actually played before the interruption."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-RealtimeSessionInput = TypeAliasType('RealtimeSessionInput', 'AudioInput | ImageInput | TextInput')
+
+RealtimeSessionInput = TypeAliasType('RealtimeSessionInput', 'str | BinaryContent')
 """The content types a caller feeds into [`RealtimeSession.send`][pydantic_ai.realtime.RealtimeSession.send].
 
-Session content only: audio, images, and text. Turn-control verbs (`CommitAudio`, `ClearAudio`,
-`CreateResponse`, `CancelResponse`, `TruncateOutput`) are connection-level vocabulary driven through the
-dedicated `RealtimeSession` methods (`commit_audio()`, `clear_audio()`, `create_response()`,
-`interrupt()`), and [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself when a
-tool completes — neither is accepted by `send()`.
+Session content only, in the shared message vocabulary: a `str` is a complete text turn, and
+[`BinaryContent`][pydantic_ai.messages.BinaryContent] carries an image frame, WAV audio (unwrapped to
+raw PCM before it is streamed, matching the history-seeding path), or a raw PCM chunk
+(`media_type='audio/pcm'`). The session normalizes these before forwarding them to the connection.
+Turn-control verbs (`CommitAudio`, `ClearAudio`, `CreateResponse`, `CancelResponse`,
+`TruncateOutput`) are connection-level vocabulary driven through the dedicated `RealtimeSession`
+methods (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
+[`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself when a tool
+completes — neither is accepted by `send()`.
 """
 
 RealtimeInput = TypeAliasType(
     'RealtimeInput',
-    'RealtimeSessionInput | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult',
+    'str | BinaryAudio | BinaryImage | CommitAudio | ClearAudio | CreateResponse | CancelResponse | TruncateOutput | ToolResult',
 )
 """Union of content types accepted by [`RealtimeConnection.send`][pydantic_ai.realtime.codec.RealtimeConnection.send].
 
-A superset of [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput]: the low-level
-connection additionally accepts the turn-control verbs and [`ToolResult`][pydantic_ai.realtime.codec.ToolResult],
-which [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] sends on the caller's behalf.
+The connection-level counterpart of [`RealtimeSessionInput`][pydantic_ai.realtime.RealtimeSessionInput],
+already normalized: a `str` is a complete text turn, a
+[`BinaryAudio`][pydantic_ai.messages.BinaryAudio] carries a raw mono PCM16 chunk at the model's
+[`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
+(`media_type='audio/pcm'`), and a [`BinaryImage`][pydantic_ai.messages.BinaryImage] an image frame.
+The connection additionally accepts the turn-control verbs and
+[`ToolResult`][pydantic_ai.realtime.codec.ToolResult], which
+[`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] sends on the caller's behalf.
 """
 
 
 # Connection-level events (yielded by `RealtimeConnection.__aiter__`).
 
 
-@dataclass
+@dataclass(repr=False)
 class AudioDelta:
     """A chunk of audio output from the model."""
 
@@ -205,8 +195,10 @@ class AudioDelta:
     item_id: str | None = None
     """Provider item ID for the spoken output this chunk belongs to, when available."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False)
 class OutputTranscript:
     """The model's textual output (partial or final): an audio transcript, or plain text output."""
 
@@ -222,8 +214,10 @@ class OutputTranscript:
     item_id: str | None = None
     """Provider item ID for the spoken output, when available."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False)
 class InputTranscript:
     """A transcription of the user's audio input (partial or final).
 
@@ -249,8 +243,10 @@ class InputTranscript:
     corrected whole. Leave `False` for incremental deltas.
     """
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False)
 class ToolCall:
     """The model is requesting a tool call."""
 
@@ -270,8 +266,10 @@ class ToolCall:
     item_id: str | None = None
     """Provider conversation-item ID for this call, when available."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False)
 class ToolCallCancelled:
     """The model cancelled in-flight tool calls (e.g. the user barged in before they finished).
 
@@ -282,8 +280,10 @@ class ToolCallCancelled:
     tool_call_ids: list[str]
     """Identifiers of the [`ToolCall`][pydantic_ai.realtime.codec.ToolCall]s that were cancelled."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False)
 class ResponseDone:
     """The provider reported that its current response is done.
 
@@ -308,8 +308,10 @@ class ResponseDone:
     event_kind: Literal['response_done'] = 'response_done'
     """Event type identifier, used as a discriminator."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False)
 class SessionUsageEvent:
     """Usage reported by the provider for a model response or another run-level operation."""
 
@@ -335,8 +337,10 @@ class SessionUsageEvent:
     event_kind: Literal['session_usage'] = 'session_usage'
     """Event type identifier, used as a discriminator."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False)
 class ConversationCreated:
     """An OpenAI-protocol server assigned a conversation ID.
 
@@ -347,8 +351,10 @@ class ConversationCreated:
     conversation_id: str
     """Provider-assigned conversation ID."""
 
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
-@dataclass
+
+@dataclass(repr=False)
 class ConversationItemCreated:
     """An OpenAI-protocol server reported a conversation item.
 
@@ -364,6 +370,8 @@ class ConversationItemCreated:
     """Provider-assigned tool-call ID, for function call and result items."""
     replayed: bool = False
     """Whether the provider identified this item as part of a resumption replay."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 RealtimeCodecEvent = TypeAliasType(
@@ -516,11 +524,9 @@ def inject_trace_context(headers: MutableMapping[str, str]) -> None:
     TraceContextTextMapPropagator().inject(headers)
 
 
-SeedContent = TypeAliasType('SeedContent', 'str | BinaryContent')
-"""Provider-neutral text or image/audio bytes ready for realtime history seeding."""
-
-
-async def seed_user_content(part: UserPromptPart, *, provider_name: str, supports_images: bool) -> list[SeedContent]:
+async def seed_user_content(
+    part: UserPromptPart, *, provider_name: str, supports_images: bool
+) -> list[RealtimeSessionInput]:
     """Normalize a `UserPromptPart` to replayable text and image content.
 
     Used both when seeding `message_history` at connect and for a live tool result's attached
@@ -531,7 +537,7 @@ async def seed_user_content(part: UserPromptPart, *, provider_name: str, support
     before anything is sent.
     """
     content: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
-    result: list[SeedContent] = []
+    result: list[RealtimeSessionInput] = []
     for item in content:
         if isinstance(item, str):
             result.append(item)
@@ -582,7 +588,7 @@ def seed_speech_content(
     *,
     provider_name: str,
     supports_audio: bool,
-) -> SeedContent:
+) -> RealtimeSessionInput:
     """Return replayable content for a `SpeechPart`, preferring its transcript.
 
     Only retained user audio can be replayed, and only when the provider profile explicitly supports

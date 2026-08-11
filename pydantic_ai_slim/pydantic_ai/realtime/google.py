@@ -7,7 +7,7 @@ Built on the `google-genai` SDK, which manages the WebSocket transport for you. 
 
 Unlike the OpenAI provider, Gemini wants **16 kHz** PCM input audio (output is 24 kHz), produces a
 single response modality per session (audio *or* text), and natively accepts a stream of video
-frames sent as `ImageInput`.
+frames sent as [`BinaryImage`][pydantic_ai.messages.BinaryImage].
 
 Use `provider='google'` for the Gemini Developer API, or `provider='google-cloud'` /
 [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] for Google Cloud with
@@ -43,7 +43,9 @@ from .._utils import generate_tool_call_id
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
     AudioUrl,
+    BinaryAudio,
     BinaryContent,
+    BinaryImage,
     CachePoint,
     CompactionPart,
     DocumentUrl,
@@ -97,8 +99,6 @@ from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from .codec import (
     AudioDelta,
-    AudioInput,
-    ImageInput,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -106,7 +106,6 @@ from .codec import (
     RealtimeInput,
     ResponseDone,
     SessionUsageEvent,
-    TextInput,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -1199,22 +1198,23 @@ class GoogleRealtimeConnection(RealtimeConnection):
     async def send(self, content: RealtimeInput) -> None:
         """Send content to the Gemini Live API.
 
-        Accepts `AudioInput` (PCM16, 16kHz, mono), `TextInput`, `ImageInput` (a live video frame),
-        and `ToolResult`. The manual turn-taking verbs are not supported (Gemini uses automatic VAD).
+        Accepts `BinaryAudio` (raw PCM16, 16kHz, mono), a `str` text turn, `BinaryImage` (a live
+        video frame), and `ToolResult`. The manual turn-taking verbs are not supported (Gemini uses
+        automatic VAD).
         """
         # `send_realtime_input` is typed against a PIL.Image union the SDK leaves partially untyped.
-        if isinstance(content, AudioInput):
+        if isinstance(content, BinaryAudio):
             await self._session.send_realtime_input(  # pyright: ignore[reportUnknownMemberType]
                 audio=genai_types.Blob(data=content.data, mime_type=f'audio/pcm;rate={INPUT_SAMPLE_RATE}')
             )
-        elif isinstance(content, TextInput):
+        elif isinstance(content, str):
             # A typed message is a discrete turn: commit it with `send_client_content(turn_complete=True)`
             # so the model replies, rather than buffering it as streaming realtime input.
             await self._session.send_client_content(
-                turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content.text)]),
+                turns=genai_types.Content(role='user', parts=[genai_types.Part(text=content)]),
                 turn_complete=True,
             )
-        elif isinstance(content, ImageInput):
+        elif isinstance(content, BinaryImage):
             await self._session.send_realtime_input(  # pyright: ignore[reportUnknownMemberType]
                 video=genai_types.Blob(data=content.data, mime_type=content.media_type)
             )

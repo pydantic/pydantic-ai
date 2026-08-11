@@ -23,7 +23,9 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import (
+    BinaryAudio,
     BinaryContent,
+    BinaryImage,
     CachePoint,
     CompactionPart,
     FilePart,
@@ -49,7 +51,6 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
 from pydantic_ai.realtime import (
-    AudioInput,
     RealtimeModelProfile,
     RealtimeModelSettings,
     RealtimeResponseInterruptedEvent,
@@ -60,12 +61,10 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
-    ImageInput,
     InputTranscript,
     OutputTranscript,
     ResponseDone,
     SessionUsageEvent,
-    TextInput,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -999,7 +998,7 @@ def test_config_forwards_only_present_model_settings() -> None:
 
 async def test_send_audio() -> None:
     session = _RecordingSession()
-    await _conn(session).send(AudioInput(data=b'\x01\x02'))
+    await _conn(session).send(BinaryAudio(data=b'\x01\x02', media_type='audio/pcm'))
     blob = session.realtime[0]['audio']
     assert blob.data == b'\x01\x02'
     assert blob.mime_type == 'audio/pcm;rate=16000'
@@ -1008,7 +1007,7 @@ async def test_send_audio() -> None:
 async def test_send_text() -> None:
     # A typed turn is committed with `send_client_content(turn_complete=True)` so the model replies.
     session = _RecordingSession()
-    await _conn(session).send(TextInput(text='hello'))
+    await _conn(session).send('hello')
     sent = session.client_content[0]
     assert sent['turn_complete'] is True
     assert sent['turns'].role == 'user'
@@ -1017,7 +1016,7 @@ async def test_send_text() -> None:
 
 async def test_send_image_as_video_frame() -> None:
     session = _RecordingSession()
-    await _conn(session).send(ImageInput(data=b'\xff\xd8', media_type='image/jpeg'))
+    await _conn(session).send(BinaryImage(data=b'\xff\xd8', media_type='image/jpeg'))
     blob = session.realtime[0]['video']
     assert blob.data == b'\xff\xd8'
     assert blob.mime_type == 'image/jpeg'
