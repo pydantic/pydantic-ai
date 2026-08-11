@@ -1,9 +1,12 @@
 from __future__ import annotations as _annotations
 
-from typing import Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from . import ModelProfile
+
+if TYPE_CHECKING:
+    from ..realtime.profiles import RealtimeModelProfile
 
 GrokReasoningEffort: TypeAlias = Literal['none', 'low', 'medium', 'high']
 """Native xAI `reasoning_effort` values."""
@@ -99,3 +102,24 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         grok_reasoning_efforts=grok_reasoning_efforts,
         supported_native_tools=supported_native_tools,
     )
+
+
+def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+    """Get the realtime model profile for an xAI Grok Voice model."""
+    return {
+        'supports_manual_turn_control': True,
+        'supports_interruption': True,
+        # Grok Voice always speaks: the API has no response-modality control, so an
+        # `output_modality='text'` session would silently come back as audio.
+        'supports_text_output': False,
+        'supports_session_seeding': True,
+        'supports_seeding_images': False,
+        'supports_seeding_audio': False,
+        # xAI puts `think` in the name of the voice models that take `reasoning.effort`, so match on
+        # that rather than pinning versions: `grok-voice-think-fast-2.0` shipped a week after 1.0,
+        # and a pinned list would have silently dropped reasoning for anyone who moved to it.
+        'supports_thinking': model_name == 'grok-voice-latest' or model_name.startswith('grok-voice-think-'),
+        'emits_input_speech_events': True,
+        'audio_input_sample_rate': 24000,
+        'audio_output_sample_rate': 24000,
+    }

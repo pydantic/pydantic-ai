@@ -13,6 +13,7 @@ Each knob below bounds a different unit of work. None of them bounds the wall-cl
 | A [hook](hooks.md) function | `timeout=` on the `@hooks.on.*` decorator | [`HookTimeoutError`][pydantic_ai.capabilities.HookTimeoutError], which is an [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] and aborts the run |
 | Connecting to an MCP server | `MCPToolset(init_timeout=...)`, default `5` seconds | The connection and `initialize` handshake fail |
 | A single MCP request | `MCPToolset(read_timeout=...)`, default `300` seconds | The request fails; under the default [`tool_error_behavior='retry'`](mcp/client.md#tool-errors) the model sees it as a retryable tool error |
+| Opening a [realtime session](realtime/overview.md) | `handshake_timeout` on [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings], default `30` seconds — OpenAI, Azure OpenAI, and xAI | Opening the session raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. On a reconnect it consumes a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] attempt instead |
 | Total work done by a run | [`UsageLimits`][pydantic_ai.usage.UsageLimits] — requests, tool calls, tokens, or cost — see [Usage Limits](agent.md#usage-limits) | [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] |
 | Wall-clock duration of a whole run | Nothing built in — wrap `agent.run()` in `asyncio.timeout` (Python 3.11+) or `anyio.fail_after()`, or cancel a [`CancellationToken`][pydantic_ai.CancellationToken] from a timer | The run is [cancelled](agent.md#cancelling-a-run) |
 
@@ -40,6 +41,8 @@ What a tool raises decides whether the run continues, and what the model gets to
 | [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] | Yes | A [failed tool result](tools-advanced.md#tool-failed) to adapt to — does not consume the retry budget |
 | [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] / [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] | Ends the run with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output, unless a [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler resolves the call inline | Nothing yet — see [Deferred Tools](deferred-tools.md) |
 | Any other exception | No | By default nothing — it propagates out of `agent.run()`. A [capability](capabilities/overview.md) implementing `on_tool_execute_error` sees it first and can return a replacement tool result or raise `ModelRetry`, letting the run continue |
+
+The deferred row reads differently inside a [realtime session](realtime/overview.md), which has no way to pause: a live conversation can't wait for an out-of-band result. A `HandleDeferredToolCalls` handler still gets the chance to resolve the call inline, but where a run would end with a `DeferredToolRequests` output, a session instead answers the model with an explanation that the tool can't complete during the session, and keeps going. See [Deferred and approval-required tools](realtime/tools.md#deferred-and-approval-required-tools).
 
 A tool can also end the run without raising, by calling [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel] — the run ends with [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and the tool's return value is discarded. See [Cancelling the Run from a Tool](tools-advanced.md#cancelling-the-run-from-a-tool).
 
