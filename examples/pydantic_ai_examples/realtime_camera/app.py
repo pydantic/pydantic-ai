@@ -360,10 +360,12 @@ def _build_model(params: Mapping[str, str]) -> RealtimeModel:
         if coverage in ('activity_only', 'all_input', 'all_video'):
             settings['google_turn_coverage'] = coverage
         if start in ('high', 'low') or end in ('high', 'low'):
-            settings['google_vad'] = AutomaticVAD(
-                start_sensitivity=start if start in ('high', 'low') else None,
-                end_sensitivity=end if end in ('high', 'low') else None,
-            )
+            vad: AutomaticVAD = {}
+            if start in ('high', 'low'):
+                vad['start_sensitivity'] = start
+            if end in ('high', 'low'):
+                vad['end_sensitivity'] = end
+            settings['google_vad'] = vad
         model.settings = settings
     elif isinstance(model, OpenAIRealtimeModel):
         settings = OpenAIRealtimeModelSettings(**common_settings)
