@@ -1,8 +1,10 @@
 import datetime
 import json
+import os
 from collections.abc import AsyncIterable, Sequence
 from copy import deepcopy
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
@@ -1588,6 +1590,54 @@ async def test_openrouter_web_search_tool_usage(
     raw_response = json.loads(vcr.responses[0]['body']['string'])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
     assert raw_response['usage']['server_tool_use_details'] == {'web_search_requests': 1}
     assert response.provider_details['server_tool_use'] == {'web_search_requests': 1}
+
+
+_OPENROUTER_WEB_SEARCH_FULL_PARAMS_CASSETTE = (
+    Path(__file__).parent / 'cassettes' / 'test_openrouter' / 'test_openrouter_web_search_tool_full_params.yaml'
+)
+
+
+@pytest.mark.skipif(
+    not os.environ.get('OPENROUTER_API_KEY') and not _OPENROUTER_WEB_SEARCH_FULL_PARAMS_CASSETTE.is_file(),
+    reason=(
+        'verifies OpenRouter accepts the `user_location`, `allowed_domains`, and `blocked_domains` '
+        'web-search wire names with a real request; requires OPENROUTER_API_KEY to record '
+        '(run with --record-mode=rewrite) and skips in CI until a maintainer records the cassette'
+    ),
+)
+async def test_openrouter_web_search_tool_full_params(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """Live provider-acceptance check for the inferred web-search wire names.
+
+    Unlike `test_openrouter_web_search_tool_request` (which asserts the outgoing payload against a mock
+    client), this sends `user_location`, `allowed_domains`, and `blocked_domains` to OpenRouter so its
+    acceptance of those names is verified by a recorded response, not just request construction. Skips
+    in CI (no key, no cassette) until a maintainer records it:
+    `uv run pytest tests/models/test_openrouter.py::test_openrouter_web_search_tool_full_params --record-mode=rewrite`.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                WebSearchTool(
+                    search_context_size='low',
+                    user_location={'city': 'London', 'country': 'GB', 'region': 'England', 'timezone': 'Europe/London'},
+                    allowed_domains=['pydantic.dev'],
+                    blocked_domains=['example.com'],
+                    max_uses=1,
+                )
+            )
+        ],
+    )
+
+    result = await agent.run("Use web search to find Pydantic AI's GitHub repository and answer with its URL only.")
+
+    assert result.output
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is not None
+    assert response.provider_details['server_tool_use'].get('web_search_requests', 0) >= 1
 
 
 async def test_openrouter_web_search_tool_usage_stream(allow_model_requests: None, openrouter_api_key: str) -> None:

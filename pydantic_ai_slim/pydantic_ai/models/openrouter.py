@@ -964,6 +964,9 @@ class OpenRouterModel(OpenAIChatModel):
 
         web_search = next((t for t in model_request_parameters.native_tools if isinstance(t, WebSearchTool)), None)
         if web_search is not None:
+            # The `user_location` shape, the `blocked_domains`-to-`excluded_domains` rename, and `allowed_domains`
+            # are provider-API facts inferred from OpenRouter's docs and the OpenAI web-search convention, not yet
+            # backed by a recorded request. Verify them against a recorded cassette before relying on the wire names.
             parameters: dict[str, Any] = {'search_context_size': web_search.search_context_size}
             if (user_location := web_search.user_location) is not None:
                 parameters['user_location'] = {'type': 'approximate', **user_location}
