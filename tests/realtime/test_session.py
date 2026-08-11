@@ -53,6 +53,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
+    SystemPromptPart,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -79,6 +80,7 @@ from pydantic_ai.realtime import (
     RealtimeTurnCompleteEvent,
     TranscriptUpdate,
 )
+from pydantic_ai.realtime._session import _pending_message_text  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     CancelResponse,
@@ -1658,7 +1660,7 @@ async def test_tool_runner_cancelled_call_ends_cleanly() -> None:
     assert conn.sent == []
     results = [event for event in events if isinstance(event, FunctionToolResultEvent)]
     assert len(results) == 1 and isinstance(results[0].part, ToolReturnPart)
-    assert results[0].part.content == 'Tool call cancelled before it completed.'
+    assert results[0].part.content == 'The tool call was interrupted before a result was produced.'
 
 
 async def test_validation_hook_exception_reports_failed_validation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2160,7 +2162,7 @@ async def test_tool_call_cancellation_cancels_running_tool() -> None:
         if isinstance(part, ToolReturnPart)
     ]
     assert [(part.tool_call_id, part.content) for part in returns] == [
-        ('c1', 'Tool call cancelled before it completed.')
+        ('c1', 'The tool call was interrupted before a result was produced.')
     ]
 
 
@@ -2592,27 +2594,6 @@ async def test_send_enforces_model_profile_guard() -> None:
     session = RealtimeSession(conn, _noop_runner, profile=_profile(supports_image_input=False))
     with pytest.raises(UserError, match='does not support image input'):
         await session.send(BinaryImage(data=b'\xff', media_type='image/jpeg'))
-    assert conn.sent == []
-
-
-async def test_send_rejects_control_verbs() -> None:
-    # Turn-control verbs are connection-level vocabulary excluded from `RealtimeSessionInput`; `send()`
-    # rejects them at runtime and directs callers to the dedicated methods (which apply profile guards).
-    conn = FakeRealtimeConnection([])
-    session = RealtimeSession(conn, _noop_runner)
-    for verb in (CommitAudio(), ClearAudio(), CreateResponse(), CancelResponse(), TruncateOutput(audio_end_ms=120)):
-        with pytest.raises(UserError, match=r'Turn-control verbs cannot be sent.*commit_audio'):
-            await session.send(verb)  # type: ignore[arg-type]
-    assert conn.sent == []
-
-
-async def test_send_rejects_tool_result() -> None:
-    # Tool results are sent by the session itself; a caller can't inject one via `send()`. `ToolResult`
-    # is excluded from `RealtimeSessionInput` (hence the type-ignore), so this also guards the runtime path.
-    conn = FakeRealtimeConnection([])
-    session = RealtimeSession(conn, _noop_runner)
-    with pytest.raises(UserError, match='Tool results are sent automatically'):
-        await session.send(ToolResult(tool_call_id='c', output='x'))  # type: ignore[arg-type]
     assert conn.sent == []
 
 
@@ -3569,7 +3550,7 @@ async def test_reconnect_cancels_obsolete_tool_call() -> None:
     result = request.parts[0]
     assert isinstance(result, ToolReturnPart)
     assert result.tool_name == 'slow'
-    assert result.content == 'Tool call cancelled before it completed.'
+    assert result.content == 'The tool call was interrupted before a result was produced.'
     assert result.tool_call_id == 'old-call'
     assert result.outcome == 'interrupted'
 
@@ -4533,7 +4514,7 @@ async def test_agent_realtime_session_rejects_non_text_enqueue() -> None:
 
     conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='queue_image', args='{}')])
     async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
-        with pytest.raises(UserError, match='currently supports one plain-text prompt per call'):
+        with pytest.raises(UserError, match='supports plain-text prompts and system-prompt parts only'):
             _ = [event async for event in session]
 
 
@@ -4541,7 +4522,8 @@ async def test_agent_realtime_session_rejects_non_text_enqueue() -> None:
     'messages',
     [
         [ModelResponse(parts=[TextPart(content='not a request')])],
-        [ModelRequest(parts=[UserPromptPart(content='one'), UserPromptPart(content='two')])],
+        [ModelRequest(parts=[UserPromptPart(content=[BinaryImage(data=b'x', media_type='image/png')])])],
+        [ModelRequest(parts=[])],
     ],
 )
 async def test_realtime_pending_messages_reject_unsupported_message_shapes(messages: list[ModelMessage]) -> None:
@@ -4549,8 +4531,20 @@ async def test_realtime_pending_messages_reject_unsupported_message_shapes(messa
     manager = session._tool_manager  # pyright: ignore[reportPrivateUsage]
     assert manager.ctx is not None
     assert manager.ctx.pending_messages is not None
-    with pytest.raises(UserError, match='one plain-text prompt per call'):
+    with pytest.raises(UserError, match='supports plain-text prompts and system-prompt parts only'):
         manager.ctx.pending_messages.append(PendingMessage(messages=messages))
+
+
+def test_realtime_pending_messages_join_text_and_tag_system_prompts() -> None:
+    # Multiple text parts join across messages, and a mid-conversation `SystemPromptPart` degrades to
+    # `<system>`-tagged user text — the same treatment `Model.prepare_messages` applies in a standard run.
+    pending = PendingMessage(
+        messages=[
+            ModelRequest(parts=[UserPromptPart(content='one'), SystemPromptPart(content='rule')]),
+            ModelRequest(parts=[UserPromptPart(content='two')]),
+        ]
+    )
+    assert _pending_message_text(pending) == 'one\n\n<system>rule</system>\n\ntwo'
 
 
 async def test_session_exit_is_idempotent_and_flushes_unfinalized_user() -> None:

@@ -44,6 +44,7 @@ from .._tool_execution import (
 from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata
 from ..exceptions import ApprovalRequired, CallDeferred, RunCancelled, ToolFailedError, ToolRetryError, UserError
 from ..messages import (
+    INTERRUPTED_TOOL_RETURN_CONTENT,
     BinaryAudio,
     BinaryContent,
     BinaryImage,
@@ -70,6 +71,7 @@ from ..messages import (
     RetryPromptPart,
     SpeechPart,
     SpeechPartDelta,
+    SystemPromptPart,
     TextPart,
     TextPartDelta,
     ToolCallPart,
@@ -155,7 +157,7 @@ control-plane events.
 """
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, kw_only=True)
 class TranscriptUpdate:
     """One incremental transcript update, carrying everything needed to render it.
 
@@ -198,9 +200,9 @@ class TranscriptUpdate:
 # format is self-describing and portable to classic model adapters. Live `SpeechPartDelta.audio_chunk`
 # values remain raw PCM.
 _WAV_MEDIA_TYPE = 'audio/wav'
-# Recorded as the result of a tool call the model cancelled mid-flight (see `ToolCallCancelled`), so the
-# call still has a matching return in history.
-_CANCELLED_TOOL_RESULT = 'Tool call cancelled before it completed.'
+# Marks every span this session emits so the Logfire UI (and any consumer) can recognize realtime
+# activity without parsing span names.
+_REALTIME_SPAN_ATTRIBUTE = 'pydantic_ai.realtime'
 
 # Fallback for a session created without a model's profile (e.g. directly, in tests): assume
 # everything is supported so no guard fires. Real sessions receive `model.profile`. Native tools are
@@ -411,15 +413,31 @@ def _is_user_speech_request(message: ModelMessage) -> bool:
 
 
 def _pending_message_text(pending: PendingMessage) -> str:
-    """Return the text a realtime session can deliver, or reject unsupported enqueue content."""
-    if len(pending.messages) == 1 and isinstance(message := pending.messages[0], ModelRequest):
-        if len(message.parts) == 1 and isinstance(part := message.parts[0], UserPromptPart):
-            if isinstance(part.content, str):
-                return part.content
-    raise UserError(
-        '`RunContext.enqueue()` in a realtime session currently supports one plain-text prompt per call. '
-        'Multimodal content and prebuilt message or part sequences cannot be delivered over the live input channel.'
+    """Render enqueued messages down to the text a realtime session can deliver.
+
+    Text-only parts join across messages, and a mid-conversation `SystemPromptPart` is delivered as
+    `<system>`-tagged user text — the same degradation `Model.prepare_messages` applies for a
+    standard run's non-leading system prompts. Anything else can't cross the live input channel.
+    """
+    error = UserError(
+        '`RunContext.enqueue()` in a realtime session supports plain-text prompts and system-prompt '
+        'parts only. Multimodal content and model responses cannot be delivered over the live input '
+        'channel.'
     )
+    texts: list[str] = []
+    for message in pending.messages:
+        if not isinstance(message, ModelRequest):
+            raise error
+        for part in message.parts:
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str):
+                texts.append(part.content)
+            elif isinstance(part, SystemPromptPart):
+                texts.append(f'<system>{part.content}</system>')
+            else:
+                raise error
+    if not texts:
+        raise error
+    return '\n\n'.join(texts)
 
 
 class _RealtimePendingMessages(list[PendingMessage]):
@@ -764,7 +782,7 @@ class RealtimeSession:
                 # An explicit marker so a backend can tell a realtime session (and its `chat` turns) apart
                 # from a classic run: the semconv has no realtime operation, and `gen_ai.output.type` only
                 # distinguishes audio from text, not realtime from a classic run that happens to be text.
-                'pydantic_ai.realtime': True,
+                _REALTIME_SPAN_ATTRIBUTE: True,
                 # Display the session as `<agent> realtime`, mirroring the classic run span's `<agent> run`
                 # message, so it reads as the realtime variant of an agent run regardless of span name.
                 'logfire.msg': f'{agent_name} realtime',
@@ -829,7 +847,7 @@ class RealtimeSession:
             'user speech',
             context=context,
             start_time=started_at,
-            attributes={'pydantic_ai.realtime': True, 'logfire.msg': 'user speech'},
+            attributes={_REALTIME_SPAN_ATTRIBUTE: True, 'logfire.msg': 'user speech'},
             kind=SpanKind.INTERNAL,
         ).end()
 
@@ -852,7 +870,7 @@ class RealtimeSession:
         context = self._session_span_context
         if settings is None or context is None:
             return
-        attrs: dict[str, Any] = {'pydantic_ai.realtime': True}
+        attrs: dict[str, Any] = {_REALTIME_SPAN_ATTRIBUTE: True}
         if message is not None:
             attrs['logfire.msg'] = message
         attrs.update({key: value for key, value in attributes.items() if value is not None})
@@ -1149,13 +1167,6 @@ class RealtimeSession:
                     f'Unsupported binary media type {content.media_type!r} for `session.send()`. '
                     'Send an image, WAV audio, or raw PCM (`audio/pcm`); for a raw PCM byte stream use `send_audio()`.'
                 )
-        elif isinstance(content, (CommitAudio, ClearAudio, CreateResponse, CancelResponse, TruncateOutput)):
-            # Turn-control verbs are connection-level vocabulary, excluded from `RealtimeSessionInput`.
-            # Direct callers to the dedicated methods, which apply the model-profile capability guards.
-            raise UserError(
-                'Turn-control verbs cannot be sent via `session.send()`; use the dedicated methods '
-                '`commit_audio()`, `clear_audio()`, `create_response()`, or `interrupt()`.'
-            )
         elif isinstance(content, (bytes, bytearray)):
             # `bytes` is a `Sequence[int]`, so guard it before the sequence branch below — otherwise it
             # iterates into a confusing per-byte error. Raw input audio goes through `send_audio()`.
@@ -1164,16 +1175,11 @@ class RealtimeSession:
             for item in content:
                 await self.send(item)
         else:
-            # Unreachable for a well-typed caller: `RealtimeSessionInput` is exhausted above and excludes
-            # `ToolResult`. Guard the untyped-caller case (a `ToolResult` passed dynamically) with a clear
-            # error, since the session sends tool results itself (see `_execute_tool`).
-            raise UserError(
-                'Tool results are sent automatically by the realtime session and cannot be sent via `session.send()`.'
-            )
+            assert_never(content)
 
     async def _send_image(self, content: BinaryContent) -> None:
         """Forward an image and retain it according to the session's sampling and cap policies."""
-        self._require_capability(self._profile.get('supports_image_input', False), 'send', 'image input')
+        self._require_capability('supports_image_input', method='send', feature='image input')
         request: ModelRequest | None = None
         if self._retain_images_max != 0 and self._sent_image_count % self._retain_images_every_n == 0:
             request = self._new_request([UserPromptPart(content=[content])])
@@ -1252,9 +1258,7 @@ class RealtimeSession:
 
     async def commit_audio(self) -> None:
         """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""
-        self._require_capability(
-            self._profile.get('supports_manual_turn_control', False), 'commit_audio', 'manual turn-taking'
-        )
+        self._require_capability('supports_manual_turn_control', method='commit_audio', feature='manual turn-taking')
         await self._send_frame(CommitAudio())
         self._user_turn_active = True
         for event in self._finalize_untranscribed_user():
@@ -1262,9 +1266,7 @@ class RealtimeSession:
 
     async def clear_audio(self) -> None:
         """Discard buffered, uncommitted input audio."""
-        self._require_capability(
-            self._profile.get('supports_manual_turn_control', False), 'clear_audio', 'manual turn-taking'
-        )
+        self._require_capability('supports_manual_turn_control', method='clear_audio', feature='manual turn-taking')
         await self._send_frame(ClearAudio())
         # Drop the locally retained copy too (with `audio_retention='input_audio'`/`'all'`), or the discarded
         # audio would still be attached to the next finalized user turn.
@@ -1273,9 +1275,7 @@ class RealtimeSession:
 
     async def create_response(self) -> None:
         """Ask the model to respond now (manual turn-taking, after `commit_audio`)."""
-        self._require_capability(
-            self._profile.get('supports_manual_turn_control', False), 'create_response', 'manual turn-taking'
-        )
+        self._require_capability('supports_manual_turn_control', method='create_response', feature='manual turn-taking')
         self._reserve_response_request()
         try:
             await self._send_frame(CreateResponse())
@@ -1296,7 +1296,7 @@ class RealtimeSession:
                 point before the response is cancelled.
         """
         self._ensure_not_closed()
-        self._require_capability(self._profile.get('supports_interruption', False), 'interrupt', 'interruption')
+        self._require_capability('supports_interruption', method='interrupt', feature='interruption')
         if played_ms is not None and not self._profile.get('supports_output_truncation', False):
             raise UserError(
                 'This realtime model does not support output truncation, so `interrupt(played_ms=...)` '
@@ -1348,9 +1348,9 @@ class RealtimeSession:
         if self._closed:
             raise UserError('This realtime session is closed.')
 
-    def _require_capability(self, supported: bool, method: str, feature: str) -> None:
-        """Raise a clear `UserError` before sending when the model doesn't support `method`."""
-        if not supported:
+    def _require_capability(self, capability: str, *, method: str, feature: str) -> None:
+        """Raise a clear `UserError` before sending when the profile doesn't report `capability`."""
+        if not self._profile.get(capability, False):
             raise UserError(f'This realtime model does not support {feature}, so `session.{method}()` is unavailable.')
 
     # --- history assembly -------------------------------------------------------------------------
@@ -1665,7 +1665,7 @@ class RealtimeSession:
             'gen_ai.output.type': self._otel_output_type,
             # Mark the turn as realtime too (see the session span), so a backend can tell a realtime
             # `chat` span apart from a classic model-request `chat` span.
-            'pydantic_ai.realtime': True,
+            _REALTIME_SPAN_ATTRIBUTE: True,
             # Render as `response {model}` while keeping the semconv `chat` operation + span name: this
             # span covers one `ModelResponse`, and no request was sent, so "chat" misleads. Verb-first
             # matches the other span messages (`chat {model}`, `execute_tool {name}`, `invoke_agent {name}`).
@@ -2202,7 +2202,7 @@ class RealtimeSession:
             task.cancel()
             cancelled_part = ToolReturnPart(
                 tool_name=call_part.tool_name,
-                content=_CANCELLED_TOOL_RESULT,
+                content=INTERRUPTED_TOOL_RETURN_CONTENT,
                 tool_call_id=call_part.tool_call_id,
                 outcome='interrupted',
             )
@@ -2340,16 +2340,8 @@ class RealtimeSession:
         that only made a tool call falls through to the spoken reply that followed it.
         """
         for message in reversed(self.all_messages()):
-            if not isinstance(message, ModelResponse):
-                continue
-            texts: list[str] = []
-            for part in message.parts:
-                if isinstance(part, TextPart) and part.content:
-                    texts.append(part.content)
-                elif isinstance(part, SpeechPart) and part.transcript:
-                    texts.append(part.transcript)
-            if texts:
-                return ''.join(texts)
+            if isinstance(message, ModelResponse) and (text := message.text):
+                return text
         return None
 
     async def _execute_tool(
@@ -2750,7 +2742,7 @@ class RealtimeSession:
                 # it abandoned the call.
                 cancelled_part = ToolReturnPart(
                     tool_name=call_part.tool_name,
-                    content=_CANCELLED_TOOL_RESULT,
+                    content=INTERRUPTED_TOOL_RETURN_CONTENT,
                     tool_call_id=call_part.tool_call_id,
                     outcome='interrupted',
                 )
