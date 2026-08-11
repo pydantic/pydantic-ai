@@ -391,9 +391,9 @@ async def run_chat(
                     usage=session_usage,
                 )
                 session_turns += 1
-            except anyio.get_cancelled_exc_class():  # pragma: no cover
+            except anyio.get_cancelled_exc_class():
                 console.print('[dim]Interrupted[/dim]')
-            except Exception as e:  # pragma: no cover
+            except Exception as e:
                 _render_error(console, e, show_traceback=show_traceback)
 
 
@@ -474,7 +474,7 @@ class CustomAutoSuggest(AutoSuggestFromHistory):
         super().__init__()
         self.special_suggestions = special_suggestions or []
 
-    def get_suggestion(self, buffer: Buffer, document: Document) -> Suggestion | None:  # pragma: no cover
+    def get_suggestion(self, buffer: Buffer, document: Document) -> Suggestion | None:
         # Get the suggestion from history
         suggestion = super().get_suggestion(buffer, document)
 
