@@ -230,7 +230,7 @@ def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:
     if model_kind in ('google', 'google-cloud'):
         from .google import GoogleRealtimeModel
 
-        return GoogleRealtimeModel(model_name, provider=provider)
+        return GoogleRealtimeModel(model_name, provider='gateway' if provider.startswith('gateway/') else model_kind)
     raise UserError(
         f'Unknown realtime model provider {provider!r}. Supported providers are `openai`, `azure`, '
         '`xai`, `google`, and `google-cloud`, or `gateway/openai` / `gateway/google` to route OpenAI '

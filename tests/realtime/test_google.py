@@ -7,7 +7,7 @@ import gc
 import random
 import re
 import weakref
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
 from types import SimpleNamespace
@@ -71,7 +71,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
-from .test_session import make_tool_manager
+from .test_session import FakeRealtimeModel, make_tool_manager
 
 with try_import() as imports_successful:
     from google.genai import Client, errors as genai_errors, types as genai_types
@@ -457,13 +457,18 @@ async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
         UserError,
         match=r"'ImageGenerationTool'\] not supported by this model.*ImageGeneration\(local=my_func\)",
     ):
-        async with agent.realtime(GoogleRealtimeModel(), capabilities=[NativeTool(ImageGenerationTool())]).session():
+        async with agent.realtime(
+            GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest'),
+            capabilities=[NativeTool(ImageGenerationTool())],
+        ).session():
             pass  # pragma: no cover
 
 
 def test_config_combines_function_and_native_tools() -> None:
     tools = [ToolDefinition(name='f', parameters_json_schema={'type': 'object'})]
-    config = GoogleRealtimeModel()._config('hi', tools, model_settings=None, native_tools=[WebSearchTool()])  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')._config(  # pyright: ignore[reportPrivateUsage]
+        'hi', tools, model_settings=None, native_tools=[WebSearchTool()]
+    )
     assert config.tools[0].function_declarations[0].name == 'f'  # type: ignore[index,union-attr]
     assert config.tools[1].google_search is not None  # type: ignore[index,union-attr]
 
@@ -633,16 +638,11 @@ def test_ws_connect_lock_is_per_event_loop() -> None:
     assert [ref() for ref in refs] == [None, None]
 
 
-def test_ws_trace_context_noop_without_http_options() -> None:
-    # A custom/fake client without the SDK's private HTTP options simply skips injection.
-    from types import SimpleNamespace
-
-    client = SimpleNamespace(_api_client=None)
-    with rt_google._ws_trace_context(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        # No HTTP options to inject into, so the client is left untouched (no attribute is added).
-        assert client._api_client is None
-        assert not hasattr(client, '_http_options')
-    assert client._api_client is None
+def test_google_genai_private_http_options_contract() -> None:
+    """Pin the private header chain used with the minimum supported `google-genai` SDK."""
+    client = Client(api_key='test')
+    headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(headers, MutableMapping)
 
 
 async def test_connect_serializes_shared_client_header_mutations(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -674,7 +674,7 @@ async def test_connect_serializes_shared_client_header_mutations(monkeypatch: py
 
     monkeypatch.setattr(client.aio.live, 'connect', connect)
     monkeypatch.setattr(rt_google, 'inject_trace_context', inject)
-    model = GoogleRealtimeModel(provider=provider)
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=provider)
 
     async def open_connection(value: str) -> None:
         token = traceparent.set(value)
@@ -789,7 +789,7 @@ async def test_gateway_url_rewrite_leaves_other_urls_alone() -> None:
 async def test_non_gateway_handshake_has_no_bearer_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     # A plain `GoogleProvider` is not a gateway provider, so `connect` leaves the handshake auth to the
     # SDK (the API key travels as `x-goog-api-key`) and adds no `Authorization` header.
-    model = GoogleRealtimeModel(provider=GoogleProvider(api_key='k'))
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(api_key='k'))
     assert model._gateway is False  # pyright: ignore[reportPrivateUsage]
 
     captured: dict[str, Any] = {}
@@ -806,18 +806,18 @@ async def test_non_gateway_handshake_has_no_bearer_auth(monkeypatch: pytest.Monk
 
 def test_default_provider_is_google() -> None:
     # The default `'google'` provider reads GOOGLE_API_KEY (set to a placeholder by the autouse fixture).
-    model = GoogleRealtimeModel()
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')
     assert isinstance(model.client, Client)
 
 
 def test_provider_instance_is_reused() -> None:
     provider = GoogleProvider(api_key='k')
-    model = GoogleRealtimeModel(provider=provider)
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=provider)
     assert model.client is provider.client
 
 
 def test_profile() -> None:
-    profile = GoogleRealtimeModel().profile
+    profile = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest').profile
     # Gemini Live has no manual turn control or server-side interruption (automatic VAD only).
     assert (
         profile.get('supports_image_input'),
@@ -862,7 +862,7 @@ def test_config_full() -> None:
         google_voice='Puck',
         google_vad={'prefix_padding_ms': 200, 'silence_duration_ms': 400},
     )
-    model = GoogleRealtimeModel(settings=settings)
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=settings)
     assert model.settings == settings
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
     config = model._config('Be nice', tools, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
@@ -886,7 +886,11 @@ def test_config_thinking_maps_to_thinking_level() -> None:
     # and `False` disables it via a zero budget.
     def thinking_config(thinking: object) -> genai_types.ThinkingConfig | None:
         settings = GoogleRealtimeModelSettings(thinking=thinking)  # type: ignore[typeddict-item]
-        return GoogleRealtimeModel()._config('hi', None, model_settings=settings).thinking_config  # pyright: ignore[reportPrivateUsage]
+        return (
+            GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')
+            ._config('hi', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+            .thinking_config
+        )
 
     assert thinking_config('high') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
     assert thinking_config('xhigh') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
@@ -897,12 +901,12 @@ def test_config_thinking_maps_to_thinking_level() -> None:
 
 def test_config_tool_choice_restricts_advertised_tools() -> None:
     tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('allowed', 'unsafe')]
-    allowed = GoogleRealtimeModel()._config(  # pyright: ignore[reportPrivateUsage]
+    allowed = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')._config(  # pyright: ignore[reportPrivateUsage]
         'hi', tools, model_settings=GoogleRealtimeModelSettings(tool_choice=['allowed'])
     )
     assert [tool.name for tool in allowed.tools[0].function_declarations] == ['allowed']  # type: ignore[index,union-attr]
 
-    none = GoogleRealtimeModel()._config(  # pyright: ignore[reportPrivateUsage]
+    none = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')._config(  # pyright: ignore[reportPrivateUsage]
         'hi', tools, model_settings=GoogleRealtimeModelSettings(tool_choice='none')
     )
     assert none.tools is None
@@ -910,7 +914,7 @@ def test_config_tool_choice_restricts_advertised_tools() -> None:
 
 def test_config_google_thinking_config_wins_over_unified_thinking() -> None:
     settings = GoogleRealtimeModelSettings(thinking='low', google_thinking_config={'thinking_budget': 512})
-    config = GoogleRealtimeModel()._config('hi', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')._config('hi', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
     assert config.thinking_config == genai_types.ThinkingConfig(thinking_budget=512)
 
 
@@ -948,9 +952,10 @@ def test_async_tool_calls_opt_in_resolution() -> None:
 
 def test_config_minimal_text_no_transcription_no_vad() -> None:
     model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
         settings=GoogleRealtimeModelSettings(
             output_modality='text', google_input_transcription=False, google_output_transcription=False
-        )
+        ),
     )
     config = model._config('', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config.response_modalities == [genai_types.Modality.TEXT]
@@ -971,16 +976,22 @@ def test_shared_input_transcription_none_turns_gemini_transcription_off() -> Non
     user's words out of history, so Gemini must honor it rather than transcribe anyway. Kept a unit test
     because it's the request payload that has to change, which a cassette match isn't sensitive to.
     """
-    off = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(input_transcription_model=None))
+    off = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest', settings=GoogleRealtimeModelSettings(input_transcription_model=None)
+    )
     assert off._config('', None, model_settings=None).input_audio_transcription is None  # pyright: ignore[reportPrivateUsage]
 
     # A pinned id can't be pointed at anything, so transcription stays on, as documented.
-    pinned = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(input_transcription_model='gpt-4o-transcribe'))
+    pinned = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        settings=GoogleRealtimeModelSettings(input_transcription_model='gpt-4o-transcribe'),
+    )
     assert pinned._config('', None, model_settings=None).input_audio_transcription is not None  # pyright: ignore[reportPrivateUsage]
 
     # The provider-specific setting wins where both are given, in either direction.
     both_on = GoogleRealtimeModel(
-        settings=GoogleRealtimeModelSettings(input_transcription_model=None, google_input_transcription=True)
+        'gemini-2.5-flash-native-audio-latest',
+        settings=GoogleRealtimeModelSettings(input_transcription_model=None, google_input_transcription=True),
     )
     assert both_on._config('', None, model_settings=None).input_audio_transcription is not None  # pyright: ignore[reportPrivateUsage]
 
@@ -988,7 +999,7 @@ def test_shared_input_transcription_none_turns_gemini_transcription_off() -> Non
 def test_config_forwards_only_present_model_settings() -> None:
     # `model_settings` is non-empty but carries none of the forwarded fields → all stay unset
     # (`presence_penalty` has no Gemini Live equivalent and is ignored).
-    config = GoogleRealtimeModel()._config(  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')._config(  # pyright: ignore[reportPrivateUsage]
         'hi', None, model_settings=GoogleRealtimeModelSettings()
     )
     assert config.max_output_tokens is None
@@ -1009,6 +1020,13 @@ async def test_send_audio() -> None:
     blob = session.realtime[0]['audio']
     assert blob.data == b'\x01\x02'
     assert blob.mime_type == 'audio/pcm;rate=16000'
+
+
+async def test_send_audio_rejects_non_pcm_media_type() -> None:
+    session = _RecordingSession()
+    with pytest.raises(UserError, match='require raw PCM audio'):
+        await _conn(session).send(BinaryAudio(data=b'RIFF', media_type='audio/wav'))
+    assert session.realtime == []
 
 
 async def test_send_text() -> None:
@@ -1234,9 +1252,8 @@ async def test_interruption_finalizes_session_response_as_interrupted() -> None:
     )
     session = RealtimeSession(
         _conn(provider_session),
+        model=FakeRealtimeModel(_conn(provider_session), model_name='gemini-live', system='google'),
         tool_manager=make_tool_manager(),
-        model_name='gemini-live',
-        provider_name='google',
     )
     events: list[Any] = []
     async with session:
@@ -1471,7 +1488,7 @@ class _ApiClient:
     """The private client attribute `GoogleProvider.base_url` reads."""
 
     def __init__(self) -> None:
-        self._http_options = SimpleNamespace(base_url='https://generativelanguage.googleapis.com/')
+        self._http_options = SimpleNamespace(base_url='https://generativelanguage.googleapis.com/', headers={})
 
 
 def _fake_client(session: _RecordingSession, captured: dict[str, Any] | None = None) -> Client:
@@ -1508,7 +1525,11 @@ def _fake_client(session: _RecordingSession, captured: dict[str, Any] | None = N
 
 def _model(session: _RecordingSession, captured: dict[str, Any] | None = None, **kwargs: Any) -> GoogleRealtimeModel:
     """A `GoogleRealtimeModel` whose provider reuses a fake client backed by `session`."""
-    return GoogleRealtimeModel(provider=GoogleProvider(client=_fake_client(session, captured)), **kwargs)
+    return GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        provider=GoogleProvider(client=_fake_client(session, captured)),
+        **kwargs,
+    )
 
 
 async def test_connect_streams_events() -> None:
@@ -1551,8 +1572,8 @@ async def test_connect_maps_rejected_config_to_model_http_error() -> None:
         def connect(self, *, model: str, config: Any) -> _RejectingConnect:
             return _RejectingConnect()
 
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})()})())
-    model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
     with pytest.raises(ModelHTTPError) as exc_info:
         async with _connect(model, 'x'):
             pass  # pragma: no cover
@@ -1581,8 +1602,8 @@ async def test_connect_maps_websocket_invalid_status_to_model_http_error() -> No
         def connect(self, *, model: str, config: Any) -> _RejectingConnect:
             return _RejectingConnect()
 
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})()})())
-    model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
     with pytest.raises(ModelHTTPError) as exc_info:
         async with _connect(model, 'x'):
             pass  # pragma: no cover
@@ -1606,8 +1627,8 @@ async def test_connect_maps_other_websocket_errors_to_model_api_error() -> None:
         def connect(self, *, model: str, config: Any) -> _FailingConnect:
             return _FailingConnect()
 
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})()})())
-    model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
     with pytest.raises(ModelAPIError) as exc_info:
         async with _connect(model, 'x'):
             pass  # pragma: no cover
@@ -1629,8 +1650,8 @@ async def test_connect_maps_unreachable_api_to_model_api_error() -> None:
         def connect(self, *, model: str, config: Any) -> _UnreachableConnect:
             return _UnreachableConnect()
 
-    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})()})())
-    model = GoogleRealtimeModel(provider=GoogleProvider(client=client))
+    client = cast('Client', type('_C', (), {'aio': type('_A', (), {'live': _Live()})(), '_api_client': _ApiClient()})())
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
     with pytest.raises(ModelAPIError) as exc_info:
         async with _connect(model, 'x'):
             pass  # pragma: no cover
@@ -1702,7 +1723,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
         ),
         ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='spoken answer')]),
     ]
-    monkeypatch.setattr('pydantic_ai.realtime.codec.download_item', download_image)
+    monkeypatch.setattr('pydantic_ai.realtime._utils.download_item', download_image)
     model = _model(session)
     async with _connect(model, 'x', messages=history) as conn:
         _ = [e async for e in conn]
@@ -1720,17 +1741,17 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                 'parts': [
                     {'text': '<think>\nreasoning\n</think>'},
                     {'text': 'earlier answer'},
-                    {'text': '[Tool call: weather({"city":"Paris"})]'},
+                    {'text': '[Tool call-1: weather({"city":"Paris"})]'},
                 ],
                 'role': 'model',
             },
             {
                 'parts': [
-                    {'text': '[Tool "weather" returned: ["sunny","See file weather.png."]]'},
+                    {'text': '[Tool call-1: weather returned: ["sunny","See file weather.png."]]'},
                     {'text': 'This is file weather.png:'},
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
-                    {'text': '[Tool "plain" returned: ok]'},
-                    {'text': '[Tool "weather" error: invalid city\n\nFix the errors and try again.]'},
+                    {'text': '[Tool plain-call: plain returned: ok]'},
+                    {'text': '[Tool call-1: weather error: invalid city\n\nFix the errors and try again.]'},
                     {'text': 'Validation feedback:\nanswer in prose\n\nFix the errors and try again.'},
                     {'inline_data': {'data': b'url-image', 'mime_type': 'image/png'}},
                     {'inline_data': {'data': b'inline-image', 'mime_type': 'image/png'}},
@@ -1747,13 +1768,13 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
 
 async def test_connect_seed_projects_tool_calls_as_text() -> None:
     session = _RecordingSession([[_turn('hi')]])
-    history = [ModelResponse(parts=[ToolCallPart(tool_name='t', args='{}')])]
+    history = [ModelResponse(parts=[ToolCallPart(tool_name='t', args='{}', tool_call_id='call-1')])]
     model = _model(session)
     async with _connect(model, 'x', messages=history) as conn:
         _ = [e async for e in conn]
 
     turns = session.client_content[0]['turns']
-    assert [(t.role, [p.text for p in t.parts]) for t in turns] == [('model', ['[Tool call: t({})]'])]
+    assert [(t.role, [p.text for p in t.parts]) for t in turns] == [('model', ['[Tool call-1: t({})]'])]
 
 
 async def test_connect_rejects_audio_only_user_turn() -> None:
@@ -1874,7 +1895,10 @@ async def test_iter_ends_on_oserror() -> None:
 
 def test_speech_config_voice_and_language() -> None:
     speech = (
-        GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_voice='Puck', google_language_code='pl-PL'))
+        GoogleRealtimeModel(
+            'gemini-2.5-flash-native-audio-latest',
+            settings=GoogleRealtimeModelSettings(google_voice='Puck', google_language_code='pl-PL'),
+        )
         ._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
         .speech_config
     )
@@ -1887,9 +1911,10 @@ def test_speech_config_voice_and_language() -> None:
 def test_speech_config_multi_speaker_overrides_voice() -> None:
     # Multi-speaker and single-voice configs are mutually exclusive in the API, so multi-speaker wins.
     model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
         settings=GoogleRealtimeModelSettings(
             google_voice='Puck', google_multi_speaker={'voices': {'Joe': 'Puck', 'Jane': 'Kore'}}
-        )
+        ),
     )
     speech = model._config('hi', None, model_settings=None).speech_config  # pyright: ignore[reportPrivateUsage]
     assert speech is not None
@@ -1900,16 +1925,22 @@ def test_speech_config_multi_speaker_overrides_voice() -> None:
 
 
 def test_speech_config_absent_when_unset() -> None:
-    assert GoogleRealtimeModel()._config('hi', None, model_settings=None).speech_config is None  # pyright: ignore[reportPrivateUsage]
+    assert (
+        GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')
+        ._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
+        .speech_config
+        is None
+    )
 
 
 def test_realtime_input_full() -> None:
     model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
         settings=GoogleRealtimeModelSettings(
             google_vad={'start_sensitivity': 'high', 'end_sensitivity': 'low', 'silence_duration_ms': 300},
             google_activity_handling='no_interruption',
             google_turn_coverage='all_video',
-        )
+        ),
     )
     rt = model._config('hi', None, model_settings=None).realtime_input_config  # pyright: ignore[reportPrivateUsage]
     assert rt is not None
@@ -1931,7 +1962,8 @@ def test_cross_provider_turn_detection_sensitivity(sensitivity: Literal['low', '
         'high': (genai_types.StartSensitivity.START_SENSITIVITY_HIGH, genai_types.EndSensitivity.END_SENSITIVITY_HIGH),
     }[sensitivity]
     config = GoogleRealtimeModel(
-        settings=GoogleRealtimeModelSettings(turn_detection={'sensitivity': sensitivity})
+        'gemini-2.5-flash-native-audio-latest',
+        settings=GoogleRealtimeModelSettings(turn_detection={'sensitivity': sensitivity}),
     )._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     realtime_input_config = config.realtime_input_config
     assert realtime_input_config is not None
@@ -1943,10 +1975,11 @@ def test_cross_provider_turn_detection_sensitivity(sensitivity: Literal['low', '
 
 def test_google_vad_overrides_cross_provider_turn_detection() -> None:
     config = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
         settings=GoogleRealtimeModelSettings(
             turn_detection={'sensitivity': 'high'},
             google_vad={'start_sensitivity': 'low', 'end_sensitivity': 'low'},
-        )
+        ),
     )._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     realtime_input_config = config.realtime_input_config
     assert realtime_input_config is not None
@@ -1959,13 +1992,17 @@ def test_google_vad_overrides_cross_provider_turn_detection() -> None:
 def test_cross_provider_turn_detection_false_is_rejected() -> None:
     """Gemini has no manual turn controls, so disabling VAD (push-to-talk) fails loudly rather than
     producing an unusable session."""
-    model = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(turn_detection=False))
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest', settings=GoogleRealtimeModelSettings(turn_detection=False)
+    )
     with pytest.raises(UserError, match='does not support disabling automatic turn detection'):
         model._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_google_vad_disabled_is_rejected() -> None:
-    model = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_vad={'disabled': True}))
+    model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest', settings=GoogleRealtimeModelSettings(google_vad={'disabled': True})
+    )
 
     with pytest.raises(UserError, match='does not support disabling automatic turn detection'):
         model._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
@@ -1973,13 +2010,18 @@ def test_google_vad_disabled_is_rejected() -> None:
 
 def test_realtime_input_absent_when_unset() -> None:
     # no vad, no activity handling, no turn coverage → no realtime input config at all.
-    assert GoogleRealtimeModel()._config('hi', None, model_settings=None).realtime_input_config is None  # pyright: ignore[reportPrivateUsage]
+    assert (
+        GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')
+        ._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
+        .realtime_input_config
+        is None
+    )
 
 
 def test_vad_without_sensitivities() -> None:
     # a bare `{}` sets a detection block but leaves sensitivities/disabled unset.
     rt = (
-        GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_vad={}))
+        GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=GoogleRealtimeModelSettings(google_vad={}))
         ._config(  # pyright: ignore[reportPrivateUsage]
             'hi', None, model_settings=None
         )
@@ -1993,21 +2035,23 @@ def test_vad_without_sensitivities() -> None:
 
 def test_affective_and_proactive_audio() -> None:
     config = GoogleRealtimeModel(
-        settings=GoogleRealtimeModelSettings(google_affective_dialog=True, google_proactive_audio=True)
+        'gemini-2.5-flash-native-audio-latest',
+        settings=GoogleRealtimeModelSettings(google_affective_dialog=True, google_proactive_audio=True),
     )._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config.enable_affective_dialog is True
     assert config.proactivity.proactive_audio is True  # type: ignore[union-attr]
 
 
 def test_affective_and_proactive_default_off() -> None:
-    config = GoogleRealtimeModel()._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config.enable_affective_dialog is None
     assert config.proactivity is None
 
 
 def test_transcription_language_codes() -> None:
     config = GoogleRealtimeModel(
-        settings=GoogleRealtimeModelSettings(google_transcription_language_codes=['pl-PL'])
+        'gemini-2.5-flash-native-audio-latest',
+        settings=GoogleRealtimeModelSettings(google_transcription_language_codes=['pl-PL']),
     )._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config.input_audio_transcription.language_codes == ['pl-PL']  # type: ignore[union-attr]
     assert config.output_audio_transcription.language_codes == ['pl-PL']  # type: ignore[union-attr]
@@ -2015,6 +2059,7 @@ def test_transcription_language_codes() -> None:
 
 def test_context_compression_and_session_resumption() -> None:
     model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
         settings=GoogleRealtimeModelSettings(
             google_context_compression={'trigger_tokens': 8000, 'target_tokens': 4000},
             google_enable_session_resumption=True,
@@ -2029,7 +2074,10 @@ def test_context_compression_and_session_resumption() -> None:
 
 
 def test_session_resumption_passes_handle() -> None:
-    config = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True))._config(  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
+        settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True),
+    )._config(  # pyright: ignore[reportPrivateUsage]
         'hi', None, model_settings=None, resumption_handle='h9'
     )
     assert config.session_resumption.handle == 'h9'  # type: ignore[union-attr]
@@ -2045,7 +2093,7 @@ def test_generation_params_from_model_settings() -> None:
         google_thinking_config={'thinking_budget': 100},
         google_video_resolution=genai_types.MediaResolution.MEDIA_RESOLUTION_LOW,
     )
-    config = GoogleRealtimeModel()._config('hi', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest')._config('hi', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
     assert config.temperature == 0.3
     assert config.top_p == 0.8
     assert config.top_k == 20
@@ -2057,7 +2105,8 @@ def test_generation_params_from_model_settings() -> None:
 
 def test_config_overrides_escape_hatch() -> None:
     model = GoogleRealtimeModel(
-        settings=GoogleRealtimeModelSettings(google_config_overrides={'explicit_vad_signal': True})
+        'gemini-2.5-flash-native-audio-latest',
+        settings=GoogleRealtimeModelSettings(google_config_overrides={'explicit_vad_signal': True}),
     )
     assert model._config('hi', None, model_settings=None).explicit_vad_signal is True  # pyright: ignore[reportPrivateUsage]
 
@@ -2311,6 +2360,7 @@ async def test_connect_reconnect_closes_previous_session() -> None:
             self.vertexai = False
 
     model = GoogleRealtimeModel(
+        'gemini-2.5-flash-native-audio-latest',
         provider=GoogleProvider(client=cast('Client', _Client())),
         settings=GoogleRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}),
     )

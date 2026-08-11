@@ -49,7 +49,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
 
     def __init__(
         self,
-        model: AzureRealtimeModelName = 'gpt-realtime',
+        model: AzureRealtimeModelName,
         *,
         provider: Provider[AsyncOpenAI] | str = 'azure',
         settings: RealtimeModelSettings | None = None,

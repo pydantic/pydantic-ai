@@ -3,7 +3,7 @@
 Built on the `google-genai` SDK, which manages the WebSocket transport for you. Available via the
 `google` optional group:
 
-    pip install "pydantic-ai-slim[google]"
+    pip install "pydantic-ai-slim[google-realtime]"
 
 Unlike the OpenAI provider, Gemini wants **16 kHz** PCM input audio (output is 24 kHz), produces a
 single response modality per session (audio *or* text), and natively accepts a stream of video
@@ -35,7 +35,7 @@ try:
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Gemini realtime model, '
-        'you can use the `google` optional group - `pip install "pydantic-ai-slim[google]"`'
+        'you can use the `google-realtime` optional group - `pip install "pydantic-ai-slim[google-realtime]"`'
     ) from _import_error
 
 from .._instrumentation import get_instructions
@@ -91,12 +91,23 @@ from ..models.google import (
 )
 from ..native_tools import AbstractNativeTool, CodeExecutionTool, WebFetchTool, WebSearchTool
 from ..profiles import DEFAULT_THINKING_TAGS
-from ..profiles.google import GoogleOpenAPISchemaTransformer
+from ..profiles.google import (
+    GoogleOpenAPISchemaTransformer,
+    _drop_unsupported_schema_keywords,  # pyright: ignore[reportPrivateUsage]
+)
 from ..providers import Provider, infer_provider
 from ..providers.gateway import is_gateway_provider
 from ..settings import ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._utils import (
+    inject_trace_context,
+    reconnect_with_backoff,
+    require_pcm_audio,
+    resolve_advertised_tools,
+    seed_speech_content,
+    seed_user_content,
+)
 from .codec import (
     AudioDelta,
     InputTranscript,
@@ -109,11 +120,6 @@ from .codec import (
     ToolCall,
     ToolCallCancelled,
     ToolResult,
-    inject_trace_context,
-    reconnect_with_backoff,
-    resolve_advertised_tools,
-    seed_speech_content,
-    seed_user_content,
 )
 from .model import RealtimeError, RealtimeModel
 from .profiles import DEFAULT_REALTIME_PROFILE, RealtimeModelProfile, RealtimeModelProfileSpec
@@ -396,23 +402,23 @@ async def _seed_request_parts(
         elif isinstance(part, UserPromptPart):
             parts.extend(
                 _genai_user_parts(
-                    await seed_user_content(part, provider_name=provider_name, supports_images=supports_images)
+                    await seed_user_content(part=part, provider_name=provider_name, supports_images=supports_images)
                 )
             )
         elif isinstance(part, SpeechPart):
             # Gemini has no client-content channel for raw audio, so seeding never replays retained
             # audio regardless of profile flags — the typed result is always a transcript string.
-            content = seed_speech_content(part, provider_name=provider_name, supports_audio=False)
+            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=False)
             if content:
                 parts.append(genai_types.Part(text=content))
         elif isinstance(part, ToolReturnPart):
             output, user_content = part.model_response_str_and_user_content()
-            parts.append(genai_types.Part(text=f'[Tool "{part.tool_name}" returned: {output}]'))
+            parts.append(genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name} returned: {output}]'))
             if user_content:
                 parts.extend(
                     _genai_user_parts(
                         await seed_user_content(
-                            UserPromptPart(content=user_content),
+                            part=UserPromptPart(content=user_content),
                             provider_name=provider_name,
                             supports_images=supports_images,
                         )
@@ -420,7 +426,7 @@ async def _seed_request_parts(
                 )
         elif isinstance(part, RetryPromptPart):
             output = part.model_response()
-            text = output if part.tool_name is None else f'[Tool "{part.tool_name}" error: {output}]'
+            text = output if part.tool_name is None else f'[Tool {part.tool_call_id}: {part.tool_name} error: {output}]'
             parts.append(genai_types.Part(text=text))
         else:
             assert_never(part)
@@ -438,12 +444,14 @@ def _seed_response_parts(message_parts: Sequence[ModelResponsePart], *, provider
                 start_tag, end_tag = DEFAULT_THINKING_TAGS
                 parts.append(genai_types.Part(text='\n'.join([start_tag, part.content, end_tag])))
         elif isinstance(part, ToolCallPart):
-            parts.append(genai_types.Part(text=f'[Tool call: {part.tool_name}({part.args_as_json_str()})]'))
+            parts.append(
+                genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name}({part.args_as_json_str()})]')
+            )
         elif isinstance(part, (NativeToolCallPart, NativeToolReturnPart)):
             continue
         elif isinstance(part, SpeechPart):
             # Assistant audio can't be replayed on any provider; the typed result is a transcript string.
-            content = seed_speech_content(part, provider_name=provider_name, supports_audio=False)
+            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=False)
             if content:
                 parts.append(genai_types.Part(text=content))
         elif isinstance(part, CompactionPart):
@@ -470,88 +478,6 @@ def _genai_user_parts(content: Sequence[str | BinaryContent]) -> list[genai_type
     ]
 
 
-# The keywords `genai_types.Schema` accepts. It forbids every other one outright, so a constraint
-# with no OpenAPI-subset equivalent — `multipleOf` from `Field(multiple_of=...)`, `uniqueItems` from
-# a `set[str]` — has to come off before validation or it would fail the session's setup rather than
-# just go unenforced. Read off the model so a field the SDK gains is honored without a change here.
-_SCHEMA_KEYWORDS = frozenset(field.alias or name for name, field in genai_types.Schema.model_fields.items())
-
-# Keywords whose value is itself a schema, a list of schemas, or a map of names to schemas — the
-# only places the walk may descend. Everything else is a leaf value, including `required` (names)
-# and `enum` (values), which must be copied through untouched.
-_SCHEMA_VALUED_KEYWORDS = frozenset({'items', 'additionalProperties'})
-_SCHEMA_LIST_KEYWORDS = frozenset({'anyOf'})
-_SCHEMA_MAP_KEYWORDS = frozenset({'properties'})
-
-
-def _flatten_all_of(json_schema: dict[str, Any]) -> dict[str, Any]:
-    """Best-effort merge of an `allOf` intersection, which `Schema` has no field for.
-
-    `properties` are merged and `required` unioned across the members and the parent's own keys;
-    for anything else the parent wins, then later members. Imperfect for genuinely conflicting
-    constraints, but the alternative — the keyword filter below dropping `allOf` outright — erases
-    the parameter's entire shape into an unconstrained `{}`, which loses far more. Boolean members
-    are skipped: `True` adds no constraint, and `False` (nothing validates) is inexpressible.
-    """
-    members = json_schema.get('allOf')
-    if not isinstance(members, list):
-        return json_schema
-    merged: dict[str, Any] = {}
-    properties: dict[str, Any] = {}
-    required: list[str] = []
-    parent = {key: value for key, value in json_schema.items() if key != 'allOf'}
-    candidates: list[dict[str, Any]] = [
-        *(cast('dict[str, Any]', member) for member in cast('list[Any]', members) if isinstance(member, dict)),
-        parent,
-    ]
-    for member in candidates:
-        member = _flatten_all_of(member)
-        for key, value in member.items():
-            if key == 'properties' and isinstance(value, dict):
-                properties.update(cast('dict[str, Any]', value))
-            elif key == 'required' and isinstance(value, list):
-                required.extend(name for name in cast('list[str]', value) if name not in required)
-            else:
-                merged[key] = value
-    if properties:
-        merged['properties'] = properties
-    if required:
-        merged['required'] = required
-    return merged
-
-
-def _drop_unsupported_keywords(json_schema: dict[str, Any]) -> dict[str, Any]:
-    """Drop the keywords Gemini's `Schema` has no field for, recursively."""
-    json_schema = _flatten_all_of(json_schema)
-    kept: dict[str, Any] = {}
-    for key, value in json_schema.items():
-        if key not in _SCHEMA_KEYWORDS:
-            continue
-        if key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
-            # A property's schema can be a boolean too: `True` accepts anything, so it becomes the
-            # unconstrained schema, and `False` accepts nothing, so the property is dropped rather
-            # than declared as something no value could satisfy.
-            kept[key] = {
-                name: {} if schema is True else _drop_unsupported_keywords(schema)
-                for name, schema in cast('dict[str, dict[str, Any] | bool]', value).items()
-                if schema is not False
-            }
-        elif key in _SCHEMA_LIST_KEYWORDS and isinstance(value, list):
-            # A member can be a boolean schema, which `Schema` has no way to express: `True` accepts
-            # anything, so it becomes the unconstrained schema, and `False` accepts nothing, so it
-            # contributes no alternative to the union at all.
-            kept[key] = [
-                {} if item is True else _drop_unsupported_keywords(item)
-                for item in cast('list[dict[str, Any] | bool]', value)
-                if item is not False
-            ]
-        elif key in _SCHEMA_VALUED_KEYWORDS and isinstance(value, dict):
-            kept[key] = _drop_unsupported_keywords(cast('dict[str, Any]', value))
-        else:
-            kept[key] = value
-    return kept
-
-
 def _schema_from_json_schema(json_schema: dict[str, Any]) -> genai_types.Schema:
     """Convert a JSON schema to the `Schema` a Gemini Live function declaration carries.
 
@@ -567,7 +493,10 @@ def _schema_from_json_schema(json_schema: dict[str, Any]) -> genai_types.Schema:
     advertised as non-nullable.
     """
     transformed = GoogleOpenAPISchemaTransformer(json_schema, strict=None).walk()
-    return genai_types.Schema.model_validate(_drop_unsupported_keywords(transformed))
+    accepted_keywords = frozenset(field.alias or name for name, field in genai_types.Schema.model_fields.items())
+    return genai_types.Schema.model_validate(
+        _drop_unsupported_schema_keywords(transformed, accepted_keywords=accepted_keywords)
+    )
 
 
 def _tool_def_to_genai(tool: ToolDefinition, *, async_tool_calls: bool = False) -> genai_types.FunctionDeclaration:
@@ -584,16 +513,9 @@ def _tool_def_to_genai(tool: ToolDefinition, *, async_tool_calls: bool = False) 
 def _native_tool_to_genai(tool: AbstractNativeTool) -> genai_types.Tool:
     """Map a supported Gemini built-in native tool to a genai `Tool`.
 
-    [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] maps to Grounding with Google Search,
-    [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] to URL context, and
-    [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] to Gemini's code execution tool.
-    [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] validates native tools against
-    the model's [`supported_native_tools`][pydantic_ai.realtime.RealtimeModelProfile.supported_native_tools]
-    profile before connecting, so only these three reach this mapping.
-
-    Note: some Gemini native-audio Live models reject certain built-in tools at connect time. That's a
-    request-time concern surfaced by the API; capturing whatever code-execution parts the model emits
-    (see `_map_server_content`) is always safe and needs no tool to have been requested.
+    Today's Live profile enables Google Search only. URL context and code execution remain class-level
+    capabilities so a future model profile can enable them through the standard capability/profile
+    intersection without another adapter change.
     """
     if isinstance(tool, WebSearchTool):
         return genai_types.Tool(google_search=genai_types.GoogleSearch())
@@ -667,13 +589,8 @@ def _single_ws_user_agent(client: Client) -> Generator[None]:
     capitalized variant just for the connect and restore it after, so a single user-agent reaches the
     socket while HTTP requests keep pydantic-ai's user-agent.
     """
-    # Reach into the SDK's private HTTP options; guarded with `getattr` so custom / fake clients that
-    # don't expose them (e.g. in tests) simply skip the reconciliation.
-    raw_headers = getattr(getattr(getattr(client, '_api_client', None), '_http_options', None), 'headers', None)
-    if not isinstance(raw_headers, dict):
-        yield
-        return
-    headers = cast('dict[str, str]', raw_headers)
+    headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
+    assert headers is not None
     duplicates = [key for key in headers if key.lower() == 'user-agent']
     if len(duplicates) < 2:
         yield
@@ -694,14 +611,10 @@ def _ws_trace_context(client: Client) -> Generator[None]:
     `google-genai` forwards the client's HTTP headers as the Live WebSocket's `additional_headers`, so
     injecting `traceparent` here propagates trace context to the server (e.g. a gateway) over the
     handshake — see `inject_trace_context` for the rationale. The keys it added are removed afterwards
-    so the shared client's later HTTP requests don't carry a stale trace context. Guarded like
-    `_single_ws_user_agent`: custom/fake clients without the private HTTP options simply skip injection.
+    so the shared client's later HTTP requests don't carry a stale trace context.
     """
-    raw_headers = getattr(getattr(getattr(client, '_api_client', None), '_http_options', None), 'headers', None)
-    if not isinstance(raw_headers, dict):
-        yield
-        return
-    headers = cast('dict[str, str]', raw_headers)
+    headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
+    assert headers is not None
     carrier: dict[str, str] = {}
     inject_trace_context(carrier)
     # Compared case-insensitively: header names are, and `websockets` stores them that way, so adding a
@@ -784,7 +697,7 @@ class GoogleRealtimeModel(RealtimeModel):
             identify the model (e.g. an Azure deployment named something other than its model).
     """
 
-    model: GoogleRealtimeModelName = 'gemini-2.5-flash-native-audio-latest'
+    model: GoogleRealtimeModelName
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
     _provider: Provider[Client] = field(init=False, repr=False)
@@ -795,9 +708,9 @@ class GoogleRealtimeModel(RealtimeModel):
     # dataclass field of that name would shadow the property.
     def __init__(
         self,
-        model: GoogleRealtimeModelName = 'gemini-2.5-flash-native-audio-latest',
+        model: GoogleRealtimeModelName,
         *,
-        provider: Provider[Client] | str = 'google',
+        provider: Literal['google', 'google-cloud', 'gateway'] | Provider[Client] = 'google',
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
@@ -805,7 +718,8 @@ class GoogleRealtimeModel(RealtimeModel):
         self.settings = settings
         self._profile = profile
         if isinstance(provider, str):
-            provider = cast('Provider[Client]', infer_provider(provider))
+            provider_name = 'gateway/google-cloud' if provider == 'gateway' else provider
+            provider = cast('Provider[Client]', infer_provider(provider_name))
         self._provider = provider
         self._gateway = is_gateway_provider(provider)
 
@@ -1211,6 +1125,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         """
         # `send_realtime_input` is typed against a PIL.Image union the SDK leaves partially untyped.
         if isinstance(content, BinaryAudio):
+            require_pcm_audio(content, provider_name=self._provider_name)
             await self._session.send_realtime_input(  # pyright: ignore[reportUnknownMemberType]
                 audio=genai_types.Blob(data=content.data, mime_type=f'audio/pcm;rate={INPUT_SAMPLE_RATE}')
             )

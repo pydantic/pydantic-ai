@@ -40,7 +40,7 @@ def _realtime_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
 
     The realtime models resolve their provider (and its API client) eagerly at construction, like
     `OpenAIChatModel` / `GoogleModel`. Network-free tests never hit the network, so a placeholder key
-    is enough to let `OpenAIRealtimeModel()` / `GoogleRealtimeModel()` build their default providers.
+    is enough to let realtime models build their default providers.
 
     The cassette fixtures build their provider from the session-scoped `openai_api_key` /
     `gemini_api_key` fixtures, which are resolved before this (function-scoped) override runs and read

@@ -19,6 +19,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import (
+    BinaryAudio,
     BinaryContent,
     ImageUrl,
     ModelMessage,
@@ -78,14 +79,23 @@ def test_xai_public_exports_are_curated() -> None:
 
 
 def _model(settings: rt_xai.XaiRealtimeModelSettings | None = None, **kwargs: Any) -> XaiRealtimeModel:
-    return XaiRealtimeModel(provider=XaiProvider(api_key='k'), settings=settings, **kwargs)
+    model = kwargs.pop('model', 'grok-voice-latest')
+    return XaiRealtimeModel(model, provider=XaiProvider(api_key='k'), settings=settings, **kwargs)
 
 
 def test_realtime_rejects_custom_api_host() -> None:
     """A custom `api_host` sets the gRPC channel target, which the realtime WebSocket can't honor (it
     derives its URL from `base_url`), so construction fails loudly rather than dialing the wrong host."""
     with pytest.raises(UserError, match='does not support a custom `api_host`'):
-        XaiRealtimeModel(provider=XaiProvider(api_key='k', api_host='grpc.custom.example.com'))
+        XaiRealtimeModel('grok-voice-latest', provider=XaiProvider(api_key='k', api_host='grpc.custom.example.com'))
+
+
+async def test_connection_send_audio_rejects_non_pcm_media_type() -> None:
+    ws = FakeWebSocket([])
+    conn = XaiRealtimeConnection(ws)  # type: ignore[arg-type]
+    with pytest.raises(UserError, match='require raw PCM audio'):
+        await conn.send(BinaryAudio(data=b'RIFF', media_type='audio/wav'))
+    assert ws.sent == []
 
 
 def _connect(
@@ -945,7 +955,7 @@ async def test_provider_str_resolves_key_from_env(monkeypatch: pytest.MonkeyPatc
     fake_connect = FakeConnect(ws)
     monkeypatch.setattr(rt_xai.websockets, 'connect', fake_connect)
 
-    model = XaiRealtimeModel()
+    model = XaiRealtimeModel('grok-voice-latest')
     assert model.model_name == 'grok-voice-latest'
     async with _connect(model, 'hi'):
         pass
@@ -993,4 +1003,4 @@ def test_provider_from_xai_client_without_exposed_key_raises() -> None:
     """A provider built from a pre-configured `xai_client` can't expose its key, so realtime errors clearly."""
     provider = XaiProvider(xai_client=AsyncClient(api_key='hidden'))
     with pytest.raises(UserError, match='pre-configured `xai_client`'):
-        XaiRealtimeModel(provider=provider)
+        XaiRealtimeModel('grok-voice-latest', provider=provider)

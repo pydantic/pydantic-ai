@@ -6,7 +6,7 @@ protocol to the shared realtime event types.
 Requires the `websockets` and `openai` packages, available via the `realtime` and `openai` optional
 groups:
 
-    pip install "pydantic-ai-slim[realtime,openai]"
+    pip install "pydantic-ai-slim[openai-realtime]"
 """
 
 from __future__ import annotations as _annotations
@@ -38,7 +38,7 @@ try:
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `websockets` package to use the OpenAI Realtime model, '
-        'you can use the `realtime` and `openai` optional groups - `pip install "pydantic-ai-slim[realtime,openai]"`'
+        'you can use the `openai-realtime` optional group - `pip install "pydantic-ai-slim[openai-realtime]"`'
     ) from _import_error
 
 if TYPE_CHECKING:
@@ -95,6 +95,7 @@ from ._openai_protocol import (
     turn_detection_config,
     user_message_item,
 )
+from ._utils import inject_trace_context, reconnect_with_backoff, require_pcm_audio, resolve_advertised_tools
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -108,9 +109,6 @@ from .codec import (
     SessionUsage,
     ToolResult,
     TruncateOutput,
-    inject_trace_context,
-    reconnect_with_backoff,
-    resolve_advertised_tools,
 )
 from .model import RealtimeModel
 from .profiles import RealtimeModelProfileSpec
@@ -343,9 +341,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._dial = dial
         self._reconnect = reconnect
         self._restores_state_on_reconnect = False
-        # Set by the session (see `set_conversation`) so a re-dial can replay the call. The API keeps no
+        # Set by the session (see `set_message_history`) so a re-dial can replay the call. The API keeps no
         # state across sessions, so without it a reconnect resumes knowing nothing that was said.
-        self._conversation: Callable[[], Sequence[ModelMessage]] | None = None
+        self._message_history: Callable[[], Sequence[ModelMessage]] | None = None
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
         self._observes_output_audio = observes_output_audio
@@ -372,8 +370,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     def model_name(self) -> str | None:
         return self._model_name_getter() if self._model_name_getter is not None else self._model_name
 
-    def set_conversation(self, conversation: Callable[[], Sequence[ModelMessage]]) -> None:
-        self._conversation = conversation
+    def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
+        self._message_history = message_history
         # A reconnect will now replay the call, so it restores state rather than starting blank.
         self._restores_state_on_reconnect = True
 
@@ -382,9 +380,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         return _map_usage(usage)
 
     @property
-    def conversation(self) -> Callable[[], Sequence[ModelMessage]] | None:
+    def message_history(self) -> Callable[[], Sequence[ModelMessage]] | None:
         """The call so far, when a session has offered it for replay on reconnect."""
-        return self._conversation
+        return self._message_history
 
     @property
     def input_transcription_enabled(self) -> bool:
@@ -398,6 +396,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         `CancelResponse`, and `TruncateOutput`.
         """
         if isinstance(content, BinaryAudio):
+            require_pcm_audio(content, provider_name=self._provider_label)
             await self._send_event(
                 {
                     'type': INPUT_AUDIO_BUFFER_APPEND_EVENT,
@@ -816,7 +815,7 @@ class OpenAIRealtimeModel(RealtimeModel):
     # vendor a closed or rejecting connection names in its errors.
     _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = OpenAIRealtimeConnection
 
-    model: OpenAIRealtimeModelName = 'gpt-realtime'
+    model: OpenAIRealtimeModelName
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
@@ -826,7 +825,7 @@ class OpenAIRealtimeModel(RealtimeModel):
     # dataclass field of that name would shadow the property.
     def __init__(
         self,
-        model: OpenAIRealtimeModelName = 'gpt-realtime',
+        model: OpenAIRealtimeModelName,
         *,
         provider: Provider[AsyncOpenAI] | str = 'openai',
         settings: RealtimeModelSettings | None = None,
@@ -970,7 +969,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         server_model: str | None = None
 
         # Assigned once the connection exists, which is *after* `dial` is defined but before it can be
-        # called again: a re-dial reads the call so far off it and replays it (see `set_conversation`).
+        # called again: a re-dial reads the call so far off it and replays it (see `set_message_history`).
         connection: OpenAIRealtimeConnection | None = None
 
         async def dial() -> ClientConnection:
@@ -992,9 +991,9 @@ class OpenAIRealtimeModel(RealtimeModel):
                 server_model = model
             await ws.send(to_json({'type': SESSION_UPDATE_EVENT, 'session': session_config}).decode())
             await expect_event(ws, SESSION_UPDATED_EVENT, timeout=handshake_timeout)
-            if connection is not None and (conversation := connection.conversation) is not None:
+            if connection is not None and (message_history := connection.message_history) is not None:
                 # A re-dial: the API keeps nothing across sessions, so replay the call to continue it.
-                for item in await replay_items(conversation(), profile=self.profile, provider_name=self.system):
+                for item in await replay_items(message_history(), profile=self.profile, provider_name=self.system):
                     await ws.send(to_json({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item}).decode())
             return ws
 

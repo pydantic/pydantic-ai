@@ -440,6 +440,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 | RealtimeSessionReconnectEvent()
                 | RealtimeSessionErrorEvent()
             ):  # pragma: no cover
+                # This spells out `RealtimeSessionEvent`: class patterns cannot reference a union alias,
+                # and a guarded `isinstance` arm prevents pyright from proving this match exhaustive.
                 # Realtime session events don't flow through UI event streams.
                 pass
             case _:

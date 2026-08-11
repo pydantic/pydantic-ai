@@ -23,7 +23,7 @@ Requires the `websockets` package (the `realtime` optional group), `xai-sdk` (th
 [`XaiProvider`][pydantic_ai.providers.xai.XaiProvider]), and `openai` (the `openai` group, whose SDK
 supplies the event types the shared OpenAI codec is built on):
 
-    pip install "pydantic-ai-slim[realtime,xai,openai]"
+    pip install "pydantic-ai-slim[xai-realtime]"
 """
 
 from __future__ import annotations as _annotations
@@ -54,7 +54,7 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `websockets` and `openai` packages to use the xAI Grok Voice realtime model '
         '(`openai` supplies the event types of the OpenAI codec this provider reuses), you can use the '
         '`realtime`, `xai`, and `openai` optional groups - '
-        '`pip install "pydantic-ai-slim[realtime,xai,openai]"`'
+        '`pip install "pydantic-ai-slim[xai-realtime]"`'
     ) from _import_error
 
 from .._instrumentation import get_instructions
@@ -81,14 +81,13 @@ from ._openai_protocol import (
     tool_def_to_openai,
     turn_detection_config,
 )
+from ._utils import inject_trace_context, resolve_advertised_tools
 from .codec import (
     ConversationCreated,
     ConversationItemCreated,
     InputTranscript,
     RealtimeCodecEvent,
     ToolCall,
-    inject_trace_context,
-    resolve_advertised_tools,
 )
 from .model import RealtimeModel
 from .openai import OpenAIRealtimeConnection, ServerVAD
@@ -297,7 +296,7 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
                 mapped.details[key] = raw
         return mapped
 
-    def set_conversation(self, conversation: Callable[[], Sequence[ModelMessage]]) -> None:
+    def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
         """Ignored: xAI restores the conversation itself, so replaying it would say everything twice."""
 
     @property
@@ -333,7 +332,7 @@ class XaiRealtimeModel(RealtimeModel):
     `wss://api.x.ai/v1/realtime`.
 
     Args:
-        model: The model name, e.g. `grok-voice-latest` (the default, tracks the current model) or a
+        model: The model name, e.g. `grok-voice-latest` (which tracks the current model) or a
             pinned version like `grok-voice-think-fast-1.0`. The `model` query parameter is required by
             the server, which otherwise falls back to a default silently.
         provider: The provider to use for authentication and the base URL. Defaults to `'xai'`.
@@ -348,7 +347,7 @@ class XaiRealtimeModel(RealtimeModel):
             identify the model (e.g. an Azure deployment named something other than its model).
     """
 
-    model: XaiRealtimeModelName = 'grok-voice-latest'
+    model: XaiRealtimeModelName
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
     _provider: XaiProvider = field(init=False, repr=False)
@@ -359,7 +358,7 @@ class XaiRealtimeModel(RealtimeModel):
     # dataclass field of that name would shadow the property.
     def __init__(
         self,
-        model: XaiRealtimeModelName = 'grok-voice-latest',
+        model: XaiRealtimeModelName,
         *,
         provider: XaiProvider | str = 'xai',
         settings: RealtimeModelSettings | None = None,

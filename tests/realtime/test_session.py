@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from threading import Event as ThreadEvent
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 import anyio
 import pytest
@@ -81,6 +81,7 @@ from pydantic_ai.realtime import (
     TranscriptUpdate,
 )
 from pydantic_ai.realtime._session import _pending_message_text  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.realtime._utils import resolve_advertised_tools, seed_pcm_audio, seed_speech_content
 from pydantic_ai.realtime.codec import (
     AudioDelta,
     CancelResponse,
@@ -100,9 +101,6 @@ from pydantic_ai.realtime.codec import (
     ToolCallCancelled,
     ToolResult,
     TruncateOutput,
-    resolve_advertised_tools,
-    seed_pcm_audio,
-    seed_speech_content,
 )
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tool_manager import ToolManager
@@ -158,7 +156,7 @@ def test_seed_pcm_audio_rejects_truncated_wav() -> None:
     truncated = BinaryContent(data=audio.data[:-2], media_type='audio/wav')
 
     with pytest.raises(UserError, match='not valid WAV audio'):
-        seed_pcm_audio(truncated, provider_name='test', sample_rate=24000)
+        seed_pcm_audio(audio=truncated, provider_name='test', sample_rate=24000)
 
 
 async def _noop_runner(name: str, args: dict[str, Any], call_id: str) -> str:  # pragma: no cover
@@ -219,6 +217,13 @@ def test_runner_toolset_has_stable_id() -> None:
 
 def RealtimeSession(connection: RealtimeConnection, runner: Any = _noop_runner, **kwargs: Any) -> _RealtimeSession:
     """Construct a session with the real `ToolManager` API while keeping test setup compact."""
+    if any(name in kwargs for name in ('model_name', 'provider_name', 'provider_url')):
+        kwargs['model'] = FakeRealtimeModel(
+            connection,
+            model_name=kwargs.pop('model_name', None),
+            system=kwargs.pop('provider_name', None),
+            base_url=kwargs.pop('provider_url', None),
+        )
     return _RealtimeSession(connection, tool_manager=make_tool_manager(runner), **kwargs)
 
 
@@ -314,10 +319,16 @@ class FakeRealtimeModel(RealtimeModel):
         *,
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfile | None = None,
+        model_name: str | None = 'fake-realtime',
+        system: str | None = 'fake',
+        base_url: str | None = None,
     ) -> None:
         self._connection = connection
         self.settings = settings
         self._fixed_profile = profile or _profile()
+        self._model_name = model_name
+        self._system = system
+        self._base_url = base_url
         self.last_instructions: str | None = None
         self.last_tools: list[ToolDefinition] | None = None
         self.last_native_tools: list[AbstractNativeTool] | None = None
@@ -326,11 +337,15 @@ class FakeRealtimeModel(RealtimeModel):
 
     @property
     def model_name(self) -> str:
-        return 'fake-realtime'
+        return cast('str', self._model_name)
 
     @property
     def system(self) -> str:
-        return 'fake'
+        return cast('str', self._system)
+
+    @property
+    def base_url(self) -> str | None:
+        return self._base_url
 
     @property
     def profile(self) -> RealtimeModelProfile:
@@ -3394,22 +3409,22 @@ async def test_session_offers_the_conversation_for_replay_when_seeding_is_suppor
     class _RecordsConversation(FakeRealtimeConnection):
         def __init__(self, events: list[RealtimeCodecEvent]) -> None:
             super().__init__(events)
-            self.conversation: Callable[[], Sequence[ModelMessage]] | None = None
+            self.message_history: Callable[[], Sequence[ModelMessage]] | None = None
 
-        def set_conversation(self, conversation: Callable[[], Sequence[ModelMessage]]) -> None:
-            self.conversation = conversation
+        def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
+            self.message_history = message_history
 
     seeding = _RecordsConversation([])
     async with RealtimeSession(seeding, profile=_profile(supports_session_seeding=True)) as session:
         await session.send('hello')
-    assert seeding.conversation is not None
+    assert seeding.message_history is not None
     # A live view, not a snapshot: the call grows after the connection is handed it.
-    assert [type(m).__name__ for m in seeding.conversation()] == ['ModelRequest']
+    assert [type(m).__name__ for m in seeding.message_history()] == ['ModelRequest']
 
     no_seeding = _RecordsConversation([])
     async with RealtimeSession(no_seeding, profile=_profile(supports_session_seeding=False)):
         pass
-    assert no_seeding.conversation is None
+    assert no_seeding.message_history is None
 
 
 async def test_reconnect_while_idle_passes_through() -> None:
@@ -3849,8 +3864,8 @@ async def test_handoff_to_standard_agent_run() -> None:
 async def test_contentless_speech_parts_are_skipped_for_seeding_and_text_handoff() -> None:
     user = SpeechPart(speaker='user')
     assistant = SpeechPart(speaker='assistant')
-    assert seed_speech_content(user, provider_name='test', supports_audio=False) == ''
-    assert seed_speech_content(assistant, provider_name='test', supports_audio=False) == ''
+    assert seed_speech_content(part=user, provider_name='test', supports_audio=False) == ''
+    assert seed_speech_content(part=assistant, provider_name='test', supports_audio=False) == ''
 
     captured: list[ModelMessage] = []
 

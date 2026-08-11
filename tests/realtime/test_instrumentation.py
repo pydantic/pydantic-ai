@@ -75,12 +75,19 @@ from pydantic_ai.realtime.codec import (
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from .test_session import make_tool_manager
+from .test_session import FakeRealtimeModel, make_tool_manager
 
 pytestmark = pytest.mark.anyio
 
 
 def RealtimeSession(connection: RealtimeConnection, runner: Any, **kwargs: Any) -> _RealtimeSession:
+    if any(name in kwargs for name in ('model_name', 'provider_name', 'provider_url')):
+        kwargs['model'] = FakeRealtimeModel(
+            connection,
+            model_name=kwargs.pop('model_name', None),
+            system=kwargs.pop('provider_name', None),
+            base_url=kwargs.pop('provider_url', None),
+        )
     return _RealtimeSession(connection, tool_manager=make_tool_manager(runner), **kwargs)
 
 

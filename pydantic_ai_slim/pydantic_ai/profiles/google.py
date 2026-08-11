@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
@@ -19,6 +19,71 @@ _GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES: tuple[str, ...] = (
     'application/pdf',
     'text/plain',
 )
+
+_SCHEMA_VALUED_KEYWORDS = frozenset({'items', 'additionalProperties'})
+_SCHEMA_LIST_KEYWORDS = frozenset({'anyOf'})
+_SCHEMA_MAP_KEYWORDS = frozenset({'properties'})
+
+
+def _flatten_all_of(json_schema: dict[str, Any]) -> dict[str, Any]:
+    """Best-effort merge an `allOf` intersection into Gemini's OpenAPI subset."""
+    members = json_schema.get('allOf')
+    if not isinstance(members, list):
+        return json_schema
+    merged: dict[str, Any] = {}
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    parent = {key: value for key, value in json_schema.items() if key != 'allOf'}
+    candidates = [
+        *(cast('dict[str, Any]', member) for member in cast('list[Any]', members) if isinstance(member, dict)),
+        parent,
+    ]
+    for member in candidates:
+        member = _flatten_all_of(member)
+        for key, value in member.items():
+            if key == 'properties' and isinstance(value, dict):
+                properties.update(cast('dict[str, Any]', value))
+            elif key == 'required' and isinstance(value, list):
+                required.extend(name for name in cast('list[str]', value) if name not in required)
+            else:
+                merged[key] = value
+    if properties:
+        merged['properties'] = properties
+    if required:
+        merged['required'] = required
+    return merged
+
+
+def _drop_unsupported_schema_keywords(
+    json_schema: dict[str, Any], *, accepted_keywords: frozenset[str]
+) -> dict[str, Any]:
+    """Drop unsupported Gemini schema keywords recursively without importing `google-genai`."""
+    json_schema = _flatten_all_of(json_schema)
+    kept: dict[str, Any] = {}
+    for key, value in json_schema.items():
+        if key not in accepted_keywords:
+            continue
+        if key in _SCHEMA_MAP_KEYWORDS and isinstance(value, dict):
+            kept[key] = {
+                name: {}
+                if schema is True
+                else _drop_unsupported_schema_keywords(schema, accepted_keywords=accepted_keywords)
+                for name, schema in cast('dict[str, dict[str, Any] | bool]', value).items()
+                if schema is not False
+            }
+        elif key in _SCHEMA_LIST_KEYWORDS and isinstance(value, list):
+            kept[key] = [
+                {} if item is True else _drop_unsupported_schema_keywords(item, accepted_keywords=accepted_keywords)
+                for item in cast('list[dict[str, Any] | bool]', value)
+                if item is not False
+            ]
+        elif key in _SCHEMA_VALUED_KEYWORDS and isinstance(value, dict):
+            kept[key] = _drop_unsupported_schema_keywords(
+                cast('dict[str, Any]', value), accepted_keywords=accepted_keywords
+            )
+        else:
+            kept[key] = value
+    return kept
 
 
 class GoogleModelProfile(ModelProfile, total=False):

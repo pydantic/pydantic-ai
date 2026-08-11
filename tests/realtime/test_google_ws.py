@@ -391,7 +391,7 @@ def test_profile_allow_seeding() -> None:
     that a recording wouldn't protect. Gemini Live has no manual turn control or server-side
     interruption (automatic VAD only).
     """
-    profile = GoogleRealtimeModel().profile
+    profile = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest').profile
     assert profile == RealtimeModelProfile(
         supports_image_input=True,
         supports_manual_turn_control=False,

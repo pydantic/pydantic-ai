@@ -83,6 +83,7 @@ from ..messages import (
 from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
+from ._utils import seed_pcm_audio, seed_speech_content, seed_user_content
 from .codec import (
     AudioDelta,
     InputTranscript,
@@ -90,9 +91,6 @@ from .codec import (
     RealtimeCodecEvent,
     ResponseDone,
     ToolCall,
-    seed_pcm_audio,
-    seed_speech_content,
-    seed_user_content,
 )
 from .model import RealtimeError
 from .profiles import RealtimeModelProfile
@@ -457,17 +455,17 @@ async def _seed_request_items(
             continue
         elif isinstance(part, UserPromptPart):
             if content := _user_content_items(
-                await seed_user_content(part, provider_name=provider_name, supports_images=supports_images)
+                await seed_user_content(part=part, provider_name=provider_name, supports_images=supports_images)
             ):
                 items.append(_message_item('user', content))
         elif isinstance(part, SpeechPart):
-            content = seed_speech_content(part, provider_name=provider_name, supports_audio=supports_audio)
+            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=supports_audio)
             if isinstance(content, str):
                 if content:
                     items.append(_message_item('user', [_text_content('input_text', content)]))
             else:
                 pcm = seed_pcm_audio(
-                    content,
+                    audio=content,
                     provider_name=provider_name,
                     sample_rate=audio_input_sample_rate,
                 )
@@ -485,7 +483,7 @@ async def _seed_request_items(
             if user_content and (
                 content := _user_content_items(
                     await seed_user_content(
-                        UserPromptPart(content=user_content),
+                        part=UserPromptPart(content=user_content),
                         provider_name=provider_name,
                         supports_images=supports_images,
                     )
@@ -543,7 +541,7 @@ def _seed_response_items(
         elif isinstance(part, SpeechPart):
             # Assistant audio can't be replayed on any provider, so the audio-seeding capability
             # doesn't apply here and the typed result is always a transcript string.
-            content = seed_speech_content(part, provider_name=provider_name, supports_audio=False)
+            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=False)
             if content:
                 items.append(_message_item('assistant', [_text_content('output_text', content)]))
         elif isinstance(part, CompactionPart):
@@ -608,7 +606,7 @@ async def user_message_item(
 ) -> dict[str, Any] | None:
     """Build a live follow-up user item through the same normalization used for seeded history."""
     normalized = await seed_user_content(
-        UserPromptPart(content=content), provider_name=provider_name, supports_images=supports_images
+        part=UserPromptPart(content=content), provider_name=provider_name, supports_images=supports_images
     )
     return _message_item('user', items) if (items := _user_content_items(normalized)) else None
 

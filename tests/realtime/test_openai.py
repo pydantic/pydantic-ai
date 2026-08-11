@@ -91,7 +91,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from ..conftest import try_import
-from .test_session import make_tool_manager
+from .test_session import FakeRealtimeModel, make_tool_manager
 from .ws_helpers import collect_codec_events, collect_session_events
 
 with try_import() as imports_successful:
@@ -1020,6 +1020,7 @@ async def test_connect_resolves_workload_identity_token(monkeypatch: pytest.Monk
 
 def test_session_config_server_vad_params() -> None:
     model = OpenAIRealtimeModel(
+        'gpt-realtime',
         settings=rt_openai.OpenAIRealtimeModelSettings(
             openai_turn_detection={
                 'type': 'server_vad',
@@ -1030,7 +1031,7 @@ def test_session_config_server_vad_params() -> None:
                 'interrupt_response': False,
                 'idle_timeout_ms': 5000,
             },
-        )
+        ),
     )
     config = model._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['turn_detection'] == {
@@ -1055,20 +1056,23 @@ def test_server_vad_from_turn_detection_mapping() -> None:
 
 def test_session_config_truncation_modes() -> None:
     # A plain mode passes through as-is; a retention ratio maps to the retention_ratio truncation shape.
-    auto = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(openai_truncation='disabled'))
+    auto = OpenAIRealtimeModel(
+        'gpt-realtime', settings=rt_openai.OpenAIRealtimeModelSettings(openai_truncation='disabled')
+    )
     assert auto._session_config('hi', None, model_settings=None)['truncation'] == 'disabled'  # pyright: ignore[reportPrivateUsage]
 
     ratio = OpenAIRealtimeModel(
+        'gpt-realtime',
         settings=rt_openai.OpenAIRealtimeModelSettings(
             openai_truncation={'type': 'retention_ratio', 'retention_ratio': 0.8}
-        )
+        ),
     )
     assert ratio._session_config('hi', None, model_settings=None)['truncation'] == {  # pyright: ignore[reportPrivateUsage]
         'type': 'retention_ratio',
         'retention_ratio': 0.8,
     }
     # Absent by default so the wire stays byte-identical for sessions that don't set it.
-    assert 'truncation' not in OpenAIRealtimeModel()._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
+    assert 'truncation' not in OpenAIRealtimeModel('gpt-realtime')._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None:
@@ -1098,10 +1102,11 @@ def test_session_config_thinking_on_non_reasoning_model_is_ignored() -> None:
 
 def test_session_config_openai_turn_detection_overrides_base() -> None:
     model = OpenAIRealtimeModel(
+        'gpt-realtime',
         settings=rt_openai.OpenAIRealtimeModelSettings(
             turn_detection={'sensitivity': 'low'},
             openai_turn_detection={'type': 'semantic_vad', 'eagerness': 'high'},
-        )
+        ),
     )
     config = model._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['turn_detection'] == {
@@ -1117,7 +1122,7 @@ def test_session_config_cross_provider_turn_detection_sensitivity(
     sensitivity: Literal['low', 'medium', 'high'], threshold: float
 ) -> None:
     settings = rt_openai.OpenAIRealtimeModelSettings(turn_detection={'sensitivity': sensitivity})
-    config = OpenAIRealtimeModel(settings=settings)._session_config(  # pyright: ignore[reportPrivateUsage]
+    config = OpenAIRealtimeModel('gpt-realtime', settings=settings)._session_config(  # pyright: ignore[reportPrivateUsage]
         'hi', None, model_settings=None
     )
     assert config['audio']['input']['turn_detection']['threshold'] == threshold
@@ -1125,15 +1130,15 @@ def test_session_config_cross_provider_turn_detection_sensitivity(
 
 def test_session_config_manual_turn_detection_is_null() -> None:
     """`turn_detection=False` disables VAD (push-to-talk), sent as an explicit null."""
-    model = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(turn_detection=False))
+    model = OpenAIRealtimeModel('gpt-realtime', settings=rt_openai.OpenAIRealtimeModelSettings(turn_detection=False))
     config = model._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['turn_detection'] is None
 
 
 def test_session_config_turn_detection_true_matches_default() -> None:
     """`turn_detection=True` enables server VAD at the provider defaults — identical to an absent setting."""
-    enabled = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(turn_detection=True))
-    default = OpenAIRealtimeModel()
+    enabled = OpenAIRealtimeModel('gpt-realtime', settings=rt_openai.OpenAIRealtimeModelSettings(turn_detection=True))
+    default = OpenAIRealtimeModel('gpt-realtime')
     assert (
         enabled._session_config('hi', None, model_settings=None)['audio']['input']['turn_detection']  # pyright: ignore[reportPrivateUsage]
         == default._session_config('hi', None, model_settings=None)['audio']['input']['turn_detection']  # pyright: ignore[reportPrivateUsage]
@@ -1142,9 +1147,10 @@ def test_session_config_turn_detection_true_matches_default() -> None:
 
 def test_session_config_noise_reduction_and_speed_and_modalities() -> None:
     model = OpenAIRealtimeModel(
+        'gpt-realtime',
         settings=rt_openai.OpenAIRealtimeModelSettings(
             openai_input_noise_reduction='near_field', openai_output_speed=1.25, output_modality='text'
-        )
+        ),
     )
     config = model._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['noise_reduction'] == {'type': 'near_field'}
@@ -1154,7 +1160,7 @@ def test_session_config_noise_reduction_and_speed_and_modalities() -> None:
 
 def test_session_config_forwards_parallel_tool_calls_and_tool_choice() -> None:
     settings = rt_openai.OpenAIRealtimeModelSettings(parallel_tool_calls=True, tool_choice='required')
-    model = OpenAIRealtimeModel(settings=settings)
+    model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
     assert model.settings == settings
     tools = [ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
     config = model._session_config('hi', tools, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
@@ -1163,7 +1169,9 @@ def test_session_config_forwards_parallel_tool_calls_and_tool_choice() -> None:
 
 
 def test_session_config_merges_model_defaults_and_connection_overrides() -> None:
-    model = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(openai_voice='alloy', max_tokens=128))
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', settings=rt_openai.OpenAIRealtimeModelSettings(openai_voice='alloy', max_tokens=128)
+    )
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
         'hi', None, model_settings=rt_openai.OpenAIRealtimeModelSettings(openai_voice='echo')
     )
@@ -1173,14 +1181,16 @@ def test_session_config_merges_model_defaults_and_connection_overrides() -> None
 
 
 def test_session_config_forwards_custom_voice_id() -> None:
-    model = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(openai_voice=VoiceID(id='voice_custom')))
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', settings=rt_openai.OpenAIRealtimeModelSettings(openai_voice=VoiceID(id='voice_custom'))
+    )
     config = model._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
 
     assert config['audio']['output']['voice'] == {'id': 'voice_custom'}
 
 
 def test_session_config_tool_choice_single_function() -> None:
-    model = OpenAIRealtimeModel()
+    model = OpenAIRealtimeModel('gpt-realtime')
     tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('get_weather', 'other')]
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
         'hi', tools, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice=['get_weather'])
@@ -1190,7 +1200,7 @@ def test_session_config_tool_choice_single_function() -> None:
 
 
 def test_session_config_tool_choice_multi_tool_restricts_advertised_tools() -> None:
-    model = OpenAIRealtimeModel()
+    model = OpenAIRealtimeModel('gpt-realtime')
     tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('a', 'b', 'excluded')]
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
         'hi', tools, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice=['a', 'b'])
@@ -1200,7 +1210,7 @@ def test_session_config_tool_choice_multi_tool_restricts_advertised_tools() -> N
 
 
 def test_session_config_tool_choice_tool_or_output_restricts_advertised_tools() -> None:
-    model = OpenAIRealtimeModel()
+    model = OpenAIRealtimeModel('gpt-realtime')
     tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('a', 'excluded')]
     settings = rt_openai.OpenAIRealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['a']))
     config = model._session_config('hi', tools, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
@@ -1210,7 +1220,7 @@ def test_session_config_tool_choice_tool_or_output_restricts_advertised_tools() 
 
 def test_session_config_tool_choice_none_advertises_no_tools() -> None:
     tools = [ToolDefinition(name='unsafe', parameters_json_schema={'type': 'object'})]
-    config = OpenAIRealtimeModel()._session_config(  # pyright: ignore[reportPrivateUsage]
+    config = OpenAIRealtimeModel('gpt-realtime')._session_config(  # pyright: ignore[reportPrivateUsage]
         'hi', tools, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice='none')
     )
     assert config['tool_choice'] == 'none'
@@ -1490,7 +1500,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
     async def download_image(*args: Any, **kwargs: Any) -> Any:
         return {'data': b'url-image', 'data_type': 'image/png'}
 
-    monkeypatch.setattr('pydantic_ai.realtime.codec.download_item', download_image)
+    monkeypatch.setattr('pydantic_ai.realtime._utils.download_item', download_image)
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [
@@ -1650,7 +1660,7 @@ async def test_connect_seeds_multimodal_user_prompt_as_native_image(monkeypatch:
     async def download_image(*args: Any, **kwargs: Any) -> Any:
         return {'data': b'png', 'data_type': 'image/png'}
 
-    monkeypatch.setattr('pydantic_ai.realtime.codec.download_item', download_image)
+    monkeypatch.setattr('pydantic_ai.realtime._utils.download_item', download_image)
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [
@@ -1939,7 +1949,7 @@ async def test_connect_rejects_image_url_returning_non_image(monkeypatch: pytest
     async def download_document(*args: Any, **kwargs: Any) -> Any:
         return {'data': b'not-image', 'data_type': 'application/pdf'}
 
-    monkeypatch.setattr('pydantic_ai.realtime.codec.download_item', download_document)
+    monkeypatch.setattr('pydantic_ai.realtime._utils.download_item', download_document)
     ws = FakeWebSocket([_created(), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     history = [ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/a.png')])])]
@@ -2046,6 +2056,15 @@ async def test_connection_send_audio() -> None:
     event = json.loads(ws.sent[0])
     assert event['type'] == 'input_audio_buffer.append'
     assert base64.b64decode(event['audio']) == b'\x01\x02'
+
+
+@pytest.mark.anyio
+async def test_connection_send_audio_rejects_non_pcm_media_type() -> None:
+    ws = FakeWebSocket([])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    with pytest.raises(UserError, match='require raw PCM audio'):
+        await conn.send(BinaryAudio(data=b'RIFF', media_type='audio/wav'))
+    assert ws.sent == []
 
 
 @pytest.mark.anyio
@@ -2538,7 +2557,9 @@ async def test_function_call_only_response_without_usage_finalizes_before_answer
         return 'sunny'
 
     connection = OpenAIRealtimeConnection(FakeWebSocket(frames))  # type: ignore[arg-type]
-    session = RealtimeSession(connection, tool_manager=make_tool_manager(runner), provider_name='openai')
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager(runner)
+    )
     async with session:
         _ = await collect_session_events(session)
 
@@ -2583,9 +2604,8 @@ async def test_session_stamps_openai_response_metadata(
     connection = OpenAIRealtimeConnection(FakeWebSocket([transcript, done]))  # type: ignore[arg-type]
     session = RealtimeSession(
         connection,
+        model=FakeRealtimeModel(connection, model_name='gpt-realtime', system='openai'),
         tool_manager=make_tool_manager(),
-        model_name='gpt-realtime',
-        provider_name='openai',
     )
     async with session:
         _ = await collect_session_events(session)
@@ -2621,7 +2641,9 @@ async def test_session_records_empty_openai_response(
         response_data['status_details'] = {'reason': raw_reason}
     done = json.dumps({'type': 'response.done', 'response': response_data})
     connection = OpenAIRealtimeConnection(FakeWebSocket([done]))  # type: ignore[arg-type]
-    session = RealtimeSession(connection, tool_manager=make_tool_manager(), provider_name='openai')
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
 
     async with session:
         _ = await collect_session_events(session)
@@ -3618,7 +3640,7 @@ async def test_reconnect_replays_the_conversation(monkeypatch: pytest.MonkeyPatc
         ModelRequest(parts=[UserPromptPart(content=[frame])]),
     ]
     async with _connect(model, 'be brief') as conn:
-        conn.set_conversation(lambda: conversation)
+        conn.set_message_history(lambda: conversation)
         events = await collect_codec_events(conn)
 
     # The reconnect reports state as restored, because the replay is what restores it.

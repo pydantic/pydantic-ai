@@ -12,7 +12,7 @@ from ..models.instrumented import InstrumentationSettings
 _REALTIME_SPAN_ATTRIBUTE = 'pydantic_ai.realtime'
 
 
-class _SessionInstrumentation:  # pyright: ignore[reportUnusedClass]
+class SessionInstrumentation:
     """Own the span operations that do not depend on conversation assembly."""
 
     def __init__(self, settings: InstrumentationSettings | None) -> None:

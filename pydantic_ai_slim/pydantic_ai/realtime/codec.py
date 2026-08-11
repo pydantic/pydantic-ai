@@ -11,28 +11,19 @@ model-profile merge helpers.
 
 from __future__ import annotations as _annotations
 
-import asyncio
-import io
-import random
-import wave
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass
-from typing import Any, ClassVar, Literal, overload
+from typing import Any, ClassVar, Literal
 
-from typing_extensions import TypeAliasType, assert_never
+from typing_extensions import TypeAliasType
 
 from .. import _utils
-from ..exceptions import UserError
 from ..messages import (
-    AudioUrl,
     BinaryAudio,
     BinaryContent,
     BinaryImage,
-    CachePoint,
-    DocumentUrl,
     FinishReason,
-    ImageUrl,
     ModelMessage,
     PartEndEvent,
     PartStartEvent,
@@ -42,47 +33,10 @@ from ..messages import (
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
-    SpeechPart,
-    TextContent,
-    UploadedFile,
     UserContent,
-    UserPromptPart,
-    VideoUrl,
 )
-from ..models import ModelRequestParameters, download_item
-from ..models._tool_choice import ResolvedToolChoice, resolve_tool_choice
-from ..settings import ToolChoice
-from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, DEFAULT_REALTIME_PROFILE, merge_realtime_profile
-from .settings import ReconnectPolicy
-
-
-def resolve_advertised_tools(
-    tools: list[ToolDefinition] | None, tool_choice: ToolChoice
-) -> tuple[list[ToolDefinition], ResolvedToolChoice | None]:
-    """Apply `tool_choice` the way a standard model request does, as tools plus a mode.
-
-    A realtime session advertises its tools once, when the session is created, so a restriction to a
-    subset is expressed by advertising only that subset — the same trick the standard models use for
-    providers that can't express one, minus the per-request re-advertising. Output tools don't exist
-    here (structured output is delegated to a standard agent) and spoken output is always allowed, so
-    the resolution reduces to the function tools to advertise plus the mode to ask for. Unset leaves
-    both alone, so a session that never mentions `tool_choice` sends what it always sent.
-    """
-    tools = tools or []
-    if tool_choice is None:
-        return tools, None
-    resolved = resolve_tool_choice(
-        {'tool_choice': tool_choice}, ModelRequestParameters(function_tools=tools, allow_text_output=True)
-    )
-    if resolved == 'none':
-        return [], resolved
-    if isinstance(resolved, tuple):
-        _, allowed = resolved
-        return [tool for tool in tools if tool.name in allowed], resolved
-    return tools, resolved
-
 
 # Input content types (fed into the connection via `send`). Session content reuses the shared message
 # vocabulary — `str` for a text turn, `BinaryAudio`/`BinaryImage` from `pydantic_ai.messages` for
@@ -456,8 +410,8 @@ class RealtimeConnection(ABC):
         """
         return None
 
-    def set_conversation(self, conversation: Callable[[], Sequence[ModelMessage]]) -> None:
-        """Tell the connection how to read the conversation as it currently stands.
+    def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
+        """Tell the connection how to read the message history as it currently stands.
 
         A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] calls this when it takes ownership of
         the connection, so a provider that loses server-side state on
@@ -480,189 +434,6 @@ class RealtimeConnection(ABC):
         duplicate turn if transcripts did arrive).
         """
         return True
-
-
-async def reconnect_with_backoff(
-    policy: ReconnectPolicy, attempt: Callable[[], Awaitable[bool]], *, reconnects_used: int = 0
-) -> bool:
-    """Retry `attempt` with exponential backoff (and optional jitter) until it succeeds or attempts run out.
-
-    `attempt` performs one provider-specific re-dial and returns whether it succeeded.
-    `reconnects_used` is how many times this session has already reconnected, checked against the
-    policy's session-wide budget so a server that hangs up as fast as we dial cannot loop forever.
-    """
-    if reconnects_used >= policy.get('max_reconnects', 50):
-        return False
-    for i in range(policy.get('max_attempts', 3)):
-        delay = min(policy.get('max_delay', 30.0), policy.get('base_delay', 0.5) * (2**i))
-        if policy.get('jitter', True):
-            delay *= 0.5 + random.random() * 0.5
-        await asyncio.sleep(delay)
-        if await attempt():
-            return True
-    return False
-
-
-def inject_trace_context(headers: MutableMapping[str, str]) -> None:
-    """Add the current W3C trace context (`traceparent`) to a realtime WebSocket's handshake headers.
-
-    A realtime connection is a raw WebSocket that bypasses the provider's `httpx` client, so the
-    trace-context injection that client's event hooks would normally perform (see the gateway
-    provider's request hook in `providers/gateway.py`) doesn't happen automatically. Calling this when
-    building the handshake headers propagates trace context to the server, so a proxy like the
-    Pydantic AI Gateway can nest its own realtime spans under the client's trace.
-
-    It is a no-op when no span is active (the propagator writes nothing without a valid span
-    context) and harmless against providers that ignore the header, so it is safe to call
-    unconditionally. The W3C trace-context propagator is used directly rather than the configured
-    global propagators: those commonly include baggage propagation, and this header set goes to
-    third-party providers, which must see the trace IDs but not whatever application metadata the
-    active OTel baggage carries.
-    """
-    from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
-
-    TraceContextTextMapPropagator().inject(headers)
-
-
-async def seed_user_content(
-    part: UserPromptPart, *, provider_name: str, supports_images: bool
-) -> list[RealtimeSessionInput]:
-    """Normalize a `UserPromptPart` to replayable text and image content.
-
-    Used both when seeding `message_history` at connect and for a live tool result's attached
-    content, so its errors speak of "a realtime session" rather than either path. Image URLs are
-    downloaded because realtime APIs accept inline image bytes, not arbitrary HTTPS URLs.
-    `CachePoint`s are deliberately ignored, matching request-response model adapters. Other file
-    kinds cannot be represented faithfully and raise [`UserError`][pydantic_ai.exceptions.UserError]
-    before anything is sent.
-    """
-    content: Sequence[UserContent] = [part.content] if isinstance(part.content, str) else part.content
-    result: list[RealtimeSessionInput] = []
-    for item in content:
-        if isinstance(item, str):
-            result.append(item)
-        elif isinstance(item, TextContent):
-            result.append(item.content)
-        elif isinstance(item, CachePoint):
-            continue
-        elif isinstance(item, ImageUrl):
-            if not supports_images:
-                raise UserError(
-                    f'{provider_name} realtime sessions do not support images in seeded history or tool results. '
-                    'Remove the image, or use a realtime provider that supports images.'
-                )
-            downloaded = await download_item(item, data_format='bytes')
-            image = BinaryContent(data=downloaded['data'], media_type=downloaded['data_type'])
-            if not image.is_image:
-                raise UserError(
-                    f'`ImageUrl` resolved to unsupported media type {image.media_type!r} in a '
-                    f'{provider_name} realtime session. Use a URL that returns an image, or remove it.'
-                )
-            result.append(image)
-        elif isinstance(item, BinaryContent):
-            if not item.is_image:
-                raise UserError(
-                    f'`BinaryContent` with media type {item.media_type!r} cannot be sent to {provider_name} '
-                    'in a realtime session. Convert it to text or an image, or remove it '
-                    'from `message_history` or the tool result.'
-                )
-            if not supports_images:
-                raise UserError(
-                    f'{provider_name} realtime sessions do not support images in seeded history or tool results. '
-                    'Remove the image, or use a realtime provider that supports images.'
-                )
-            result.append(item)
-        elif isinstance(item, (AudioUrl, VideoUrl, DocumentUrl, UploadedFile)):
-            content_type = item.__class__.__name__
-            raise UserError(
-                f'`{content_type}` cannot be sent to {provider_name} in a realtime session. '
-                'Convert it to text or an inline image, or remove it from `message_history` or the tool result.'
-            )
-        else:
-            assert_never(item)
-    return result
-
-
-@overload
-def seed_speech_content(part: SpeechPart, *, provider_name: str, supports_audio: Literal[False]) -> str: ...
-@overload
-def seed_speech_content(part: SpeechPart, *, provider_name: str, supports_audio: bool) -> RealtimeSessionInput: ...
-def seed_speech_content(
-    part: SpeechPart,
-    *,
-    provider_name: str,
-    supports_audio: bool,
-) -> RealtimeSessionInput:
-    """Return replayable content for a `SpeechPart`, preferring its transcript.
-
-    Only retained user audio can be replayed, and only when the provider profile explicitly supports
-    it. Assistant audio cannot be inserted into any supported realtime history API. With
-    `supports_audio=False` the result is always a `str`: every branch that could yield audio raises
-    first, which is what lets assistant-side seeding paths (where replaying audio is impossible on
-    any provider) call this without a per-site audio case.
-    """
-    if part.transcript is not None:
-        return part.transcript
-    if part.audio is None:
-        # A content-less placeholder preserves the turn in history but carries nothing to replay.
-        return ''
-    if part.speaker == 'assistant':
-        raise UserError(
-            f'An assistant `SpeechPart` without a transcript cannot be seeded into {provider_name} realtime history. '
-            'Enable output transcription or filter the part from `message_history` before connecting.'
-        )
-    if not part.audio.is_audio:
-        raise UserError(
-            f'`SpeechPart.audio` with media type {part.audio.media_type!r} cannot be seeded into realtime history. '
-            'Use retained audio bytes or filter the part from `message_history` before connecting.'
-        )
-    if not supports_audio:
-        raise UserError(
-            f'{provider_name} realtime history seeding does not support retained user audio. '
-            'Enable input transcription so the turn has a transcript, or filter the part from `message_history`.'
-        )
-    return part.audio
-
-
-def seed_pcm_audio(audio: BinaryContent, *, provider_name: str, sample_rate: int) -> bytes:
-    """Extract mono PCM16 bytes from retained WAV audio for a realtime input stream.
-
-    Realtime wire protocols accept raw PCM rather than a container. The WAV's rate must match the
-    target session because this path deliberately does not resample audio.
-    """
-    if audio.media_type != 'audio/wav':
-        raise UserError(
-            f'`SpeechPart.audio` with media type {audio.media_type!r} cannot be seeded into '
-            f'{provider_name} realtime history. Use WAV audio matching the target session input format.'
-        )
-    try:
-        with wave.open(io.BytesIO(audio.data), 'rb') as wav:
-            source_rate = wav.getframerate()
-            channels = wav.getnchannels()
-            sample_width = wav.getsampwidth()
-            compression = wav.getcomptype()
-            if source_rate != sample_rate:
-                raise UserError(
-                    f'Cannot seed retained audio recorded at {source_rate} Hz into a {provider_name} realtime session '
-                    f'expecting {sample_rate} Hz. Resample it before passing `message_history`.'
-                )
-            if channels != 1 or sample_width != 2 or compression != 'NONE':
-                raise UserError(
-                    f'Cannot seed retained audio into {provider_name} realtime history: expected mono 16-bit PCM WAV, '
-                    f'got {channels} channel(s), {sample_width * 8}-bit samples, compression {compression!r}.'
-                )
-            frame_count = wav.getnframes()
-            pcm = wav.readframes(frame_count)
-            if len(pcm) != frame_count * channels * sample_width:
-                # `readframes` returns short instead of raising when the data chunk is smaller than the
-                # header promises, so a truncated file would otherwise seed as partial (or empty) audio
-                # with no complaint. Route it through the invalid-WAV message below.
-                raise wave.Error('truncated audio data')
-    except (EOFError, wave.Error) as e:
-        raise UserError(
-            f'`SpeechPart.audio` cannot be seeded into {provider_name} realtime history because it is not valid WAV audio.'
-        ) from e
-    return pcm
 
 
 __all__ = (

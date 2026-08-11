@@ -84,8 +84,9 @@ from ..tool_manager import ToolManager
 from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._instrumentation import (
     _REALTIME_SPAN_ATTRIBUTE,  # pyright: ignore[reportPrivateUsage]
-    _SessionInstrumentation,  # pyright: ignore[reportPrivateUsage]
+    SessionInstrumentation,
 )
+from ._utils import seed_pcm_audio
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -106,7 +107,6 @@ from .codec import (
     ToolCallCancelled,
     ToolResult,
     TruncateOutput,
-    seed_pcm_audio,
 )
 from .model import RealtimeError
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, RealtimeModelProfile
@@ -541,9 +541,6 @@ class RealtimeSession:
         model: RealtimeModel | None = None,
         tool_manager: ToolManager[Any],
         instrumentation: InstrumentationSettings | None = None,
-        model_name: str | None = None,
-        provider_name: str | None = None,
-        provider_url: str | None = None,
         agent_name: str | None = None,
         usage: RunUsage | None = None,
         usage_limits: UsageLimits | None = None,
@@ -567,13 +564,11 @@ class RealtimeSession:
         self._tool_run_step = 0
         self._tool_manager_lock = Lock()
         self._instrumentation = instrumentation
-        self._session_instrumentation = _SessionInstrumentation(instrumentation)
+        self._session_instrumentation = SessionInstrumentation(instrumentation)
         self._profile = profile if profile is not None else model.profile if model is not None else _FULL_PROFILE
-        self._model_name = model_name if model_name is not None else model.model_name if model is not None else None
-        self._provider_name = (
-            provider_name if provider_name is not None else model.system if model is not None else None
-        )
-        self._provider_url = provider_url if provider_url is not None else model.base_url if model is not None else None
+        self._model_name = model.model_name if model is not None else None
+        self._provider_name = model.system if model is not None else None
+        self._provider_url = model.base_url if model is not None else None
         self._agent_name = agent_name
         self._conversation_id = conversation_id
         self._run_id = run_id
@@ -771,7 +766,7 @@ class RealtimeSession:
             # Offer the conversation for replay, so a provider that keeps no state across sessions can
             # carry the call through a reconnect instead of resuming with amnesia. Gated on seeding
             # support because that is the mechanism, and a no-op where the provider resumes natively.
-            self._connection.set_conversation(self.all_messages)
+            self._connection.set_message_history(self.all_messages)
 
         settings = self._instrumentation
         if settings is not None:
@@ -1087,7 +1082,7 @@ class RealtimeSession:
 
     @staticmethod
     def _record_span_error(span: Span, error: BaseException) -> None:
-        _SessionInstrumentation.record_error(span, error)
+        SessionInstrumentation.record_error(span, error)
 
     def all_messages(self) -> list[ModelMessage]:
         """A snapshot of the seeded history plus messages recorded during this session.
@@ -1147,7 +1142,7 @@ class RealtimeSession:
                 # then `send()` it back) doesn't stream the WAV header into the buffer as noise.
                 await self.send_audio(
                     seed_pcm_audio(
-                        content,
+                        audio=content,
                         provider_name=self._provider_name or 'realtime',
                         sample_rate=self.audio_input_sample_rate,
                     )
