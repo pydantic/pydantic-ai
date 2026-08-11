@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from importlib.metadata import version as _package_version
+from importlib.metadata import version
 from typing import TypeVar
 
 from pydantic import BaseModel, TypeAdapter
@@ -16,7 +16,7 @@ def is_mcp_sdk_v2() -> bool:
     generation, and shape differences like the camelCase → snake_case field rename are symptoms
     of the generation rather than a contract to detect it by.
     """
-    return int(_package_version('mcp').split('.')[0]) >= 2
+    return int(version('mcp').split('.')[0]) >= 2
 
 
 def mcp_field_value(value: BaseModel, *, v1_name: str, v2_name: str) -> object:

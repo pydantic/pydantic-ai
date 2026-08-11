@@ -147,7 +147,7 @@ def test_is_mcp_sdk_v2_reads_the_installed_distribution_version(
         assert distribution_name == 'mcp'
         return installed
 
-    monkeypatch.setattr(_mcp_compat, '_package_version', fake_package_version)
+    monkeypatch.setattr(_mcp_compat, 'version', fake_package_version)
     assert _mcp_compat.is_mcp_sdk_v2() is expected
 
 
