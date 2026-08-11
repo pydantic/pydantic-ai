@@ -78,11 +78,11 @@ def test_profile_override_corrects_a_deployment_name(monkeypatch: pytest.MonkeyP
 
     inferred = AzureRealtimeModel('voice-prod', settings={'thinking': 'low'})
     assert inferred.profile.get('supports_thinking') is False
-    assert 'reasoning' not in inferred._session_config('', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert 'reasoning' not in inferred._session_config('', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
 
     corrected = AzureRealtimeModel('voice-prod', settings={'thinking': 'low'}, profile={'supports_thinking': True})
     assert corrected.profile.get('supports_thinking') is True
-    assert corrected._session_config('', None, None)['reasoning'] == {'effort': 'low'}  # pyright: ignore[reportPrivateUsage]
+    assert corrected._session_config('', None, model_settings=None)['reasoning'] == {'effort': 'low'}  # pyright: ignore[reportPrivateUsage]
     # Everything the provider said is still there — `profile=` is a layer, not a replacement.
     assert corrected.profile.get('supports_image_input') is True
 

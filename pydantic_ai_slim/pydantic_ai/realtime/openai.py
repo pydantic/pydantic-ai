@@ -12,13 +12,13 @@ groups:
 from __future__ import annotations as _annotations
 
 import base64
-import json
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from pydantic import FiniteFloat, TypeAdapter
+from pydantic_core import to_json
 from typing_extensions import TypeAliasType
 
 try:
@@ -63,9 +63,19 @@ from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._openai_protocol import (
     AUDIO_DELTA_TYPES,
+    CONVERSATION_ITEM_CREATE_EVENT,
+    CONVERSATION_ITEM_TRUNCATE_EVENT,
+    INPUT_AUDIO_BUFFER_APPEND_EVENT,
+    INPUT_AUDIO_BUFFER_CLEAR_EVENT,
+    INPUT_AUDIO_BUFFER_COMMIT_EVENT,
     INPUT_TRANSCRIPT_DONE_TYPES,
+    RESPONSE_CANCEL_EVENT,
+    RESPONSE_CREATE_EVENT,
     RESPONSE_CREATED_EVENT_ADAPTER,
     RESPONSE_DONE_EVENT_ADAPTER,
+    SESSION_CREATED_EVENT,
+    SESSION_UPDATE_EVENT,
+    SESSION_UPDATED_EVENT,
     ProtocolResponseDoneEvent,
     RealtimeHandshakeError,
     SemanticVAD,
@@ -111,6 +121,17 @@ from .settings import RealtimeModelSettings, ReconnectPolicy
 # and designed for realtime sessions, unlike the legacy `whisper-1`). Kept behind the `'auto'` sentinel
 # (see `resolve_transcription_model`) so it can be bumped without changing the behavior of apps on `'auto'`.
 _AUTO_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper'
+
+LatestOpenAIRealtimeModelNames = Literal['gpt-realtime', 'gpt-realtime-2.1', 'gpt-realtime-2.1-mini']
+OpenAIRealtimeModelName = str | LatestOpenAIRealtimeModelNames
+
+LatestOpenAIRealtimeTranscriptionModelNames = Literal[
+    'whisper-1',
+    'gpt-4o-transcribe',
+    'gpt-4o-mini-transcribe',
+    'gpt-realtime-whisper',
+]
+OpenAIRealtimeTranscriptionModelName = str | LatestOpenAIRealtimeTranscriptionModelNames
 
 __all__ = (
     'OpenAIRealtimeModel',
@@ -379,14 +400,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if isinstance(content, BinaryAudio):
             await self._send_event(
                 {
-                    'type': 'input_audio_buffer.append',
+                    'type': INPUT_AUDIO_BUFFER_APPEND_EVENT,
                     'audio': base64.b64encode(content.data).decode('ascii'),
                 }
             )
         elif isinstance(content, str):
             await self._send_event(
                 {
-                    'type': 'conversation.item.create',
+                    'type': CONVERSATION_ITEM_CREATE_EVENT,
                     'item': {
                         'type': 'message',
                         'role': 'user',
@@ -410,7 +431,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             )
             await self._send_event(
                 {
-                    'type': 'conversation.item.create',
+                    'type': CONVERSATION_ITEM_CREATE_EVENT,
                     'item': {
                         'type': 'function_call_output',
                         'call_id': content.tool_call_id,
@@ -419,7 +440,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 }
             )
             if item:
-                await self._send_event({'type': 'conversation.item.create', 'item': item})
+                await self._send_event({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item})
             await self._request_response()
         elif isinstance(content, BinaryImage):
             # An image is added as conversation context (like a video frame), not a turn of its own,
@@ -427,7 +448,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             data_uri = content.data_uri
             await self._send_event(
                 {
-                    'type': 'conversation.item.create',
+                    'type': CONVERSATION_ITEM_CREATE_EVENT,
                     'item': {
                         'type': 'message',
                         'role': 'user',
@@ -436,16 +457,16 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 }
             )
         elif isinstance(content, CommitAudio):
-            await self._send_event({'type': 'input_audio_buffer.commit'})
+            await self._send_event({'type': INPUT_AUDIO_BUFFER_COMMIT_EVENT})
         elif isinstance(content, ClearAudio):
-            await self._send_event({'type': 'input_audio_buffer.clear'})
+            await self._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
         elif isinstance(content, CreateResponse):
             await self._request_response()
         elif isinstance(content, CancelResponse):
             # Only cancel when a response is actually active: with server VAD the provider may have
             # already cancelled on the user's barge-in, and a redundant cancel raises a session error.
             if self._response_active and not self._cancel_sent:
-                await self._send_event({'type': 'response.cancel'})
+                await self._send_event({'type': RESPONSE_CANCEL_EVENT})
                 self._cancel_sent = True
                 # Suppress the cancelled response's trailing deltas until its `response.done` arrives.
                 self._cancelled_response_id = self._active_response_id
@@ -466,7 +487,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     audio_end_ms = min(audio_end_ms, max_audio_end_ms)
                 await self._send_event(
                     {
-                        'type': 'conversation.item.truncate',
+                        'type': CONVERSATION_ITEM_TRUNCATE_EVENT,
                         'item_id': self._current_item_id,
                         'content_index': self._current_content_index,
                         'audio_end_ms': audio_end_ms,
@@ -482,10 +503,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         else:
             self._response_active = True
             self._active_response_id = None
-            await self._send_event({'type': 'response.create'})
+            await self._send_event({'type': RESPONSE_CREATE_EVENT})
 
     async def _send_event(self, event: dict[str, Any]) -> None:
-        await self._ws.send(json.dumps(event))
+        await self._ws.send(to_json(event).decode())
 
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         """Map a raw provider frame to a codec event.
@@ -558,7 +579,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     async def _decode_frame(self, raw: str) -> list[RealtimeCodecEvent]:
         """Parse one text frame into events, updating tracked response state.
 
-        Raises `ValueError` (incl. `json.JSONDecodeError` / `binascii.Error`) on a malformed payload.
+        Raises `ValueError` (incl. `pydantic.ValidationError` / `binascii.Error`) on a malformed payload.
         """
         data = loads_obj(raw)
         event_type = data.get('type')
@@ -686,7 +707,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             if response.status != 'cancelled' or was_client_cancel:
                 self._response_active = True
                 self._active_response_id = None
-                await self._send_event({'type': 'response.create'})
+                await self._send_event({'type': RESPONSE_CREATE_EVENT})
         # Validated only now that all the response state above is settled: a malformed usage payload
         # raises `ValueError`, which `__aiter__` surfaces as a recoverable frame error and keeps reading
         # — but this `response.done` was still the terminal for its response, and bailing before the
@@ -795,7 +816,7 @@ class OpenAIRealtimeModel(RealtimeModel):
     # vendor a closed or rejecting connection names in its errors.
     _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = OpenAIRealtimeConnection
 
-    model: str = 'gpt-realtime'
+    model: OpenAIRealtimeModelName = 'gpt-realtime'
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
     _provider: Provider[AsyncOpenAI] = field(init=False, repr=False)
@@ -805,7 +826,7 @@ class OpenAIRealtimeModel(RealtimeModel):
     # dataclass field of that name would shadow the property.
     def __init__(
         self,
-        model: str = 'gpt-realtime',
+        model: OpenAIRealtimeModelName = 'gpt-realtime',
         *,
         provider: Provider[AsyncOpenAI] | str = 'openai',
         settings: RealtimeModelSettings | None = None,
@@ -835,7 +856,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         return self._provider.client
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> OpenAIRealtimeModelName:
         return self.model
 
     @property
@@ -846,6 +867,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         self,
         instructions: str,
         tools: list[ToolDefinition] | None,
+        *,
         model_settings: OpenAIRealtimeModelSettings | None,
     ) -> dict[str, Any]:
         model_settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
@@ -929,7 +951,9 @@ class OpenAIRealtimeModel(RealtimeModel):
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages, model_request_parameters) or ''
-        session_config = self._session_config(instructions, model_request_parameters.function_tools, settings)
+        session_config = self._session_config(
+            instructions=instructions, tools=model_request_parameters.function_tools, model_settings=settings
+        )
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
         # Convert the history to seed items before dialing. Content this provider can't replay is the
         # caller's mistake, not the API's, so it should surface as a `UserError` without a socket ever
@@ -961,17 +985,17 @@ class OpenAIRealtimeModel(RealtimeModel):
             opening = websockets.connect(url, additional_headers=headers)
             ws = await opening.__aenter__()
             cm = opening
-            created = await expect_event(ws, 'session.created', timeout=handshake_timeout)
+            created = await expect_event(ws, SESSION_CREATED_EVENT, timeout=handshake_timeout)
             session = SessionCreatedEvent.model_validate(created).session
             model = session.model if isinstance(session, RealtimeSessionCreateRequest) else None
             if isinstance(model, str) and model:
                 server_model = model
-            await ws.send(json.dumps({'type': 'session.update', 'session': session_config}))
-            await expect_event(ws, 'session.updated', timeout=handshake_timeout)
+            await ws.send(to_json({'type': SESSION_UPDATE_EVENT, 'session': session_config}).decode())
+            await expect_event(ws, SESSION_UPDATED_EVENT, timeout=handshake_timeout)
             if connection is not None and (conversation := connection.conversation) is not None:
                 # A re-dial: the API keeps nothing across sessions, so replay the call to continue it.
                 for item in await replay_items(conversation(), profile=self.profile, provider_name=self.system):
-                    await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
+                    await ws.send(to_json({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item}).decode())
             return ws
 
         try:
@@ -983,7 +1007,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 # Seed prior conversation after the initial handshake. A *re*-dial replays the call so far
                 # instead (from inside `dial`), which supersedes this history.
                 for item in seed:
-                    await ws.send(json.dumps({'type': 'conversation.item.create', 'item': item}))
+                    await ws.send(to_json({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item}).decode())
             connection = self._connection_type(
                 ws,
                 dial=dial,

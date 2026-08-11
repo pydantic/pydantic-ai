@@ -282,7 +282,7 @@ def test_session_config_shape() -> None:
     """`xai_voice` maps to top-level `voice`, alongside `turn_detection`, in xAI's session shape."""
     model = _model(rt_xai.XaiRealtimeModelSettings(xai_voice='ara'))
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
-    config = model._session_config('Be nice', tools, None)  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('Be nice', tools, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config == {
         'instructions': 'Be nice',
         'turn_detection': {'type': 'server_vad', 'create_response': True, 'interrupt_response': True},
@@ -301,13 +301,13 @@ def test_session_config_shape() -> None:
 
 
 def test_session_config_resumption_follows_reconnect_policy() -> None:
-    assert 'resumption' not in _model()._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert 'resumption' not in _model()._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     # A model-level default policy (via `settings=`) enables native resumption...
     model_level = _model(rt_xai.XaiRealtimeModelSettings(reconnect={}))
-    assert model_level._session_config('hi', None, None)['resumption'] == {'enabled': True}  # pyright: ignore[reportPrivateUsage]
+    assert model_level._session_config('hi', None, model_settings=None)['resumption'] == {'enabled': True}  # pyright: ignore[reportPrivateUsage]
     # ...and so does a per-session policy on a model with no defaults.
     per_session = rt_xai.XaiRealtimeModelSettings(reconnect={})
-    assert _model()._session_config('hi', None, per_session)['resumption'] == {'enabled': True}  # pyright: ignore[reportPrivateUsage]
+    assert _model()._session_config('hi', None, model_settings=per_session)['resumption'] == {'enabled': True}  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize(
@@ -323,7 +323,7 @@ def test_session_config_resumption_follows_reconnect_policy() -> None:
 def test_session_config_thinking(model_name: str, thinking: object, expected: str) -> None:
     model = _model(model=model_name)
     settings = rt_xai.XaiRealtimeModelSettings(thinking=thinking)  # type: ignore[typeddict-item]
-    config = model._session_config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('hi', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
     assert config['reasoning'] == {'effort': expected}
     assert model.profile.get('supports_thinking') is True
 
@@ -331,7 +331,7 @@ def test_session_config_thinking(model_name: str, thinking: object, expected: st
 def test_session_config_thinking_is_ignored_by_legacy_model() -> None:
     model = _model(model='grok-voice-fast-1.0')
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', None, rt_xai.XaiRealtimeModelSettings(thinking='high')
+        'hi', None, model_settings=rt_xai.XaiRealtimeModelSettings(thinking='high')
     )
     assert 'reasoning' not in config
     assert model.profile.get('supports_thinking') is False
@@ -341,14 +341,14 @@ def test_session_config_transcription_auto_by_default() -> None:
     """The default `input_transcription_model='auto'` resolves to xAI's recommended transcription model
     (`grok-transcribe`) → `audio.input.transcription.model`, so the user's audio turns are transcribed
     into history under the default `transcript_only` retention (they'd otherwise be dropped)."""
-    config = _model()._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = _model()._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['transcription'] == {'model': 'grok-transcribe'}
 
 
 def test_session_config_transcription_explicit_override() -> None:
     """An explicit model id is used verbatim, overriding the `'auto'` default."""
     config = _model()._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', None, rt_xai.XaiRealtimeModelSettings(input_transcription_model='grok-transcribe-next')
+        'hi', None, model_settings=rt_xai.XaiRealtimeModelSettings(input_transcription_model='grok-transcribe-next')
     )
     assert config['audio']['input']['transcription'] == {'model': 'grok-transcribe-next'}
 
@@ -356,7 +356,7 @@ def test_session_config_transcription_explicit_override() -> None:
 def test_session_config_transcription_disabled() -> None:
     """`input_transcription_model=None` opts out of transcription."""
     config = _model()._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', None, rt_xai.XaiRealtimeModelSettings(input_transcription_model=None)
+        'hi', None, model_settings=rt_xai.XaiRealtimeModelSettings(input_transcription_model=None)
     )
     assert 'transcription' not in config['audio']['input']
 
@@ -364,7 +364,7 @@ def test_session_config_transcription_disabled() -> None:
 def test_session_config_manual_turn_detection_is_null() -> None:
     """`turn_detection=False` disables VAD (push-to-talk), sent as an explicit null."""
     config = _model()._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', None, rt_xai.XaiRealtimeModelSettings(turn_detection=False)
+        'hi', None, model_settings=rt_xai.XaiRealtimeModelSettings(turn_detection=False)
     )
     assert config['turn_detection'] is None
 
@@ -376,7 +376,7 @@ def test_session_config_cross_provider_turn_detection_sensitivity(
     config = _model()._session_config(  # pyright: ignore[reportPrivateUsage]
         'hi',
         None,
-        rt_xai.XaiRealtimeModelSettings(turn_detection={'sensitivity': sensitivity}),
+        model_settings=rt_xai.XaiRealtimeModelSettings(turn_detection={'sensitivity': sensitivity}),
     )
     assert config['turn_detection']['threshold'] == threshold
 
@@ -385,7 +385,7 @@ def test_session_config_xai_turn_detection_overrides_base() -> None:
     config = _model()._session_config(  # pyright: ignore[reportPrivateUsage]
         'hi',
         None,
-        rt_xai.XaiRealtimeModelSettings(
+        model_settings=rt_xai.XaiRealtimeModelSettings(
             turn_detection={'sensitivity': 'high'},
             xai_turn_detection={'type': 'server_vad', 'threshold': 0.9, 'create_response': False},
         ),
@@ -400,7 +400,7 @@ def test_session_config_xai_turn_detection_overrides_base() -> None:
 
 def test_session_config_no_voice_by_default() -> None:
     """Without an explicit voice, none is sent and the server default (`eve`) applies."""
-    assert 'voice' not in _model()._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert 'voice' not in _model()._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_session_config_forwards_model_settings() -> None:
@@ -408,7 +408,7 @@ def test_session_config_forwards_model_settings() -> None:
     model = _model(settings=settings)
     assert model.settings == settings
     tools = [ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
-    config = model._session_config('hi', tools, settings)  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('hi', tools, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
     assert config['max_output_tokens'] == 256
     assert config['parallel_tool_calls'] is False
     assert config['tool_choice'] == 'required'
@@ -416,7 +416,7 @@ def test_session_config_forwards_model_settings() -> None:
 
 def test_session_config_omits_absent_model_settings() -> None:
     """Absent realtime settings are omitted from the session config."""
-    config = _model()._session_config('hi', None, rt_xai.XaiRealtimeModelSettings())  # pyright: ignore[reportPrivateUsage]
+    config = _model()._session_config('hi', None, model_settings=rt_xai.XaiRealtimeModelSettings())  # pyright: ignore[reportPrivateUsage]
     assert 'max_output_tokens' not in config
     assert 'parallel_tool_calls' not in config
     assert 'tool_choice' not in config

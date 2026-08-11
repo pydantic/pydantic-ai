@@ -187,7 +187,7 @@ KnownRealtimeTranscriptionModelName = TypeAliasType(
         'mai-transcribe',
     ],
 )
-"""Known values for the OpenAI-protocol models' `input_transcription_model`, surfaced for autocomplete.
+"""Known values for the OpenAI-protocol models' `input_transcription_model`, pinned by a provider sync test.
 
 `'auto'` is the sentinel that resolves to the provider's recommended transcription model; the rest are
 concrete model ids. The values span providers, so an id valid for one provider (e.g. `'grok-transcribe'`

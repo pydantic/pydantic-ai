@@ -18,7 +18,6 @@ from __future__ import annotations as _annotations
 import asyncio
 import base64
 import hashlib
-import json
 import time
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
@@ -28,17 +27,12 @@ from urllib.parse import quote
 
 import websockets
 from openai.types.realtime import (
-    ConversationCreatedEvent,
     ConversationItem,
-    ConversationItemAdded,
-    ConversationItemCreatedEvent,
     ConversationItemInputAudioTranscriptionCompletedEvent,
     ConversationItemInputAudioTranscriptionDeltaEvent,
     ConversationItemInputAudioTranscriptionFailedEvent,
     InputAudioBufferSpeechStartedEvent,
     InputAudioBufferSpeechStoppedEvent,
-    RealtimeConversationItemFunctionCall,
-    RealtimeConversationItemFunctionCallOutput,
     RealtimeError as RealtimeErrorPayload,
     RealtimeErrorEvent,
     RealtimeResponse,
@@ -54,6 +48,7 @@ from openai.types.realtime import (
     ResponseTextDoneEvent,
 )
 from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic_core import to_json
 from typing_extensions import Required, TypedDict, assert_never
 
 from .._utils import generate_tool_call_id
@@ -90,8 +85,6 @@ from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
 from .codec import (
     AudioDelta,
-    ConversationCreated,
-    ConversationItemCreated,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -107,6 +100,18 @@ from .settings import TurnDetection
 
 if TYPE_CHECKING:
     from websockets.asyncio.client import ClientConnection
+
+
+SESSION_CREATED_EVENT = 'session.created'
+SESSION_UPDATE_EVENT = 'session.update'
+SESSION_UPDATED_EVENT = 'session.updated'
+CONVERSATION_ITEM_CREATE_EVENT = 'conversation.item.create'
+INPUT_AUDIO_BUFFER_APPEND_EVENT = 'input_audio_buffer.append'
+INPUT_AUDIO_BUFFER_COMMIT_EVENT = 'input_audio_buffer.commit'
+INPUT_AUDIO_BUFFER_CLEAR_EVENT = 'input_audio_buffer.clear'
+RESPONSE_CREATE_EVENT = 'response.create'
+RESPONSE_CANCEL_EVENT = 'response.cancel'
+CONVERSATION_ITEM_TRUNCATE_EVENT = 'conversation.item.truncate'
 
 
 def realtime_websocket_url(base_url: str, *, model: str | None = None) -> str:
@@ -228,22 +233,6 @@ class _ProtocolResponseOutputItem(BaseModel):
     type: str
 
 
-class _ProtocolConversationItem(BaseModel):
-    """Minimal typed item for xAI conversation lifecycle frames."""
-
-    model_config = ConfigDict(extra='allow')
-
-    type: str
-    id: str | None = None
-    call_id: str | None = None
-
-
-class _ProtocolConversationItemAdded(BaseModel):
-    event_id: str
-    item: ConversationItem | _ProtocolConversationItem
-    type: Literal['conversation.item.added']
-
-
 class _ProtocolInputTranscriptionCompletedEvent(BaseModel):
     """SDK event with xAI's cassette-proven omitted `usage` field."""
 
@@ -316,7 +305,6 @@ class ProtocolResponseCreatedEvent(BaseModel):
     type: Literal['response.created']
 
 
-_ConversationItemAddedEvent = ConversationItemAdded | _ProtocolConversationItemAdded
 _InputTranscriptionCompletedEvent = (
     ConversationItemInputAudioTranscriptionCompletedEvent | _ProtocolInputTranscriptionCompletedEvent
 )
@@ -326,7 +314,6 @@ _AudioTranscriptDoneEvent = ResponseAudioTranscriptDoneEvent | _ProtocolAudioTra
 ResponseDoneEventType = ResponseDoneEvent | ProtocolResponseDoneEvent
 ResponseCreatedEventType = ResponseCreatedEvent | ProtocolResponseCreatedEvent
 
-_CONVERSATION_ITEM_ADDED_ADAPTER: TypeAdapter[_ConversationItemAddedEvent] = TypeAdapter(_ConversationItemAddedEvent)
 _INPUT_TRANSCRIPTION_COMPLETED_ADAPTER: TypeAdapter[_InputTranscriptionCompletedEvent] = TypeAdapter(
     _InputTranscriptionCompletedEvent
 )
@@ -486,7 +473,7 @@ async def _seed_request_items(
                 )
                 items.append(_message_item('user', [{'type': 'input_audio', 'audio': base64.b64encode(pcm).decode()}]))
         elif isinstance(part, ToolReturnPart):
-            _require_seeded_call(part.tool_name, part.tool_call_id, seeded_calls)
+            _require_seeded_call(part.tool_name, tool_call_id=part.tool_call_id, seeded_calls=seeded_calls)
             output, user_content = part.model_response_str_and_user_content()
             items.append(
                 {
@@ -510,7 +497,7 @@ async def _seed_request_items(
             if part.tool_name is None:
                 items.append(_message_item('user', [_text_content('input_text', output)]))
             else:
-                _require_seeded_call(part.tool_name, part.tool_call_id, seeded_calls)
+                _require_seeded_call(part.tool_name, tool_call_id=part.tool_call_id, seeded_calls=seeded_calls)
                 items.append(
                     {
                         'type': 'function_call_output',
@@ -585,7 +572,7 @@ def _seed_call_id(tool_call_id: str, call_ids: dict[str, str]) -> str:
     return wire_id
 
 
-def _require_seeded_call(tool_name: str, tool_call_id: str, seeded_calls: set[str]) -> None:
+def _require_seeded_call(tool_name: str, *, tool_call_id: str, seeded_calls: set[str]) -> None:
     if tool_call_id not in seeded_calls:
         raise UserError(
             f'Cannot seed output for tool {tool_name!r} with call ID {tool_call_id!r}: no preceding '
@@ -624,47 +611,6 @@ async def user_message_item(
         UserPromptPart(content=content), provider_name=provider_name, supports_images=supports_images
     )
     return _message_item('user', items) if (items := _user_content_items(normalized)) else None
-
-
-def map_conversation_event(
-    data: dict[str, Any], *, replayed: bool | None = None
-) -> ConversationCreated | ConversationItemCreated | None:
-    """Map xAI's conversation handshake and item lifecycle events to codec control events.
-
-    OpenAI emits similarly shaped lifecycle events during ordinary streaming, but doesn't support
-    resumption. The shared OpenAI mapper deliberately doesn't call this helper; xAI opts in from its
-    provider-specific mapper so OpenAI's observable codec stream remains unchanged.
-    """
-    event_type = data.get('type')
-    if event_type == 'conversation.created':
-        event = ConversationCreatedEvent.model_validate(data)
-        conversation_id = event.conversation.id
-        return ConversationCreated(conversation_id) if conversation_id else None
-    if event_type == 'conversation.item.added':
-        event = _CONVERSATION_ITEM_ADDED_ADAPTER.validate_python(data)
-    elif event_type == 'conversation.item.created':
-        event = ConversationItemCreatedEvent.model_validate(data)
-    else:
-        return None
-    item_id = event.item.id or data.get('item_id')
-    tool_call_id = (
-        event.item.call_id
-        if isinstance(event.item, (RealtimeConversationItemFunctionCall, RealtimeConversationItemFunctionCallOutput))
-        else data.get('call_id')
-    )
-    item_id = item_id if isinstance(item_id, str) and item_id else None
-    tool_call_id = tool_call_id if isinstance(tool_call_id, str) and tool_call_id else None
-    if item_id is not None or tool_call_id is not None:
-        # An item is only part of a resumption replay when the reconnect handshake explicitly says
-        # so (`replayed=True`, set by the burst-capture callback bounded by `session.updated`). A
-        # live-stream lifecycle event — including the server's echo of a client-created item — is
-        # never a replay, so it defaults to `replayed=False` and is not suppressed.
-        return ConversationItemCreated(
-            item_id=item_id,
-            tool_call_id=tool_call_id,
-            replayed=bool(replayed),
-        )
-    return None
 
 
 def loads_obj(raw: str) -> dict[str, Any]:
@@ -854,7 +800,7 @@ def _map_input_transcription_event(
 def _error_message(error: RealtimeErrorPayload | object) -> str:
     """Extract a human-readable message from an OpenAI `error` payload."""
     if isinstance(error, RealtimeErrorPayload):
-        return error.message or json.dumps(error.model_dump(exclude_none=True))
+        return error.message or to_json(error.model_dump(exclude_none=True)).decode()
     return str(error)
 
 

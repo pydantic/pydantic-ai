@@ -2,6 +2,8 @@ from __future__ import annotations as _annotations
 
 import subprocess
 import sys
+from collections.abc import Iterator
+from typing import Any, get_args
 
 import pytest
 
@@ -18,6 +20,45 @@ with try_import() as imports_successful:
     # the `xai-sdk` and `google-genai` SDKs, so this dispatch test only runs when both are installed.
     import google.genai  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import xai_sdk  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
+    from pydantic_ai.realtime.azure import (
+        LatestAzureRealtimeModelNames,
+        LatestAzureRealtimeTranscriptionModelNames,
+    )
+    from pydantic_ai.realtime.google import LatestGoogleRealtimeModelNames
+    from pydantic_ai.realtime.model import KnownRealtimeModelName
+    from pydantic_ai.realtime.openai import (
+        LatestOpenAIRealtimeModelNames,
+        LatestOpenAIRealtimeTranscriptionModelNames,
+    )
+    from pydantic_ai.realtime.settings import KnownRealtimeTranscriptionModelName
+    from pydantic_ai.realtime.xai import LatestXaiRealtimeModelNames, LatestXaiRealtimeTranscriptionModelNames
+
+
+@pytest.mark.skipif(not imports_successful(), reason='realtime provider packages were not installed')
+def test_known_realtime_model_names() -> None:  # pragma: lax no cover
+    def get_model_names(model_name_type: Any) -> Iterator[str]:
+        for arg in get_args(model_name_type):
+            if isinstance(arg, str):
+                yield arg
+            else:
+                yield from get_model_names(arg)
+
+    generated_names = sorted(
+        [f'openai:{name}' for name in get_model_names(LatestOpenAIRealtimeModelNames)]
+        + [f'azure:{name}' for name in get_model_names(LatestAzureRealtimeModelNames)]
+        + [f'xai:{name}' for name in get_model_names(LatestXaiRealtimeModelNames)]
+        + [f'google:{name}' for name in get_model_names(LatestGoogleRealtimeModelNames)]
+    )
+    assert generated_names == sorted(get_args(KnownRealtimeModelName.__value__))
+
+    generated_transcription_names = sorted(
+        ['auto']
+        + list(get_model_names(LatestOpenAIRealtimeTranscriptionModelNames))
+        + list(get_model_names(LatestXaiRealtimeTranscriptionModelNames))
+        + list(get_model_names(LatestAzureRealtimeTranscriptionModelNames))
+    )
+    assert generated_transcription_names == sorted(get_args(KnownRealtimeTranscriptionModelName.__value__))
 
 
 def test_star_import_does_not_load_optional_providers() -> None:

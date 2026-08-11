@@ -4,7 +4,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import gc
-import json
 import random
 import re
 import weakref
@@ -464,7 +463,7 @@ async def test_agent_realtime_session_rejects_unsupported_native_tool() -> None:
 
 def test_config_combines_function_and_native_tools() -> None:
     tools = [ToolDefinition(name='f', parameters_json_schema={'type': 'object'})]
-    config = GoogleRealtimeModel()._config('hi', tools, None, native_tools=[WebSearchTool()])  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel()._config('hi', tools, model_settings=None, native_tools=[WebSearchTool()])  # pyright: ignore[reportPrivateUsage]
     assert config.tools[0].function_declarations[0].name == 'f'  # type: ignore[index,union-attr]
     assert config.tools[1].google_search is not None  # type: ignore[index,union-attr]
 
@@ -866,7 +865,7 @@ def test_config_full() -> None:
     model = GoogleRealtimeModel(settings=settings)
     assert model.settings == settings
     tools = [ToolDefinition(name='get_weather', description='Weather', parameters_json_schema={'type': 'object'})]
-    config = model._config('Be nice', tools, settings)  # pyright: ignore[reportPrivateUsage]
+    config = model._config('Be nice', tools, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
 
     assert model.model_name == 'gemini-2.5-flash-native-audio-latest'
     assert config.response_modalities == [genai_types.Modality.AUDIO]
@@ -887,7 +886,7 @@ def test_config_thinking_maps_to_thinking_level() -> None:
     # and `False` disables it via a zero budget.
     def thinking_config(thinking: object) -> genai_types.ThinkingConfig | None:
         settings = GoogleRealtimeModelSettings(thinking=thinking)  # type: ignore[typeddict-item]
-        return GoogleRealtimeModel()._config('hi', None, settings).thinking_config  # pyright: ignore[reportPrivateUsage]
+        return GoogleRealtimeModel()._config('hi', None, model_settings=settings).thinking_config  # pyright: ignore[reportPrivateUsage]
 
     assert thinking_config('high') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
     assert thinking_config('xhigh') == genai_types.ThinkingConfig(thinking_level=genai_types.ThinkingLevel.HIGH)
@@ -899,19 +898,19 @@ def test_config_thinking_maps_to_thinking_level() -> None:
 def test_config_tool_choice_restricts_advertised_tools() -> None:
     tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('allowed', 'unsafe')]
     allowed = GoogleRealtimeModel()._config(  # pyright: ignore[reportPrivateUsage]
-        'hi', tools, GoogleRealtimeModelSettings(tool_choice=['allowed'])
+        'hi', tools, model_settings=GoogleRealtimeModelSettings(tool_choice=['allowed'])
     )
     assert [tool.name for tool in allowed.tools[0].function_declarations] == ['allowed']  # type: ignore[index,union-attr]
 
     none = GoogleRealtimeModel()._config(  # pyright: ignore[reportPrivateUsage]
-        'hi', tools, GoogleRealtimeModelSettings(tool_choice='none')
+        'hi', tools, model_settings=GoogleRealtimeModelSettings(tool_choice='none')
     )
     assert none.tools is None
 
 
 def test_config_google_thinking_config_wins_over_unified_thinking() -> None:
     settings = GoogleRealtimeModelSettings(thinking='low', google_thinking_config={'thinking_budget': 512})
-    config = GoogleRealtimeModel()._config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel()._config('hi', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
     assert config.thinking_config == genai_types.ThinkingConfig(thinking_budget=512)
 
 
@@ -929,7 +928,7 @@ def test_config_thinking_on_non_thinking_model_is_ignored(monkeypatch: pytest.Mo
         'realtime_model_profile',
         staticmethod(no_thinking_profile),
     )
-    config = model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = model._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config.thinking_config is None
 
 
@@ -953,7 +952,7 @@ def test_config_minimal_text_no_transcription_no_vad() -> None:
             output_modality='text', google_input_transcription=False, google_output_transcription=False
         )
     )
-    config = model._config('', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = model._config('', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config.response_modalities == [genai_types.Modality.TEXT]
     assert config.system_instruction is None  # empty instructions → not set
     assert config.speech_config is None
@@ -973,24 +972,24 @@ def test_shared_input_transcription_none_turns_gemini_transcription_off() -> Non
     because it's the request payload that has to change, which a cassette match isn't sensitive to.
     """
     off = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(input_transcription_model=None))
-    assert off._config('', None, None).input_audio_transcription is None  # pyright: ignore[reportPrivateUsage]
+    assert off._config('', None, model_settings=None).input_audio_transcription is None  # pyright: ignore[reportPrivateUsage]
 
     # A pinned id can't be pointed at anything, so transcription stays on, as documented.
     pinned = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(input_transcription_model='gpt-4o-transcribe'))
-    assert pinned._config('', None, None).input_audio_transcription is not None  # pyright: ignore[reportPrivateUsage]
+    assert pinned._config('', None, model_settings=None).input_audio_transcription is not None  # pyright: ignore[reportPrivateUsage]
 
     # The provider-specific setting wins where both are given, in either direction.
     both_on = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(input_transcription_model=None, google_input_transcription=True)
     )
-    assert both_on._config('', None, None).input_audio_transcription is not None  # pyright: ignore[reportPrivateUsage]
+    assert both_on._config('', None, model_settings=None).input_audio_transcription is not None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_config_forwards_only_present_model_settings() -> None:
     # `model_settings` is non-empty but carries none of the forwarded fields → all stay unset
     # (`presence_penalty` has no Gemini Live equivalent and is ignored).
     config = GoogleRealtimeModel()._config(  # pyright: ignore[reportPrivateUsage]
-        'hi', None, GoogleRealtimeModelSettings()
+        'hi', None, model_settings=GoogleRealtimeModelSettings()
     )
     assert config.max_output_tokens is None
     assert config.temperature is None
@@ -1262,7 +1261,7 @@ def test_map_tool_call_and_usage() -> None:
         usage_metadata=genai_types.UsageMetadata(prompt_token_count=7, response_token_count=2),
     )
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
-        ToolCall(tool_call_id='c1', tool_name='calc', args=json.dumps({'x': 1})),
+        ToolCall(tool_call_id='c1', tool_name='calc', args='{"x":1}'),
         SessionUsageEvent(usage=RequestUsage(input_tokens=7, output_tokens=2)),
     ]
 
@@ -1876,7 +1875,7 @@ async def test_iter_ends_on_oserror() -> None:
 def test_speech_config_voice_and_language() -> None:
     speech = (
         GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_voice='Puck', google_language_code='pl-PL'))
-        ._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+        ._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
         .speech_config
     )
     assert speech is not None
@@ -1892,7 +1891,7 @@ def test_speech_config_multi_speaker_overrides_voice() -> None:
             google_voice='Puck', google_multi_speaker={'voices': {'Joe': 'Puck', 'Jane': 'Kore'}}
         )
     )
-    speech = model._config('hi', None, None).speech_config  # pyright: ignore[reportPrivateUsage]
+    speech = model._config('hi', None, model_settings=None).speech_config  # pyright: ignore[reportPrivateUsage]
     assert speech is not None
     assert speech.voice_config is None
     speakers = speech.multi_speaker_voice_config.speaker_voice_configs  # type: ignore[union-attr]
@@ -1901,7 +1900,7 @@ def test_speech_config_multi_speaker_overrides_voice() -> None:
 
 
 def test_speech_config_absent_when_unset() -> None:
-    assert GoogleRealtimeModel()._config('hi', None, None).speech_config is None  # pyright: ignore[reportPrivateUsage]
+    assert GoogleRealtimeModel()._config('hi', None, model_settings=None).speech_config is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_realtime_input_full() -> None:
@@ -1912,7 +1911,7 @@ def test_realtime_input_full() -> None:
             google_turn_coverage='all_video',
         )
     )
-    rt = model._config('hi', None, None).realtime_input_config  # pyright: ignore[reportPrivateUsage]
+    rt = model._config('hi', None, model_settings=None).realtime_input_config  # pyright: ignore[reportPrivateUsage]
     assert rt is not None
     detection = rt.automatic_activity_detection
     assert detection.start_of_speech_sensitivity == genai_types.StartSensitivity.START_SENSITIVITY_HIGH  # type: ignore[union-attr]
@@ -1933,7 +1932,7 @@ def test_cross_provider_turn_detection_sensitivity(sensitivity: Literal['low', '
     }[sensitivity]
     config = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(turn_detection={'sensitivity': sensitivity})
-    )._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    )._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     realtime_input_config = config.realtime_input_config
     assert realtime_input_config is not None
     detection = realtime_input_config.automatic_activity_detection
@@ -1948,7 +1947,7 @@ def test_google_vad_overrides_cross_provider_turn_detection() -> None:
             turn_detection={'sensitivity': 'high'},
             google_vad={'start_sensitivity': 'low', 'end_sensitivity': 'low'},
         )
-    )._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    )._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     realtime_input_config = config.realtime_input_config
     assert realtime_input_config is not None
     detection = realtime_input_config.automatic_activity_detection
@@ -1962,19 +1961,19 @@ def test_cross_provider_turn_detection_false_is_rejected() -> None:
     producing an unusable session."""
     model = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(turn_detection=False))
     with pytest.raises(UserError, match='does not support disabling automatic turn detection'):
-        model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+        model._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_google_vad_disabled_is_rejected() -> None:
     model = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_vad={'disabled': True}))
 
     with pytest.raises(UserError, match='does not support disabling automatic turn detection'):
-        model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+        model._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_realtime_input_absent_when_unset() -> None:
     # no vad, no activity handling, no turn coverage → no realtime input config at all.
-    assert GoogleRealtimeModel()._config('hi', None, None).realtime_input_config is None  # pyright: ignore[reportPrivateUsage]
+    assert GoogleRealtimeModel()._config('hi', None, model_settings=None).realtime_input_config is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_vad_without_sensitivities() -> None:
@@ -1982,7 +1981,7 @@ def test_vad_without_sensitivities() -> None:
     rt = (
         GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_vad={}))
         ._config(  # pyright: ignore[reportPrivateUsage]
-            'hi', None, None
+            'hi', None, model_settings=None
         )
         .realtime_input_config
     )
@@ -1995,13 +1994,13 @@ def test_vad_without_sensitivities() -> None:
 def test_affective_and_proactive_audio() -> None:
     config = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(google_affective_dialog=True, google_proactive_audio=True)
-    )._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    )._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config.enable_affective_dialog is True
     assert config.proactivity.proactive_audio is True  # type: ignore[union-attr]
 
 
 def test_affective_and_proactive_default_off() -> None:
-    config = GoogleRealtimeModel()._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel()._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config.enable_affective_dialog is None
     assert config.proactivity is None
 
@@ -2009,7 +2008,7 @@ def test_affective_and_proactive_default_off() -> None:
 def test_transcription_language_codes() -> None:
     config = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(google_transcription_language_codes=['pl-PL'])
-    )._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    )._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config.input_audio_transcription.language_codes == ['pl-PL']  # type: ignore[union-attr]
     assert config.output_audio_transcription.language_codes == ['pl-PL']  # type: ignore[union-attr]
 
@@ -2021,7 +2020,7 @@ def test_context_compression_and_session_resumption() -> None:
             google_enable_session_resumption=True,
         ),
     )
-    config = model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = model._config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     cwc = config.context_window_compression
     assert cwc.trigger_tokens == 8000  # type: ignore[union-attr]
     assert cwc.sliding_window.target_tokens == 4000  # type: ignore[union-attr]
@@ -2031,7 +2030,7 @@ def test_context_compression_and_session_resumption() -> None:
 
 def test_session_resumption_passes_handle() -> None:
     config = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_enable_session_resumption=True))._config(  # pyright: ignore[reportPrivateUsage]
-        'hi', None, None, resumption_handle='h9'
+        'hi', None, model_settings=None, resumption_handle='h9'
     )
     assert config.session_resumption.handle == 'h9'  # type: ignore[union-attr]
 
@@ -2046,7 +2045,7 @@ def test_generation_params_from_model_settings() -> None:
         google_thinking_config={'thinking_budget': 100},
         google_video_resolution=genai_types.MediaResolution.MEDIA_RESOLUTION_LOW,
     )
-    config = GoogleRealtimeModel()._config('hi', None, settings)  # pyright: ignore[reportPrivateUsage]
+    config = GoogleRealtimeModel()._config('hi', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
     assert config.temperature == 0.3
     assert config.top_p == 0.8
     assert config.top_k == 20
@@ -2060,7 +2059,7 @@ def test_config_overrides_escape_hatch() -> None:
     model = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(google_config_overrides={'explicit_vad_signal': True})
     )
-    assert model._config('hi', None, None).explicit_vad_signal is True  # pyright: ignore[reportPrivateUsage]
+    assert model._config('hi', None, model_settings=None).explicit_vad_signal is True  # pyright: ignore[reportPrivateUsage]
 
 
 # --- reconnect via session resumption ----------------------------------------

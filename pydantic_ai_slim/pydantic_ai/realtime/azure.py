@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Literal
 from urllib.parse import urlencode, urlparse, urlunparse
 
 from openai import AsyncOpenAI
@@ -11,11 +11,17 @@ from openai import AsyncOpenAI
 from ..exceptions import UserError
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
-from .openai import OpenAIRealtimeConnection, OpenAIRealtimeModel
+from .openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, OpenAIRealtimeModelName
 from .profiles import RealtimeModelProfileSpec
 from .settings import RealtimeModelSettings
 
 __all__ = ('AzureRealtimeModel', 'AzureRealtimeConnection')
+
+LatestAzureRealtimeModelNames = Literal['gpt-realtime']
+AzureRealtimeModelName = OpenAIRealtimeModelName
+
+LatestAzureRealtimeTranscriptionModelNames = Literal['azure-speech', 'mai-transcribe']
+AzureRealtimeTranscriptionModelName = str | LatestAzureRealtimeTranscriptionModelNames
 
 
 class AzureRealtimeConnection(OpenAIRealtimeConnection):
@@ -43,7 +49,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
 
     def __init__(
         self,
-        model: str = 'gpt-realtime',
+        model: AzureRealtimeModelName = 'gpt-realtime',
         *,
         provider: Provider[AsyncOpenAI] | str = 'azure',
         settings: RealtimeModelSettings | None = None,

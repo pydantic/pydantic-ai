@@ -16,7 +16,6 @@ Application Default Credentials.
 
 from __future__ import annotations as _annotations
 
-import json
 import re
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
@@ -26,6 +25,7 @@ from urllib.parse import quote
 
 from anyio import Lock
 from anyio.lowlevel import RunVar
+from pydantic_core import to_json
 from typing_extensions import TypedDict, assert_never
 
 try:
@@ -118,6 +118,12 @@ from .codec import (
 from .model import RealtimeError, RealtimeModel
 from .profiles import DEFAULT_REALTIME_PROFILE, RealtimeModelProfile, RealtimeModelProfileSpec
 from .settings import RealtimeModelSettings, ReconnectPolicy, TurnDetection
+
+LatestGoogleRealtimeModelNames = Literal[
+    'gemini-2.5-flash-native-audio-latest',
+    'gemini-3.1-flash-live-preview',
+]
+GoogleRealtimeModelName = str | LatestGoogleRealtimeModelNames
 
 __all__ = (
     'GoogleRealtimeModel',
@@ -778,7 +784,7 @@ class GoogleRealtimeModel(RealtimeModel):
             identify the model (e.g. an Azure deployment named something other than its model).
     """
 
-    model: str = 'gemini-2.5-flash-native-audio-latest'
+    model: GoogleRealtimeModelName = 'gemini-2.5-flash-native-audio-latest'
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
     _provider: Provider[Client] = field(init=False, repr=False)
@@ -789,7 +795,7 @@ class GoogleRealtimeModel(RealtimeModel):
     # dataclass field of that name would shadow the property.
     def __init__(
         self,
-        model: str = 'gemini-2.5-flash-native-audio-latest',
+        model: GoogleRealtimeModelName = 'gemini-2.5-flash-native-audio-latest',
         *,
         provider: Provider[Client] | str = 'google',
         settings: RealtimeModelSettings | None = None,
@@ -809,7 +815,7 @@ class GoogleRealtimeModel(RealtimeModel):
         return self._provider.client
 
     @property
-    def model_name(self) -> str:
+    def model_name(self) -> GoogleRealtimeModelName:
         return self.model
 
     @property
@@ -970,8 +976,8 @@ class GoogleRealtimeModel(RealtimeModel):
         self,
         instructions: str,
         tools: list[ToolDefinition] | None,
-        model_settings: GoogleRealtimeModelSettings | None,
         *,
+        model_settings: GoogleRealtimeModelSettings | None,
         native_tools: list[AbstractNativeTool] | None = None,
         resumption_handle: str | None = None,
     ) -> genai_types.LiveConnectConfig:
@@ -1065,7 +1071,7 @@ class GoogleRealtimeModel(RealtimeModel):
             config = self._config(
                 instructions,
                 model_request_parameters.function_tools,
-                settings,
+                model_settings=settings,
                 native_tools=model_request_parameters.native_tools,
                 resumption_handle=handle,
             )
@@ -1421,7 +1427,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 # A tool call opens the turn like audio output does: the session holds a partial
                 # response for it, so a drop before `turn_complete` needs the same synthetic boundary.
                 self._turn_open = True
-                events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=json.dumps(call.args or {})))
+                events.append(ToolCall(tool_call_id=call_id, tool_name=name, args=to_json(call.args or {}).decode()))
         if message.tool_call_cancellation is not None and (cancelled_ids := message.tool_call_cancellation.ids):
             # The cancellation carries Gemini's own call ids, which match the `tool_call_id`s emitted
             # above whenever Gemini assigned them (id-less calls can't be cancelled by id anyway).

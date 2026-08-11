@@ -180,7 +180,7 @@ KnownRealtimeModelName = TypeAliasType(
         'google:gemini-3.1-flash-live-preview',
     ],
 )
-"""Known realtime model identifiers, surfaced for autocomplete."""
+"""Known realtime model identifiers, surfaced for autocomplete and pinned to provider aliases by a sync test."""
 
 
 def infer_realtime_model(model: KnownRealtimeModelName | str) -> RealtimeModel:

@@ -63,7 +63,6 @@ from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
     _user_content_items,  # pyright: ignore[reportPrivateUsage]
     expect_event,
-    map_conversation_event as _map_conversation_wire_event,
     realtime_websocket_url,
     replay_items,
     server_vad_from_turn_detection,
@@ -86,6 +85,7 @@ from pydantic_ai.realtime.codec import (
     TruncateOutput,
 )
 from pydantic_ai.realtime.profiles import merge_realtime_profile
+from pydantic_ai.realtime.xai import map_conversation_event as _map_conversation_wire_event
 from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -580,7 +580,7 @@ def test_map_error_event_with_message() -> None:
 
 def test_map_error_event_without_message_serializes_payload() -> None:
     assert map_event({'type': 'error', 'error': {'code': 'x'}}) == RealtimeSessionErrorEvent(
-        message=json.dumps({'message': '', 'type': '', 'code': 'x'}), code='x'
+        message='{"message":"","type":"","code":"x"}', code='x'
     )
 
 
@@ -1032,7 +1032,7 @@ def test_session_config_server_vad_params() -> None:
             },
         )
     )
-    config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['turn_detection'] == {
         'type': 'server_vad',
         'create_response': False,
@@ -1056,19 +1056,19 @@ def test_server_vad_from_turn_detection_mapping() -> None:
 def test_session_config_truncation_modes() -> None:
     # A plain mode passes through as-is; a retention ratio maps to the retention_ratio truncation shape.
     auto = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(openai_truncation='disabled'))
-    assert auto._session_config('hi', None, None)['truncation'] == 'disabled'  # pyright: ignore[reportPrivateUsage]
+    assert auto._session_config('hi', None, model_settings=None)['truncation'] == 'disabled'  # pyright: ignore[reportPrivateUsage]
 
     ratio = OpenAIRealtimeModel(
         settings=rt_openai.OpenAIRealtimeModelSettings(
             openai_truncation={'type': 'retention_ratio', 'retention_ratio': 0.8}
         )
     )
-    assert ratio._session_config('hi', None, None)['truncation'] == {  # pyright: ignore[reportPrivateUsage]
+    assert ratio._session_config('hi', None, model_settings=None)['truncation'] == {  # pyright: ignore[reportPrivateUsage]
         'type': 'retention_ratio',
         'retention_ratio': 0.8,
     }
     # Absent by default so the wire stays byte-identical for sessions that don't set it.
-    assert 'truncation' not in OpenAIRealtimeModel()._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert 'truncation' not in OpenAIRealtimeModel()._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None:
@@ -1078,7 +1078,7 @@ def test_session_config_thinking_maps_to_reasoning_on_reasoning_models() -> None
         model = OpenAIRealtimeModel(
             'gpt-realtime-2.1', settings=rt_openai.OpenAIRealtimeModelSettings(thinking=thinking)
         )
-        return model._session_config('hi', None, None).get('reasoning')  # pyright: ignore[reportPrivateUsage]
+        return model._session_config('hi', None, model_settings=None).get('reasoning')  # pyright: ignore[reportPrivateUsage]
 
     assert reasoning('low') == {'effort': 'low'}
     assert reasoning('high') == {'effort': 'high'}
@@ -1092,7 +1092,7 @@ def test_session_config_thinking_on_non_reasoning_model_is_ignored() -> None:
     # The GA `gpt-realtime` isn't a reasoning model, so `thinking` is silently dropped, matching
     # unsupported generic settings on classic model adapters.
     model = OpenAIRealtimeModel('gpt-realtime', settings=rt_openai.OpenAIRealtimeModelSettings(thinking='high'))
-    config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert 'reasoning' not in config
 
 
@@ -1103,7 +1103,7 @@ def test_session_config_openai_turn_detection_overrides_base() -> None:
             openai_turn_detection={'type': 'semantic_vad', 'eagerness': 'high'},
         )
     )
-    config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['turn_detection'] == {
         'type': 'semantic_vad',
         'eagerness': 'high',
@@ -1118,7 +1118,7 @@ def test_session_config_cross_provider_turn_detection_sensitivity(
 ) -> None:
     settings = rt_openai.OpenAIRealtimeModelSettings(turn_detection={'sensitivity': sensitivity})
     config = OpenAIRealtimeModel(settings=settings)._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', None, None
+        'hi', None, model_settings=None
     )
     assert config['audio']['input']['turn_detection']['threshold'] == threshold
 
@@ -1126,7 +1126,7 @@ def test_session_config_cross_provider_turn_detection_sensitivity(
 def test_session_config_manual_turn_detection_is_null() -> None:
     """`turn_detection=False` disables VAD (push-to-talk), sent as an explicit null."""
     model = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(turn_detection=False))
-    config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['turn_detection'] is None
 
 
@@ -1135,8 +1135,8 @@ def test_session_config_turn_detection_true_matches_default() -> None:
     enabled = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(turn_detection=True))
     default = OpenAIRealtimeModel()
     assert (
-        enabled._session_config('hi', None, None)['audio']['input']['turn_detection']  # pyright: ignore[reportPrivateUsage]
-        == default._session_config('hi', None, None)['audio']['input']['turn_detection']  # pyright: ignore[reportPrivateUsage]
+        enabled._session_config('hi', None, model_settings=None)['audio']['input']['turn_detection']  # pyright: ignore[reportPrivateUsage]
+        == default._session_config('hi', None, model_settings=None)['audio']['input']['turn_detection']  # pyright: ignore[reportPrivateUsage]
     )
 
 
@@ -1146,7 +1146,7 @@ def test_session_config_noise_reduction_and_speed_and_modalities() -> None:
             openai_input_noise_reduction='near_field', openai_output_speed=1.25, output_modality='text'
         )
     )
-    config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     assert config['audio']['input']['noise_reduction'] == {'type': 'near_field'}
     assert config['audio']['output']['speed'] == 1.25
     assert config['output_modalities'] == ['text']
@@ -1157,7 +1157,7 @@ def test_session_config_forwards_parallel_tool_calls_and_tool_choice() -> None:
     model = OpenAIRealtimeModel(settings=settings)
     assert model.settings == settings
     tools = [ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})]
-    config = model._session_config('hi', tools, settings)  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('hi', tools, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
     assert config['parallel_tool_calls'] is True
     assert config['tool_choice'] == 'required'
 
@@ -1165,7 +1165,7 @@ def test_session_config_forwards_parallel_tool_calls_and_tool_choice() -> None:
 def test_session_config_merges_model_defaults_and_connection_overrides() -> None:
     model = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(openai_voice='alloy', max_tokens=128))
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', None, rt_openai.OpenAIRealtimeModelSettings(openai_voice='echo')
+        'hi', None, model_settings=rt_openai.OpenAIRealtimeModelSettings(openai_voice='echo')
     )
 
     assert config['audio']['output']['voice'] == 'echo'
@@ -1174,7 +1174,7 @@ def test_session_config_merges_model_defaults_and_connection_overrides() -> None
 
 def test_session_config_forwards_custom_voice_id() -> None:
     model = OpenAIRealtimeModel(settings=rt_openai.OpenAIRealtimeModelSettings(openai_voice=VoiceID(id='voice_custom')))
-    config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
 
     assert config['audio']['output']['voice'] == {'id': 'voice_custom'}
 
@@ -1183,7 +1183,7 @@ def test_session_config_tool_choice_single_function() -> None:
     model = OpenAIRealtimeModel()
     tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('get_weather', 'other')]
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', tools, rt_openai.OpenAIRealtimeModelSettings(tool_choice=['get_weather'])
+        'hi', tools, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice=['get_weather'])
     )
     assert config['tool_choice'] == {'type': 'function', 'name': 'get_weather'}
     assert [tool['name'] for tool in config['tools']] == ['get_weather']
@@ -1193,7 +1193,7 @@ def test_session_config_tool_choice_multi_tool_restricts_advertised_tools() -> N
     model = OpenAIRealtimeModel()
     tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('a', 'b', 'excluded')]
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', tools, rt_openai.OpenAIRealtimeModelSettings(tool_choice=['a', 'b'])
+        'hi', tools, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice=['a', 'b'])
     )
     assert config['tool_choice'] == 'required'
     assert [tool['name'] for tool in config['tools']] == ['a', 'b']
@@ -1203,7 +1203,7 @@ def test_session_config_tool_choice_tool_or_output_restricts_advertised_tools() 
     model = OpenAIRealtimeModel()
     tools = [ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in ('a', 'excluded')]
     settings = rt_openai.OpenAIRealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['a']))
-    config = model._session_config('hi', tools, settings)  # pyright: ignore[reportPrivateUsage]
+    config = model._session_config('hi', tools, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
     assert config['tool_choice'] == 'auto'
     assert [tool['name'] for tool in config['tools']] == ['a']
 
@@ -1211,7 +1211,7 @@ def test_session_config_tool_choice_tool_or_output_restricts_advertised_tools() 
 def test_session_config_tool_choice_none_advertises_no_tools() -> None:
     tools = [ToolDefinition(name='unsafe', parameters_json_schema={'type': 'object'})]
     config = OpenAIRealtimeModel()._session_config(  # pyright: ignore[reportPrivateUsage]
-        'hi', tools, rt_openai.OpenAIRealtimeModelSettings(tool_choice='none')
+        'hi', tools, model_settings=rt_openai.OpenAIRealtimeModelSettings(tool_choice='none')
     )
     assert config['tool_choice'] == 'none'
     assert 'tools' not in config
@@ -2322,7 +2322,7 @@ async def test_malformed_usage_on_response_done_still_releases_the_response() ->
     assert any(isinstance(event, RealtimeSessionErrorEvent) and event.recoverable for event in events)
     assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]  # the replayed request
     assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
-    assert json.dumps({'type': 'response.create'}) in ws.sent
+    assert '{"type":"response.create"}' in ws.sent
 
 
 class _ResetWebSocket(FakeWebSocket):
@@ -2358,7 +2358,7 @@ async def test_response_done_without_response_object_is_recoverable() -> None:
     assert len(events) == 1
     assert isinstance(events[0], RealtimeSessionErrorEvent)
     assert 'validation errors for union[ResponseDoneEvent,ProtocolResponseDoneEvent]' in events[0].message
-    assert ws.sent == [json.dumps({'type': 'response.create'})]
+    assert ws.sent == ['{"type":"response.create"}']
     assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]
     assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
 
@@ -2944,7 +2944,7 @@ async def test_reconnect_replays_a_deferred_response_request() -> None:
 
     events = [e async for e in conn]
     assert [type(e).__name__ for e in events] == ['RealtimeSessionReconnectEvent', 'RealtimeSessionErrorEvent']
-    assert replacement.sent == [json.dumps({'type': 'response.create'})]
+    assert replacement.sent == ['{"type":"response.create"}']
     assert conn._pending_response is False  # pyright: ignore[reportPrivateUsage]
     assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]
 
@@ -3000,7 +3000,7 @@ async def test_response_done_settles_a_response_whose_id_was_never_announced() -
     await collect_codec_events(conn)
     assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
     await conn._request_response()  # pyright: ignore[reportPrivateUsage]
-    assert ws.sent == [json.dumps({'type': 'response.create'})]
+    assert ws.sent == ['{"type":"response.create"}']
 
 
 @pytest.mark.anyio
@@ -3019,7 +3019,7 @@ async def test_malformed_response_done_still_releases_the_response() -> None:
     assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
     # The session can speak again, rather than only ever deferring.
     await conn._request_response()  # pyright: ignore[reportPrivateUsage]
-    assert ws.sent == [json.dumps({'type': 'response.create'})]
+    assert ws.sent == ['{"type":"response.create"}']
 
 
 @pytest.mark.anyio
@@ -3537,7 +3537,7 @@ def test_user_profile_corrects_a_thinking_claim_defeated_by_the_model_name() -> 
     provider = OpenAIProvider(api_key='k')
     deployment = OpenAIRealtimeModel('voice-prod', provider=provider, settings={'thinking': 'low'})
     assert deployment.profile.get('supports_thinking') is False
-    assert 'reasoning' not in deployment._session_config('', None, None)  # pyright: ignore[reportPrivateUsage]
+    assert 'reasoning' not in deployment._session_config('', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
 
     corrected = OpenAIRealtimeModel(
         'voice-prod',
@@ -3546,7 +3546,7 @@ def test_user_profile_corrects_a_thinking_claim_defeated_by_the_model_name() -> 
         profile=RealtimeModelProfile(supports_thinking=True),
     )
     assert corrected.profile.get('supports_thinking') is True
-    assert corrected._session_config('', None, None)['reasoning'] == {'effort': 'low'}  # pyright: ignore[reportPrivateUsage]
+    assert corrected._session_config('', None, model_settings=None)['reasoning'] == {'effort': 'low'}  # pyright: ignore[reportPrivateUsage]
 
 
 class _ConnectSequence:
