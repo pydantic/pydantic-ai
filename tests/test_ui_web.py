@@ -542,13 +542,17 @@ async def test_post_chat_streams_tool_approval(allow_model_requests: None, sdk_v
 
 
 def test_chat_app_options_endpoint():
-    """Test the OPTIONS /api/chat endpoint (CORS preflight)."""
+    """Test the OPTIONS /api/chat endpoint (CORS preflight).
+
+    Pins the headers the standalone app returns, which were previously unasserted.
+    """
     agent = Agent('test')
     app = create_web_app(agent)
 
     with TestClient(app) as client:
         response = client.options('/api/chat')
         assert response.status_code == 200
+        assert not any(name.lower().startswith('access-control-') for name in response.headers)
 
 
 @pytest.mark.parametrize(
@@ -562,22 +566,19 @@ def test_chat_app_options_endpoint():
         pytest.param(None, id='no-content-type'),
     ],
 )
-def test_chat_rejects_non_json_content_type(content_type: str | None):
+def test_chat_rejects_non_json_content_type(content_type: str | None, monkeypatch: pytest.MonkeyPatch):
     """The chat endpoint turns away request bodies that aren't declared as JSON.
 
-    Asserting the status alone would be too weak — what this pins is that the rejection happens
-    before the agent is dispatched, so the tool never runs.
+    Asserting the status alone would be too weak: the contract is that a request the endpoint won't
+    accept costs nothing to reject, so this pins that the adapter is never built — which is what
+    puts the check ahead of both reading the body and starting a run.
 
     This is a unit test rather than a VCR one because the check runs before any model request, so
     there is no HTTP traffic to record.
     """
     agent = Agent(TestModel())
-    tool_calls: list[str] = []
-
-    @agent.tool_plain
-    def side_effecting_tool() -> str:
-        tool_calls.append('called')  # pragma: no cover
-        return 'done'  # pragma: no cover
+    mock_from_request = AsyncMock(side_effect=AssertionError('adapter should not be built'))
+    monkeypatch.setattr(VercelAIAdapter, 'from_request', mock_from_request)
 
     app = create_web_app(agent)
     body = json.dumps(
@@ -594,7 +595,7 @@ def test_chat_rejects_non_json_content_type(content_type: str | None):
 
     assert response.status_code == 415
     assert 'application/json' in response.json()['error']
-    assert tool_calls == []
+    assert mock_from_request.call_count == 0
 
 
 @pytest.mark.parametrize(
