@@ -26,7 +26,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1072'
+      - '1114'
       content-type:
       - application/json
       transfer-encoding:
@@ -42,17 +42,18 @@ interactions:
           content: 2 + 2 = 4.
           function_call: null
           reasoning: |-
-            1.  **Analyze the Input:** The user is asking a basic arithmetic question: "What is 2 + 2?".
-            2.  **Perform the calculation:** 2 + 2 = 4.
-            3.  **Formulate the output:** State the answer clearly. "2 + 2 = 4." or "2 + 2 is 4."
-            4.  **Final Response:** Keep it simple and direct. "2 + 2 = 4."
+            1.  **Analyze the Input:** The user is asking "What is 2 + 2?".
+            2.  **Identify the intent:** This is a basic arithmetic question (addition).
+            3.  **Perform the calculation:** 2 + 2 = 4.
+            4.  **Formulate the output:** State the answer clearly and concisely. "2 + 2 = 4" or simply "4".
+            5.  **Final Output Generation:** "2 + 2 = 4."
           refusal: null
           role: assistant
         routed_experts: null
         stop_reason: 154827
         token_ids: null
-      created: 1786478328
-      id: chatcmpl-c2d8231e5ba8d627
+      created: 1786479603
+      id: chatcmpl-0ab4663bd38a42ca
       kv_transfer_params: null
       metrics: null
       model: zai/GLM-5.2
@@ -63,14 +64,14 @@ interactions:
       service_tier: null
       system_fingerprint: null
       usage:
-        completion_tokens: 110
+        completion_tokens: 118
         completion_tokens_details:
-          reasoning_tokens: 100
+          reasoning_tokens: 108
         prompt_tokens: 20
         prompt_tokens_details:
           cached_tokens: 0
           multimodal_tokens: null
-        total_tokens: 130
+        total_tokens: 138
     status:
       code: 200
       message: OK

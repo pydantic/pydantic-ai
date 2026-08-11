@@ -42,7 +42,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1382'
+      - '1667'
       content-type:
       - application/json
       transfer-encoding:
@@ -55,23 +55,25 @@ interactions:
         message:
           annotations: null
           audio: null
-          content: "{   \n  \"city\": \"Paris\",  \n  \"country\": \"France\"  \n}"
+          content: '{ "city": "Paris", "country": "France" }'
           function_call: null
           reasoning: |-
-            1.  Identify the core entity and question: The user is asking for the location of the "Eiffel Tower".
-            2.  Retrieve knowledge about the Eiffel Tower:
-                *   Entity: Eiffel Tower (Tour Eiffel)
-                *   Location: Paris, France
-                *   Specific details (optional but helpful): Champ de Mars, near the Seine River.
-            3.  Formulate the answer: State clearly that it is in Paris, France. Keep it concise and direct.
-            4.  Review the formulated answer: "The Eiffel Tower is located in Paris, France." This is accurate and directly answers the user's question.
+            1.  **Identify the core entity and the question:** The user is asking for the location of the Eiffel Tower.
+            2.  **Retrieve knowledge about the Eiffel Tower:**
+                *   Entity: Eiffel Tower (Tour Eiffel).
+                *   Country: France.
+                *   City: Paris.
+                *   Specific location: Champ de Mars near the Seine River.
+            3.  **Formulate the answer:** Keep it clear, concise, and accurate. State the city and country directly. Optionally, add a little more context (like the Champ de Mars or the Seine river) to be helpful, but don't overcomplicate it.
+            4.  **Draft response:** "The Eiffel Tower is located in Paris, France." (Can add: "Specifically, it is situated on the Champ de Mars, near the Seine River.")
+            5.  **Final Polish:** The Eiffel Tower is located in Paris, France. Specifically, it is situated on the Champ de Mars, next to the Seine River.
           refusal: null
           role: assistant
         routed_experts: null
         stop_reason: null
         token_ids: null
-      created: 1786478331
-      id: chatcmpl-0b3c99015ab2ac08
+      created: 1786479606
+      id: chatcmpl-4b2c1a1af5371f21
       kv_transfer_params: null
       metrics: null
       model: zai/GLM-5.2
@@ -82,14 +84,14 @@ interactions:
       service_tier: null
       system_fingerprint: null
       usage:
-        completion_tokens: 157
+        completion_tokens: 233
         completion_tokens_details:
-          reasoning_tokens: 136
+          reasoning_tokens: 217
         prompt_tokens: 20
         prompt_tokens_details:
           cached_tokens: 0
           multimodal_tokens: null
-        total_tokens: 177
+        total_tokens: 253
     status:
       code: 200
       message: OK
