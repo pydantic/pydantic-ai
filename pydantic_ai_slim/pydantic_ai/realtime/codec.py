@@ -258,7 +258,7 @@ class ToolCall:
     args: str
     """Raw JSON-encoded arguments. May be an empty string if the model sent no arguments."""
     response_usage_follows: bool = False
-    """Whether a per-response [`SessionUsageEvent`][pydantic_ai.realtime.codec.SessionUsageEvent] will follow
+    """Whether per-response [`SessionUsage`][pydantic_ai.realtime.codec.SessionUsage] will follow
     this call before the provider's response is complete.
 
     OpenAI-protocol providers report calls before `response.done`, which carries usage; the session
@@ -312,7 +312,7 @@ class ResponseDone:
 
 
 @dataclass(repr=False)
-class SessionUsageEvent:
+class SessionUsage:
     """Usage reported by the provider for a model response or another run-level operation."""
 
     usage: RequestUsage
@@ -386,7 +386,7 @@ RealtimeCodecEvent = TypeAliasType(
     | RealtimeResponseInterruptedEvent
     | RealtimeInputSpeechEndEvent
     | RealtimeInputTranscriptionErrorEvent
-    | SessionUsageEvent
+    | SessionUsage
     | RealtimeSessionReconnectEvent
     | ConversationCreated
     | ConversationItemCreated
@@ -680,7 +680,7 @@ __all__ = (
     'ResponseDone',
     'ConversationCreated',
     'ConversationItemCreated',
-    'SessionUsageEvent',
+    'SessionUsage',
     # Turn-control verbs a connection accepts.
     'CommitAudio',
     'ClearAudio',

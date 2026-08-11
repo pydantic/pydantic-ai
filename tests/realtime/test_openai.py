@@ -79,7 +79,7 @@ from pydantic_ai.realtime.codec import (
     OutputTranscript,
     RealtimeCodecEvent,
     ResponseDone,
-    SessionUsageEvent,
+    SessionUsage,
     ToolCall,
     ToolResult,
     TruncateOutput,
@@ -2253,8 +2253,8 @@ async def test_superseded_cancelled_response_done_suppresses_turn_complete() -> 
 
     events = await collect_codec_events(conn)
     # A's usage is recorded, B keeps streaming, and no `ResponseDone` fired for the superseded A.
-    assert [type(event).__name__ for event in events] == ['SessionUsageEvent', 'AudioDelta']
-    assert isinstance(events[0], SessionUsageEvent) and events[0].provider_response_id == 'A'
+    assert [type(event).__name__ for event in events] == ['SessionUsage', 'AudioDelta']
+    assert isinstance(events[0], SessionUsage) and events[0].provider_response_id == 'A'
     assert events[1] == AudioDelta(data=b'\x02', item_id='b-item')
     assert not any(isinstance(event, ResponseDone) for event in events)
 
@@ -2399,7 +2399,7 @@ async def test_transcription_completed_token_usage_emits_run_level_usage() -> No
     events = await collect_codec_events(conn)
     assert events == [
         InputTranscript(text='hi', is_final=True, item_id='u1'),
-        SessionUsageEvent(
+        SessionUsage(
             usage=RequestUsage(
                 details={
                     'input_transcription_tokens': 5,
@@ -2451,7 +2451,7 @@ async def test_response_done_emits_usage_then_turn_complete() -> None:
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     events = await collect_codec_events(conn)
     assert events == [
-        SessionUsageEvent(
+        SessionUsage(
             usage=RequestUsage(input_tokens=3, output_tokens=2),
             provider_response_id='resp-1',
             finish_reason='stop',
@@ -2483,7 +2483,7 @@ async def test_response_done_function_call_only_still_emits_usage() -> None:
     events = await collect_codec_events(conn)
     # function-call-only → no ResponseDone, but usage is still surfaced
     assert events == [
-        SessionUsageEvent(
+        SessionUsage(
             usage=RequestUsage(output_tokens=5),
             provider_response_id='resp-tool',
             finish_reason='tool_call',
@@ -2538,7 +2538,7 @@ async def test_function_call_only_response_without_usage_finalizes_before_answer
         return 'sunny'
 
     connection = OpenAIRealtimeConnection(FakeWebSocket(frames))  # type: ignore[arg-type]
-    session = RealtimeSession(connection, make_tool_manager(runner), provider_name='openai')
+    session = RealtimeSession(connection, tool_manager=make_tool_manager(runner), provider_name='openai')
     async with session:
         _ = await collect_session_events(session)
 
@@ -2551,7 +2551,7 @@ async def test_function_call_only_response_without_usage_finalizes_before_answer
     assert isinstance(tool_result, ModelRequest)
     assert isinstance(tool_result.parts[0], ToolReturnPart)
     assert isinstance(answer, ModelResponse)
-    assert answer.parts == [SpeechPart(speaker='assistant', transcript='Sunny', id='answer-1', provider_name='openai')]
+    assert answer.parts == [SpeechPart(speaker='assistant', transcript='Sunny')]
     assert answer.usage == RequestUsage(output_tokens=3)
 
 
@@ -2583,7 +2583,7 @@ async def test_session_stamps_openai_response_metadata(
     connection = OpenAIRealtimeConnection(FakeWebSocket([transcript, done]))  # type: ignore[arg-type]
     session = RealtimeSession(
         connection,
-        make_tool_manager(),
+        tool_manager=make_tool_manager(),
         model_name='gpt-realtime',
         provider_name='openai',
     )
@@ -2601,7 +2601,7 @@ async def test_session_stamps_openai_response_metadata(
     assert response.provider_details == expected_details
     speech = response.parts[0]
     assert isinstance(speech, SpeechPart)
-    assert (speech.id, speech.provider_name) == ('item-1', 'openai')
+    assert (speech.id, speech.provider_name) == (None, None)
 
 
 @pytest.mark.anyio
@@ -2621,7 +2621,7 @@ async def test_session_records_empty_openai_response(
         response_data['status_details'] = {'reason': raw_reason}
     done = json.dumps({'type': 'response.done', 'response': response_data})
     connection = OpenAIRealtimeConnection(FakeWebSocket([done]))  # type: ignore[arg-type]
-    session = RealtimeSession(connection, make_tool_manager(), provider_name='openai')
+    session = RealtimeSession(connection, tool_manager=make_tool_manager(), provider_name='openai')
 
     async with session:
         _ = await collect_session_events(session)

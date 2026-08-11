@@ -321,8 +321,6 @@ async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCasse
             tool_name='get_weather',
             args=IsStr(),
             tool_call_id=IsStr(),
-            id=IsStr(),
-            provider_name='xai',
         )
     ]
     assert (tool_response.usage.input_tokens, tool_response.usage.output_tokens) == (7, 113)

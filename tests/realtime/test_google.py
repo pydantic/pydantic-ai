@@ -62,7 +62,7 @@ from pydantic_ai.realtime.codec import (
     InputTranscript,
     OutputTranscript,
     ResponseDone,
-    SessionUsageEvent,
+    SessionUsage,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -1234,7 +1234,7 @@ async def test_interruption_finalizes_session_response_as_interrupted() -> None:
     )
     session = RealtimeSession(
         _conn(provider_session),
-        make_tool_manager(),
+        tool_manager=make_tool_manager(),
         model_name='gemini-live',
         provider_name='google',
     )
@@ -1262,7 +1262,7 @@ def test_map_tool_call_and_usage() -> None:
     )
     assert conn._map_message(message) == [  # pyright: ignore[reportPrivateUsage]
         ToolCall(tool_call_id='c1', tool_name='calc', args='{"x":1}'),
-        SessionUsageEvent(usage=RequestUsage(input_tokens=7, output_tokens=2)),
+        SessionUsage(usage=RequestUsage(input_tokens=7, output_tokens=2)),
     ]
 
 

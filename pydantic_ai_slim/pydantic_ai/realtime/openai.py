@@ -105,7 +105,7 @@ from .codec import (
     RealtimeCodecEvent,
     RealtimeConnection,
     RealtimeInput,
-    SessionUsageEvent,
+    SessionUsage,
     ToolResult,
     TruncateOutput,
     inject_trace_context,
@@ -635,7 +635,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     events.append(_frame_error(e))
                 else:
                     if (asr := _map_transcription_usage(usage)) is not None:
-                        events.append(SessionUsageEvent(usage=asr, response_scoped=False))
+                        events.append(SessionUsage(usage=asr, response_scoped=False))
         return events
 
     async def _handle_response_done(self, data: dict[str, Any]) -> tuple[list[RealtimeCodecEvent], bool]:
@@ -722,7 +722,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         usage = self._map_response_usage(response.usage) or self._map_response_usage(frame_usage)
         if usage is not None:
             events.append(
-                SessionUsageEvent(
+                SessionUsage(
                     usage=usage,
                     provider_response_id=response_id or None,
                     finish_reason=finish_reason,
@@ -730,7 +730,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             )
         elif matches_active_response and finish_reason == 'tool_call':
             events.append(
-                SessionUsageEvent(
+                SessionUsage(
                     usage=RequestUsage(),
                     provider_response_id=response_id or None,
                     finish_reason='tool_call',

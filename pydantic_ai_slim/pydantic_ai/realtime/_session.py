@@ -6,7 +6,6 @@ import asyncio
 import dataclasses
 import io
 import wave
-from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
 from threading import Lock as ThreadLock
@@ -18,7 +17,7 @@ import pydantic_core
 from anyio import Lock
 from opentelemetry import context as otel_context
 from opentelemetry.context import Context
-from opentelemetry.trace import Span, SpanKind, StatusCode, set_span_in_context
+from opentelemetry.trace import Span, SpanKind, set_span_in_context
 from typing_extensions import TypeAliasType, assert_never
 
 from pydantic_graph._utils import get_traceparent
@@ -83,6 +82,10 @@ from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
 from ..tool_manager import ToolManager
 from ..usage import RequestUsage, RunUsage, UsageLimits
+from ._instrumentation import (
+    _REALTIME_SPAN_ATTRIBUTE,  # pyright: ignore[reportPrivateUsage]
+    _SessionInstrumentation,  # pyright: ignore[reportPrivateUsage]
+)
 from .codec import (
     AudioDelta,
     CancelResponse,
@@ -98,7 +101,7 @@ from .codec import (
     RealtimeInput,
     RealtimeSessionInput,
     ResponseDone,
-    SessionUsageEvent,
+    SessionUsage,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -114,6 +117,7 @@ if TYPE_CHECKING:
     from ..models import ModelRequestParameters
     from ..models.instrumented import InstrumentationSettings
     from ..tools import DeferredToolRequests, DeferredToolResults
+    from .model import RealtimeModel
 
 # Session-level events (yielded by `RealtimeSession.__aiter__`).
 #
@@ -196,13 +200,20 @@ class TranscriptUpdate:
     __repr__ = dataclasses_no_defaults_repr
 
 
+@dataclass
+class _UserTurn:
+    part: SpeechPart
+    transcript: str
+    index: int
+    finalized: bool = False
+
+
 # Realtime providers stream raw PCM audio, but retained history uses a WAV container so the sample
 # format is self-describing and portable to classic model adapters. Live `SpeechPartDelta.audio_chunk`
 # values remain raw PCM.
 _WAV_MEDIA_TYPE = 'audio/wav'
 # Marks every span this session emits so the Logfire UI (and any consumer) can recognize realtime
 # activity without parsing span names.
-_REALTIME_SPAN_ATTRIBUTE = 'pydantic_ai.realtime'
 
 # Fallback for a session created without a model's profile (e.g. directly, in tests): assume
 # everything is supported so no guard fires. Real sessions receive `model.profile`. Native tools are
@@ -242,7 +253,7 @@ def _put_tap(queue: asyncio.Queue[_TapItem], item: _TapItem) -> int:
 
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
-# `SessionUsageEvent`, which `_handle_pump_event` peels off first (they drive tool execution and usage
+# `SessionUsage`, which `_handle_pump_event` peels off first (they drive tool execution and usage
 # accounting before delegating). Splitting the union lets `_translate_event` end in `assert_never`, so
 # a new non-pump variant added to `RealtimeEvent` is caught at type-check time — either the call site
 # (where the residual no longer fits this alias) or the `assert_never` flags it.
@@ -374,7 +385,7 @@ def _build_session_tool_return(
     return result_part, user_content
 
 
-def _unsettled_call_return(call: ToolCall, error: ApprovalRequired | CallDeferred | RunCancelled) -> ToolReturnPart:
+def _unsettled_call_return(call: ToolCallPart, error: ApprovalRequired | CallDeferred | RunCancelled) -> ToolReturnPart:
     """The failed return a session answers with when a tool call couldn't settle normally.
 
     Both cases are ones the graph resolves by ending or isolating the run, which a live conversation
@@ -526,8 +537,9 @@ class RealtimeSession:
     def __init__(
         self,
         connection: RealtimeConnection,
-        tool_manager: ToolManager[Any],
         *,
+        model: RealtimeModel | None = None,
+        tool_manager: ToolManager[Any],
         instrumentation: InstrumentationSettings | None = None,
         model_name: str | None = None,
         provider_name: str | None = None,
@@ -555,10 +567,13 @@ class RealtimeSession:
         self._tool_run_step = 0
         self._tool_manager_lock = Lock()
         self._instrumentation = instrumentation
-        self._profile = profile if profile is not None else _FULL_PROFILE
-        self._model_name = model_name
-        self._provider_name = provider_name
-        self._provider_url = provider_url
+        self._session_instrumentation = _SessionInstrumentation(instrumentation)
+        self._profile = profile if profile is not None else model.profile if model is not None else _FULL_PROFILE
+        self._model_name = model_name if model_name is not None else model.model_name if model is not None else None
+        self._provider_name = (
+            provider_name if provider_name is not None else model.system if model is not None else None
+        )
+        self._provider_url = provider_url if provider_url is not None else model.base_url if model is not None else None
         self._agent_name = agent_name
         self._conversation_id = conversation_id
         self._run_id = run_id
@@ -641,6 +656,7 @@ class RealtimeSession:
         # request between an assistant response's streamed parts.
         self._pending_sent_requests: list[ModelRequest] = []
         self._active_assistant: SpeechPart | TextPart | None = None
+        self._active_assistant_item_id: str | None = None
         self._active_assistant_index = 0
         self._assistant_transcript = ''
         self._output_audio = bytearray()
@@ -652,20 +668,15 @@ class RealtimeSession:
         # part's index unique instead: in realtime, `index` identifies a part in the event stream, not
         # a slot in a message.
         self._next_part_index = 0
-        self._active_user_index = 0
-        self._user_indexes_by_id: dict[str, int] = {}
         # Connection-supplied native-tool part index -> the session index it was remapped to, so a
         # `PartEndEvent` closes the part its `PartStartEvent` opened. See `_remap_native_part_index`.
         self._native_part_indexes: dict[int, int] = {}
 
         # In-flight user request being assembled from input-transcript events.
-        self._active_user: SpeechPart | None = None
-        self._user_transcript = ''
         self._user_turn_active = False
-        self._active_users_by_id: dict[str, SpeechPart] = {}
-        self._user_transcripts_by_id: dict[str, str] = {}
-        self._user_item_order: deque[str] = deque()
-        self._finalized_users_by_id: dict[str, SpeechPart] = {}
+        # Insertion order is provider item order. `None` is the single anonymous turn used by
+        # providers that do not identify input transcript items.
+        self._user_turns: dict[str | None, _UserTurn] = {}
         self._finalized_user_item_ids: set[str] = set()
         # Where in history each user turn belongs, remembered when the turn *starts* — see
         # `_open_user_turn_anchor`. `_pending_user_turn_anchor` holds the anchor of a turn that has begun
@@ -825,6 +836,7 @@ class RealtimeSession:
             )
             self._session_span = span
             self._session_span_context = set_span_in_context(span, parent_context)
+            self._session_instrumentation.context = self._session_span_context
             self._session_span_attributes = attributes
 
         return self
@@ -837,19 +849,8 @@ class RealtimeSession:
         no span rather than one whose length was inferred from something else — a duration nobody
         measured is worse than no duration at all.
         """
-        settings = self._instrumentation
         started_at, self._user_speech_started_at = self._user_speech_started_at, None
-        if settings is None or started_at is None:
-            return
-        context = self._session_span_context
-        assert context is not None
-        settings.tracer.start_span(
-            'user speech',
-            context=context,
-            start_time=started_at,
-            attributes={_REALTIME_SPAN_ATTRIBUTE: True, 'logfire.msg': 'user speech'},
-            kind=SpanKind.INTERNAL,
-        ).end()
+        self._session_instrumentation.record_user_speech(started_at)
 
     def _record_lifecycle_event(self, name: str, *, message: str | None = None, **attributes: Any) -> None:
         """Record a realtime lifecycle moment (barge-in, turn boundary) as a zero-duration child span.
@@ -866,15 +867,7 @@ class RealtimeSession:
         more than one grouping key — e.g. an interrupted turn boundary reads "model turn complete
         (interrupted)" while still counting as a `model turn complete` span.
         """
-        settings = self._instrumentation
-        context = self._session_span_context
-        if settings is None or context is None:
-            return
-        attrs: dict[str, Any] = {_REALTIME_SPAN_ATTRIBUTE: True}
-        if message is not None:
-            attrs['logfire.msg'] = message
-        attrs.update({key: value for key, value in attributes.items() if value is not None})
-        settings.tracer.start_span(name, context=context, attributes=attrs, kind=SpanKind.INTERNAL).end()
+        self._session_instrumentation.record_lifecycle(name, message=message, **attributes)
 
     async def __aexit__(
         self,
@@ -947,6 +940,7 @@ class RealtimeSession:
             span.end()
         self._session_span = None
         self._session_span_context = None
+        self._session_instrumentation.context = None
         self._session_span_attributes = None
         self._loop = None
 
@@ -1093,9 +1087,7 @@ class RealtimeSession:
 
     @staticmethod
     def _record_span_error(span: Span, error: BaseException) -> None:
-        if span.is_recording():
-            span.record_exception(error, escaped=True)
-            span.set_status(StatusCode.ERROR)
+        _SessionInstrumentation.record_error(span, error)
 
     def all_messages(self) -> list[ModelMessage]:
         """A snapshot of the seeded history plus messages recorded during this session.
@@ -1206,18 +1198,22 @@ class RealtimeSession:
 
     def _record_sent_request(self, request: ModelRequest) -> None:
         """Record a sent request without interleaving it with an in-flight assistant response."""
-        response_in_flight = bool(
+        if self._response_in_flight:
+            self._pending_sent_requests.append(request)
+        else:
+            self._history.append(request)
+
+    @property
+    def _response_in_flight(self) -> bool:
+        return bool(
             self._active_assistant is not None
             or self._response_parts
             or self._native_tool_parts
             or self._pending_provider_response_id is not None
             or self._pending_finish_reason is not None
             or self._pending_response_usage != RequestUsage()
+            or self._chat_span is not None
         )
-        if response_in_flight:
-            self._pending_sent_requests.append(request)
-        else:
-            self._history.append(request)
 
     def _remove_sent_request(self, request: ModelRequest) -> None:
         """Remove a recorded request: a failed network send takes it back, the image cap evicts it."""
@@ -1365,36 +1361,22 @@ class RealtimeSession:
         active = self._active_assistant
         events: list[RealtimeEvent] = []
         if active is not None:
-            active_item_id = active.id
+            active_item_id = self._active_assistant_item_id
             item_changed = active_item_id is not None and item_id is not None and active_item_id != item_id
             modality_changed = output_text != isinstance(active, TextPart)
             if item_changed or modality_changed:
                 events.extend(self._finalize_assistant_part())
                 active = None
         if active is not None:
-            if isinstance(self._active_assistant, SpeechPart) and item_id and self._active_assistant.id is None:
-                self._active_assistant = replace(
-                    self._active_assistant,
-                    id=item_id,
-                    provider_name=self._provider_name,
-                )
+            if item_id is not None and self._active_assistant_item_id is None:
+                self._active_assistant_item_id = item_id
             return events
         self._ensure_chat_span()
         part: SpeechPart | TextPart = (
-            TextPart(
-                content='',
-                id=item_id,
-                provider_name=self._provider_name if item_id else None,
-            )
-            if output_text
-            else SpeechPart(
-                speaker='assistant',
-                transcript='',
-                id=item_id,
-                provider_name=self._provider_name if item_id else None,
-            )
+            TextPart(content='') if output_text else SpeechPart(speaker='assistant', transcript='')
         )
         self._active_assistant = part
+        self._active_assistant_item_id = item_id
         self._active_assistant_index = self._take_part_index()
         self._assistant_transcript = ''
         events.append(PartStartEvent(index=self._active_assistant_index, part=part))
@@ -1476,6 +1458,7 @@ class RealtimeSession:
                 )
         index = self._active_assistant_index
         self._active_assistant = None
+        self._active_assistant_item_id = None
         self._assistant_transcript = ''
         self._output_audio.clear()
         self._response_parts.append(part)
@@ -1804,7 +1787,7 @@ class RealtimeSession:
         """Fold a tool call into the current response, deferring finalization when its usage follows.
 
         OpenAI-protocol providers report each call before the `response.done` frame carrying that
-        response's usage, so finalization waits for the ensuing `SessionUsageEvent`. Gemini's tool-call
+        response's usage, so finalization waits for the ensuing `SessionUsage`. Gemini's tool-call
         frame has no per-response usage to wait for; it is finalized immediately with zero usage, while
         the later completed turn keeps the usage Gemini reports for that turn.
         """
@@ -1880,65 +1863,47 @@ class RealtimeSession:
             if item_id in self._finalized_user_item_ids:
                 return []
             events: list[RealtimeEvent] = []
-            if item_id not in self._active_users_by_id:
+            if item_id not in self._user_turns:
                 self._user_turn_active = True
-                part = SpeechPart(
-                    speaker='user',
-                    transcript='',
-                    id=item_id,
-                    provider_name=self._provider_name,
-                )
-                self._active_users_by_id[item_id] = part
-                self._user_transcripts_by_id[item_id] = ''
-                self._user_item_order.append(item_id)
+                part = SpeechPart(speaker='user', transcript='')
                 self._claim_user_turn_anchor(item_id)
-                self._user_indexes_by_id[item_id] = self._take_part_index()
-                events.append(PartStartEvent(index=self._user_indexes_by_id[item_id], part=part))
-            transcript, delta = _user_transcript_update(
-                self._user_transcripts_by_id[item_id], text, cumulative=cumulative
-            )
-            self._user_transcripts_by_id[item_id] = transcript
-            self._active_users_by_id[item_id] = replace(self._active_users_by_id[item_id], transcript=transcript)
+                turn = self._user_turns[item_id] = _UserTurn(part, '', self._take_part_index())
+                events.append(PartStartEvent(index=turn.index, part=part))
+            turn = self._user_turns[item_id]
+            transcript, delta = _user_transcript_update(turn.transcript, text, cumulative=cumulative)
+            turn.transcript = transcript
+            turn.part = replace(turn.part, transcript=transcript)
             if delta is not None:
-                events.append(PartDeltaEvent(index=self._user_indexes_by_id[item_id], delta=delta))
+                events.append(PartDeltaEvent(index=turn.index, delta=delta))
             if is_final:
                 events.extend(self._finalize_user(item_id=item_id))
             return events
 
         events: list[RealtimeEvent] = []
-        if self._active_user is None:
+        if None not in self._user_turns:
             self._user_turn_active = True
             part = SpeechPart(speaker='user', transcript='')
-            self._active_user = part
-            self._user_transcript = ''
-            self._active_user_index = self._take_part_index()
             self._claim_user_turn_anchor(None)
-            events.append(PartStartEvent(index=self._active_user_index, part=part))
-        self._user_transcript, delta = _user_transcript_update(self._user_transcript, text, cumulative=cumulative)
-        assert self._active_user is not None
-        self._active_user = replace(self._active_user, transcript=self._user_transcript)
+            turn = self._user_turns[None] = _UserTurn(part, '', self._take_part_index())
+            events.append(PartStartEvent(index=turn.index, part=part))
+        turn = self._user_turns[None]
+        turn.transcript, delta = _user_transcript_update(turn.transcript, text, cumulative=cumulative)
+        turn.part = replace(turn.part, transcript=turn.transcript)
         if delta is not None:
-            events.append(PartDeltaEvent(index=self._active_user_index, delta=delta))
+            events.append(PartDeltaEvent(index=turn.index, delta=delta))
         if is_final:
             events.extend(self._finalize_user())
         return events
 
     def _finalize_user(self, *, item_id: str | None = None) -> list[RealtimeEvent]:
-        if item_id is None:
-            if self._active_user is None:
-                return []
-            part = self._active_user
-            index = self._active_user_index
-            self._active_user = None
-            self._user_transcript = ''
-        else:
-            part = self._active_users_by_id.pop(item_id)
-            index = self._user_indexes_by_id.pop(item_id)
-            self._user_transcripts_by_id.pop(item_id)
+        turn = self._user_turns.get(item_id)
+        if turn is None or turn.finalized:
+            return []
+        part = turn.part
+        index = turn.index
+        if item_id is not None:
             self._finalized_user_item_ids.add(item_id)
-        self._user_turn_active = bool(
-            self._active_user is not None or self._active_users_by_id or self._pending_user_turn_anchor is not None
-        )
+        self._user_turn_active = any(not current.finalized for current in self._user_turns.values())
         # Strip surrounding whitespace at finalization: providers whose transcripts arrive as a cumulative
         # or final snapshot (OpenAI/xAI) already reconcile leading-space drift via `_accumulate_transcript`,
         # but a partial-only stream (Gemini) concatenates deltas verbatim and would otherwise keep the
@@ -1963,8 +1928,10 @@ class RealtimeSession:
                 )
         if item_id is None:
             self._record_user_request(None, self._new_request([part]))
+            self._user_turns.pop(None)
         else:
-            self._finalized_users_by_id[item_id] = part
+            turn.part = part
+            turn.finalized = True
             self._flush_finalized_user_prefix()
         return [PartEndEvent(index=index, part=part)]
 
@@ -2020,13 +1987,15 @@ class RealtimeSession:
         """Record finalized user items in provider order, up to the first item still awaiting its final.
 
         Item-ID transcripts finalize in any order, but history must keep provider order (call/return
-        adjacency etc.), so a finalized item waits in `_finalized_users_by_id` until every earlier item
-        has resolved (finalized or discarded).
+        adjacency etc.), so a finalized item waits in `_user_turns` until every earlier item has
+        resolved (finalized or discarded).
         """
-        while self._user_item_order and self._user_item_order[0] in self._finalized_users_by_id:
-            finalized_id = self._user_item_order.popleft()
-            finalized = self._finalized_users_by_id.pop(finalized_id)
-            self._record_user_request(finalized_id, self._new_request([finalized]))
+        while self._user_turns:
+            finalized_id, turn = next(iter(self._user_turns.items()))
+            if finalized_id is None or not turn.finalized:
+                break
+            self._user_turns.pop(finalized_id)
+            self._record_user_request(finalized_id, self._new_request([turn.part]))
 
     def _segment_input_audio(self, item_id: str | None) -> None:
         """Cut the rolling input-audio buffer into `item_id`'s own segment at its speech-stopped boundary.
@@ -2043,36 +2012,26 @@ class RealtimeSession:
     def _finalize_failed_user_item(self, item_id: str | None) -> list[RealtimeEvent]:
         """Finalize a user item whose transcription failed without retaining unreliable partial text."""
         start_emitted = False
-        if item_id is None:
-            active = self._active_user
-            start_emitted = active is not None
-            part = replace(active, transcript=None) if active is not None else SpeechPart(speaker='user')
-            index = self._active_user_index if start_emitted else self._take_part_index()
-            self._active_user = None
-            self._user_transcript = ''
-        else:
+        if item_id is not None:
             # Same guard as `_handle_input_transcript`: once an item is closed, a stray duplicate or
             # late error event must not re-open it and record a second (blank) user turn.
             if item_id in self._finalized_user_item_ids:
                 return []
-            active = self._active_users_by_id.pop(item_id, None)
-            start_emitted = active is not None
-            part = (
-                replace(active, transcript=None)
-                if active is not None
-                else SpeechPart(speaker='user', id=item_id, provider_name=self._provider_name)
-            )
-            index = self._user_indexes_by_id.pop(item_id, None)
-            if index is None:
-                index = self._take_part_index()
-            self._user_transcripts_by_id.pop(item_id, None)
-            self._finalized_users_by_id.pop(item_id, None)
-            if item_id not in self._user_item_order:
-                self._user_item_order.append(item_id)
+            turn = self._user_turns.get(item_id)
+            start_emitted = turn is not None
+            part = replace(turn.part, transcript=None) if turn is not None else SpeechPart(speaker='user')
+            index = turn.index if turn is not None else self._take_part_index()
+            if turn is None:
+                turn = self._user_turns[item_id] = _UserTurn(part, '', index)
             if item_id not in self._user_turn_anchors:
                 # The failure is the first we hear of this item, so its turn is only placed now.
                 self._claim_user_turn_anchor(item_id)
             self._finalized_user_item_ids.add(item_id)
+        else:
+            turn = self._user_turns.get(None)
+            start_emitted = turn is not None
+            part = replace(turn.part, transcript=None) if turn is not None else SpeechPart(speaker='user')
+            index = turn.index if turn is not None else self._take_part_index()
 
         if self._retain_input:
             segment = self._input_audio_by_id.pop(item_id, None) if item_id is not None else None
@@ -2090,32 +2049,27 @@ class RealtimeSession:
 
         # Recompute like `_finalize_user`: with overlapping user items, one item's failure must not mark
         # the whole user side idle while another item is still active.
-        self._user_turn_active = bool(
-            self._active_user is not None or self._active_users_by_id or self._pending_user_turn_anchor is not None
-        )
+        self._user_turn_active = any(not current.finalized for current in self._user_turns.values())
         if item_id is None:
             self._record_user_request(None, self._new_request([part]))
+            self._user_turns.pop(None, None)
         else:
-            self._finalized_users_by_id[item_id] = part
+            assert turn is not None
+            turn.part = part
+            turn.finalized = True
             self._flush_finalized_user_prefix()
         end = PartEndEvent(index=index, part=part)
         return [end] if start_emitted else [PartStartEvent(index=index, part=part), end]
 
     def _flush_pending_users(self) -> None:
         """Preserve transcript-bearing user items that never received an explicit final event."""
-        if self._active_user is not None:
+        if None in self._user_turns:
             self._finalize_user()
-        for item_id in list(self._user_item_order):
-            if item_id in self._active_users_by_id:
+        for item_id, turn in list(self._user_turns.items()):
+            if item_id is not None and not turn.finalized:
                 self._finalize_user(item_id=item_id)
-        while self._user_item_order:
-            item_id = self._user_item_order.popleft()
-            part = self._finalized_users_by_id.pop(item_id, None)
-            if part is not None:
-                self._record_user_request(item_id, self._new_request([part]))
-        self._active_users_by_id.clear()
-        self._user_transcripts_by_id.clear()
-        self._finalized_users_by_id.clear()
+        # Finalizing the last blocked item flushed the whole finalized prefix, so nothing remains.
+        assert not self._user_turns, 'every pending user turn should have been recorded'
         self._user_turn_anchors.clear()
         self._pending_user_turn_anchor = None
         # Drop any input-audio segments whose transcript never arrived, so they can't leak across a
@@ -2135,7 +2089,7 @@ class RealtimeSession:
         """
         if self._input_transcription_enabled:
             return []
-        if self._active_user is not None or not self._user_turn_active:
+        if None in self._user_turns or not self._user_turn_active:
             return []
         audio = None
         if self._input_audio:
@@ -2153,13 +2107,16 @@ class RealtimeSession:
         return [PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part)]
 
     def _is_replayed_item(self, item_id: str | None, tool_call_id: str | None = None) -> bool:
-        """Whether an xAI resumption replay already exists in local history."""
+        """Whether a provider-generic resumption replay already exists in local history.
+
+        Only xAI currently emits `ConversationItemCreated(replayed=True)`.
+        """
         return (item_id is not None and item_id in self._replayed_item_ids) or (
             tool_call_id is not None and tool_call_id in self._replayed_tool_call_ids
         )
 
     def _accept_item(self, item_id: str | None, tool_call_id: str | None = None) -> bool:
-        """Return `False` for an xAI item that belongs to the resumption replay burst."""
+        """Return `False` for an item that belongs to a provider's resumption replay burst."""
         return not self._is_replayed_item(item_id, tool_call_id)
 
     def _handle_reconnected(self, event: RealtimeSessionReconnectEvent) -> list[RealtimeEvent]:
@@ -2178,23 +2135,14 @@ class RealtimeSession:
         ending on a dangling `ToolCallPart`.
         """
         events = self._finalize_user()
-        for item_id in list(self._user_item_order):
-            if item_id in self._active_users_by_id:
+        for item_id, turn in list(self._user_turns.items()):
+            if item_id is not None and not turn.finalized:
                 events.extend(self._finalize_user(item_id=item_id))
         self._flush_pending_users()
         events.extend(self._finalize_untranscribed_user())
         self._input_audio.clear()
 
-        response_in_flight = bool(
-            self._active_assistant is not None
-            or self._response_parts
-            or self._native_tool_parts
-            or self._pending_provider_response_id is not None
-            or self._pending_finish_reason is not None
-            or self._pending_response_usage != RequestUsage()
-            or self._chat_span is not None
-        )
-        if response_in_flight:
+        if self._response_in_flight:
             events.extend(self._finalize_assistant_part())
             self._finalize_response(interrupted=True)
         for tool_call_id, (task, call_part) in list(self._pending_tool_calls.items()):
@@ -2346,11 +2294,11 @@ class RealtimeSession:
 
     async def _execute_tool(
         self,
-        call: ToolCall,
         call_part: ToolCallPart,
+        *,
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
-        *,
+        response_usage_follows: bool,
         run_step: int,
         reserved_budget: bool,
     ) -> _SettledToolResult:
@@ -2408,7 +2356,7 @@ class RealtimeSession:
             result_part = e.tool_failed
             user_content = None
         except (ApprovalRequired, CallDeferred, RunCancelled) as e:
-            result_part = _unsettled_call_return(call, e)
+            result_part = _unsettled_call_return(call_part, e)
             user_content = None
         else:
             result_part, user_content = _build_session_tool_return(tool_result, call_part, tool_manager)
@@ -2430,13 +2378,13 @@ class RealtimeSession:
             wire_content.append(user_content)
         elif user_content:
             wire_content.extend(user_content)
-        if call.tool_call_id not in self._tool_calls_awaiting_usage:
+        if not response_usage_follows:
             await self._drain_pending_messages('asap')
         self._reserve_response_request()
         try:
             await self._send_frame(
                 ToolResult(
-                    tool_call_id=call.tool_call_id,
+                    tool_call_id=call_part.tool_call_id,
                     output=output,
                     content=wire_content or None,
                 )
@@ -2534,7 +2482,7 @@ class RealtimeSession:
             self._usage_limits.check_before_request(self.usage)
         self._response_limit_checked = True
 
-    def _accumulate_response_usage(self, event: SessionUsageEvent) -> None:
+    def _accumulate_response_usage(self, event: SessionUsage) -> None:
         self._pending_response_usage = self._pending_response_usage + event.usage
         self._pending_provider_response_id = event.provider_response_id or self._pending_provider_response_id
         self._pending_finish_reason = event.finish_reason or self._pending_finish_reason
@@ -2547,7 +2495,7 @@ class RealtimeSession:
             # already, so that terminal must not append a second, empty `ModelResponse`.
             self._response_finalized_before_terminal = True
 
-    async def _handle_usage_event(self, event: SessionUsageEvent) -> None:
+    async def _handle_usage_event(self, event: SessionUsage) -> None:
         if event.response_scoped:
             self._begin_response()
         self.usage.incr(event.usage)
@@ -2564,12 +2512,12 @@ class RealtimeSession:
 
     async def _run_tool(
         self,
-        call: ToolCall,
         call_part: ToolCallPart,
+        *,
         validation_done: asyncio.Event,
         execution_prerequisites: tuple[asyncio.Event, ...],
         completion: asyncio.Event,
-        *,
+        response_usage_follows: bool,
         run_step: int,
         reserved_budget: bool,
         order_index: int,
@@ -2578,10 +2526,10 @@ class RealtimeSession:
         """Run a tool and feed its completion (or failure) back through the queue."""
         try:
             result_part, content = await self._execute_tool(
-                call,
                 call_part,
-                validation_done,
-                execution_prerequisites,
+                validation_done=validation_done,
+                execution_prerequisites=execution_prerequisites,
+                response_usage_follows=response_usage_follows,
                 run_step=run_step,
                 reserved_budget=reserved_budget,
             )
@@ -2670,8 +2618,6 @@ class RealtimeSession:
             tool_name=event.tool_name,
             args=event.args,
             tool_call_id=event.tool_call_id,
-            id=event.item_id,
-            provider_name=self._provider_name if event.item_id is not None else None,
         )
         for out in self._handle_tool_call_part(
             call_part,
@@ -2700,11 +2646,11 @@ class RealtimeSession:
         validation_done = asyncio.Event()
         task = asyncio.create_task(
             self._run_tool(
-                event,
                 call_part,
-                validation_done,
-                execution_prerequisites,
-                completion,
+                validation_done=validation_done,
+                execution_prerequisites=execution_prerequisites,
+                completion=completion,
+                response_usage_follows=event.response_usage_follows,
                 run_step=tool_run_step,
                 reserved_budget=reserves_budget,
                 order_index=order_index,
@@ -2749,7 +2695,7 @@ class RealtimeSession:
                 for out in self._complete_tool_call(call_part, cancelled_part):
                     await self._queue.put(out)
             return False
-        if isinstance(event, SessionUsageEvent):
+        if isinstance(event, SessionUsage):
             await self._handle_usage_event(event)
             return False
         for out in self._translate_event(event):

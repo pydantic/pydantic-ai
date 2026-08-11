@@ -95,8 +95,8 @@ def test_realtime_event_exports_match_public_layers() -> None:
     }
     assert not shared_message_events & set(realtime_module.__all__)
     assert all(hasattr(messages_module, name) for name in shared_message_events)
-    assert 'SessionUsageEvent' not in realtime_module.__all__
-    assert 'SessionUsageEvent' in realtime_codec.__all__
+    assert 'SessionUsage' not in realtime_module.__all__
+    assert 'SessionUsage' in realtime_codec.__all__
 
 
 @pytest.mark.skipif(not imports_successful(), reason='xai-sdk / google-genai not installed')

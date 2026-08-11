@@ -41,7 +41,7 @@ from pydantic_ai.realtime.codec import (
     ConversationItemCreated,
     InputTranscript,
     OutputTranscript,
-    SessionUsageEvent,
+    SessionUsage,
     ToolCall,
     ToolResult,
 )
@@ -474,7 +474,7 @@ async def test_response_done_maps_xai_usage_extras() -> None:
     conn = XaiRealtimeConnection(FakeWebSocket([done]))  # type: ignore[arg-type]
     events = await collect_codec_events(conn)
 
-    assert events[0] == SessionUsageEvent(
+    assert events[0] == SessionUsage(
         usage=RequestUsage(
             input_tokens=8,
             output_tokens=5,
@@ -840,8 +840,6 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
         SpeechPart(
             speaker='assistant',
             transcript='Hello back.',
-            id='item-assistant',
-            provider_name='xai',
         )
     ]
 

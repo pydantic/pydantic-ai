@@ -38,6 +38,7 @@ from pydantic_ai._instrumentation import provider_attributes
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -68,7 +69,7 @@ from pydantic_ai.realtime.codec import (
     RealtimeConnection,
     RealtimeInput,
     ResponseDone,
-    SessionUsageEvent,
+    SessionUsage,
     ToolCall,
 )
 from pydantic_ai.tools import ToolDefinition
@@ -80,7 +81,7 @@ pytestmark = pytest.mark.anyio
 
 
 def RealtimeSession(connection: RealtimeConnection, runner: Any, **kwargs: Any) -> _RealtimeSession:
-    return _RealtimeSession(connection, make_tool_manager(runner), **kwargs)
+    return _RealtimeSession(connection, tool_manager=make_tool_manager(runner), **kwargs)
 
 
 async def collect_events(session: _RealtimeSession) -> list[RealtimeEvent]:
@@ -163,17 +164,24 @@ class _Model(RealtimeModel):
 
 
 def _settings(
-    *, include_content: bool = True, use_aggregated_usage_attribute_names: bool = True
+    *,
+    include_content: bool = True,
+    include_binary_content: bool = True,
+    use_aggregated_usage_attribute_names: bool = True,
 ) -> tuple[InstrumentationSettings, InMemorySpanExporter]:
     settings, exporter, _ = _settings_with_metrics(
         include_content=include_content,
+        include_binary_content=include_binary_content,
         use_aggregated_usage_attribute_names=use_aggregated_usage_attribute_names,
     )
     return settings, exporter
 
 
 def _settings_with_metrics(
-    *, include_content: bool = True, use_aggregated_usage_attribute_names: bool = True
+    *,
+    include_content: bool = True,
+    include_binary_content: bool = True,
+    use_aggregated_usage_attribute_names: bool = True,
 ) -> tuple[InstrumentationSettings, InMemorySpanExporter, InMemoryMetricReader]:
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
@@ -183,6 +191,7 @@ def _settings_with_metrics(
         tracer_provider=provider,
         meter_provider=MeterProvider(metric_readers=[metric_reader]),
         include_content=include_content,
+        include_binary_content=include_binary_content,
         use_aggregated_usage_attribute_names=use_aggregated_usage_attribute_names,
     )
     return settings, exporter, metric_reader
@@ -264,7 +273,7 @@ async def test_session_and_tool_spans_with_usage() -> None:
     conn = _Connection(
         [
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
-            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
             ResponseDone(),
         ]
     )
@@ -707,7 +716,7 @@ async def test_chat_spans_split_on_tool_call_are_session_children() -> None:
             OutputTranscript(text='let me check'),
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
             OutputTranscript(text='it is sunny'),
-            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
             ResponseDone(),
         ]
     )
@@ -767,7 +776,7 @@ async def test_conversation_span_tree() -> None:
             OutputTranscript(text='let me check'),
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
             OutputTranscript(text='it is sunny'),
-            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
             ResponseDone(),
             InputTranscript(text='and tomorrow?', is_final=True),
             OutputTranscript(text='also sunny'),
@@ -826,7 +835,7 @@ async def test_explicit_capability_produces_session_chat_and_tool_spans() -> Non
     conn = _Connection(
         [
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
-            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
             ResponseDone(),
         ]
     )
@@ -852,7 +861,7 @@ async def test_explicit_capability_settings_win_over_instrument() -> None:
     conn = _Connection(
         [
             ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'),
-            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
             ResponseDone(),
         ]
     )
@@ -1029,6 +1038,25 @@ async def test_include_content_false_redacts_transcript_messages() -> None:
     assert 'final_result' not in sess.attributes
 
 
+@pytest.mark.parametrize('include_binary_content', [False, True])
+async def test_session_span_respects_include_binary_content(include_binary_content: bool) -> None:
+    settings, exporter = _settings(include_binary_content=include_binary_content)
+    audio = BinaryContent(data=b'secret-audio', media_type='audio/wav')
+    seeded: list[ModelMessage] = [ModelRequest(parts=[SpeechPart(speaker='user', audio=audio)])]
+    session = RealtimeSession(
+        _Connection([]),
+        _ok_runner,
+        instrumentation=settings,
+        message_history=seeded,
+    )
+    _ = await collect_events(session)
+
+    session_span = next(span for span in exporter.get_finished_spans() if span.name == 'invoke_agent agent')
+    assert session_span.attributes is not None
+    serialized = str(session_span.attributes['pydantic_ai.all_messages'])
+    assert ('c2VjcmV0LWF1ZGlv' in serialized) is include_binary_content
+
+
 async def test_session_span_sets_conversation_id() -> None:
     # `conversation_id` lands on the session span under the same key the classic agent-run span uses
     # (`gen_ai.conversation.id`), so a realtime session can be correlated with other runs.
@@ -1132,7 +1160,7 @@ async def test_session_usage_without_aggregated_attribute_names() -> None:
         [
             InputTranscript(text='hi', is_final=True),
             OutputTranscript(text='hello'),
-            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
             ResponseDone(),
         ]
     )
@@ -1157,7 +1185,7 @@ async def test_chat_span_matches_instrumented_model_shape() -> None:
         [
             InputTranscript(text='hello there', is_final=True),
             OutputTranscript(text='hi, how can I help?'),
-            SessionUsageEvent(
+            SessionUsage(
                 usage=RequestUsage(input_tokens=10, output_tokens=4),
                 provider_response_id='resp-1',
                 finish_reason='stop',
@@ -1217,11 +1245,11 @@ async def test_per_response_token_metrics_match_classic_dimensions() -> None:
         [
             InputTranscript(text='first', is_final=True),
             OutputTranscript(text='one'),
-            SessionUsageEvent(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
             ResponseDone(),
             InputTranscript(text='second', is_final=True),
             OutputTranscript(text='two'),
-            SessionUsageEvent(usage=RequestUsage(input_tokens=7, output_tokens=3)),
+            SessionUsage(usage=RequestUsage(input_tokens=7, output_tokens=3)),
             ResponseDone(),
         ]
     )

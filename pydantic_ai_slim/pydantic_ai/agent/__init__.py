@@ -3378,7 +3378,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
                 session = RealtimeSession(
                     _SkippedRealtimeConnection(),
-                    ToolManager(FunctionToolset()),
+                    model=model,
+                    tool_manager=ToolManager(FunctionToolset()),
                     model_name=model.model_name,
                     usage=run_context.usage,
                     usage_limits=usage_limits,
@@ -3503,11 +3504,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ) as connection:
                 session = RealtimeSession(
                     connection,
-                    tool_manager,
+                    model=model,
+                    tool_manager=tool_manager,
                     instrumentation=session_instrumentation_settings,
-                    model_name=model.model_name,
-                    provider_name=model.system,
-                    provider_url=model.base_url,
                     # Fall back to 'agent' like the classic run span (see `capabilities/instrumentation.py`)
                     # so the session span always carries an `agent_name`; backends that group runs by it
                     # (e.g. Logfire's Runs view) would otherwise skip an unnamed agent's realtime session.
@@ -3518,7 +3517,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     retain_images_every_n=retain_images_every_n,
                     retain_images_max=retain_images_max,
                     message_history=message_history,
-                    profile=model_profile,
                     conversation_id=conversation_id,
                     run_id=run_id,
                     instructions=resolved_instructions or None,

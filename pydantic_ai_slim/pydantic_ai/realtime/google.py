@@ -105,7 +105,7 @@ from .codec import (
     RealtimeConnection,
     RealtimeInput,
     ResponseDone,
-    SessionUsageEvent,
+    SessionUsage,
     ToolCall,
     ToolCallCancelled,
     ToolResult,
@@ -1438,7 +1438,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
             events.append(ToolCallCancelled(tool_call_ids=list(cancelled_ids)))
         if message.usage_metadata is not None:
             events.append(
-                SessionUsageEvent(
+                SessionUsage(
                     usage=_map_usage(
                         message.usage_metadata,
                         provider_name=self._provider_name,
