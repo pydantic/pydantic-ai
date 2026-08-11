@@ -79,7 +79,7 @@ available as audio.
 ## Browser WebRTC and Microsoft Entra ID
 
 Azure OpenAI supports the same browser WebRTC flow as OpenAI — the audio flows browser ↔ Azure directly
-while your backend runs a control-plane **sideband**. See [Browser / WebRTC](lifecycle.md#browser-webrtc)
+while your backend runs a control-plane **sideband**. See [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)
 for the topology, and use
 [`AgentRealtime.answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] /
 [`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] exactly as on OpenAI.
@@ -106,7 +106,7 @@ safe subset so the session instructions stay on the server's control connection.
     [`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] /
     [`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent], so a
     listening/speaking indicator can be driven from the server rather than reconstructed in the browser
-    (see [Browser / WebRTC](lifecycle.md#browser-webrtc)).
+    (see [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)).
 
 Azure requests authenticate with the resource's API key by default. To use **Microsoft Entra ID**
 instead — so no API key is involved, e.g. when the resource is locked to managed identity — pass a

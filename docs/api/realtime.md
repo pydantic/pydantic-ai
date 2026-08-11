@@ -50,7 +50,7 @@ provider-specific (see [Concurrent tool execution](../realtime/tools.md#concurre
 | [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] | Wraps a connection with automatic concurrent tool dispatch. |
 
 **Browser / WebRTC** — for browser voice agents, the media flows browser ↔ provider directly while the
-backend runs a control-plane sideband (OpenAI and Azure OpenAI; see [Browser / WebRTC](../realtime/lifecycle.md#browser-webrtc)):
+backend runs a control-plane sideband (OpenAI and Azure OpenAI; see [Connecting a frontend](../realtime/deployment.md#browser-webrtc-server-sideband)):
 
 | Object | Role |
 | --- | --- |

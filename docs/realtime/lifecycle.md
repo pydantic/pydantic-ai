@@ -42,76 +42,6 @@ and xAI). A handshake that times out raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError]; a rejected WebSocket upgrade raises
 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] (see [Errors](#errors)).
 
-## Browser / WebRTC
-
-For browser voice agents on OpenAI and Azure OpenAI, the browser can carry microphone and speaker
-audio directly over WebRTC while the backend attaches a control-plane sideband to the same call.
-This keeps media latency low and keeps tools, history, dependencies, and provider credentials on the
-server.
-
-```text
-browser ── WebRTC media ── provider
-   │                         ▲
-   └─ SDP offer → backend ───┘ sideband identified by call_id
-```
-
-Relay the browser's offer with
-[`AgentRealtime.answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer], return
-the SDP answer to the browser, then attach the returned call handle:
-
-```python
-import asyncio
-
-from pydantic_ai import Agent
-
-agent = Agent(instructions='You are a concise voice assistant.')
-realtime = agent.realtime('openai:gpt-realtime')
-
-
-async def handle_offer(sdp_offer: str) -> str:
-    answer = await realtime.answer_webrtc_offer(sdp_offer)
-
-    async def run_sideband() -> None:
-        async with realtime.session(provider_session=answer.session) as session:
-            async for event in session:
-                print(event)
-
-    asyncio.create_task(run_sideband())
-    return answer.sdp
-```
-
-The secure offer-relay flow never gives the browser a token. As an alternative,
-[`AgentRealtime.create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] mints a
-short-lived credential for client-led negotiation. The browser is still a peer on the provider
-session and can send provider-native control events, so authorize every server-side tool against
-trusted [`deps`](../dependencies.md), not session instructions supplied to the model.
-
-!!! warning "The browser can read seeded history"
-    Seeding a sideband session with [`message_history`](history.md) sends those prior turns into the
-    **shared** provider conversation that the browser is a peer on, so a call participant can read
-    them — including confidential tool results — over the data channel (Azure's `webrtcfilter=on`
-    still forwards conversation-item events). Only seed a sideband with history that is safe for the
-    browser to see; keep confidential context in [`deps`](../dependencies.md) and tool logic instead.
-
-A sideband does not own the audio transport. Its `send_audio()`, `commit_audio()`, `clear_audio()`,
-and `stream_audio()` methods raise, and `audio_retention` must remain `'transcript_only'`. Enable
-[input transcription](audio.md#input-transcription) when user speech must appear in history.
-
-Generation can finish before buffered media stops playing. Use
-[`RealtimeOutputSpeechStartEvent`][pydantic_ai.realtime.RealtimeOutputSpeechStartEvent] and
-[`RealtimeOutputSpeechEndEvent`][pydantic_ai.realtime.RealtimeOutputSpeechEndEvent] for speaking
-indicators. [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] also clears the
-provider's outbound WebRTC audio buffer so barge-in stops playback. A clean sideband close means the
-browser hung up and ends iteration without a session error or reconnect attempt, even when a
-`reconnect` policy is set: the sideband is a control channel, so a normal close is the call ending.
-The close frame alone can't distinguish that from a WebSocket-terminating proxy closing the sideband
-cleanly mid-call (a restart or graceful rotation), which would also end the agent side while the
-browser keeps talking to the provider — drain such connections at the infrastructure layer rather
-than relying on the `reconnect` policy to cover them.
-
-The [realtime WebRTC example](../examples/realtime-webrtc.md) demonstrates the full FastAPI and
-browser flow. Gemini Live and xAI do not provide this sideband transport.
-
 ## Reconnecting
 
 Set the `reconnect` [shared setting](overview.md#shared-settings) to a
@@ -136,6 +66,14 @@ forever.
 
 Without a policy, an unexpected provider close raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session iterator.
+
+On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) the same policy applies to an
+unexpected drop, but a *clean* close is treated as the browser hanging up: the sideband is a control
+channel, so a normal close ends iteration without a session error or reconnect attempt even when a
+`reconnect` policy is set. The close frame alone can't distinguish a hangup from a
+WebSocket-terminating proxy closing the sideband cleanly mid-call (a restart or graceful rotation),
+which would end the agent side while the browser keeps talking to the provider — drain such
+connections at the infrastructure layer rather than relying on the `reconnect` policy to cover them.
 
 ### State restoration
 

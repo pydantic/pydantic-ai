@@ -69,7 +69,7 @@ async def handle_events(session: RealtimeSession, speaker: Speaker):
 The speech-start event also occurs on ordinary user turns when nothing is playing. Track unplayed
 audio before interrupting. `interrupt()` never flushes the local speaker buffer.
 
-On a [WebRTC sideband](lifecycle.md#browser-webrtc) there is a third buffer between those two: the
+On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) there is a third buffer between those two: the
 provider generates audio well ahead of playback and keeps streaming what it already produced, so
 stopping the model is not enough to stop the voice. `interrupt()` drops that outbound buffer too,
 which is what actually ends the turn for the listener. The browser still owns its own playback buffer

@@ -18,9 +18,9 @@ Authentication and base URL come from `provider`, mirroring
 [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. The default `provider='openai'`
 reads the environment; pass an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] for a
 custom key or base URL. The realtime WebSocket opens separately, so a custom provider `httpx` client
-is not used for it. Sessions run over a server-side WebSocket; browser-direct WebRTC transport is
-coming in [#6676](https://github.com/pydantic/pydantic-ai/pull/6676) (see
-[Connecting a frontend](deployment.md)).
+is not used for it. Sessions run over a server-side WebSocket by default; for browser voice, the
+browser can exchange media directly over [WebRTC](#browser-webrtc) while your backend runs the agent
+(see [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)).
 
 ## Model names
 
@@ -79,10 +79,7 @@ exposes effort as input only.
 ## Browser WebRTC
 
 For browser voice agents, OpenAI recommends WebRTC: the audio flows browser ↔ OpenAI directly, while
-your backend attaches a control-plane **sideband** to run the agent. See
-[Browser / WebRTC](lifecycle.md#browser-webrtc) in the overview for the topology and the secure flow, and
-the [realtime WebRTC example](../examples/realtime-webrtc.md) for a runnable app.
-
+your backend attaches a control-plane **sideband** to run the agent.
 [`AgentRealtime`][pydantic_ai.agent.AgentRealtime] exposes two signaling helpers, both resolving and
 binding the agent's session configuration (instructions, tools, voice, VAD) server-side:
 
@@ -95,30 +92,9 @@ binding the agent's session configuration (instructions, tools, voice, VAD) serv
   [`RealtimeClientSecret`][pydantic_ai.realtime.RealtimeClientSecret] (ephemeral token) for a browser
   that negotiates the WebRTC call itself, when you don't relay the SDP through your backend.
 
-```python
-import asyncio
-
-from pydantic_ai import Agent
-from pydantic_ai.realtime.openai import OpenAIRealtimeModel
-
-agent = Agent(instructions='You are a helpful voice assistant.')
-realtime = agent.realtime(OpenAIRealtimeModel('gpt-realtime'))
-
-
-# In your `POST /offer` handler, `sdp_offer` is the browser's SDP offer (the request body):
-async def handle_offer(sdp_offer: str) -> str:
-    answer = await realtime.answer_webrtc_offer(sdp_offer)
-
-    async def run_sideband() -> None:
-        async with realtime.session(provider_session=answer.session) as session:
-            async for event in session:
-                ...
-
-    # The browser applies the answer as its remote description before any media flows, so the sideband
-    # runs as a background task and the handler returns the answer straight away.
-    asyncio.create_task(run_sideband())
-    return answer.sdp
-```
+See [Connecting a frontend](deployment.md#browser-webrtc-server-sideband) for the topology, the
+secure offer-relay flow, and the sideband trust model, and the
+[realtime WebRTC example](../examples/realtime-webrtc.md) for a runnable FastAPI and browser app.
 
 ## Feature support and limitations
 
