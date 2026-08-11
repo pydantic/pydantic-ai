@@ -1,16 +1,16 @@
-"""Serializable sandbox identity and worker-side reconnection."""
+"""Serializable sandbox identity and the provider glue that creates and re-opens sandboxes."""
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
 
 from pydantic_ai.exceptions import UserError
 
 from .protocol import SandboxBackend
 
-__all__ = ('SandboxConnector', 'SandboxRef')
+__all__ = ('SandboxProvider', 'SandboxRef')
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -18,40 +18,87 @@ class SandboxRef:
     """Serializable identity for an existing sandbox environment."""
 
     provider: str
-    """The provider whose connector can re-open the environment."""
+    """The provider that can re-open the environment."""
 
     sandbox_id: str
     """The provider-specific identifier of the existing environment."""
 
 
-class SandboxConnector(Protocol):
-    """Worker-side configuration for re-opening existing sandboxes.
+class SandboxProvider(ABC):
+    """Creates, reconnects to, and optionally destroys sandboxes for one provider.
 
-    A connector must fail when `sandbox_id` no longer exists. It must never silently create a
-    replacement environment, since that would violate durable-execution identity.
+    Unlike the [backend and result protocols][pydantic_ai.sandboxes.SandboxBackend], this is an
+    ordinary abstract base class rather than a structural protocol. Structural typing is reserved
+    for objects a third-party sandbox library already has — its live environment handle, its
+    result and file-entry types — so they conform without depending on Pydantic AI. Provider glue
+    is the opposite: it is written *against* Pydantic AI, so inheriting costs nothing and buys
+    optional methods with real default behavior.
+
+    [`connect`][pydantic_ai.sandboxes.SandboxProvider.connect] is the one required operation;
+    [`create`][pydantic_ai.sandboxes.SandboxProvider.create] and
+    [`teardown`][pydantic_ai.sandboxes.SandboxProvider.teardown] follow the module's
+    "optional operations raise `NotImplementedError`" contract, so a provider implements exactly
+    the lifecycle its platform supports.
+
+    Pass a provider to [`ManagedSandbox`][pydantic_ai.sandboxes.ManagedSandbox] to let a run own a
+    sandbox's whole lifecycle, and/or register it on a durability capability so a
+    [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] can be re-opened worker-side.
     """
 
     @property
+    @abstractmethod
     def provider(self) -> str:
-        """The provider identifier this connector handles."""
-        ...
+        """The provider identifier this provider handles.
 
+        Must equal the `provider` its backends report, since that pairing is what
+        [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] resolution matches on.
+        """
+
+    @abstractmethod
     async def connect(self, sandbox_id: str) -> SandboxBackend:
-        """Re-open the existing sandbox identified by `sandbox_id`."""
-        ...
+        """Re-open the existing sandbox identified by `sandbox_id`.
+
+        Must fail when `sandbox_id` no longer exists. It must never silently create a
+        replacement environment, since that would violate durable-execution identity.
+        """
+
+    async def create(self) -> SandboxBackend:
+        """Provision a fresh sandbox and return a live backend for it.
+
+        The framework derives the new sandbox's identity from the backend's required
+        `provider`/`sandbox_id` members, so there is nothing to return alongside it.
+
+        Providers that cannot provision — because the environment is created out of band, by
+        an operator or another service — leave this unimplemented; the sandbox is then supplied
+        to the run directly, as a backend or as a
+        [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef].
+        """
+        raise NotImplementedError(
+            f'Sandbox provider {self.provider!r} does not implement `create()`; pass an existing sandbox '
+            'backend or a `SandboxRef` to the run instead.'
+        )
+
+    async def teardown(self, sandbox_id: str) -> None:
+        """Destroy the sandbox identified by `sandbox_id`.
+
+        The default is a no-op: most platforms reap idle sandboxes on their own timeout, which
+        is the backstop for every path that cannot run teardown (a killed worker, a cancelled
+        workflow). Implementations must tolerate an already-gone sandbox, because teardown also
+        runs after a failure that may have destroyed it.
+        """
 
 
-async def connect_sandbox_ref(ref: SandboxRef, connectors: Sequence[SandboxConnector]) -> SandboxBackend:
-    """Connect a sandbox reference using latest-connector-wins provider resolution."""
-    connectors_by_provider = {connector.provider: connector for connector in connectors}
-    connector = connectors_by_provider.get(ref.provider)
-    if connector is None:
-        registered = ', '.join(repr(provider) for provider in connectors_by_provider) or '(none)'
+async def connect_sandbox_ref(ref: SandboxRef, providers: Sequence[SandboxProvider]) -> SandboxBackend:
+    """Connect a sandbox reference using latest-provider-wins provider resolution."""
+    providers_by_name = {provider.provider: provider for provider in providers}
+    provider = providers_by_name.get(ref.provider)
+    if provider is None:
+        registered = ', '.join(repr(name) for name in providers_by_name) or '(none)'
         raise UserError(
-            f'No sandbox connector is registered for provider {ref.provider!r}. Registered providers: {registered}.'
+            f'No sandbox provider is registered for provider {ref.provider!r}. Registered providers: {registered}.'
         )
     try:
-        return await connector.connect(ref.sandbox_id)
+        return await provider.connect(ref.sandbox_id)
     except Exception as error:
         raise UserError(
             f'Failed to connect to sandbox provider {ref.provider!r} for sandbox {ref.sandbox_id!r}.'

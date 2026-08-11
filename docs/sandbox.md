@@ -255,10 +255,10 @@ Durable sandboxes split **identity** from **connection**:
 
 - [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] is pure serializable identity:
   `provider` plus `sandbox_id`, with no credentials or live client.
-- [`SandboxConnector`][pydantic_ai.sandboxes.SandboxConnector] holds worker-side credentials and
+- [`SandboxProvider`][pydantic_ai.sandboxes.SandboxProvider] holds worker-side credentials and
   configuration. Its `connect()` method re-opens that existing environment.
 
-Pass the reference through `sandbox=` and register its connector on the durability capability.
+Pass the reference through `sandbox=` and register its provider on the durability capability.
 Pydantic AI reconstructs a deferred [`Sandbox`][pydantic_ai.sandboxes.Sandbox] inside the durable
 I/O boundary, so tool code continues to call `await ctx.sandbox.run(...)`. The first operation
 connects once and caches the live backend for that activity, step, or task.
@@ -269,9 +269,10 @@ from temporalio import workflow
 
 from pydantic_ai import Agent, RunContext, SandboxBackend, SandboxRef
 from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai.sandboxes import SandboxProvider
 
 
-class MySandboxConnector:
+class MySandboxProvider(SandboxProvider):
     provider = 'my-sandbox'
 
     def __init__(self, client: SandboxClient):
@@ -283,7 +284,7 @@ class MySandboxConnector:
 
 
 durability = TemporalDurability(
-    sandbox_connectors=[MySandboxConnector(SandboxClient.from_environment())]
+    sandbox_providers=[MySandboxProvider(SandboxClient.from_environment())]
 )
 agent = Agent('anthropic:claude-sonnet-5', name='workspace_agent', capabilities=[durability])
 
@@ -312,7 +313,7 @@ property raises until an async operation has connected the facade.
   `TemporalRunContext` and rebuilds the deferred facade in activities. Workflow code may inspect
   its identity, but must not call sandbox operations because connecting performs I/O.
 - **[DBOS](durable_execution/dbos.md)** pickles the reference as a workflow input. Recovery
-  rebuilds a fresh facade whose connector reaches the same `sandbox_id`. Effectful sandbox tools
+  rebuilds a fresh facade whose provider reaches the same `sandbox_id`. Effectful sandbox tools
   must still run as DBOS steps, like any other tool I/O.
 - **[Prefect](durable_execution/prefect.md)** runs tools in-process, so the default local sandbox
   remains available. A deferred facade contributes `(provider, sandbox_id)` to task cache keys
@@ -321,16 +322,16 @@ property raises until an async operation has connected the facade.
 
 Without a `SandboxRef`, Temporal and DBOS keep their `UnavailableSandbox` default. A live backend
 is still rejected because it cannot cross their durable boundaries. `LocalSandbox` has no
-connector: its worker-local temporary directory cannot survive worker replacement.
+provider: its worker-local temporary directory cannot survive worker replacement.
 
-Rules of thumb for connector authors:
+Rules of thumb for provider authors:
 
 - **Create the sandbox in an activity** (or before the workflow starts), keyed idempotently
   (for example, on the workflow id) so an activity retry cannot create duplicates.
 - **Destroy in a workflow `finally` — and still set a server-side TTL.** A terminated workflow
   runs no cleanup; without a TTL or reaper, the sandbox leaks.
 - **Ids only in `SandboxRef`.** The reference is recorded in workflow history; credentials belong
-  on the worker-side connector.
+  on the worker-side provider.
 - **Fail loudly on expiry.** If the sandbox was reaped while the workflow slept, an
   open-or-create fallback silently swaps in an empty environment that the model's message
   history contradicts. Recreate only as an explicit, logged decision.

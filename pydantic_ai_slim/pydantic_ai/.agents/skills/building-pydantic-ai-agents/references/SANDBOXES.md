@@ -75,10 +75,10 @@ sandbox = UnavailableSandbox(reason='Local execution is disabled by application 
 Split durable sandbox state into identity and connection:
 
 - `SandboxRef(provider, sandbox_id)` is serializable identity with no credentials.
-- A structural `SandboxConnector` holds worker-side credentials and implements
+- A `SandboxProvider` subclass holds worker-side credentials and implements
   `connect(sandbox_id) -> SandboxBackend` for an existing environment.
-- Register connectors with `TemporalDurability(sandbox_connectors=[...])`,
-  `DBOSDurability(sandbox_connectors=[...])`, or `PrefectDurability(sandbox_connectors=[...])`.
+- Register providers with `TemporalDurability(sandbox_providers=[...])`,
+  `DBOSDurability(sandbox_providers=[...])`, or `PrefectDurability(sandbox_providers=[...])`.
 - Pass the reference through `sandbox=`. Tools continue to use `await ctx.sandbox.run(...)`; the
   deferred facade connects once on its first operation.
 
@@ -91,10 +91,10 @@ keys without connecting.
 Without a reference, Temporal and DBOS retain `UnavailableSandbox`. They reject live backends.
 `LocalSandbox` is intentionally not reconnectable because its temporary directory is worker-local.
 
-Connector rules:
+Provider rules:
 
-- Re-open only; raise when the environment expired. Never silently open-or-create.
-- Keep credentials on the connector, not in `SandboxRef` or workflow history.
+- `connect()` re-opens only; raise when the environment expired. Never silently open-or-create.
+- Keep credentials on the provider, not in `SandboxRef` or workflow history.
 - Create idempotently in a separate activity or before workflow start.
 - Destroy in workflow cleanup and also configure a server-side TTL or reaper.
 

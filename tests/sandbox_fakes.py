@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from pydantic_ai import RunPreparationContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.sandboxes import SandboxBackend
+from pydantic_ai.sandboxes import SandboxBackend, SandboxProvider
 
 
 @dataclass(frozen=True)
@@ -52,12 +52,14 @@ class RecordingSandboxBackend:
         return '/workspace'
 
 
-class RecordingSandboxConnector:
-    provider = 'fake'
-
+class RecordingSandboxProvider(SandboxProvider):
     def __init__(self) -> None:
         self.sandbox_ids: list[str] = []
         self.backends: list[RecordingSandboxBackend] = []
+
+    @property
+    def provider(self) -> str:
+        return 'fake'
 
     async def connect(self, sandbox_id: str) -> SandboxBackend:
         self.sandbox_ids.append(sandbox_id)

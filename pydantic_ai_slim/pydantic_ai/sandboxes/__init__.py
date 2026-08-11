@@ -13,7 +13,7 @@ from .protocol import (
     SupportsStart,
     SupportsStream,
 )
-from .references import SandboxConnector, SandboxRef
+from .references import SandboxProvider, SandboxRef
 from .sandbox import FileWindow, Sandbox
 from .unavailable import UnavailableSandbox
 
@@ -22,7 +22,7 @@ __all__ = (
     'LocalSandbox',
     'Sandbox',
     'SandboxBackend',
-    'SandboxConnector',
+    'SandboxProvider',
     'SandboxCommand',
     'SandboxFileEntry',
     'SandboxFilesystem',

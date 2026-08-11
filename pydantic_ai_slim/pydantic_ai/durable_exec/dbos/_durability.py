@@ -22,7 +22,7 @@ from pydantic_ai.durable_exec._utils import (
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import SandboxConnector
+from pydantic_ai.sandboxes import SandboxProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
@@ -71,14 +71,14 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             'run arguments are pickled as workflow inputs for recovery, and a live handle does not survive '
             'pickling or recovery'
         ),
-        connector_hint='register a matching connector on `DBOSDurability`',
+        provider_hint='register a matching provider on `DBOSDurability`',
     )
 
     def __init__(
         self,
         *,
         models: Mapping[str, Model] | None = None,
-        sandbox_connectors: Sequence[SandboxConnector] | None = None,
+        sandbox_providers: Sequence[SandboxProvider] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         name: str | None = None,
         model_step_config: StepConfig | None = None,
@@ -106,7 +106,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 specific instance inside the step from such a string — a custom
                 provider, or per-user credentials carried on `deps` — use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
-            sandbox_connectors: Worker-side connectors for re-opening
+            sandbox_providers: Worker-side providers for re-opening
                 [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] run arguments after recovery.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request steps, and each tool event is handled in its own
@@ -124,7 +124,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         super().__init__(
             models=models,
-            sandbox_connectors=sandbox_connectors,
+            sandbox_providers=sandbox_providers,
             event_stream_handler=event_stream_handler,
             name=name,
         )

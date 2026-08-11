@@ -35,7 +35,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
-from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import SandboxBackend, SandboxProvider, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -47,12 +47,12 @@ from pydantic_ai.tools import (
 
 from .._runtime_toolsets import reject_cancellation_token, reject_unsupported_runtime_toolsets
 from .._sandbox import (
-    SandboxConnectorsCapability,
+    SandboxProvidersCapability,
     contributes_sandbox,
     guard_workflow_sandbox,
     live_sandbox_error,
     sandbox_contribution_error,
-    with_sandbox_connectors,
+    with_sandbox_providers,
 )
 from ._activity_execution import execute_activity
 from ._durability import serialization_user_error
@@ -74,7 +74,7 @@ _SANDBOX_CONTRIBUTION_ERROR = sandbox_contribution_error(
 _LIVE_SANDBOX_ERROR = live_sandbox_error(
     run_location='to an agent run inside a Temporal workflow',
     sandbox_constraint='it would exist in workflow code where I/O is forbidden and cannot cross into activities',
-    connector_hint='register a matching `sandbox_connectors=` entry',
+    provider_hint='register a matching `sandbox_providers=` entry',
 )
 
 
@@ -91,7 +91,7 @@ class _EventStreamHandlerParams:
 - `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[TemporalDurability(...)])`.
 - `name=` → set `name=` on `Agent`, or `name=` on `TemporalDurability`.
 - `models=` → set `models=` on `TemporalDurability`.
-- `sandbox_connectors=` → set `sandbox_connectors=` on `TemporalDurability`.
+- `sandbox_providers=` → set `sandbox_providers=` on `TemporalDurability`.
 - `provider_factory=` → use a deps-aware `ResolveModelId` capability.
 - `event_stream_handler=` → pass `event_stream_handler=` to `TemporalDurability`; it runs inside activities, exactly like before; for streams that don't need to run inside activities, register a `ProcessEventStream` capability instead.
 - `activity_config=` → set `activity_config=` on `TemporalDurability`.
@@ -110,7 +110,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         *,
         name: str | None = None,
         models: Mapping[str, Model] | None = None,
-        sandbox_connectors: Sequence[SandboxConnector] | None = None,
+        sandbox_providers: Sequence[SandboxProvider] | None = None,
         provider_factory: TemporalProviderFactory | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
@@ -144,7 +144,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 Registered model instances can be passed directly to `run(model=...)`.
                 If the wrapped agent doesn't have a model set and none is provided to `run()`,
                 the first model in this mapping will be used as the default.
-            sandbox_connectors: Worker-side connectors for re-opening
+            sandbox_providers: Worker-side providers for re-opening
                 [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] run arguments inside activities.
             provider_factory:
                 Optional callable used when instantiating models from provider strings (those supplied at runtime).
@@ -169,8 +169,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         self._name = name
         self._event_stream_handler = event_stream_handler
-        self._sandbox_connectors = tuple(sandbox_connectors or ())
-        self._sandbox_connector_capability = SandboxConnectorsCapability(self._sandbox_connectors)
+        self._sandbox_providers = tuple(sandbox_providers or ())
+        self._sandbox_provider_capability = SandboxProvidersCapability(self._sandbox_providers)
         self._wrapped_contributes_sandbox = contributes_sandbox(wrapped.root_capability)
         self.run_context_type = run_context_type
 
@@ -215,7 +215,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 params.serialized_run_context,
                 deps=deps,
                 agent=self.wrapped,
-                sandbox_connectors=self._sandbox_connectors,
+                sandbox_providers=self._sandbox_providers,
             )
 
             async def streamed_response():
@@ -243,7 +243,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             models=models,
             provider_factory=provider_factory,
             agent=self.wrapped,
-            sandbox_connectors=self._sandbox_connectors,
+            sandbox_providers=self._sandbox_providers,
         )
         activities.extend(temporal_model.temporal_activities)
         self._temporal_model = temporal_model
@@ -271,9 +271,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             if n_positional > 6:
                 args = (*args, self.wrapped)
             if temporalize_toolset_func is _default_temporalize_toolset:
-                toolset = _default_temporalize_toolset(*args, sandbox_connectors=self._sandbox_connectors)
+                toolset = _default_temporalize_toolset(*args, sandbox_providers=self._sandbox_providers)
             else:
-                # Custom callbacks intentionally retain the legacy signature without sandbox connectors.
+                # Custom callbacks intentionally retain the legacy signature without sandbox providers.
                 toolset = temporalize_toolset_func(*args)
             activities.extend(toolset_temporal_activities(toolset))
             return toolset
@@ -541,7 +541,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 infer_name=infer_name,
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler or self.event_stream_handler,
-                capabilities=with_sandbox_connectors(capabilities, self._sandbox_connector_capability),
+                capabilities=with_sandbox_providers(capabilities, self._sandbox_provider_capability),
                 sandbox=sandbox,
                 spec=spec,
             )
@@ -697,7 +697,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
-            capabilities=with_sandbox_connectors(capabilities, self._sandbox_connector_capability),
+            capabilities=with_sandbox_providers(capabilities, self._sandbox_provider_capability),
             sandbox=sandbox,
             spec=spec,
         )
@@ -853,7 +853,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             infer_name=infer_name,
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
-            capabilities=with_sandbox_connectors(capabilities, self._sandbox_connector_capability),
+            capabilities=with_sandbox_providers(capabilities, self._sandbox_provider_capability),
             sandbox=sandbox,
             spec=spec,
         ) as result:
@@ -1030,7 +1030,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 retries=retries,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                capabilities=with_sandbox_connectors(capabilities, self._sandbox_connector_capability),
+                capabilities=with_sandbox_providers(capabilities, self._sandbox_provider_capability),
                 sandbox=sandbox,
                 spec=spec,
             ) as events:
@@ -1251,7 +1251,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             retries=retries,
             infer_name=infer_name,
             toolsets=toolsets,
-            capabilities=with_sandbox_connectors(capabilities, self._sandbox_connector_capability),
+            capabilities=with_sandbox_providers(capabilities, self._sandbox_provider_capability),
             sandbox=sandbox,
             spec=spec,
         ) as run:

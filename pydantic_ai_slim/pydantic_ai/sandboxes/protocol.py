@@ -335,8 +335,8 @@ class SandboxBackend(Protocol):
         """Short identifier of the backing implementation (e.g. `'docker'`, `'local'`).
 
         Together with `sandbox_id`, this is the identity consumed by a
-        [`SandboxConnector`][pydantic_ai.sandboxes.SandboxConnector]. Credentials and other
-        worker-side configuration stay on the connector rather than in the identity.
+        [`SandboxProvider`][pydantic_ai.sandboxes.SandboxProvider]. Credentials and other
+        worker-side configuration stay on the provider rather than in the identity.
 
         The name is `provider` — not `provider_name` — by contract: conformance is
         structural, and sandbox libraries already expose `provider` on their native types, so

@@ -41,7 +41,7 @@ from pydantic_ai.models import (
     infer_model,
 )
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import SandboxConnector
+from pydantic_ai.sandboxes import SandboxProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
@@ -156,7 +156,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     _live_sandbox_error = live_sandbox_error(
         run_location='to an agent run inside a Temporal workflow',
         sandbox_constraint='it would exist in workflow code where I/O is forbidden and cannot cross into activities',
-        connector_hint='register a matching connector on `TemporalDurability`',
+        provider_hint='register a matching provider on `TemporalDurability`',
     )
 
     run_context_type: type[TemporalRunContext[AgentDepsT]]
@@ -169,7 +169,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self,
         *,
         models: Mapping[str, Model] | None = None,
-        sandbox_connectors: Sequence[SandboxConnector] | None = None,
+        sandbox_providers: Sequence[SandboxProvider] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         name: str | None = None,
         deps_type: type[AgentDepsT] | None = None,
@@ -199,7 +199,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 specific instance on the worker from such a string — a custom
                 provider, or per-user credentials carried on `deps` — use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
-            sandbox_connectors: Worker-side connectors for re-opening
+            sandbox_providers: Worker-side providers for re-opening
                 [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] run arguments inside activities.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request activities, and tool events are handled in
@@ -235,7 +235,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         super().__init__(
             models=models,
-            sandbox_connectors=sandbox_connectors,
+            sandbox_providers=sandbox_providers,
             event_stream_handler=event_stream_handler,
             name=name,
         )
@@ -332,7 +332,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 params.serialized_run_context,
                 deps=deps,
                 agent=self._agent,
-                sandbox_connectors=self._sandbox_connectors,
+                sandbox_providers=self._sandbox_providers,
             )
             model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
             async with heartbeating():
@@ -352,7 +352,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 params.serialized_run_context,
                 deps=deps,
                 agent=self._agent,
-                sandbox_connectors=self._sandbox_connectors,
+                sandbox_providers=self._sandbox_providers,
             )
             model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
             async with heartbeating():
@@ -385,7 +385,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                         params.serialized_run_context,
                         deps=deps,
                         agent=self._agent,
-                        sandbox_connectors=self._sandbox_connectors,
+                        sandbox_providers=self._sandbox_providers,
                     )
                     await handler(run_context, self._single_event_stream(params.event))
 
@@ -407,7 +407,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     params.serialized_run_context,
                     deps=deps,
                     agent=self._agent,
-                    sandbox_connectors=self._sandbox_connectors,
+                    sandbox_providers=self._sandbox_providers,
                 )
                 model = await self._resolve_model_for_request(params.model_id, run_context)
             # The cancel activity shares `_model_activity_config`, whose default `heartbeat_timeout`
@@ -444,7 +444,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._deps_type,
             self.run_context_type,
             self._agent,
-            sandbox_connectors=self._sandbox_connectors,
+            sandbox_providers=self._sandbox_providers,
         )
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
 

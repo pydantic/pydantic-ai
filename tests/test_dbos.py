@@ -69,7 +69,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import SandboxBackend, SandboxProvider, SandboxRef, UnavailableSandbox
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .conftest import IsDatetime, IsNow, IsStr
@@ -120,7 +120,7 @@ from ._inline_snapshot import snapshot
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from .sandbox_fakes import (
     FakeSandboxHandle,
-    RecordingSandboxConnector,
+    RecordingSandboxProvider,
     SandboxContributingCapability,
 )
 
@@ -1319,11 +1319,11 @@ class SandboxContributingDBOSDurability(DBOSDurability[Any]):
 _SANDBOX_REJECTION_MESSAGE = (
     'A live sandbox handle cannot be passed to a DBOS durable agent run: run arguments are pickled as '
     'workflow inputs for recovery, and a live handle does not survive pickling or recovery. Pass a '
-    '`SandboxRef` instead and register a matching `sandbox_connectors=` entry.'
+    '`SandboxRef` instead and register a matching `sandbox_providers=` entry.'
 )
 _DBOS_UNAVAILABLE_SANDBOX_MESSAGE = (
     'RunContext.sandbox is not available inside a DBOS durable workflow. Pass a `SandboxRef` to the agent '
-    'run and register a matching `sandbox_connectors=` entry on `DBOSDurability`.'
+    'run and register a matching `sandbox_providers=` entry on `DBOSDurability`.'
 )
 
 
@@ -1413,7 +1413,7 @@ async def test_dbos_preserves_explicit_unavailable_sandbox_reason(
 _DBOS_DURABILITY_LIVE_SANDBOX_MESSAGE = (
     'A live sandbox handle cannot be passed to a DBOS durable agent run: run arguments are pickled as '
     'workflow inputs for recovery, and a live handle does not survive pickling or recovery. Pass a '
-    '`SandboxRef` instead and register a matching connector on `DBOSDurability`.'
+    '`SandboxRef` instead and register a matching provider on `DBOSDurability`.'
 )
 
 
@@ -1429,10 +1429,10 @@ async def test_dbos_durability_rejects_live_sandbox_inside_durable_run(dbos: DBO
         await run_durable_agent()
 
 
-async def test_dbos_agent_sandbox_connectors_resolve_refs(dbos: DBOS):
-    """The deprecated wrapper's `sandbox_connectors=` still resolves a `SandboxRef` run argument."""
-    connector = RecordingSandboxConnector()
-    typed_connector: SandboxConnector = connector
+async def test_dbos_agent_sandbox_providers_resolve_refs(dbos: DBOS):
+    """The deprecated wrapper's `sandbox_providers=` still resolves a `SandboxRef` run argument."""
+    provider = RecordingSandboxProvider()
+    typed_provider: SandboxProvider = provider
 
     def call_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -1449,10 +1449,10 @@ async def test_dbos_agent_sandbox_connectors_resolve_refs(dbos: DBOS):
     async def use_wrapper_sandbox(ctx: RunContext[None]) -> str:
         return (await ctx.sandbox.run(['echo', 'hello'])).stdout
 
-    dbos_agent = DBOSAgent(agent, sandbox_connectors=[typed_connector])  # pyright: ignore[reportDeprecated]
+    dbos_agent = DBOSAgent(agent, sandbox_providers=[typed_provider])  # pyright: ignore[reportDeprecated]
     result = await dbos_agent.run('Use the sandbox.', sandbox=SandboxRef(provider='fake', sandbox_id='wrapper-sandbox'))
     assert result.output == 'done'
-    assert connector.sandbox_ids == ['wrapper-sandbox']
+    assert provider.sandbox_ids == ['wrapper-sandbox']
 
 
 async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):
@@ -1477,8 +1477,8 @@ def test_dbos_durability_base_sandbox_suppressor_is_not_a_user_supplier(dbos: DB
 
 
 async def test_dbos_durability_reconnects_sandbox_ref_after_reexecution(dbos: DBOS):
-    connector = RecordingSandboxConnector()
-    typed_connector: SandboxConnector = connector
+    provider = RecordingSandboxProvider()
+    typed_provider: SandboxProvider = provider
 
     def call_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -1494,7 +1494,7 @@ async def test_dbos_durability_reconnects_sandbox_ref_after_reexecution(dbos: DB
         name='dbos_sandbox_ref_agent',
         deps_type=type(None),
         tools=[use_reconnected_sandbox],
-        capabilities=[DBOSDurability(sandbox_connectors=[typed_connector])],
+        capabilities=[DBOSDurability(sandbox_providers=[typed_provider])],
     )
 
     @DBOS.workflow()
@@ -1503,8 +1503,8 @@ async def test_dbos_durability_reconnects_sandbox_ref_after_reexecution(dbos: DB
 
     assert await run_agent('durable-sandbox') == 'done'
     assert await run_agent('durable-sandbox') == 'done'
-    assert connector.sandbox_ids == ['durable-sandbox', 'durable-sandbox']
-    assert [backend.commands for backend in connector.backends] == [
+    assert provider.sandbox_ids == ['durable-sandbox', 'durable-sandbox']
+    assert [backend.commands for backend in provider.backends] == [
         [['echo', 'durable-sandbox']],
         [['echo', 'durable-sandbox']],
     ]

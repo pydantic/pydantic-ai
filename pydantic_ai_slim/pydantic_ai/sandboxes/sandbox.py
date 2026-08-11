@@ -31,7 +31,7 @@ from .protocol import (
     SupportsFilesystem,
     SupportsStart,
 )
-from .references import SandboxConnector, SandboxRef, connect_sandbox_ref
+from .references import SandboxProvider, SandboxRef, connect_sandbox_ref
 
 __all__ = ('FileWindow', 'Sandbox')
 
@@ -123,12 +123,12 @@ class Sandbox:
     def from_ref(
         cls,
         ref: SandboxRef,
-        connectors: Sequence[SandboxConnector] | Callable[[], Sequence[SandboxConnector]],
+        providers: Sequence[SandboxProvider] | Callable[[], Sequence[SandboxProvider]],
     ) -> Sandbox:
-        """Create a facade that connects to `ref` on its first operation, using a matching connector."""
+        """Create a facade that connects to `ref` on its first operation, using a matching provider."""
 
         async def resolve(ref: SandboxRef) -> SandboxBackend:
-            resolved = connectors() if callable(connectors) else connectors
+            resolved = providers() if callable(providers) else providers
             return await connect_sandbox_ref(ref, resolved)
 
         sandbox = cls.__new__(cls)

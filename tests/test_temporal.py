@@ -120,7 +120,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.sandboxes import (
     Sandbox,
     SandboxBackend,
-    SandboxConnector,
+    SandboxProvider,
     SandboxRef,
     UnavailableSandbox,
 )
@@ -135,7 +135,7 @@ from ._inline_snapshot import snapshot
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from .sandbox_fakes import (
     FakeSandboxHandle,
-    RecordingSandboxConnector,
+    RecordingSandboxProvider,
     SandboxContributingCapability,
 )
 
@@ -2973,7 +2973,7 @@ async def test_temporal_agent_run_in_workflow_with_sandbox(allow_model_requests:
         with workflow_raises(
             UserError,
             snapshot(
-                'A live sandbox handle cannot be passed to an agent run inside a Temporal workflow: it would exist in workflow code where I/O is forbidden and cannot cross into activities. Pass a `SandboxRef` instead and register a matching `sandbox_connectors=` entry.'
+                'A live sandbox handle cannot be passed to an agent run inside a Temporal workflow: it would exist in workflow code where I/O is forbidden and cannot cross into activities. Pass a `SandboxRef` instead and register a matching `sandbox_providers=` entry.'
             ),
         ):
             await client.execute_workflow(
@@ -3001,7 +3001,7 @@ unavailable_sandbox_temporal_agent = TemporalAgent(  # pyright: ignore[reportDep
 _TEMPORAL_UNAVAILABLE_SANDBOX_MESSAGE = (
     'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
     'the activity boundary. Pass a `SandboxRef` to the agent run and register a matching '
-    '`sandbox_connectors=` entry on `TemporalDurability`.'
+    '`sandbox_providers=` entry on `TemporalDurability`.'
 )
 
 
@@ -4395,30 +4395,30 @@ async def test_temporal_run_context_round_trips_sandbox_ref():
     from pydantic_ai.durable_exec.temporal._run_context import deserialize_run_context
 
     ref = SandboxRef(provider='fake', sandbox_id='sandbox-123')
-    source_connector = RecordingSandboxConnector()
+    source_provider = RecordingSandboxProvider()
     ctx = RunContext(
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        sandbox=Sandbox.from_ref(ref, [source_connector]),
+        sandbox=Sandbox.from_ref(ref, [source_provider]),
     )
     serialized = TemporalRunContext.serialize_run_context(ctx)
     assert serialized['_sandbox_state'] == {'provider': 'fake', 'sandbox_id': 'sandbox-123'}
-    assert source_connector.sandbox_ids == []
+    assert source_provider.sandbox_ids == []
 
-    connector = RecordingSandboxConnector()
-    typed_connector: SandboxConnector = connector
+    provider = RecordingSandboxProvider()
+    typed_provider: SandboxProvider = provider
     reconstructed = deserialize_run_context(
         TemporalRunContext,
         serialized,
         deps=None,
         agent=None,
-        sandbox_connectors=[typed_connector],
+        sandbox_providers=[typed_provider],
     )
     assert (reconstructed.sandbox.provider, reconstructed.sandbox.sandbox_id) == ('fake', 'sandbox-123')
-    assert connector.sandbox_ids == []
+    assert provider.sandbox_ids == []
     assert (await reconstructed.sandbox.run(['true'])).stdout == 'connected'
-    assert connector.sandbox_ids == ['sandbox-123']
+    assert provider.sandbox_ids == ['sandbox-123']
     assert await reconstructed.sandbox.working_dir() == '/workspace'
 
 
@@ -6784,7 +6784,7 @@ async def use_reconnected_sandbox(ctx: RunContext[None]) -> str:
     return result.stdout
 
 
-_temporal_sandbox_connector = RecordingSandboxConnector()
+_temporal_sandbox_provider = RecordingSandboxProvider()
 _sandbox_ref_durable_agent: Agent[None, str] = Agent(
     FunctionModel(_sandbox_ref_model),
     name='sandbox_ref_durability_agent',
@@ -6793,7 +6793,7 @@ _sandbox_ref_durable_agent: Agent[None, str] = Agent(
     capabilities=[
         TemporalDurability(
             activity_config=BASE_ACTIVITY_CONFIG,
-            sandbox_connectors=[_temporal_sandbox_connector],
+            sandbox_providers=[_temporal_sandbox_provider],
         )
     ],
 )
@@ -6944,8 +6944,8 @@ async def test_temporal_durability_suppresses_default_sandbox_in_workflow(client
 
 
 async def test_temporal_durability_reconnects_sandbox_ref_inside_activity(client: Client):
-    _temporal_sandbox_connector.sandbox_ids.clear()
-    _temporal_sandbox_connector.backends.clear()
+    _temporal_sandbox_provider.sandbox_ids.clear()
+    _temporal_sandbox_provider.backends.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -6959,8 +6959,8 @@ async def test_temporal_durability_reconnects_sandbox_ref_inside_activity(client
             task_queue=TASK_QUEUE,
         )
     assert output == 'done'
-    assert _temporal_sandbox_connector.sandbox_ids == ['temporal-sandbox']
-    assert _temporal_sandbox_connector.backends[0].commands == [['echo', 'temporal-sandbox']]
+    assert _temporal_sandbox_provider.sandbox_ids == ['temporal-sandbox']
+    assert _temporal_sandbox_provider.backends[0].commands == [['echo', 'temporal-sandbox']]
 
 
 class SandboxContributingTemporalDurability(TemporalDurability[Any]):

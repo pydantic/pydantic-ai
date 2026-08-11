@@ -6,19 +6,19 @@ from typing import Any, TypeVar, cast
 
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapperCapability
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import SandboxBackend, SandboxProvider, SandboxRef, UnavailableSandbox
 
 AgentDepsT = TypeVar('AgentDepsT')
 
 
 @dataclass
-class SandboxConnectorsCapability(AbstractCapability[Any]):
+class SandboxProvidersCapability(AbstractCapability[Any]):
     """Internal capability used by deprecated durable-agent wrappers."""
 
-    connectors: Sequence[SandboxConnector]
+    providers: Sequence[SandboxProvider]
 
-    def get_sandbox_connectors(self) -> Sequence[SandboxConnector]:
-        return self.connectors
+    def get_sandbox_providers(self) -> Sequence[SandboxProvider]:
+        return self.providers
 
 
 def contributes_sandbox(capability: AbstractCapability[Any]) -> bool:
@@ -67,10 +67,10 @@ def sandbox_contribution_error(*, run_location: str, sandbox_constraint: str) ->
     )
 
 
-def live_sandbox_error(*, run_location: str, sandbox_constraint: str, connector_hint: str) -> str:
+def live_sandbox_error(*, run_location: str, sandbox_constraint: str, provider_hint: str) -> str:
     return (
         f'A live sandbox handle cannot be passed {run_location}: {sandbox_constraint}. '
-        f'Pass a `SandboxRef` instead and {connector_hint}.'
+        f'Pass a `SandboxRef` instead and {provider_hint}.'
     )
 
 
@@ -96,10 +96,10 @@ def guard_workflow_sandbox(
     return sandbox
 
 
-def with_sandbox_connectors(
+def with_sandbox_providers(
     capabilities: Sequence[AgentCapability[AgentDepsT]] | None,
-    connector_capability: SandboxConnectorsCapability,
+    provider_capability: SandboxProvidersCapability,
 ) -> Sequence[AgentCapability[AgentDepsT]] | None:
-    if not connector_capability.connectors:
+    if not provider_capability.providers:
         return capabilities
-    return [*(capabilities or ()), connector_capability]
+    return [*(capabilities or ()), provider_capability]

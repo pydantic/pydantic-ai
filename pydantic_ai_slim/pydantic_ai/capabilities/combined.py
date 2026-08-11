@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
-    from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector
+    from pydantic_ai.sandboxes import SandboxBackend, SandboxProvider
     from pydantic_graph import End
 
 
@@ -252,11 +252,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 native_tools.append(deferred_native_tool)
         return native_tools
 
-    def get_sandbox_connectors(self) -> Sequence[SandboxConnector]:
-        connectors: list[SandboxConnector] = []
+    def get_sandbox_providers(self) -> Sequence[SandboxProvider]:
+        providers: list[SandboxProvider] = []
         for capability in self.capabilities:
-            connectors.extend(capability.get_sandbox_connectors())
-        return connectors
+            providers.extend(capability.get_sandbox_providers())
+        return providers
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset

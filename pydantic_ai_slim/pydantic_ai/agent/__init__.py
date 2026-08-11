@@ -1263,7 +1263,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             preparation_capability = run_layers[0]
 
         if isinstance(sandbox, SandboxRef):
-            sandbox_facade: Sandbox | None = Sandbox.from_ref(sandbox, preparation_capability.get_sandbox_connectors)
+            sandbox_facade: Sandbox | None = Sandbox.from_ref(sandbox, preparation_capability.get_sandbox_providers)
         else:
             sandbox_facade = Sandbox.wrap(sandbox) if sandbox is not None else None
 

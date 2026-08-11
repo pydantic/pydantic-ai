@@ -18,7 +18,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.sandboxes import SandboxBackend, SandboxConnector, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import SandboxBackend, SandboxProvider, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
@@ -71,14 +71,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self,
         *,
         models: Mapping[str, Model] | None = None,
-        sandbox_connectors: Sequence[SandboxConnector] | None = None,
+        sandbox_providers: Sequence[SandboxProvider] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         name: str | None = None,
     ) -> None:
         self.name: str = name or ''
         self._agent: AbstractAgent[Any, Any] | None = None
         self._extra_models: dict[str, Model] = dict(models) if models else {}
-        self._sandbox_connectors = tuple(sandbox_connectors or ())
+        self._sandbox_providers = tuple(sandbox_providers or ())
         self._models_by_id: dict[str, Model] = {}
         self._event_stream_handler = event_stream_handler
         self._process_event_stream = ProcessEventStream(event_stream_handler) if event_stream_handler else None
@@ -289,9 +289,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return UnavailableSandbox(reason=self._sandbox_unavailable_reason)
         return None
 
-    def get_sandbox_connectors(self) -> Sequence[SandboxConnector]:
-        """Return the worker-side sandbox connectors registered for this durability capability."""
-        return self._sandbox_connectors
+    def get_sandbox_providers(self) -> Sequence[SandboxProvider]:
+        """Return the worker-side sandbox providers registered for this durability capability."""
+        return self._sandbox_providers
 
     def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
         """Reject non-policy live sandbox run arguments before entering a durable container."""
