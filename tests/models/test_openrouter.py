@@ -1133,7 +1133,7 @@ async def test_openrouter_web_search_tool_is_after_tool_cache_and_advisor(allow_
 
     @agent.tool_plain
     def get_weather() -> str:
-        return 'sunny'
+        return 'sunny'  # pragma: no cover
 
     result = await agent.run('hello')
 
