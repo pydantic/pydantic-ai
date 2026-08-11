@@ -77,7 +77,7 @@ with try_import() as imports_successful:
     TextResourceContents = mcp_types.TextResourceContents
     from pydantic import AnyUrl, TypeAdapter
 
-    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
+    from pydantic_ai._mcp_compat import is_mcp_sdk_v2, wire_name
     from pydantic_ai.mcp import (
         MCPError,
         MCPToolset,
@@ -151,49 +151,53 @@ def test_is_mcp_sdk_v2_reads_the_installed_distribution_version(
     assert _mcp_compat.is_mcp_sdk_v2() is expected
 
 
-MCP_FIELD_RENAMES = [
-    ('Annotations', 'lastModified', 'last_modified'),
-    ('AudioContent', 'mimeType', 'mime_type'),
-    ('BlobResourceContents', 'mimeType', 'mime_type'),
-    ('CreateMessageRequestParams', 'maxTokens', 'max_tokens'),
-    ('CreateMessageRequestParams', 'stopSequences', 'stop_sequences'),
-    ('CreateMessageRequestParams', 'systemPrompt', 'system_prompt'),
-    ('Icon', 'mimeType', 'mime_type'),
-    ('ImageContent', 'mimeType', 'mime_type'),
-    ('InitializeResult', 'serverInfo', 'server_info'),
-    ('PromptsCapability', 'listChanged', 'list_changed'),
-    ('Resource', 'mimeType', 'mime_type'),
-    ('ResourceLink', 'mimeType', 'mime_type'),
-    ('ResourceTemplate', 'mimeType', 'mime_type'),
-    ('ResourceTemplate', 'uriTemplate', 'uri_template'),
-    ('ResourcesCapability', 'listChanged', 'list_changed'),
-    ('TextResourceContents', 'mimeType', 'mime_type'),
-    ('Tool', 'inputSchema', 'input_schema'),
-    ('Tool', 'outputSchema', 'output_schema'),
-    ('ToolExecution', 'taskSupport', 'task_support'),
-    ('ToolsCapability', 'listChanged', 'list_changed'),
+MCP_FIELD_READS = [
+    ('Annotations', 'last_modified'),
+    ('AudioContent', 'mime_type'),
+    ('BlobResourceContents', 'mime_type'),
+    ('CreateMessageRequestParams', 'max_tokens'),
+    ('CreateMessageRequestParams', 'stop_sequences'),
+    ('CreateMessageRequestParams', 'system_prompt'),
+    ('Icon', 'mime_type'),
+    ('ImageContent', 'mime_type'),
+    ('InitializeResult', 'server_info'),
+    ('PromptsCapability', 'list_changed'),
+    ('Resource', 'mime_type'),
+    ('ResourceLink', 'mime_type'),
+    ('ResourceTemplate', 'mime_type'),
+    ('ResourceTemplate', 'uri_template'),
+    ('ResourcesCapability', 'list_changed'),
+    ('TextResourceContents', 'mime_type'),
+    ('Tool', 'input_schema'),
+    ('Tool', 'output_schema'),
+    ('ToolExecution', 'task_support'),
+    ('ToolsCapability', 'list_changed'),
 ]
-"""Every `(class, SDK v1 spelling, SDK v2 spelling)` the compat readers in `pydantic_ai._mcp_compat`
-are asked for across `pydantic_ai.mcp` and `pydantic_ai._mcp`."""
+"""Every `(class, field)` the compat readers in `pydantic_ai._mcp_compat` read across
+`pydantic_ai.mcp` and `pydantic_ai._mcp`."""
 
 
 def test_compat_readers_name_real_sdk_v2_fields():
-    """Each pair the compat readers pass is a real SDK v2 field renamed from that v1 spelling.
+    """Each field the compat readers read is a real SDK v2 field whose wire alias is the derived
+    camelCase spelling.
 
     Nothing else pins this: `[mcp]` installs SDK v1, so the v2 half of every reader is unreachable in
     the suite, and a wrong snake_case spelling reads as `None` instead of raising — a mistyped
     `mime_type` would silently drop every media type once the pin widens. The standalone `mcp-types`
-    distribution depends only on Pydantic, so it installs alongside SDK v1 and the pairs can be
-    checked against the real v2 models. Its `alias` is the wire (camelCase) name, which is exactly
-    the v1 attribute name the readers fall back to, so one lookup validates both spellings.
+    distribution depends only on Pydantic, so it installs alongside SDK v1 and the fields can be
+    checked against the real v2 models. Its `alias` is the wire (camelCase) name — exactly what
+    `wire_name` derives and the SDK v1 attribute the readers fall back to — so one lookup validates
+    the spelling and the derivation at once.
     """
     v2_types = pytest.importorskip('mcp_types', reason='the `mcp-types` dev dependency is not installed')
 
-    for class_name, v1_name, v2_name in MCP_FIELD_RENAMES:
+    for class_name, field_name in MCP_FIELD_READS:
         model: type[BaseModel] = getattr(v2_types, class_name)
-        field = model.model_fields.get(v2_name)
-        assert field is not None, f'`{class_name}.{v2_name}` is not a field on the SDK v2 model'
-        assert field.alias == v1_name, f'`{class_name}.{v2_name}` has wire alias `{field.alias}`, not `{v1_name}`'
+        field = model.model_fields.get(field_name)
+        assert field is not None, f'`{class_name}.{field_name}` is not a field on the SDK v2 model'
+        assert field.alias == wire_name(field_name), (
+            f'`{class_name}.{field_name}` has wire alias `{field.alias}`, not `{wire_name(field_name)}`'
+        )
 
 
 def test_sdk_v2_image_content_accepts_wire_field_name():
