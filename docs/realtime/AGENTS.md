@@ -32,5 +32,6 @@ the four provider pages (canonical for installs, model names, settings, quirks).
   script speaks one assistant turn ('Hello from the realtime assistant.'); an agent defining a
   `check_availability` tool triggers the quickstart's scripted reservation conversation — never use
   that tool name elsewhere.
-- WebRTC and Azure Voice Live are in-flight PRs (#6676, #6642): mention them as coming to Pydantic
-  AI where relevant, and don't present third-party media platforms as the WebRTC story.
+- Browser WebRTC ships in Pydantic AI: `docs/realtime/lifecycle.md#browser-webrtc` is the canonical
+  owner of the topology, and don't present third-party media platforms as the WebRTC story. Azure
+  Voice Live is still an in-flight PR (#6642): mention it as coming to Pydantic AI where relevant.

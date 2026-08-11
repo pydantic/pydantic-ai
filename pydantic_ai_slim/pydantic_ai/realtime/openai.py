@@ -1051,7 +1051,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             http_client=self._http_client,
             client_secrets_url=self._webrtc_client_secrets_url(),
             headers=await self._webrtc_headers(),
-            provider_name=self.system,
+            model_name=self.model_name,
             session_config=self._webrtc_session_config(instructions, tools, model_settings),
             expires_after_seconds=expires_after_seconds,
         )
@@ -1069,6 +1069,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             calls_url=self._webrtc_calls_url(),
             headers=await self._webrtc_headers(),
             provider_name=self.system,
+            model_name=self.model_name,
             sdp_offer=sdp_offer,
             session_config=self._webrtc_session_config(instructions, tools, model_settings),
         )

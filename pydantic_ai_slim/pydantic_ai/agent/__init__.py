@@ -3369,23 +3369,30 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if lifecycle.short_circuited:
                     # Nothing below this is resolved: the toolset is never entered and the caller
                     # yields a closed session in place of connecting. The empty `ToolManager` is the
-                    # one that session is built on.
-                    yield _RealtimeSessionResolution(
-                        model=model,
-                        run_context=run_context,
-                        tool_manager=ToolManager(FunctionToolset()),
-                        tool_defs=[],
-                        model_request_parameters=models.ModelRequestParameters(),
-                        model_settings=effective_model_settings,
-                        instructions=None,
-                        request_messages=[],
-                        model_profile=model_profile,
-                        instrumentation_settings=session_instrumentation_settings,
-                        conversation_id=conversation_id,
-                        run_id=run_id,
-                        lifecycle=lifecycle_state,
-                        short_circuited=True,
-                    )
+                    # one that session is built on. The `yielded` guard mirrors the normal path: if the
+                    # caller's body raises and the lifecycle hooks recover it (`on_run_error` runs even
+                    # after a short-circuit), the error is suppressed at the exit stack and execution
+                    # resumes below — without this, that clean resume would yield a second time and
+                    # `asynccontextmanager` would raise `RuntimeError: generator didn't stop after athrow()`.
+                    try:
+                        yield _RealtimeSessionResolution(
+                            model=model,
+                            run_context=run_context,
+                            tool_manager=ToolManager(FunctionToolset()),
+                            tool_defs=[],
+                            model_request_parameters=models.ModelRequestParameters(),
+                            model_settings=effective_model_settings,
+                            instructions=None,
+                            request_messages=[],
+                            model_profile=model_profile,
+                            instrumentation_settings=session_instrumentation_settings,
+                            conversation_id=conversation_id,
+                            run_id=run_id,
+                            lifecycle=lifecycle_state,
+                            short_circuited=True,
+                        )
+                    finally:
+                        yielded = True
                     return
             await session_stack.enter_async_context(toolset)
             tool_manager = await ToolManager[AgentDepsT](
@@ -3616,7 +3623,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
             if resolved.short_circuited:
                 assert lifecycle.short_result is not None
-                yield _closed_session(lifecycle.short_result)
+                # `yielded` guard as in the normal path below: if the caller's body raises and the
+                # resolver's lifecycle hooks recover it, the error is suppressed at the `async with`
+                # above and execution resumes below. Without this, that resume would yield a second
+                # closed session and `asynccontextmanager` would raise `generator didn't stop after athrow()`.
+                try:
+                    yield _closed_session(lifecycle.short_result)
+                finally:
+                    yielded = True
                 return
 
             if message_history and not resolved.model_profile.get('supports_session_seeding', False):

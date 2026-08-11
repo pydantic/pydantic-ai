@@ -363,6 +363,8 @@ async def test_create_client_secret_http_error() -> None:
         await model.create_client_secret()
     assert exc_info.value.status_code == 401
     assert exc_info.value.body == 'invalid api key'
+    # `model_name` names the realtime model, not the provider, matching `ModelHTTPError` elsewhere.
+    assert exc_info.value.model_name == 'gpt-realtime'
 
 
 async def test_create_client_secret_out_of_range_expires_at() -> None:
@@ -454,6 +456,7 @@ async def test_answer_webrtc_offer_http_error() -> None:
         await model.answer_webrtc_offer(SAMPLE_SDP_OFFER)
     assert exc_info.value.status_code == 400
     assert exc_info.value.body == 'bad sdp'
+    assert exc_info.value.model_name == 'gpt-realtime'
 
 
 async def test_answer_webrtc_offer_rejects_redirect() -> None:

@@ -137,6 +137,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             calls_url=self._webrtc_calls_url(),
             ephemeral_token=secret.value,
             provider_name=self.system,
+            model_name=self.model_name,
             sdp_offer=sdp_offer,
         )
 

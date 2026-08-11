@@ -610,6 +610,33 @@ async def test_wrap_run_short_circuits_before_session_connects() -> None:
     assert model.instructions is None
 
 
+async def test_short_circuit_then_recovered_caller_error_exits_cleanly() -> None:
+    """A caller-body error after a `wrap_run` short-circuit, recovered by `on_run_error`, exits cleanly.
+
+    The short-circuit path yields a closed session without connecting; if the caller then raises and
+    `on_run_error` recovers, the lifecycle hooks suppress the error. Without the `yielded` guard on the
+    short-circuit yields, `_resolve_realtime_session`/`_open_realtime_session` would resume past their
+    exit stacks and yield a second time, which `asynccontextmanager` reports as
+    `RuntimeError: generator didn't stop after athrow()`.
+    """
+
+    class ShortCircuitThenRecoverCapability(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+            return AgentRunResult(output='short-circuited')
+
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            assert str(error) == 'caller failed'
+            return AgentRunResult(output='recovered after short-circuit')
+
+    agent = Agent(capabilities=[ShortCircuitThenRecoverCapability()], deps_type=type(None))
+
+    async with agent.realtime(_RecordingModel()).session() as session:
+        assert session.closed
+        raise RuntimeError('caller failed')
+
+    assert session.result is not None
+
+
 async def test_wrap_run_context_is_ambient_throughout_session() -> None:
     """Context set before `handler()` reaches instructions, caller code, and tool execution."""
     ambient: contextvars.ContextVar[str] = contextvars.ContextVar('realtime_lifecycle_ambient')

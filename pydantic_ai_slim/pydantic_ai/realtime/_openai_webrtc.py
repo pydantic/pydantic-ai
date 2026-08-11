@@ -54,12 +54,14 @@ def parse_call_id(location: str | None) -> str | None:
     return None
 
 
-def _raise_for_status(response: httpx.Response, provider_name: str) -> None:
+def _raise_for_status(response: httpx.Response, model_name: str) -> None:
     """Raise a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] on a non-2xx WebRTC signaling response.
 
     Signaling failures (401/403 auth, 429 rate limit, 5xx outages) are ordinary provider HTTP errors, not
     unexpected model output, so they go through the standard HTTP exception hierarchy — callers can catch
     `ModelHTTPError`, read `status_code`, and apply their own retry policy — with the response body preserved.
+    `model_name` carries the realtime model/deployment (not the provider), matching `ModelHTTPError`'s
+    contract everywhere else, so an Azure user with several deployments can tell which one failed.
     """
     if not response.is_success:
         # `not is_success` (not `is_error`) so a 3xx redirect is rejected too: the signaling flow reads
@@ -67,7 +69,7 @@ def _raise_for_status(response: httpx.Response, provider_name: str) -> None:
         # for a created call. `headers` is forwarded so a 429's `Retry-After` reaches `retry_after`.
         raise ModelHTTPError(
             status_code=response.status_code,
-            model_name=provider_name,
+            model_name=model_name,
             body=response.text.strip() or None,
             headers=response.headers,
         )
@@ -78,7 +80,7 @@ async def mint_client_secret(
     http_client: httpx.AsyncClient,
     client_secrets_url: str,
     headers: dict[str, str],
-    provider_name: str,
+    model_name: str,
     session_config: dict[str, Any],
     expires_after_seconds: int | None,
 ) -> RealtimeClientSecret:
@@ -91,7 +93,7 @@ async def mint_client_secret(
         headers={**headers, 'Content-Type': 'application/json'},
         content=to_json(payload).decode(),
     )
-    _raise_for_status(response, provider_name)
+    _raise_for_status(response, model_name)
     try:
         data = _ClientSecretResponse.model_validate_json(response.content)
     except ValidationError as e:
@@ -112,13 +114,15 @@ async def mint_client_secret(
     )
 
 
-def _webrtc_answer_from_response(response: httpx.Response, provider_name: str) -> WebRTCAnswer:
+def _webrtc_answer_from_response(response: httpx.Response, provider_name: str, model_name: str) -> WebRTCAnswer:
     """Build a [`WebRTCAnswer`][pydantic_ai.realtime.WebRTCAnswer] from a `/realtime/calls` response.
 
     The created call's id comes back in the `Location` header (e.g. `/v1/realtime/calls/rtc_...`), not
     the SDP body, so it is parsed out and carried on the returned [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession].
+    `provider_name` identifies the session (the attaching model must match); `model_name` names the model
+    on a signaling `ModelHTTPError`.
     """
-    _raise_for_status(response, provider_name)
+    _raise_for_status(response, model_name)
     location = response.headers.get('location')
     call_id = parse_call_id(location)
     if call_id is None:
@@ -141,6 +145,7 @@ async def answer_webrtc_offer(
     calls_url: str,
     headers: dict[str, str],
     provider_name: str,
+    model_name: str,
     sdp_offer: str,
     session_config: dict[str, Any],
 ) -> WebRTCAnswer:
@@ -160,7 +165,7 @@ async def answer_webrtc_offer(
             ('session', (None, to_json(session_config).decode(), 'application/json')),
         ],
     )
-    return _webrtc_answer_from_response(response, provider_name)
+    return _webrtc_answer_from_response(response, provider_name, model_name)
 
 
 async def relay_sdp_offer(
@@ -169,6 +174,7 @@ async def relay_sdp_offer(
     calls_url: str,
     ephemeral_token: str,
     provider_name: str,
+    model_name: str,
     sdp_offer: str,
 ) -> WebRTCAnswer:
     """`POST .../realtime/calls` with the raw SDP offer authenticated by an ephemeral client secret.
@@ -184,4 +190,4 @@ async def relay_sdp_offer(
         headers={'Authorization': f'Bearer {ephemeral_token}', 'Content-Type': 'application/sdp'},
         content=sdp_offer,
     )
-    return _webrtc_answer_from_response(response, provider_name)
+    return _webrtc_answer_from_response(response, provider_name, model_name)
