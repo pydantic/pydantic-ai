@@ -155,6 +155,12 @@ class Instrumentation(AbstractCapability[Any]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
+        # `RealtimeSession` owns its session and per-response spans; a second run span here would
+        # duplicate the session's canonical `invoke_agent` span. See the capability-owned span
+        # direction documented in `realtime/_session.py`.
+        if ctx.realtime:
+            return await handler()
+
         settings = self.settings
         names = self._instrumentation_names
         agent_name = self._agent_name
@@ -254,14 +260,7 @@ class Instrumentation(AbstractCapability[Any]):
         if metadata is not None:
             attrs['metadata'] = safe_to_json(serialize_any(redact_binary_content(metadata, settings))).decode()
 
-        usage_attrs = (
-            {
-                k.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): v
-                for k, v in ctx.usage.opentelemetry_attributes().items()
-            }
-            if settings.use_aggregated_usage_attribute_names
-            else ctx.usage.opentelemetry_attributes()
-        )
+        usage_attrs = settings.aggregated_usage_attributes(ctx.usage)
 
         return {
             **usage_attrs,
@@ -506,9 +505,15 @@ class Instrumentation(AbstractCapability[Any]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
+        attributes = self._tool_span_attributes(call)
+        if ctx.realtime:
+            # Realtime spans all carry this marker (see `docs/realtime/observability.md`) so
+            # backends can recognize the session tree; the tool span is shared with classic runs,
+            # which stay unmarked.
+            attributes['pydantic_ai.realtime'] = True
         return await self._run_tool_span(
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
-            attributes=self._tool_span_attributes(call),
+            attributes=attributes,
             action=lambda: handler(args),
             serialize_result=lambda value: tool_return_ta.dump_json(
                 redact_binary_content(value, self.settings)
