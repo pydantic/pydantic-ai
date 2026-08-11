@@ -19,10 +19,10 @@ import asyncio
 import base64
 import hashlib
 import time
-from collections.abc import Callable, Generator, Sequence
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Literal, TypeGuard, get_args
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeGuard, TypeVar, get_args
 from urllib.parse import quote
 
 import websockets
@@ -110,6 +110,14 @@ INPUT_AUDIO_BUFFER_CLEAR_EVENT = 'input_audio_buffer.clear'
 RESPONSE_CREATE_EVENT = 'response.create'
 RESPONSE_CANCEL_EVENT = 'response.cancel'
 CONVERSATION_ITEM_TRUNCATE_EVENT = 'conversation.item.truncate'
+
+
+class _ReconnectableOpenAIProtocolConnection(Protocol):
+    @property
+    def message_history(self) -> Callable[[], Sequence[ModelMessage]] | None: ...
+
+
+_ConnectionT = TypeVar('_ConnectionT', bound=_ReconnectableOpenAIProtocolConnection)
 
 
 def realtime_websocket_url(base_url: str, *, model: str | None = None) -> str:
@@ -851,6 +859,73 @@ def map_connect_errors(model_name: str) -> Generator[None]:
         # (`TimeoutError` is an `OSError`). No HTTP status exists, so this is a `RealtimeError` too --
         # without this the caller would get a bare built-in from what looks like an ordinary model call.
         raise RealtimeError(model_name=model_name, message=f'Could not reach the realtime API: {e}') from e
+
+
+@asynccontextmanager
+async def connect_openai_protocol(
+    *,
+    model_name: str,
+    messages: Sequence[ModelMessage],
+    profile: RealtimeModelProfile,
+    provider_name: str,
+    session_config: dict[str, Any],
+    handshake_timeout: float,
+    dial_headers: Callable[[], Awaitable[dict[str, str]]],
+    dial_url: Callable[[], str],
+    session_model: Callable[[dict[str, Any]], str | None],
+    build_connection: Callable[
+        [ClientConnection, Callable[[], Awaitable[ClientConnection]], str | None, Callable[[], str | None]],
+        _ConnectionT,
+    ],
+    after_session_created: Callable[[ClientConnection, dict[str, Any]], Awaitable[None]] | None = None,
+    on_unexpected_during_update: Callable[[], Callable[[dict[str, Any]], None] | None] | None = None,
+    replay_on_redial: bool = False,
+) -> AsyncGenerator[_ConnectionT]:
+    """Connect an OpenAI-protocol realtime model and own its socket lifecycle.
+
+    OpenAI supplies refreshable `dial_headers` and enables `replay_on_redial`. xAI supplies static
+    headers, a `dial_url` that adds its conversation ID, `after_session_created` to establish native
+    resumption, and `on_unexpected_during_update` to capture the server's replay burst.
+    """
+    # Normalize history before opening a socket so unsupported content remains a caller `UserError`.
+    seed = await seed_items(messages, profile=profile, provider_name=provider_name)
+    cm: AbstractAsyncContextManager[ClientConnection] | None = None
+    server_model: str | None = None
+    connection: _ConnectionT | None = None
+
+    async def dial() -> ClientConnection:
+        nonlocal cm, server_model
+        if cm is not None:
+            previous, cm = cm, None
+            await previous.__aexit__(None, None, None)
+        opening = websockets.connect(dial_url(), additional_headers=await dial_headers())
+        ws = await opening.__aenter__()
+        cm = opening
+        created = await expect_event(ws, SESSION_CREATED_EVENT, timeout=handshake_timeout)
+        if served_model := session_model(created):
+            server_model = served_model
+        if after_session_created is not None:
+            await after_session_created(ws, created)
+        await ws.send(to_json({'type': SESSION_UPDATE_EVENT, 'session': session_config}).decode())
+        on_unexpected = on_unexpected_during_update() if on_unexpected_during_update is not None else None
+        await expect_event(ws, SESSION_UPDATED_EVENT, timeout=handshake_timeout, on_unexpected=on_unexpected)
+        if replay_on_redial and connection is not None and (message_history := connection.message_history) is not None:
+            for item in await replay_items(message_history(), profile=profile, provider_name=provider_name):
+                await ws.send(to_json({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item}).decode())
+        return ws
+
+    try:
+        # Only the initial dial is mapped; reconnect failures stay retryable for the connection loop.
+        with map_connect_errors(model_name):
+            ws = await dial()
+            for item in seed:
+                await ws.send(to_json({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item}).decode())
+        connection = build_connection(ws, dial, server_model, lambda: server_model)
+        yield connection
+    finally:
+        # Coverage cannot attribute a failed `__aenter__` to the false exit arc.
+        if cm is not None:  # pragma: no branch
+            await cm.__aexit__(None, None, None)
 
 
 def server_vad_from_turn_detection(turn_detection: TurnDetection) -> ServerVAD:

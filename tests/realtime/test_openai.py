@@ -1045,6 +1045,17 @@ def test_session_config_server_vad_params() -> None:
     }
 
 
+def test_session_config_uses_profile_sample_rates() -> None:
+    model = OpenAIRealtimeModel(
+        'gpt-realtime', profile=RealtimeModelProfile(audio_input_sample_rate=16000, audio_output_sample_rate=32000)
+    )
+
+    config = model._session_config('', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
+
+    assert config['audio']['input']['format']['rate'] == 16000
+    assert config['audio']['output']['format']['rate'] == 32000
+
+
 def test_server_vad_from_turn_detection_mapping() -> None:
     # All three cross-provider knobs map through; sensitivity resolves via the threshold table.
     assert server_vad_from_turn_detection(

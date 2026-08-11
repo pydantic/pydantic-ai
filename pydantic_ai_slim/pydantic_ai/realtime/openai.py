@@ -13,7 +13,7 @@ from __future__ import annotations as _annotations
 
 import base64
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
@@ -73,23 +73,17 @@ from ._openai_protocol import (
     RESPONSE_CREATE_EVENT,
     RESPONSE_CREATED_EVENT_ADAPTER,
     RESPONSE_DONE_EVENT_ADAPTER,
-    SESSION_CREATED_EVENT,
-    SESSION_UPDATE_EVENT,
-    SESSION_UPDATED_EVENT,
     ProtocolResponseDoneEvent,
     RealtimeHandshakeError,
     SemanticVAD,
     ServerVAD,
-    expect_event,
+    connect_openai_protocol,
     loads_obj,
-    map_connect_errors,
     map_event,
     realtime_websocket_url,
-    replay_items,
     resolve_base_turn_detection,
     resolve_transcription_model,
     response_finish_reason,
-    seed_items,
     tool_choice_config,
     tool_def_to_openai,
     turn_detection_config,
@@ -878,7 +872,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             turn_detection: ServerVAD | SemanticVAD | None = {'type': 'server_vad'}
         # `turn_detection` is always set: a dict enables VAD, `None` (explicit null) disables it.
         audio_input: dict[str, Any] = {
-            'format': {'type': 'audio/pcm', 'rate': 24000},
+            'format': {'type': 'audio/pcm', 'rate': self.profile.get('audio_input_sample_rate', 24000)},
             'turn_detection': turn_detection_config(turn_detection),
         }
         transcription_model = resolve_transcription_model(
@@ -888,7 +882,9 @@ class OpenAIRealtimeModel(RealtimeModel):
             audio_input['transcription'] = {'model': transcription_model}
         if (noise_reduction := model_settings.get('openai_input_noise_reduction')) is not None:
             audio_input['noise_reduction'] = {'type': noise_reduction}
-        audio_output: dict[str, Any] = {'format': {'type': 'audio/pcm', 'rate': 24000}}
+        audio_output: dict[str, Any] = {
+            'format': {'type': 'audio/pcm', 'rate': self.profile.get('audio_output_sample_rate', 24000)}
+        }
         if voice := model_settings.get('openai_voice'):
             audio_output['voice'] = voice.model_dump() if isinstance(voice, VoiceID) else voice
         if (output_speed := model_settings.get('openai_output_speed')) is not None:
@@ -946,7 +942,6 @@ class OpenAIRealtimeModel(RealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
-        url = self._realtime_url()
         settings = cast('OpenAIRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         handshake_timeout = settings.get('handshake_timeout', 30.0)
         instructions = get_instructions(messages, model_request_parameters) or ''
@@ -954,70 +949,45 @@ class OpenAIRealtimeModel(RealtimeModel):
             instructions=instructions, tools=model_request_parameters.function_tools, model_settings=settings
         )
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
-        # Convert the history to seed items before dialing. Content this provider can't replay is the
-        # caller's mistake, not the API's, so it should surface as a `UserError` without a socket ever
-        # being opened -- and stay outside `map_connect_errors`, which is only about reaching the API.
-        seed = await seed_items(messages, profile=self.profile, provider_name=self.system)
 
-        # `dial` opens and configures a fresh connection. A reconnect closes the previous connection
-        # (including one left half-open by a failed handshake) before opening the next, so sockets
-        # don't accumulate; teardown closes whatever is current.
-        cm: AbstractAsyncContextManager[ClientConnection] | None = None
-
-        # The model the server reports actually serving, from the `session.created` handshake; it can
-        # differ from the requested id (see `RealtimeConnection.model_name`).
-        server_model: str | None = None
-
-        # Assigned once the connection exists, which is *after* `dial` is defined but before it can be
-        # called again: a re-dial reads the call so far off it and replays it (see `set_message_history`).
-        connection: OpenAIRealtimeConnection | None = None
-
-        async def dial() -> ClientConnection:
-            nonlocal cm, server_model
-            if cm is not None:
-                previous, cm = cm, None
-                await previous.__aexit__(None, None, None)
+        async def dial_headers() -> dict[str, str]:
             headers = await self._auth_headers()
             # The raw WebSocket bypasses the provider's `httpx` client, so every fresh handshake must
             # carry the current trace context as well as freshly resolved authentication.
             inject_trace_context(headers)
-            opening = websockets.connect(url, additional_headers=headers)
-            ws = await opening.__aenter__()
-            cm = opening
-            created = await expect_event(ws, SESSION_CREATED_EVENT, timeout=handshake_timeout)
+            return headers
+
+        def session_model(created: dict[str, Any]) -> str | None:
             session = SessionCreatedEvent.model_validate(created).session
             model = session.model if isinstance(session, RealtimeSessionCreateRequest) else None
-            if isinstance(model, str) and model:
-                server_model = model
-            await ws.send(to_json({'type': SESSION_UPDATE_EVENT, 'session': session_config}).decode())
-            await expect_event(ws, SESSION_UPDATED_EVENT, timeout=handshake_timeout)
-            if connection is not None and (message_history := connection.message_history) is not None:
-                # A re-dial: the API keeps nothing across sessions, so replay the call to continue it.
-                for item in await replay_items(message_history(), profile=self.profile, provider_name=self.system):
-                    await ws.send(to_json({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item}).decode())
-            return ws
+            return model if isinstance(model, str) else None
 
-        try:
-            # Map a rejected config or WebSocket upgrade to the same typed exceptions a regular request
-            # raises. The reconnect loop dials outside this manager, so it keeps treating a drop as
-            # retryable rather than fatal.
-            with map_connect_errors(self.model):
-                ws = await dial()
-                # Seed prior conversation after the initial handshake. A *re*-dial replays the call so far
-                # instead (from inside `dial`), which supersedes this history.
-                for item in seed:
-                    await ws.send(to_json({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item}).decode())
-            connection = self._connection_type(
+        def build_connection(
+            ws: ClientConnection,
+            dial: Callable[[], Awaitable[ClientConnection]],
+            server_model: str | None,
+            model_name_getter: Callable[[], str | None],
+        ) -> OpenAIRealtimeConnection:
+            return self._connection_type(
                 ws,
                 dial=dial,
                 reconnect=settings.get('reconnect'),
                 input_transcription_enabled=transcription_enabled,
                 model_name=server_model,
-                model_name_getter=lambda: server_model,
+                model_name_getter=model_name_getter,
             )
+
+        async with connect_openai_protocol(
+            model_name=self.model,
+            messages=messages,
+            profile=self.profile,
+            provider_name=self.system,
+            session_config=session_config,
+            handshake_timeout=handshake_timeout,
+            dial_headers=dial_headers,
+            dial_url=self._realtime_url,
+            session_model=session_model,
+            build_connection=build_connection,
+            replay_on_redial=True,
+        ) as connection:
             yield connection
-        finally:
-            # Coverage cannot attribute a failed `__aenter__` to the false exit arc; the behavior is
-            # exercised by `test_connect_open_failure_propagates_without_teardown`.
-            if cm is not None:  # pragma: no branch
-                await cm.__aexit__(None, None, None)

@@ -29,13 +29,13 @@ supplies the event types the shared OpenAI codec is built on):
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import quote
 
 try:
-    import websockets
+    import websockets as websockets
     from openai.types.realtime import (
         ConversationCreatedEvent,
         ConversationItem,
@@ -47,7 +47,6 @@ try:
         ResponseFunctionCallArgumentsDoneEvent,
     )
     from pydantic import BaseModel, ConfigDict, TypeAdapter
-    from pydantic_core import to_json
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -65,18 +64,13 @@ from ..providers import infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._openai_protocol import (
-    CONVERSATION_ITEM_CREATE_EVENT,
-    SESSION_CREATED_EVENT,
-    SESSION_UPDATE_EVENT,
-    SESSION_UPDATED_EVENT,
     RealtimeHandshakeError,
+    connect_openai_protocol,
     expect_event,
-    map_connect_errors,
     map_event as _map_openai_event,
     realtime_websocket_url,
     resolve_base_turn_detection,
     resolve_transcription_model,
-    seed_items,
     tool_choice_config,
     tool_def_to_openai,
     turn_detection_config,
@@ -410,7 +404,9 @@ class XaiRealtimeModel(RealtimeModel):
         model_settings = cast('XaiRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         # xAI puts `voice` and `turn_detection` at the session top level, unlike OpenAI's GA surface which
         # nests them under `audio`. `turn_detection` is always set: a dict enables VAD, `None` disables it.
-        audio_input: dict[str, Any] = {'format': {'type': 'audio/pcm', 'rate': 24000}}
+        audio_input: dict[str, Any] = {
+            'format': {'type': 'audio/pcm', 'rate': self.profile.get('audio_input_sample_rate', 24000)}
+        }
         transcription_model = resolve_transcription_model(
             model_settings.get('input_transcription_model', 'auto'), default=_AUTO_TRANSCRIPTION_MODEL
         )
@@ -425,7 +421,12 @@ class XaiRealtimeModel(RealtimeModel):
         config: dict[str, Any] = {
             'instructions': instructions,
             'turn_detection': turn_detection_config(turn_detection),
-            'audio': {'input': audio_input, 'output': {'format': {'type': 'audio/pcm', 'rate': 24000}}},
+            'audio': {
+                'input': audio_input,
+                'output': {
+                    'format': {'type': 'audio/pcm', 'rate': self.profile.get('audio_output_sample_rate', 24000)}
+                },
+            },
         }
         if voice := model_settings.get('xai_voice'):
             config['voice'] = voice
@@ -467,39 +468,23 @@ class XaiRealtimeModel(RealtimeModel):
             instructions=instructions, tools=model_request_parameters.function_tools, model_settings=settings
         )
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
-        # Convert the history to seed items before dialing. Content this provider can't replay is the
-        # caller's mistake, not the API's, so it should surface as a `UserError` without a socket ever
-        # being opened -- and stay outside `map_connect_errors`, which is only about reaching the API.
-        seed = await seed_items(messages, profile=self.profile, provider_name=self.system)
-
-        # `dial` opens and configures a connection. A reconnect closes the previous connection
-        # (including one left half-open by a failed handshake), then resumes the captured conversation,
-        # so sockets don't accumulate; teardown closes whatever is current.
-        cm: AbstractAsyncContextManager[ClientConnection] | None = None
-
-        # The model the server reports actually serving, from the `session.created` handshake. xAI
-        # accepts any model slug and silently substitutes its current default, so this is the only
-        # record of what actually served the session (see `RealtimeConnection.model_name`).
-        server_model: str | None = None
         conversation_id: str | None = None
         replayed_items: list[ConversationItemCreated] = []
         connection: XaiRealtimeConnection | None = None
 
-        async def dial() -> ClientConnection:
-            nonlocal cm, conversation_id, server_model
-            if cm is not None:
-                previous, cm = cm, None
-                await previous.__aexit__(None, None, None)
+        async def dial_headers() -> dict[str, str]:
+            return headers
+
+        def dial_url() -> str:
             resume_id = connection.conversation_id if connection is not None else None
             dial_url = f'{url}&conversation_id={quote(resume_id, safe="")}' if resume_id else url
-            opening = websockets.connect(dial_url, additional_headers=headers)
-            ws = await opening.__aenter__()
-            cm = opening
-            created = await expect_event(ws, SESSION_CREATED_EVENT, timeout=handshake_timeout)
-            session = _XaiSessionCreatedEvent.model_validate(created).session
-            model = session.model
-            if isinstance(model, str) and model:
-                server_model = model
+            return dial_url
+
+        def session_model(created: dict[str, Any]) -> str | None:
+            return _XaiSessionCreatedEvent.model_validate(created).session.model
+
+        async def after_session_created(ws: ClientConnection, _: dict[str, Any]) -> None:
+            nonlocal conversation_id
             if reconnect is not None:
                 conversation = map_conversation_event(
                     await expect_event(ws, _CONVERSATION_CREATED_EVENT, timeout=handshake_timeout)
@@ -512,45 +497,49 @@ class XaiRealtimeModel(RealtimeModel):
                 conversation_id = conversation.conversation_id
                 if connection is not None:
                     connection.conversation_id = conversation_id
-            await ws.send(to_json({'type': SESSION_UPDATE_EVENT, 'session': session_config}).decode())
+
+        def on_unexpected_during_update() -> Callable[[dict[str, Any]], None] | None:
+            if connection is None:
+                return None
 
             def capture_replayed_item(data: dict[str, Any]) -> None:
                 event = map_conversation_event(data, replayed=True)
                 if isinstance(event, ConversationItemCreated):
                     replayed_items.append(event)
 
-            await expect_event(
-                ws,
-                SESSION_UPDATED_EVENT,
-                timeout=handshake_timeout,
-                on_unexpected=capture_replayed_item if resume_id is not None else None,
-            )
-            return ws
+            return capture_replayed_item
 
-        try:
-            # Map a rejected config or WebSocket upgrade to the same typed exceptions a regular request
-            # raises. The reconnect loop dials outside this manager, so it keeps treating a drop as
-            # retryable rather than fatal.
-            with map_connect_errors(self.model):
-                ws = await dial()
-                # Seed prior conversation once, after the initial handshake. Reconnects don't re-seed:
-                # xAI restores the server-side conversation and replays its item lifecycle events instead.
-                for item in seed:
-                    await ws.send(to_json({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item}).decode())
+        def build_connection(
+            ws: ClientConnection,
+            dial: Callable[[], Awaitable[ClientConnection]],
+            server_model: str | None,
+            model_name_getter: Callable[[], str | None],
+        ) -> XaiRealtimeConnection:
+            nonlocal connection
             connection = XaiRealtimeConnection(
                 ws,
                 dial=dial,
                 reconnect=reconnect,
                 input_transcription_enabled=transcription_enabled,
                 model_name=server_model,
-                # A re-dial's `session.created` updates `server_model`, so read it through the closure
-                # rather than snapshotting it here: xAI substitutes its current default for any slug,
-                # and after a reconnect that can be a different model than the one that started.
-                model_name_getter=lambda: server_model,
+                model_name_getter=model_name_getter,
                 conversation_id=conversation_id,
                 replayed_items=replayed_items,
             )
-            yield connection
-        finally:
-            if cm is not None:
-                await cm.__aexit__(None, None, None)
+            return connection
+
+        async with connect_openai_protocol(
+            model_name=self.model,
+            messages=messages,
+            profile=self.profile,
+            provider_name=self.system,
+            session_config=session_config,
+            handshake_timeout=handshake_timeout,
+            dial_headers=dial_headers,
+            dial_url=dial_url,
+            session_model=session_model,
+            build_connection=build_connection,
+            after_session_created=after_session_created,
+            on_unexpected_during_update=on_unexpected_during_update,
+        ) as connected:
+            yield connected

@@ -310,6 +310,15 @@ def test_session_config_shape() -> None:
     }
 
 
+def test_session_config_uses_profile_sample_rates() -> None:
+    model = _model(profile=RealtimeModelProfile(audio_input_sample_rate=16000, audio_output_sample_rate=32000))
+
+    config = model._session_config('', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
+
+    assert config['audio']['input']['format']['rate'] == 16000
+    assert config['audio']['output']['format']['rate'] == 32000
+
+
 def test_session_config_resumption_follows_reconnect_policy() -> None:
     assert 'resumption' not in _model()._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
     # A model-level default policy (via `settings=`) enables native resumption...
