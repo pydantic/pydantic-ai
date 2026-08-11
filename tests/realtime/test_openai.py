@@ -2982,6 +2982,98 @@ async def test_reconnect_replays_a_deferred_response_request() -> None:
     assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]
 
 
+def test_openai_connection_does_not_restore_in_flight_state_on_reconnect() -> None:
+    # OpenAI reconnects by replaying finalized history only, so the session settles the in-flight turn.
+    conn = OpenAIRealtimeConnection(FakeWebSocket([]))  # type: ignore[arg-type]
+    assert conn.reconnect_restores_in_flight_state is False
+
+
+@pytest.mark.anyio
+async def test_reconnect_re_solicits_a_response_that_never_started() -> None:
+    # A `response.create` sent when idle goes out immediately (not deferred), so `_pending_response` is
+    # False while the connection waits for its `response.created`. If the socket drops in that window the
+    # answer the caller is waiting on is neither deferred nor streaming — without re-asking, the re-dial
+    # replays the finalized call but the turn never starts. `_response_active` without `_response_started`
+    # marks exactly that response, so it is re-solicited on the fresh socket.
+    replacement = FakeWebSocket([])
+    replacements = iter([replacement])
+
+    async def dial() -> Any:
+        try:
+            return next(replacements)
+        except StopIteration:
+            raise OSError('server is down')
+
+    conn = OpenAIRealtimeConnection(
+        DroppingWebSocket([]),  # type: ignore[arg-type]
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1},
+    )
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._response_started = False  # pyright: ignore[reportPrivateUsage]
+
+    events = [e async for e in conn]
+    assert [type(e).__name__ for e in events] == ['RealtimeSessionReconnectEvent', 'RealtimeSessionErrorEvent']
+    assert replacement.sent == ['{"type":"response.create"}']
+
+
+@pytest.mark.anyio
+async def test_reconnect_does_not_re_solicit_a_cancelled_response() -> None:
+    # A response the caller cancelled (barge-in) before its `response.created` arrived is `_response_active`
+    # without `_response_started`, but `_cancel_sent` marks it stopped. Re-asking would resurrect a
+    # response the user explicitly interrupted, producing unwanted output after the barge-in, so it is
+    # not replayed on the fresh socket.
+    replacement = FakeWebSocket([])
+    replacements = iter([replacement])
+
+    async def dial() -> Any:
+        try:
+            return next(replacements)
+        except StopIteration:
+            raise OSError('server is down')
+
+    conn = OpenAIRealtimeConnection(
+        DroppingWebSocket([]),  # type: ignore[arg-type]
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1},
+    )
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._response_started = False  # pyright: ignore[reportPrivateUsage]
+    conn._cancel_sent = True  # pyright: ignore[reportPrivateUsage]
+
+    events = [e async for e in conn]
+    assert [type(e).__name__ for e in events] == ['RealtimeSessionReconnectEvent', 'RealtimeSessionErrorEvent']
+    assert not any(json.loads(frame).get('type') == 'response.create' for frame in replacement.sent)
+
+
+@pytest.mark.anyio
+async def test_reconnect_does_not_re_solicit_a_response_that_was_streaming() -> None:
+    # A response already confirmed by its `response.created` (`_response_started`) had output the session
+    # settles as interrupted; re-asking for it would make the model answer a turn it was cut off mid-way
+    # through, contradicting the state-lost contract of staying quiet until the next input. So the fresh
+    # socket carries the replayed call but no `response.create`.
+    replacement = FakeWebSocket([])
+    replacements = iter([replacement])
+
+    async def dial() -> Any:
+        try:
+            return next(replacements)
+        except StopIteration:
+            raise OSError('server is down')
+
+    conn = OpenAIRealtimeConnection(
+        DroppingWebSocket([]),  # type: ignore[arg-type]
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1},
+    )
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._response_started = True  # pyright: ignore[reportPrivateUsage]
+
+    events = [e async for e in conn]
+    assert [type(e).__name__ for e in events] == ['RealtimeSessionReconnectEvent', 'RealtimeSessionErrorEvent']
+    assert not any(json.loads(frame).get('type') == 'response.create' for frame in replacement.sent)
+
+
 @pytest.mark.anyio
 async def test_reconnect_replay_failure_consumes_an_attempt() -> None:
     # The replayed `response.create` goes out on a socket that has only just come up, which can drop

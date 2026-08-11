@@ -346,6 +346,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # model is mid-answer) until the active response finishes, so the model still announces it.
         self._response_active = False
         self._active_response_id: str | None = None
+        # Whether the active response has been confirmed by its `response.created`. A response solicited
+        # (`response.create` sent) but not yet started is the one a mid-handshake drop would otherwise
+        # lose: `_pending_response` only covers responses deferred behind an *active* one, so without this
+        # a re-dial replays the finalized call but never re-asks for the answer the caller is waiting on.
+        self._response_started = False
         self._pending_response = False
         self._cancel_sent = False
         # Id of a response we cancelled (barge-in): the server keeps streaming a few straggler deltas
@@ -377,6 +382,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     def message_history(self) -> Callable[[], Sequence[ModelMessage]] | None:
         """The call so far, when a session has offered it for replay on reconnect."""
         return self._message_history
+
+    @property
+    def reconnect_restores_in_flight_state(self) -> bool:
+        # Local replay restores only the finalized turns; the response and tool calls in flight when
+        # the socket dropped are gone, so the session settles them. (The xAI clone resumes natively and
+        # overrides this back to `True`.)
+        return False
 
     @property
     def input_transcription_enabled(self) -> bool:
@@ -595,6 +607,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if event_type == 'response.created':
             created = RESPONSE_CREATED_EVENT_ADAPTER.validate_python(data)
             self._response_active = True
+            self._response_started = True
             self._active_response_id = created.response.id or None
             if self._cancel_sent and self._cancelled_response_id is None:
                 # A cancel raced ahead of this `response.created`: it was sent while the response the
@@ -745,12 +758,26 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         assert self._dial is not None
         try:
             self._ws = await self._dial()
-            # A `response.create` deferred behind the response that died with the socket will never be
-            # released by that response's `response.done`, so replay it on the fresh socket (which has
-            # just replayed the call) rather than dropping it and leaving the session waiting for a turn
-            # that can never start. Sent inside this guard because the new socket can drop before the
-            # frame reaches it, which has to consume an attempt like any other failed reconnect.
-            replay_response = self._pending_response
+            # A response the socket dropped before it could complete will never be released by its
+            # `response.done`, so re-ask for it on the fresh socket (which has just replayed the call)
+            # rather than leaving the session waiting for a turn that can never start. Two shapes qualify:
+            # one deferred behind a now-dead active response (`_pending_response`), and one solicited but
+            # not yet confirmed by its `response.created` (`_response_active` without `_response_started`)
+            # — the answer the caller is waiting on, which `_pending_response` alone does not cover. That
+            # second case is only ours to re-ask on a local-replay connection: one that restores in-flight
+            # state (`reconnect_restores_in_flight_state`, e.g. the inherited xAI clone) has the server
+            # resume that response itself, so re-asking would duplicate it. A response already streaming
+            # when it dropped is *not* re-asked either: its partial reply is settled as interrupted,
+            # matching the state-lost contract of staying quiet until the next input. Nor is one the
+            # caller cancelled (`_cancel_sent`) before it started: re-asking would resurrect a response a
+            # barge-in explicitly stopped. Sent inside this guard because the new socket can drop before
+            # the frame reaches it, which has to consume an attempt like any other failed reconnect.
+            replay_response = self._pending_response or (
+                not self.reconnect_restores_in_flight_state
+                and self._response_active
+                and not self._response_started
+                and not self._cancel_sent
+            )
             self._clear_active_response()
             # A fresh socket also drops anything the old one was still holding for us.
             self._cancelled_response_id = None
@@ -772,6 +799,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     def _clear_active_response(self) -> None:
         """Forget the response currently being generated, so a new one can start."""
         self._response_active = False
+        self._response_started = False
         self._active_response_id = None
         self._cancel_sent = False
         self._current_item_id = None
