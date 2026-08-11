@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from io import StringIO
 from typing import Any, NoReturn
 
+import anyio
 import pytest
 import sniffio
 from pytest import CaptureFixture
@@ -21,11 +22,13 @@ from ._inline_snapshot import snapshot
 from .conftest import IsInstance, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
+    from prompt_toolkit.buffer import Buffer
+    from prompt_toolkit.document import Document
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
-    from pydantic_ai._cli import ask_agent, cli, cli_agent, format_usage, handle_slash_command
+    from pydantic_ai._cli import CustomAutoSuggest, ask_agent, cli, cli_agent, format_usage, handle_slash_command
     from pydantic_ai._cli.web import run_web_command
     from pydantic_ai.models.openai import OpenAIChatModel
 
@@ -270,6 +273,41 @@ def test_chat_error(
     assert 'ValueError: provider detail' not in output
     assert 'recovered' in output
     assert attempts == 2
+
+
+def test_chat_interrupted_turn(
+    capfd: CaptureFixture[str], mocker: MockerFixture, create_test_module: Callable[..., None]
+):
+    attempts = 0
+
+    async def recover(_messages: list[ModelMessage], _info: Any) -> ModelResponse:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise anyio.get_cancelled_exc_class()()
+        return ModelResponse(parts=[TextPart(content='recovered')])
+
+    create_test_module(agent=Agent(FunctionModel(recover)))
+    with create_pipe_input() as inp:
+        inp.send_text('hello\n')
+        inp.send_text('try again\n')
+        inp.send_text('/exit\n')
+        session = PromptSession[Any](input=inp, output=DummyOutput())
+        mocker.patch('pydantic_ai._cli.PromptSession', return_value=session)
+
+        assert cli(['--agent', 'test_module:agent', '--no-stream']) == 0
+
+    output = capfd.readouterr().out
+    assert 'Interrupted' in output
+    assert 'recovered' in output
+    assert attempts == 2
+
+
+def test_custom_auto_suggest_special_suggestion():
+    suggestion = CustomAutoSuggest(['/exit']).get_suggestion(Buffer(), Document('/ex'))
+
+    assert suggestion is not None
+    assert suggestion.text == 'it'
 
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
