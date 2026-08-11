@@ -25,6 +25,7 @@ from .._instrumentation import (
     model_metric_attributes,
     model_request_parameters_attributes,
     provider_attributes,
+    redact_binary_content,
     response_attributes,
     response_price_calculation,
     safe_to_json,
@@ -204,7 +205,11 @@ class SessionInstrumentation:
                 attributes['pydantic_ai.new_message_index'] = new_message_index
             schema_properties['pydantic_ai.all_messages'] = {'type': 'array'}
         if self.metadata is not None:
-            attributes['metadata'] = safe_to_json(serialize_any(self.metadata)).decode()
+            # Redact binary payloads under `include_binary_content=False`, matching the classic
+            # run span's metadata attribute (the `Instrumentation` capability).
+            attributes['metadata'] = safe_to_json(
+                serialize_any(redact_binary_content(self.metadata, settings))
+            ).decode()
             schema_properties['metadata'] = {}
         # Declare the session-wide `model_request_parameters` / `model_settings` blobs (set at start by
         # `_request_config_attributes`) as objects here, since this rebuilds the span's `logfire.json_schema`.

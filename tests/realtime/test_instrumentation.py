@@ -1055,6 +1055,7 @@ async def test_session_span_respects_include_binary_content(include_binary_conte
         _ok_runner,
         instrumentation=settings,
         message_history=seeded,
+        metadata={'sample': audio},
     )
     _ = await collect_events(session)
 
@@ -1062,6 +1063,8 @@ async def test_session_span_respects_include_binary_content(include_binary_conte
     assert session_span.attributes is not None
     serialized = str(session_span.attributes['pydantic_ai.all_messages'])
     assert ('c2VjcmV0LWF1ZGlv' in serialized) is include_binary_content
+    # The user-supplied session `metadata` is redacted the same way, matching the classic run span.
+    assert ('c2VjcmV0LWF1ZGlv' in str(session_span.attributes['metadata'])) is include_binary_content
 
 
 async def test_session_span_sets_conversation_id() -> None:
