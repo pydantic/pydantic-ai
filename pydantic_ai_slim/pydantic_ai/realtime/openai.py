@@ -346,6 +346,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # model is mid-answer) until the active response finishes, so the model still announces it.
         self._response_active = False
         self._active_response_id: str | None = None
+        # Whether the active response has been confirmed by its `response.created`. A response solicited
+        # (`response.create` sent) but not yet started is the one a mid-handshake drop would otherwise
+        # lose: `_pending_response` only covers responses deferred behind an *active* one, so without this
+        # a re-dial replays the finalized call but never re-asks for the answer the caller is waiting on.
+        self._response_started = False
         self._pending_response = False
         self._cancel_sent = False
         # Id of a response we cancelled (barge-in): the server keeps streaming a few straggler deltas
@@ -595,6 +600,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         if event_type == 'response.created':
             created = RESPONSE_CREATED_EVENT_ADAPTER.validate_python(data)
             self._response_active = True
+            self._response_started = True
             self._active_response_id = created.response.id or None
             if self._cancel_sent and self._cancelled_response_id is None:
                 # A cancel raced ahead of this `response.created`: it was sent while the response the
@@ -745,12 +751,17 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         assert self._dial is not None
         try:
             self._ws = await self._dial()
-            # A `response.create` deferred behind the response that died with the socket will never be
-            # released by that response's `response.done`, so replay it on the fresh socket (which has
-            # just replayed the call) rather than dropping it and leaving the session waiting for a turn
-            # that can never start. Sent inside this guard because the new socket can drop before the
-            # frame reaches it, which has to consume an attempt like any other failed reconnect.
-            replay_response = self._pending_response
+            # A response the socket dropped before it could complete will never be released by its
+            # `response.done`, so re-ask for it on the fresh socket (which has just replayed the call)
+            # rather than leaving the session waiting for a turn that can never start. Two shapes qualify:
+            # one deferred behind a now-dead active response (`_pending_response`), and one solicited but
+            # not yet confirmed by its `response.created` (`_response_active` without `_response_started`)
+            # — the answer the caller is waiting on, which `_pending_response` alone does not cover. A
+            # response already streaming when it dropped is *not* re-asked: its partial reply is settled
+            # as interrupted, matching the state-lost contract of staying quiet until the next input.
+            # Sent inside this guard because the new socket can drop before the frame reaches it, which
+            # has to consume an attempt like any other failed reconnect.
+            replay_response = self._pending_response or (self._response_active and not self._response_started)
             self._clear_active_response()
             # A fresh socket also drops anything the old one was still holding for us.
             self._cancelled_response_id = None
@@ -772,6 +783,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     def _clear_active_response(self) -> None:
         """Forget the response currently being generated, so a new one can start."""
         self._response_active = False
+        self._response_started = False
         self._active_response_id = None
         self._cancel_sent = False
         self._current_item_id = None

@@ -3349,28 +3349,31 @@ async def test_audio_only_user_turn_finalized_on_each_manual_commit() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ('state_restored', 'expected'),
+_SETTLED_IN_FLIGHT = snapshot(
     [
+        ModelResponse(
+            parts=[SpeechPart(speaker='assistant', transcript='before')],
+            timestamp=IsDatetime(),
+            state='interrupted',
+        ),
+        ModelResponse(
+            parts=[SpeechPart(speaker='assistant', transcript='after')],
+            timestamp=IsDatetime(),
+            finish_reason='stop',
+        ),
+    ]
+)
+
+
+@pytest.mark.parametrize(
+    ('supports_session_seeding', 'state_restored', 'expected_state_restored', 'expected'),
+    [
+        # Native resumption (Gemini Live, xAI): the provider genuinely continues the in-flight response
+        # on the new connection, so the two transcript halves belong to one response and nothing is
+        # settled. This is the only path that keeps `state_restored=True`.
         pytest.param(
             False,
-            snapshot(
-                [
-                    ModelResponse(
-                        parts=[SpeechPart(speaker='assistant', transcript='before')],
-                        timestamp=IsDatetime(),
-                        state='interrupted',
-                    ),
-                    ModelResponse(
-                        parts=[SpeechPart(speaker='assistant', transcript='after')],
-                        timestamp=IsDatetime(),
-                        finish_reason='stop',
-                    ),
-                ]
-            ),
-            id='state-lost',
-        ),
-        pytest.param(
+            True,
             True,
             snapshot(
                 [
@@ -3381,11 +3384,23 @@ async def test_audio_only_user_turn_finalized_on_each_manual_commit() -> None:
                     )
                 ]
             ),
-            id='state-restored',
+            id='native-resume-continues',
         ),
+        # Local replay (OpenAI, Azure OpenAI): the connection reports `state_restored=True` because it
+        # replayed the *finalized* history, but the in-flight response the drop cut off is gone. The
+        # session settles it as an interrupted response and downgrades the user-facing flag to `False`,
+        # matching the fully-lost path so an app branches on the flag the same way everywhere.
+        pytest.param(True, True, False, _SETTLED_IN_FLIGHT, id='local-replay-settles-in-flight'),
+        # Nothing restored at all: same settlement, flag already `False`.
+        pytest.param(True, False, False, _SETTLED_IN_FLIGHT, id='state-lost-settles-in-flight'),
     ],
 )
-async def test_reconnect_response_state(state_restored: bool, expected: list[ModelMessage]) -> None:
+async def test_reconnect_response_state(
+    supports_session_seeding: bool,
+    state_restored: bool,
+    expected_state_restored: bool,
+    expected: list[ModelMessage],
+) -> None:
     conn = FakeRealtimeConnection(
         [
             OutputTranscript(text='before', is_final=False),
@@ -3394,9 +3409,38 @@ async def test_reconnect_response_state(state_restored: bool, expected: list[Mod
             ResponseDone(),
         ]
     )
-    session = RealtimeSession(conn)
-    await collect_events(session)
+    session = RealtimeSession(conn, profile=_profile(supports_session_seeding=supports_session_seeding))
+    events = await collect_events(session)
+    # The flag the app sees reflects what actually survived, not just what the connection replayed.
+    assert [e.state_restored for e in events if isinstance(e, RealtimeSessionReconnectEvent)] == [
+        expected_state_restored
+    ]
     assert session.new_messages() == expected
+
+
+async def test_reconnect_while_idle_on_replay_provider_keeps_state_restored() -> None:
+    # A local-replay provider (OpenAI/Azure) that drops while Listening loses nothing: the replay
+    # restores the finalized call and there is no in-flight turn to settle. The connection's
+    # `state_restored=True` stands, so an app is not told a seamless renewal was a disruption.
+    conn = FakeRealtimeConnection(
+        [
+            RealtimeSessionReconnectEvent(state_restored=True),
+            OutputTranscript(text='after', is_final=True),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, profile=_profile(supports_session_seeding=True))
+    events = await collect_events(session)
+    assert [e.state_restored for e in events if isinstance(e, RealtimeSessionReconnectEvent)] == [True]
+    assert session.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='after')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            )
+        ]
+    )
 
 
 async def test_session_offers_the_conversation_for_replay_when_seeding_is_supported() -> None:
