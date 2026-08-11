@@ -357,9 +357,8 @@ def _resolve_openai_settings(
     settings: OpenAIImageGenerationSettings, *, is_edit: bool, model_name: str
 ) -> _OpenAIResolvedSettings:
     ignored: list[str] = []
-    conflicts: list[str] = []
 
-    validate_image_count('OpenAI', settings.get('openai_n'), maximum=10)
+    validate_image_count('OpenAI', settings.get('openai_n'))
     quality = settings.get('openai_quality')
     background = settings.get('openai_background')
     input_fidelity = settings.get('openai_input_fidelity')
@@ -381,8 +380,8 @@ def _resolve_openai_settings(
         input_fidelity=input_fidelity,
         moderation=moderation,
         output_compression=output_compression,
-        ignored=ignored + geometry.ignored,
-        conflicts=conflicts + geometry.conflicts,
+        ignored=ignored,
+        conflicts=geometry.conflicts,
     )
 
 

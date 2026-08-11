@@ -38,12 +38,14 @@ ImageGenerationAspectRatio: TypeAlias = Literal[
     '20:9',
     '21:9',
 ]
-"""Portable aspect ratios understood by at least one direct image model adapter.
+"""Portable aspect ratios accepted by at least one direct image model adapter.
 
-Each adapter maps a supported ratio to one canonical exact output shape. Model
-families support different subsets: GPT Image 1.x supports `1:1`, `2:3`, and
-`3:2`; GPT Image 2 supports sixteen ratios; current Gemini families support ten
-or fourteen; Grok Imagine supports thirteen. See the
+The canonical exact shape a ratio produces is model-family specific, and the
+families name different subsets: GPT Image 1.x three, GPT Image 2 sixteen,
+Gemini 2.5 Flash and Gemini 3 Pro ten, Gemini 3.1 Flash and Flash Lite fourteen,
+and Grok Imagine thirteen. A ratio outside a family's set still reaches Gemini,
+which validates it itself; OpenAI and xAI have no way to carry it and raise
+`UserError`. See the
 [Image Generation guide](../image-generation.md#canonical-dimensions-for-aspect_ratio)
 for the ratio-to-dimensions matrix.
 """
@@ -71,9 +73,13 @@ class ImageGenerationSettings(TypedDict, total=False):
     aspect_ratio: ImageGenerationAspectRatio
     """The requested aspect ratio.
 
-    Provider adapters map this to the canonical model-specific exact dimensions
-    documented by `ImageGenerationAspectRatio`. Not every ratio is supported by
-    every model; an unsupported explicit value is ignored with a `UserWarning`.
+    Providers with a native aspect-ratio field receive the ratio as given, and reject
+    an unsupported one themselves. OpenAI has no such field, so Pydantic AI maps the
+    ratio to one of the model family's enumerated sizes and raises `UserError` for a
+    ratio outside that set; xAI takes an enum with no member for some portable values
+    and raises `UserError` for those. See the
+    [Image Generation guide](../image-generation.md#canonical-dimensions-for-aspect_ratio)
+    for the per-family shapes.
     """
 
     extra_headers: dict[str, str]

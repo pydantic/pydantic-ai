@@ -136,26 +136,34 @@ Use one of these settings to control output geometry:
 different concepts and value ranges. An explicit provider-specific geometry setting takes precedence over a portable
 one and produces a warning.
 
+Gemini takes the aspect ratio as a native request field, so the ratio you ask for is sent as-is and Gemini decides
+whether it can honor it; a rejection arrives as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. OpenAI and
+xAI cannot carry every ratio: OpenAI has no ratio field at all, so Pydantic AI maps the ratio to one of the model
+family's enumerated sizes, and xAI takes an enumeration with no member for some portable values. Both raise
+[`UserError`][pydantic_ai.exceptions.UserError] for a ratio they cannot express, rather than dropping it and billing you
+for the model's default shape.
+
 ### Canonical Dimensions for `aspect_ratio`
 
-When only `aspect_ratio` is provided, Pydantic AI selects the following canonical exact dimensions. A dash means that
-the model family cannot represent that ratio through the normalized setting.
+When only `aspect_ratio` is provided, Pydantic AI selects the following canonical exact dimensions. A dash means the
+model family names no canonical shape for that ratio: OpenAI and Grok Imagine raise
+[`UserError`][pydantic_ai.exceptions.UserError], while Gemini still receives the ratio and answers for itself.
 
-| Ratio | GPT Image 1.x | GPT Image 2 | Gemini 2.5 Flash | Gemini 3 Pro / 3.1 Flash Lite | Gemini 3.1 Flash | Grok Imagine |
+| Ratio | GPT Image 1.x | GPT Image 2 | Gemini 2.5 Flash | Gemini 3 Pro | Gemini 3.1 Flash / Flash Lite | Grok Imagine |
 | --- | --- | --- | --- | --- | --- | --- |
 | `1:1` | `1024×1024` | `1024×1024` | `1024×1024` | `1024×1024` | `1024×1024` | `1024×1024` |
 | `1:2` | — | `704×1408` | — | — | — | `704×1408` |
-| `1:4` | — | — | — | — | `512×2048` | — |
-| `1:8` | — | — | — | — | `384×3072` | — |
+| `1:4` | — | — | — | — | `512×2064` | — |
+| `1:8` | — | — | — | — | `352×2928` | — |
 | `2:1` | — | `1408×704` | — | — | — | `1408×704` |
 | `2:3` | `1024×1536` | `832×1248` | `832×1248` | `848×1264` | `848×1264` | `832×1248` |
 | `3:2` | `1536×1024` | `1248×832` | `1248×832` | `1264×848` | `1264×848` | `1248×832` |
 | `3:4` | — | `864×1152` | `864×1184` | `896×1200` | `896×1200` | `864×1152` |
-| `4:1` | — | — | — | — | `2048×512` | — |
+| `4:1` | — | — | — | — | `2064×512` | — |
 | `4:3` | — | `1152×864` | `1184×864` | `1200×896` | `1200×896` | `1152×864` |
 | `4:5` | — | `896×1120` | `896×1152` | `928×1152` | `928×1152` | — |
 | `5:4` | — | `1120×896` | `1152×896` | `1152×928` | `1152×928` | — |
-| `8:1` | — | — | — | — | `3072×384` | — |
+| `8:1` | — | — | — | — | `2928×352` | — |
 | `9:16` | — | `720×1280` | `768×1344` | `768×1376` | `768×1376` | `720×1280` |
 | `9:19.5` | — | `672×1456` | — | — | — | `576×1248` |
 | `9:20` | — | `720×1600` | — | — | — | `576×1280` |
@@ -174,10 +182,21 @@ them exactly:
 | GPT Image 1.x | `1024×1024`, `1024×1536`, or `1536×1024`. |
 | GPT Image 2 | Any positive dimensions where both sides are multiples of 16, the longest edge is at most 3840, the aspect ratio does not exceed 3:1, and the total area is between 655,360 and 8,294,400 pixels. |
 | Gemini 2.5 Flash Image | The ten dimensions shown in its canonical column above. This model has no separate resolution tier. |
-| Gemini 3.1 Flash Lite Image | The ten `1K` dimensions shown in the Gemini 3 Pro / Flash Lite column above. |
+| Gemini 3.1 Flash Lite Image | The fourteen `1K` dimensions shown in its column above. This model serves no other tier. |
 | Gemini 3 Pro Image | The ten `1K` dimensions shown above, plus `2K` and `4K` variants obtained by multiplying both sides by 2 or 4. |
-| Gemini 3.1 Flash Image | The fourteen `1K` dimensions shown above, their `2K` and `4K` variants obtained by multiplying both sides by 2 or 4, and their `512` variants obtained by halving both sides. The documented `21:9` row is the exception: `792×168`, `1584×672`, `3168×1344`, and `6336×2688`. |
+| Gemini 3.1 Flash Image | The ten standard `1K` dimensions shown above, their `2K` and `4K` variants obtained by multiplying both sides by 2 or 4, and their `512` variants obtained by halving both sides — plus the five rows in the table below, whose tiers do not scale uniformly. |
 | Grok Imagine | The verified `1k` and `2k` dimensions in the table below. |
+
+These Gemini 3.1 rows were verified against the live API, which returns shapes different from Google's published table
+for the four extended ratios. Flash Lite serves only their `1K` column:
+
+| Ratio | `512` | `1K` | `2K` | `4K` |
+| --- | --- | --- | --- | --- |
+| `1:4` | `256×1024` | `512×2064` | `1024×4128` | `2048×8256` |
+| `1:8` | `176×1456` | `352×2928` | `704×5856` | `1408×11712` |
+| `4:1` | `1024×256` | `2064×512` | `4128×1024` | `8256×2048` |
+| `8:1` | `1456×176` | `2928×352` | `5856×704` | `11712×1408` |
+| `21:9` | `792×168` | `1584×672` | `3168×1344` | `6336×2688` |
 
 xAI documents the ratios and resolution tiers but not their complete exact pixel mapping. These dimensions were verified
 against both `grok-imagine-image` and `grok-imagine-image-quality`:

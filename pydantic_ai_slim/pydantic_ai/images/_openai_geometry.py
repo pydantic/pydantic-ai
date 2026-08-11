@@ -46,7 +46,6 @@ def is_gpt_image_2(model_name: str | None) -> bool:
 @dataclass
 class _OpenAIGeometry:
     size: str | None
-    ignored: list[str]
     conflicts: list[str]
 
 
@@ -57,7 +56,6 @@ def resolve_openai_geometry(
     provider_size: str | None,
 ) -> _OpenAIGeometry:
     """Resolve common and OpenAI-specific geometry to the native `size` field."""
-    ignored: list[str] = []
     conflicts: list[str] = []
     dimensions = settings.get('dimensions')
     aspect_ratio = settings.get('aspect_ratio')
@@ -68,18 +66,15 @@ def resolve_openai_geometry(
             conflicts.append('dimensions')
         if aspect_ratio is not None and not size_matches_aspect_ratio(provider_size, aspect_ratio):
             conflicts.append('aspect_ratio')
-        return _OpenAIGeometry(size=provider_size, ignored=ignored, conflicts=conflicts)
+        return _OpenAIGeometry(size=provider_size, conflicts=conflicts)
 
     if resolved_dimensions is not None:
-        return _OpenAIGeometry(size=resolved_dimensions, ignored=ignored, conflicts=conflicts)
+        return _OpenAIGeometry(size=resolved_dimensions, conflicts=conflicts)
 
     if aspect_ratio is not None:
-        mapped_size = resolve_openai_aspect_ratio(model_name, aspect_ratio)
-        if mapped_size is None:
-            ignored.append('aspect_ratio')
-        return _OpenAIGeometry(size=mapped_size, ignored=ignored, conflicts=conflicts)
+        return _OpenAIGeometry(size=resolve_openai_aspect_ratio(model_name, aspect_ratio), conflicts=conflicts)
 
-    return _OpenAIGeometry(size=None, ignored=ignored, conflicts=conflicts)
+    return _OpenAIGeometry(size=None, conflicts=conflicts)
 
 
 def resolve_openai_dimensions(model_name: str | None, dimensions: ImageDimensions) -> str:
@@ -114,10 +109,22 @@ def resolve_openai_dimensions(model_name: str | None, dimensions: ImageDimension
     return size
 
 
-def resolve_openai_aspect_ratio(model_name: str | None, aspect_ratio: ImageGenerationAspectRatio) -> str | None:
-    """Map a normalized aspect ratio to the model's canonical native size."""
+def resolve_openai_aspect_ratio(model_name: str | None, aspect_ratio: ImageGenerationAspectRatio) -> str:
+    """Map a normalized aspect ratio to the model's canonical native size.
+
+    OpenAI has no aspect-ratio field, so Pydantic AI performs the mapping itself and the request can
+    only carry a ratio the model family enumerates. A ratio outside that set is rejected rather than
+    dropped, because dropping it bills the caller for the model's default square instead.
+    """
     mapping = _GPT_IMAGE_2_ASPECT_RATIO_TO_SIZE if is_gpt_image_2(model_name) else _LEGACY_ASPECT_RATIO_TO_SIZE
-    return mapping.get(aspect_ratio)
+    size = mapping.get(aspect_ratio)
+    if size is None:
+        supported = ', '.join(f'`{ratio}`' for ratio in mapping)
+        raise UserError(
+            f'OpenAI model {model_name!r} does not support `aspect_ratio={aspect_ratio!r}`. '
+            f'Supported aspect ratios are: {supported}.'
+        )
+    return size
 
 
 def size_matches_aspect_ratio(size: str, aspect_ratio: ImageGenerationAspectRatio) -> bool:

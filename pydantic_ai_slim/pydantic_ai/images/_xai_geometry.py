@@ -48,7 +48,6 @@ _XAI_ASPECT_RATIOS: dict[str, ImageAspectRatio] = {value: value for value in _XA
 class _XaiGeometry:
     aspect_ratio: ImageAspectRatio | None
     resolution: ImageResolution | None
-    ignored: list[str]
     conflicts: list[str]
 
 
@@ -60,7 +59,6 @@ def resolve_xai_geometry(
     provider_resolution: ImageResolution | None,
 ) -> _XaiGeometry:
     """Resolve common and xAI-specific geometry to native SDK fields."""
-    ignored: list[str] = []
     conflicts: list[str] = []
 
     if dimensions := settings.get('dimensions'):
@@ -75,17 +73,10 @@ def resolve_xai_geometry(
             resolution = mapped_resolution
         elif resolution != mapped_resolution:
             conflicts.append('dimensions')
-        return _XaiGeometry(
-            aspect_ratio=aspect_ratio,
-            resolution=resolution,
-            ignored=ignored,
-            conflicts=conflicts,
-        )
+        return _XaiGeometry(aspect_ratio=aspect_ratio, resolution=resolution, conflicts=conflicts)
 
     common_aspect_ratio = settings.get('aspect_ratio')
     mapped_aspect_ratio = resolve_xai_aspect_ratio(common_aspect_ratio) if common_aspect_ratio else None
-    if common_aspect_ratio is not None and mapped_aspect_ratio is None:
-        ignored.append('aspect_ratio')
     if provider_aspect_ratio is not None:
         if mapped_aspect_ratio is not None and mapped_aspect_ratio != provider_aspect_ratio:
             conflicts.append('aspect_ratio')
@@ -102,12 +93,7 @@ def resolve_xai_geometry(
     else:
         resolution = None
 
-    return _XaiGeometry(
-        aspect_ratio=aspect_ratio,
-        resolution=resolution,
-        ignored=ignored,
-        conflicts=conflicts,
-    )
+    return _XaiGeometry(aspect_ratio=aspect_ratio, resolution=resolution, conflicts=conflicts)
 
 
 def resolve_xai_dimensions(model_name: str, dimensions: ImageDimensions) -> tuple[ImageAspectRatio, ImageResolution]:
@@ -122,6 +108,17 @@ def resolve_xai_dimensions(model_name: str, dimensions: ImageDimensions) -> tupl
     raise UserError(f'xAI model {model_name!r} does not support `dimensions={dimensions!r}`')
 
 
-def resolve_xai_aspect_ratio(aspect_ratio: ImageGenerationAspectRatio) -> ImageAspectRatio | None:
-    """Map a portable aspect ratio to the xAI SDK type when supported."""
-    return _XAI_ASPECT_RATIOS.get(aspect_ratio)
+def resolve_xai_aspect_ratio(aspect_ratio: ImageGenerationAspectRatio) -> ImageAspectRatio:
+    """Map a portable aspect ratio onto the `ImageAspectRatio` proto enum the request travels in.
+
+    xAI takes the ratio as an enum rather than free text, so a portable value with no enum member has
+    no wire representation at all and is rejected here instead of being dropped from the request.
+    """
+    mapped = _XAI_ASPECT_RATIOS.get(aspect_ratio)
+    if mapped is None:
+        supported = ', '.join(f'`{value}`' for value in _XAI_ASPECT_RATIOS)
+        raise UserError(
+            f'xAI image generation does not support `aspect_ratio={aspect_ratio!r}`. '
+            f'Supported aspect ratios are: {supported}.'
+        )
+    return mapped

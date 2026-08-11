@@ -28,10 +28,10 @@ def validate_image_dimensions(dimensions: ImageDimensions) -> None:
         raise UserError('Image generation `dimensions` must be a `(width, height)` tuple of positive integers')
 
 
-def validate_image_count(provider: str, n: int | None, *, maximum: int) -> None:
-    """Validate a provider-specific requested image count."""
-    if n is not None and (not isinstance(n, int) or isinstance(n, bool) or n <= 0 or n > maximum):
-        raise UserError(f'{provider} image generation count must be an integer between 1 and {maximum}')
+def validate_image_count(provider: str, n: int | None) -> None:
+    """Reject a count the request cannot carry at all; the provider owns its own upper bound."""
+    if n is not None and (not isinstance(n, int) or isinstance(n, bool) or n <= 0):
+        raise UserError(f'{provider} image generation count must be a positive integer')
 
 
 def warn_image_generation_settings(

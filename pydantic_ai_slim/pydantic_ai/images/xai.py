@@ -323,7 +323,7 @@ class _XaiResolvedSettings:
 def _resolve_xai_settings(
     settings: XaiImageGenerationSettings, *, model_name: XaiImageGenerationModelName
 ) -> _XaiResolvedSettings:
-    validate_image_count('xAI', settings.get('xai_n'), maximum=10)
+    validate_image_count('xAI', settings.get('xai_n'))
     geometry = resolve_xai_geometry(
         model_name,
         settings,
@@ -333,7 +333,7 @@ def _resolve_xai_settings(
 
     # xAI is reached over gRPC, which has no per-request body or header escape hatch, so these
     # portable settings cannot be honored here as they are on the HTTP-based providers.
-    ignored = list(geometry.ignored)
+    ignored: list[str] = []
     if settings.get('extra_headers'):
         ignored.append('extra_headers')
     if settings.get('extra_body'):

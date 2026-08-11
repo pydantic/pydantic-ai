@@ -11,32 +11,26 @@ from .settings import (
 
 _GEMINI_31_512_DIMENSIONS: dict[ImageGenerationAspectRatio, ImageDimensions] = {
     '1:1': (512, 512),
-    '1:4': (256, 1024),
-    '1:8': (192, 1536),
     '2:3': (424, 632),
     '3:2': (632, 424),
     '3:4': (448, 600),
-    '4:1': (1024, 256),
     '4:3': (600, 448),
     '4:5': (464, 576),
     '5:4': (576, 464),
-    '8:1': (1536, 192),
     '9:16': (384, 688),
     '16:9': (688, 384),
     '21:9': (792, 168),
 }
-_GEMINI_31_STANDARD_RATIOS: tuple[ImageGenerationAspectRatio, ...] = (
-    '1:1',
-    '2:3',
-    '3:2',
-    '3:4',
-    '4:3',
-    '4:5',
-    '5:4',
-    '9:16',
-    '16:9',
-    '21:9',
-)
+_GEMINI_31_STANDARD_RATIOS: tuple[ImageGenerationAspectRatio, ...] = tuple(_GEMINI_31_512_DIMENSIONS)
+# The extended ratios and 21:9 neither scale uniformly from the 512 tier nor match Google's published
+# table, so every tier is listed as observed against the live API.
+_GEMINI_31_EXPLICIT_DIMENSIONS: dict[ImageGenerationAspectRatio, dict[str | None, ImageDimensions]] = {
+    '21:9': {'512': (792, 168), '1K': (1584, 672), '2K': (3168, 1344), '4K': (6336, 2688)},
+    '1:4': {'512': (256, 1024), '1K': (512, 2064), '2K': (1024, 4128), '4K': (2048, 8256)},
+    '1:8': {'512': (176, 1456), '1K': (352, 2928), '2K': (704, 5856), '4K': (1408, 11712)},
+    '4:1': {'512': (1024, 256), '1K': (2064, 512), '2K': (4128, 1024), '4K': (8256, 2048)},
+    '8:1': {'512': (1456, 176), '1K': (2928, 352), '2K': (5856, 704), '4K': (11712, 1408)},
+}
 _GEMINI_25_DIMENSIONS: dict[ImageGenerationAspectRatio, ImageDimensions] = {
     '1:1': (1024, 1024),
     '2:3': (832, 1248),
@@ -67,14 +61,7 @@ def _scaled_dimensions(
 
 
 _GEMINI_31_FLASH_DIMENSIONS = _scaled_dimensions(_GEMINI_31_512_DIMENSIONS, {'512': 1, '1K': 2, '2K': 4, '4K': 8})
-# Google's published 21:9 row does not scale uniformly from the 512 tier, so keep
-# its documented dimensions explicit rather than deriving them arithmetically.
-_GEMINI_31_FLASH_DIMENSIONS['21:9'] = {
-    '512': (792, 168),
-    '1K': (1584, 672),
-    '2K': (3168, 1344),
-    '4K': (6336, 2688),
-}
+_GEMINI_31_FLASH_DIMENSIONS.update(_GEMINI_31_EXPLICIT_DIMENSIONS)
 _GEMINI_31_FLASH_PROFILE = _GoogleImageGeometryProfile(
     dimensions=_GEMINI_31_FLASH_DIMENSIONS,
     default_size='1K',
@@ -88,10 +75,10 @@ _GEMINI_31_PRO_PROFILE = _GoogleImageGeometryProfile(
     },
     default_size='1K',
 )
+# Flash Lite serves the same 1K shapes as Flash, and only that tier: Google's documented 512 column
+# is rejected by the live API.
 _GEMINI_31_FLASH_LITE_PROFILE = _GoogleImageGeometryProfile(
-    dimensions={
-        ratio: {'1K': _GEMINI_31_FLASH_PROFILE.dimensions[ratio]['1K']} for ratio in _GEMINI_31_STANDARD_RATIOS
-    },
+    dimensions={ratio: {'1K': sizes['1K']} for ratio, sizes in _GEMINI_31_FLASH_DIMENSIONS.items()},
     default_size='1K',
 )
 _GEMINI_25_FLASH_PROFILE = _GoogleImageGeometryProfile(
@@ -104,7 +91,6 @@ _GEMINI_25_FLASH_PROFILE = _GoogleImageGeometryProfile(
 class _GoogleGeometry:
     aspect_ratio: str | None
     image_size: str | None
-    ignored: list[str]
     conflicts: list[str]
 
 
@@ -133,7 +119,6 @@ def resolve_google_geometry(
     """Resolve common and Google-specific geometry to native image config fields."""
     aspect_ratio = provider_aspect_ratio
     image_size = provider_size
-    ignored: list[str] = []
     conflicts: list[str] = []
 
     if dimensions := settings.get('dimensions'):
@@ -143,23 +128,16 @@ def resolve_google_geometry(
         )
         image_size = _prefer_google_value(image_size, mapped_size, setting_name='dimensions', conflicts=conflicts)
     elif common_aspect_ratio := settings.get('aspect_ratio'):
-        mapped_geometry = resolve_google_aspect_ratio(model_name, common_aspect_ratio)
-        if mapped_geometry is None:
-            ignored.append('aspect_ratio')
-        else:
-            mapped_aspect_ratio, default_size = mapped_geometry
-            aspect_ratio = _prefer_google_value(
-                aspect_ratio, mapped_aspect_ratio, setting_name='aspect_ratio', conflicts=conflicts
-            )
-            if default_size is not None and not provider_size_is_set:
-                image_size = default_size
+        # Forwarded whether or not the model's geometry profile lists the ratio: the profile records
+        # the shapes we can name for `dimensions`, and the API is the authority on what it accepts.
+        aspect_ratio = _prefer_google_value(
+            aspect_ratio, common_aspect_ratio, setting_name='aspect_ratio', conflicts=conflicts
+        )
+        profile = _google_image_geometry_profile(model_name)
+        if profile is not None and profile.default_size is not None and not provider_size_is_set:
+            image_size = profile.default_size
 
-    return _GoogleGeometry(
-        aspect_ratio=aspect_ratio,
-        image_size=image_size,
-        ignored=ignored,
-        conflicts=conflicts,
-    )
+    return _GoogleGeometry(aspect_ratio=aspect_ratio, image_size=image_size, conflicts=conflicts)
 
 
 def resolve_google_dimensions(
@@ -175,18 +153,6 @@ def resolve_google_dimensions(
                     return aspect_ratio, image_size
 
     raise UserError(f'Google model {model_name!r} does not support `dimensions={dimensions!r}`')
-
-
-def resolve_google_aspect_ratio(
-    model_name: str, aspect_ratio: ImageGenerationAspectRatio
-) -> tuple[ImageGenerationAspectRatio, str | None] | None:
-    """Map a normalized aspect ratio to the model's canonical Google geometry."""
-    profile = _google_image_geometry_profile(model_name)
-    if profile is None:
-        return aspect_ratio, None
-    if aspect_ratio not in profile.dimensions:
-        return None
-    return aspect_ratio, profile.default_size
 
 
 def _google_image_geometry_profile(model_name: str) -> _GoogleImageGeometryProfile | None:

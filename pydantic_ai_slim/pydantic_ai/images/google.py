@@ -164,7 +164,7 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         prompt, images, settings = self.prepare_generate(prompt, images=images, settings=settings)
         google_settings = cast(GoogleImageGenerationSettings, settings)
         resolved = _resolve_google_settings(google_settings, model_name=self.model_name)
-        warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
+        warn_image_generation_settings(self.system, conflicts=resolved.conflicts)
         contents = await self._map_contents(prompt, images)
 
         try:
@@ -299,7 +299,6 @@ class GoogleImageGenerationModel(ImageGenerationModel):
 @dataclass
 class _GoogleResolvedSettings:
     config: GenerateContentConfigDict
-    ignored: list[str]
     conflicts: list[str]
 
 
@@ -330,7 +329,6 @@ def _resolve_google_settings(settings: GoogleImageGenerationSettings, *, model_n
             image_config=image_config or None,
             http_options=http_options or None,
         ),
-        ignored=geometry.ignored,
         conflicts=geometry.conflicts,
     )
 

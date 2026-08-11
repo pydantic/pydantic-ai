@@ -515,17 +515,35 @@ def test_google_geometry_profiles_conflicts_and_unknown_models():
     assert geometry.image_size == '2K'
     assert geometry.conflicts == ['dimensions']
 
-    ignored_ratio = google_geometry.resolve_google_geometry(
+    # `1:2` is absent from every Gemini geometry profile, yet still reaches the model: our tables say
+    # which shapes we can name for `dimensions`, not what the API accepts.
+    unprofiled_ratio = google_geometry.resolve_google_geometry(
         'gemini-2.5-flash-image',
         {'aspect_ratio': '1:2'},
         provider_aspect_ratio=None,
         provider_size=None,
         provider_size_is_set=False,
     )
-    assert ignored_ratio.ignored == ['aspect_ratio']
+    assert (unprofiled_ratio.aspect_ratio, unprofiled_ratio.image_size) == ('1:2', None)
 
-    assert google_geometry.resolve_google_aspect_ratio('future-image-model', '1:2') == ('1:2', None)
-    assert google_geometry.resolve_google_aspect_ratio('gemini-3-pro-image', '1:2') is None
+    unknown_model_ratio = google_geometry.resolve_google_geometry(
+        'future-image-model',
+        {'aspect_ratio': '1:2'},
+        provider_aspect_ratio=None,
+        provider_size=None,
+        provider_size_is_set=False,
+    )
+    assert (unknown_model_ratio.aspect_ratio, unknown_model_ratio.image_size) == ('1:2', None)
+
+    tiered_model_ratio = google_geometry.resolve_google_geometry(
+        'gemini-3-pro-image',
+        {'aspect_ratio': '1:2'},
+        provider_aspect_ratio=None,
+        provider_size=None,
+        provider_size_is_set=False,
+    )
+    assert (tiered_model_ratio.aspect_ratio, tiered_model_ratio.image_size) == ('1:2', '1K')
+
     assert google_geometry.resolve_google_dimensions('gemini-3-pro-image', (1024, 1024)) == ('1:1', '1K')
     future_geometry = google_geometry.resolve_google_geometry(
         'future-image-model',
@@ -545,6 +563,37 @@ def test_google_geometry_profiles_conflicts_and_unknown_models():
     assert supported_size.image_size == '2K'
     with pytest.raises(UserError, match='does not support'):
         google_geometry.resolve_google_dimensions('future-image-model', (1024, 1024))
+
+
+@pytest.mark.parametrize(
+    ('aspect_ratio', 'tiers'),
+    [
+        ('1:4', {'512': (256, 1024), '1K': (512, 2064), '2K': (1024, 4128), '4K': (2048, 8256)}),
+        ('1:8', {'512': (176, 1456), '1K': (352, 2928), '2K': (704, 5856), '4K': (1408, 11712)}),
+        ('4:1', {'512': (1024, 256), '1K': (2064, 512), '2K': (4128, 1024), '4K': (8256, 2048)}),
+        ('8:1', {'512': (1456, 176), '1K': (2928, 352), '2K': (5856, 704), '4K': (11712, 1408)}),
+    ],
+)
+def test_google_extended_ratio_dimensions_match_the_live_api(aspect_ratio: str, tiers: dict[str, tuple[int, int]]):
+    """The extended Gemini 3.1 ratios resolve to the shapes the models actually return.
+
+    Google publishes different pixel sizes for most of these rows — `384x3072` for `1:8` at `1K`, where
+    the model returns `352x2928` — and the rows do not scale uniformly from the `512` tier the way the
+    standard ratios do, so every cell was probed against the live API. Flash Lite returns the same `1K`
+    shapes as Flash and serves no other tier: the `512` column Google documents for it is rejected.
+    """
+    for image_size, dimensions in tiers.items():
+        assert google_geometry.resolve_google_dimensions('gemini-3.1-flash-image', dimensions) == (
+            aspect_ratio,
+            image_size,
+        )
+
+    assert google_geometry.resolve_google_dimensions('gemini-3.1-flash-lite-image', tiers['1K']) == (
+        aspect_ratio,
+        '1K',
+    )
+    with pytest.raises(UserError, match='does not support'):
+        google_geometry.resolve_google_dimensions('gemini-3.1-flash-lite-image', tiers['512'])
 
 
 @pytest.mark.parametrize(
@@ -840,9 +889,19 @@ async def test_google_image_generation_resolves_dimensions_and_aspect_ratio():
     provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
     model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
 
+    unknown_model = GoogleImageGenerationModel('future-image-model', provider=provider)
+
     try:
         await model.generate('wide image', settings={'dimensions': (1376, 768)})
         await model.generate('portrait image', settings={'aspect_ratio': '3:4'})
+        # No Gemini geometry profile lists `1:2`, and it reaches the wire anyway: the profiles record
+        # the shapes we can name for `dimensions`, and Gemini itself judges the ratio it is sent.
+        await model.generate('unprofiled ratio', settings={'aspect_ratio': '1:2'})
+        await unknown_model.generate('unknown model', settings={'aspect_ratio': '1:2'})
+        await model.generate(
+            'explicit tier',
+            settings=GoogleImageGenerationSettings(aspect_ratio='16:9', google_image_config={'image_size': '4K'}),
+        )
         with pytest.raises(UserError, match=r'does not support `dimensions=\(1920, 1080\)`'):
             await model.generate('unsupported dimensions', settings={'dimensions': (1920, 1080)})
     finally:
@@ -851,6 +910,9 @@ async def test_google_image_generation_resolves_dimensions_and_aspect_ratio():
     assert [json.loads(request.content)['generationConfig']['imageConfig'] for request in requests] == [
         {'aspectRatio': '16:9', 'imageSize': '1K'},
         {'aspectRatio': '3:4', 'imageSize': '1K'},
+        {'aspectRatio': '1:2', 'imageSize': '1K'},
+        {'aspectRatio': '1:2'},
+        {'imageSize': '4K', 'aspectRatio': '16:9'},
     ]
 
 
@@ -1580,9 +1642,13 @@ async def test_xai_image_generation_wire_payload_and_response_mapping():
         resolution='1k',
     )
 
-    with pytest.warns(UserWarning, match=r'ignored unsupported settings: `aspect_ratio`'):
+    # `4:5` has no member in the SDK's `ImageAspectRatio` enum, so the request cannot carry it at all.
+    with pytest.raises(
+        UserError,
+        match=r"xAI image generation does not support `aspect_ratio='4:5'`\. Supported aspect ratios are: `1:1`, ",
+    ):
         await model.generate(
-            'unsupported settings',
+            'inexpressible aspect ratio',
             settings=XaiImageGenerationSettings(aspect_ratio='4:5'),
         )
 
@@ -1605,15 +1671,19 @@ async def test_xai_image_generation_warns_for_settings_its_transport_cannot_carr
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
-@pytest.mark.parametrize('xai_n', [0, True, 11])
+@pytest.mark.parametrize('xai_n', [0, True])
 async def test_xai_image_generation_rejects_invalid_count(xai_n: int):
+    """Only counts the request cannot express are rejected; xAI owns its own upper bound.
+
+    `xai_n=0` would otherwise be coerced to a single image, silently ignoring what was asked for.
+    """
     mock_client = AsyncMock()
     model = XaiImageGenerationModel(
         'grok-imagine-image',
         provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
     )
 
-    with pytest.raises(UserError, match='integer between 1 and 10'):
+    with pytest.raises(UserError, match='count must be a positive integer'):
         await model.generate('tiny robot', settings=XaiImageGenerationSettings(xai_n=xai_n))
 
     mock_client.image.sample.assert_not_awaited()
@@ -2258,15 +2328,11 @@ async def test_openai_image_generation_response_mapping():
     assert mock_client.images.generate.await_args.kwargs['quality'] == 'low'
     assert mock_client.images.generate.await_args.kwargs['output_compression'] == 80
 
-    unsupported_settings = OpenAIImageGenerationSettings(
-        openai_input_fidelity='high',
-        aspect_ratio='16:9',
-    )
-    with pytest.warns(
-        UserWarning,
-        match=r'ignored unsupported settings: `input_fidelity`, `aspect_ratio`',
-    ):
-        await model.generate('unsupported settings', settings=unsupported_settings)
+    with pytest.warns(UserWarning, match=r'ignored unsupported settings: `input_fidelity`'):
+        await model.generate(
+            'unsupported settings',
+            settings=OpenAIImageGenerationSettings(openai_input_fidelity='high'),
+        )
 
     with pytest.warns(UserWarning, match=r'used provider-specific settings instead of: `aspect_ratio`'):
         await model.generate(
@@ -2288,8 +2354,12 @@ async def test_openai_image_generation_response_mapping():
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-@pytest.mark.parametrize('openai_n', [0, True, 11])
+@pytest.mark.parametrize('openai_n', [0, True])
 async def test_openai_image_generation_rejects_invalid_count(openai_n: int):
+    """Only counts the request cannot express are rejected; OpenAI owns its own upper bound.
+
+    `openai_n=0` would otherwise be omitted from the request, silently ignoring what was asked for.
+    """
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
     model = OpenAIImageGenerationModel(
@@ -2297,8 +2367,47 @@ async def test_openai_image_generation_rejects_invalid_count(openai_n: int):
         provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
     )
 
-    with pytest.raises(UserError, match='integer between 1 and 10'):
+    with pytest.raises(UserError, match='count must be a positive integer'):
         await model.generate('tiny robot', settings=OpenAIImageGenerationSettings(openai_n=openai_n))
+
+    mock_client.images.generate.assert_not_awaited()
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize(
+    ('model_name', 'aspect_ratio', 'expected_error'),
+    [
+        (
+            'gpt-image-1',
+            '16:9',
+            r"model 'gpt-image-1' does not support `aspect_ratio='16:9'`\. "
+            r'Supported aspect ratios are: `1:1`, `2:3`, `3:2`\.',
+        ),
+        (
+            'gpt-image-2',
+            '1:4',
+            r"model 'gpt-image-2' does not support `aspect_ratio='1:4'`\. "
+            r'Supported aspect ratios are: `1:1`, `1:2`, `2:1`, ',
+        ),
+    ],
+)
+async def test_openai_image_generation_rejects_unmappable_aspect_ratio(
+    model_name: str, aspect_ratio: ImageGenerationAspectRatio, expected_error: str
+):
+    """OpenAI takes a size rather than a ratio, so a ratio outside the family's table cannot be sent.
+
+    Pydantic AI performs this mapping itself, so there is no provider left to judge the request:
+    dropping the ratio would silently generate — and bill for — the model's default shape instead.
+    """
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    model = OpenAIImageGenerationModel(
+        model_name,
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+    )
+
+    with pytest.raises(UserError, match=expected_error):
+        await model.generate('unmappable ratio', settings={'aspect_ratio': aspect_ratio})
 
     mock_client.images.generate.assert_not_awaited()
 
