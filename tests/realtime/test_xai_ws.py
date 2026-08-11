@@ -39,7 +39,6 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
-    ReconnectPolicy,
 )
 
 from ..conftest import IsDatetime, IsStr, try_import
@@ -412,9 +411,7 @@ async def test_message_history_seeding(xai_ws_cassette: tuple[XaiProvider, Realt
 async def test_session_resumption_after_drop(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
     """A forced WebSocket drop resumes the native xAI conversation without duplicating prior turns."""
     provider, cassette = xai_ws_cassette
-    model = XaiRealtimeModel(
-        MODEL, provider=provider, settings={'reconnect': ReconnectPolicy(base_delay=0.0, jitter=False)}
-    )
+    model = XaiRealtimeModel(MODEL, provider=provider, settings={'reconnect': {'base_delay': 0.0, 'jitter': False}})
     agent = Agent(instructions='Answer in one short sentence.')
 
     events: list[Any] = []

@@ -36,12 +36,7 @@ realtime counterpart of [model run settings](../agent.md#model-run-settings) —
 [shared settings](overview.md#shared-settings) with Google generation and Live controls:
 
 ```python
-from pydantic_ai.realtime.google import (
-    AutomaticVAD,
-    ContextCompression,
-    GoogleRealtimeModel,
-    GoogleRealtimeModelSettings,
-)
+from pydantic_ai.realtime.google import GoogleRealtimeModel, GoogleRealtimeModelSettings
 
 settings = GoogleRealtimeModelSettings(
     temperature=0.7,
@@ -50,9 +45,9 @@ settings = GoogleRealtimeModelSettings(
     google_language_code='en-US',
     google_affective_dialog=True,
     google_proactive_audio=True,
-    google_vad=AutomaticVAD(start_sensitivity='high', end_sensitivity='low'),
+    google_vad={'start_sensitivity': 'high', 'end_sensitivity': 'low'},
     google_turn_coverage='all_video',
-    google_context_compression=ContextCompression(trigger_tokens=16000, target_tokens=8000),
+    google_context_compression={'trigger_tokens': 16000, 'target_tokens': 8000},
 )
 model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=settings)
 ```
@@ -75,7 +70,7 @@ Gemini-specific control is needed.
 
 !!! warning "Keep automatic VAD enabled"
     Pydantic AI does not expose Gemini activity markers or manual turn verbs. Do not set
-    `AutomaticVAD(disabled=True)`; shared `turn_detection=False` is rejected for the same reason.
+    `google_vad={'disabled': True}`; shared `turn_detection=False` is rejected for the same reason.
 
 ### Asynchronous tool calls
 

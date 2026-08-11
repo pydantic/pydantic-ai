@@ -35,12 +35,11 @@ counterpart of [model run settings](../agent.md#model-run-settings) — extends 
 [shared settings](overview.md#shared-settings):
 
 ```python
-from pydantic_ai.realtime import TurnDetection
 from pydantic_ai.realtime.xai import XaiRealtimeModel, XaiRealtimeModelSettings
 
 settings = XaiRealtimeModelSettings(
     xai_voice='eve',
-    turn_detection=TurnDetection(sensitivity='low'),
+    turn_detection={'sensitivity': 'low'},
     input_transcription_model='auto',
 )
 model = XaiRealtimeModel('grok-voice-latest', settings=settings)

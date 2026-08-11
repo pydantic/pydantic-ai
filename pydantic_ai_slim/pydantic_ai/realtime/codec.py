@@ -491,11 +491,11 @@ async def reconnect_with_backoff(
     `reconnects_used` is how many times this session has already reconnected, checked against the
     policy's session-wide budget so a server that hangs up as fast as we dial cannot loop forever.
     """
-    if reconnects_used >= policy.max_reconnects:
+    if reconnects_used >= policy.get('max_reconnects', 50):
         return False
-    for i in range(policy.max_attempts):
-        delay = min(policy.max_delay, policy.base_delay * (2**i))
-        if policy.jitter:
+    for i in range(policy.get('max_attempts', 3)):
+        delay = min(policy.get('max_delay', 30.0), policy.get('base_delay', 0.5) * (2**i))
+        if policy.get('jitter', True):
             delay *= 0.5 + random.random() * 0.5
         await asyncio.sleep(delay)
         if await attempt():

@@ -854,7 +854,7 @@ class OpenAIRealtimeModel(RealtimeModel):
         elif 'turn_detection' in model_settings:
             turn_detection = resolve_base_turn_detection(model_settings['turn_detection'])
         else:
-            turn_detection = ServerVAD()
+            turn_detection: ServerVAD | SemanticVAD | None = {'type': 'server_vad'}
         # `turn_detection` is always set: a dict enables VAD, `None` (explicit null) disables it.
         audio_input: dict[str, Any] = {
             'format': {'type': 'audio/pcm', 'rate': 24000},

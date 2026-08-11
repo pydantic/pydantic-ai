@@ -34,7 +34,6 @@ from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeSessionReconnectEvent,
-    TurnDetection,
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -304,10 +303,10 @@ def test_session_config_shape() -> None:
 def test_session_config_resumption_follows_reconnect_policy() -> None:
     assert 'resumption' not in _model()._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     # A model-level default policy (via `settings=`) enables native resumption...
-    model_level = _model(rt_xai.XaiRealtimeModelSettings(reconnect=rt_xai.ReconnectPolicy()))
+    model_level = _model(rt_xai.XaiRealtimeModelSettings(reconnect={}))
     assert model_level._session_config('hi', None, None)['resumption'] == {'enabled': True}  # pyright: ignore[reportPrivateUsage]
     # ...and so does a per-session policy on a model with no defaults.
-    per_session = rt_xai.XaiRealtimeModelSettings(reconnect=rt_xai.ReconnectPolicy())
+    per_session = rt_xai.XaiRealtimeModelSettings(reconnect={})
     assert _model()._session_config('hi', None, per_session)['resumption'] == {'enabled': True}  # pyright: ignore[reportPrivateUsage]
 
 
@@ -377,7 +376,7 @@ def test_session_config_cross_provider_turn_detection_sensitivity(
     config = _model()._session_config(  # pyright: ignore[reportPrivateUsage]
         'hi',
         None,
-        rt_xai.XaiRealtimeModelSettings(turn_detection=TurnDetection(sensitivity=sensitivity)),
+        rt_xai.XaiRealtimeModelSettings(turn_detection={'sensitivity': sensitivity}),
     )
     assert config['turn_detection']['threshold'] == threshold
 
@@ -387,8 +386,8 @@ def test_session_config_xai_turn_detection_overrides_base() -> None:
         'hi',
         None,
         rt_xai.XaiRealtimeModelSettings(
-            turn_detection=TurnDetection(sensitivity='high'),
-            xai_turn_detection=rt_xai.ServerVAD(threshold=0.9, create_response=False),
+            turn_detection={'sensitivity': 'high'},
+            xai_turn_detection={'type': 'server_vad', 'threshold': 0.9, 'create_response': False},
         ),
     )
     assert config['turn_detection'] == {
@@ -441,13 +440,8 @@ class FakeWebSocket:
         self.sent: list[str] = []
 
     @staticmethod
-    def _normalize_frame(frame: Any) -> Any:
-        if not isinstance(frame, str):
-            return frame
-        try:
-            data = json.loads(frame)
-        except json.JSONDecodeError:
-            return frame
+    def _normalize_frame(frame: str) -> str:
+        data = json.loads(frame)
         return json.dumps(sdk_frame(cast('dict[str, Any]', data))) if isinstance(data, dict) else frame
 
     async def recv(self) -> Any:
@@ -757,7 +751,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     connect = _RecordingConnect([dropped, good])
     monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
 
-    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0, max_attempts=1)))
+    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1}))
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
@@ -830,7 +824,7 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
     monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([dropped, resumed]))
 
     agent = Agent()
-    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect=rt_xai.ReconnectPolicy(base_delay=0.0, max_attempts=1)))
+    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1}))
     async with agent.realtime(model).session() as session:
         await session.send('Hello.')
         events = await collect_session_events(session)
@@ -887,9 +881,7 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
 
     connect = _DropThenFail()
     monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
-    model = _model(
-        rt_xai.XaiRealtimeModelSettings(reconnect=rt_xai.ReconnectPolicy(max_attempts=1, base_delay=0.0, jitter=False))
-    )
+    model = _model(rt_xai.XaiRealtimeModelSettings(reconnect={'max_attempts': 1, 'base_delay': 0.0, 'jitter': False}))
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]
 
@@ -940,7 +932,7 @@ async def test_connect_rejects_conversation_created_without_id(monkeypatch: pyte
     monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
 
     with pytest.raises(RuntimeError, match=r'did not include a `conversation\.id`'):
-        async with _connect(_model(rt_xai.XaiRealtimeModelSettings(reconnect=rt_xai.ReconnectPolicy())), 'x'):
+        async with _connect(_model(rt_xai.XaiRealtimeModelSettings(reconnect={})), 'x'):
             pass  # pragma: no cover
 
 

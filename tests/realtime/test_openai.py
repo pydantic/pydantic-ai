@@ -58,14 +58,15 @@ from pydantic_ai.realtime import (
     RealtimeModelSettings,
     RealtimeSession,
     RealtimeSessionReconnectEvent,
-    TurnDetection,
 )
 from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
+    _user_content_items,  # pyright: ignore[reportPrivateUsage]
     expect_event,
     map_conversation_event as _map_conversation_wire_event,
     realtime_websocket_url,
     replay_items,
+    server_vad_from_turn_detection,
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -124,14 +125,11 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai / webso
 def sdk_frame(frame: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
     """Fill protocol bookkeeping on concise synthetic frames; semantic payloads stay test-owned."""
     frame = dict(frame)
-    event_type = frame.get('type')
+    event_type = cast('str', frame.get('type'))
     if event_type == 'session.created':
         frame.setdefault('event_id', 'event')
-        frame.setdefault('session', {'type': 'realtime'})
-        if isinstance(frame['session'], dict):
-            cast('dict[str, Any]', frame['session']).setdefault('type', 'realtime')
-        return frame
-    if not isinstance(event_type, str):
+        session = cast('dict[str, Any]', frame.setdefault('session', {'type': 'realtime'}))
+        session.setdefault('type', 'realtime')
         return frame
     if event_type in {'session.updated', 'rate_limits.updated'}:
         return frame
@@ -194,7 +192,7 @@ def sdk_frame(frame: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
         if item['type'] == 'message':
             item.setdefault('role', 'assistant')
             item.setdefault('content', [])
-        elif item['type'] == 'function_call':
+        else:  # function_call
             item.setdefault('name', '')
             item.setdefault('arguments', '')
     if event_type == 'conversation.created' and isinstance(conversation := frame.get('conversation'), dict):
@@ -202,6 +200,14 @@ def sdk_frame(frame: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
         conversation.setdefault('id', '')
         conversation.setdefault('object', 'realtime.conversation')
     return frame
+
+
+def test_user_content_items_rejects_non_image_binary_content():
+    """Upstream normalization only ever yields text and images; anything else must fail loudly."""
+    with pytest.raises(
+        UserError, match="Expected image content after realtime user-content normalization, got 'application/pdf'"
+    ):
+        _user_content_items([BinaryContent(data=b'%PDF', media_type='application/pdf')])
 
 
 def map_event(frame: dict[str, Any]) -> RealtimeCodecEvent | None:
@@ -1015,14 +1021,15 @@ async def test_connect_resolves_workload_identity_token(monkeypatch: pytest.Monk
 def test_session_config_server_vad_params() -> None:
     model = OpenAIRealtimeModel(
         settings=rt_openai.OpenAIRealtimeModelSettings(
-            openai_turn_detection=rt_openai.ServerVAD(
-                threshold=0.7,
-                prefix_padding_ms=200,
-                silence_duration_ms=400,
-                create_response=False,
-                interrupt_response=False,
-                idle_timeout_ms=5000,
-            ),
+            openai_turn_detection={
+                'type': 'server_vad',
+                'threshold': 0.7,
+                'prefix_padding_ms': 200,
+                'silence_duration_ms': 400,
+                'create_response': False,
+                'interrupt_response': False,
+                'idle_timeout_ms': 5000,
+            },
         )
     )
     config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
@@ -1035,6 +1042,15 @@ def test_session_config_server_vad_params() -> None:
         'silence_duration_ms': 400,
         'idle_timeout_ms': 5000,
     }
+
+
+def test_server_vad_from_turn_detection_mapping() -> None:
+    # All three cross-provider knobs map through; sensitivity resolves via the threshold table.
+    assert server_vad_from_turn_detection(
+        {'sensitivity': 'high', 'prefix_padding_ms': 100, 'silence_duration_ms': 300}
+    ) == {'type': 'server_vad', 'threshold': 0.3, 'prefix_padding_ms': 100, 'silence_duration_ms': 300}
+    # Without knobs the provider defaults stay in charge: only the discriminator is sent.
+    assert server_vad_from_turn_detection({}) == {'type': 'server_vad'}
 
 
 def test_session_config_truncation_modes() -> None:
@@ -1083,8 +1099,8 @@ def test_session_config_thinking_on_non_reasoning_model_is_ignored() -> None:
 def test_session_config_openai_turn_detection_overrides_base() -> None:
     model = OpenAIRealtimeModel(
         settings=rt_openai.OpenAIRealtimeModelSettings(
-            turn_detection=TurnDetection(sensitivity='low'),
-            openai_turn_detection=rt_openai.SemanticVAD(eagerness='high'),
+            turn_detection={'sensitivity': 'low'},
+            openai_turn_detection={'type': 'semantic_vad', 'eagerness': 'high'},
         )
     )
     config = model._session_config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
@@ -1100,7 +1116,7 @@ def test_session_config_openai_turn_detection_overrides_base() -> None:
 def test_session_config_cross_provider_turn_detection_sensitivity(
     sensitivity: Literal['low', 'medium', 'high'], threshold: float
 ) -> None:
-    settings = rt_openai.OpenAIRealtimeModelSettings(turn_detection=TurnDetection(sensitivity=sensitivity))
+    settings = rt_openai.OpenAIRealtimeModelSettings(turn_detection={'sensitivity': sensitivity})
     config = OpenAIRealtimeModel(settings=settings)._session_config(  # pyright: ignore[reportPrivateUsage]
         'hi', None, None
     )
@@ -2684,7 +2700,7 @@ async def test_clean_close_reconnects_when_a_policy_is_configured() -> None:
     conn = OpenAIRealtimeConnection(
         _ExpiredWebSocket([]),  # type: ignore[arg-type]
         dial=dial,
-        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+        reconnect={'base_delay': 0.0, 'max_attempts': 1},
     )
     events = await collect_codec_events(conn)
     assert events == [
@@ -2698,7 +2714,7 @@ async def test_reconnect_budget_bounds_a_flapping_server() -> None:
     # `max_attempts` bounds the retries for one drop and resets whenever a dial succeeds, so a server
     # that accepts a connection and immediately drops it would otherwise be reconnected forever. The
     # session-wide budget is what makes that terminate.
-    policy = rt_openai.ReconnectPolicy(max_attempts=1, max_reconnects=2, base_delay=0, jitter=False)
+    policy = {'max_attempts': 1, 'max_reconnects': 2, 'base_delay': 0, 'jitter': False}
     dials = 0
 
     async def dial() -> Any:
@@ -2730,7 +2746,7 @@ async def test_reconnects_on_drop_and_resumes() -> None:
     conn = OpenAIRealtimeConnection(
         DroppingWebSocket([]),  # type: ignore[arg-type]
         dial=dial,
-        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+        reconnect={'base_delay': 0.0, 'max_attempts': 1},
     )
     events = await collect_codec_events(conn)
     assert events == [RealtimeSessionReconnectEvent(state_restored=False), OutputTranscript(text='hi', is_final=True)]
@@ -2781,9 +2797,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     connect = _RecordingConnect([dropped, good])
     monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
 
-    model = OpenAIRealtimeModel(
-        'gpt-realtime', settings={'reconnect': rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1)}
-    )
+    model = OpenAIRealtimeModel('gpt-realtime', settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1}})
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
@@ -2795,8 +2809,8 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
 async def test_reconnect_policy_follows_model_settings_layering(monkeypatch: pytest.MonkeyPatch) -> None:
     """`reconnect` layers like any other model setting: the model-level default applies to every
     session, and a per-session policy overrides it."""
-    default_policy = rt_openai.ReconnectPolicy(max_attempts=1)
-    session_policy = rt_openai.ReconnectPolicy(max_attempts=2)
+    default_policy: rt_openai.ReconnectPolicy = {'max_attempts': 1}
+    session_policy: rt_openai.ReconnectPolicy = {'max_attempts': 2}
     model = OpenAIRealtimeModel('gpt-realtime', settings={'reconnect': default_policy})
 
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(FakeWebSocket([_created(), _updated()])))
@@ -2815,9 +2829,7 @@ async def test_reconnect_updates_server_reported_model(monkeypatch: pytest.Monke
     dropped = _DropAfterHandshake([initial_created, _updated()])
     good = FakeWebSocket([reconnected_created, _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', _RecordingConnect([dropped, good]))
-    model = OpenAIRealtimeModel(
-        'requested-model', settings={'reconnect': rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1)}
-    )
+    model = OpenAIRealtimeModel('requested-model', settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1}})
 
     async with _connect(model, 'x') as conn:
         await collect_codec_events(conn)
@@ -2849,7 +2861,7 @@ async def test_reconnect_refreshes_async_api_key(monkeypatch: pytest.MonkeyPatch
     model = OpenAIRealtimeModel(
         'gpt-realtime',
         provider=OpenAIProvider(openai_client=AsyncOpenAI(api_key=provide_key)),
-        settings={'reconnect': rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1)},
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1}},
     )
 
     async with _connect(model, 'x') as conn:
@@ -2869,7 +2881,7 @@ async def test_reconnect_gives_up_after_max_attempts() -> None:
     conn = OpenAIRealtimeConnection(
         DroppingWebSocket([]),  # type: ignore[arg-type]
         dial=dial,
-        reconnect=rt_openai.ReconnectPolicy(max_attempts=2, base_delay=0.0, jitter=False),
+        reconnect={'max_attempts': 2, 'base_delay': 0.0, 'jitter': False},
     )
     events = [e async for e in conn]
     assert len(events) == 1
@@ -2895,7 +2907,7 @@ async def test_reconnect_handshake_failure_consumes_an_attempt() -> None:
     conn = OpenAIRealtimeConnection(
         DroppingWebSocket([]),  # type: ignore[arg-type]
         dial=dial,
-        reconnect=rt_openai.ReconnectPolicy(max_attempts=2, base_delay=0.0, jitter=False),
+        reconnect={'max_attempts': 2, 'base_delay': 0.0, 'jitter': False},
     )
     events = [e async for e in conn]
     assert dials == 2
@@ -2925,7 +2937,7 @@ async def test_reconnect_replays_a_deferred_response_request() -> None:
     conn = OpenAIRealtimeConnection(
         DroppingWebSocket([]),  # type: ignore[arg-type]
         dial=dial,
-        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1),
+        reconnect={'base_delay': 0.0, 'max_attempts': 1},
     )
     conn._response_active = True  # pyright: ignore[reportPrivateUsage]
     conn._pending_response = True  # pyright: ignore[reportPrivateUsage]
@@ -2957,7 +2969,7 @@ async def test_reconnect_replay_failure_consumes_an_attempt() -> None:
     conn = OpenAIRealtimeConnection(
         DroppingWebSocket([]),  # type: ignore[arg-type]
         dial=dial,
-        reconnect=rt_openai.ReconnectPolicy(max_attempts=2, base_delay=0.0, jitter=False),
+        reconnect={'max_attempts': 2, 'base_delay': 0.0, 'jitter': False},
     )
     conn._response_active = True  # pyright: ignore[reportPrivateUsage]
     conn._pending_response = True  # pyright: ignore[reportPrivateUsage]
@@ -3021,7 +3033,7 @@ async def test_reconnect_propagates_unexpected_dial_error() -> None:
     conn = OpenAIRealtimeConnection(
         DroppingWebSocket([]),  # type: ignore[arg-type]
         dial=dial,
-        reconnect=rt_openai.ReconnectPolicy(base_delay=0.0),
+        reconnect={'base_delay': 0.0},
     )
     with pytest.raises(RuntimeError, match='boom'):
         _ = [e async for e in conn]
@@ -3574,7 +3586,7 @@ async def test_reconnect_replays_the_conversation(monkeypatch: pytest.MonkeyPatc
     model = OpenAIRealtimeModel(
         'gpt-realtime',
         provider=OpenAIProvider(api_key='k'),
-        settings={'reconnect': rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1)},
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1}},
     )
     # What a session would offer, with every kind of media a call accumulates: retained audio on both
     # sides, and a video frame sent alongside text. All of it is left behind; the words come back.
@@ -3664,7 +3676,7 @@ async def test_reconnect_without_a_session_does_not_replay(monkeypatch: pytest.M
     model = OpenAIRealtimeModel(
         'gpt-realtime',
         provider=OpenAIProvider(api_key='k'),
-        settings={'reconnect': rt_openai.ReconnectPolicy(base_delay=0.0, max_attempts=1)},
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1}},
     )
     async with _connect(model, 'be brief') as conn:
         events = await collect_codec_events(conn)

@@ -2,12 +2,10 @@
 
 from __future__ import annotations as _annotations
 
-from dataclasses import KW_ONLY, dataclass
 from typing import Literal
 
 from typing_extensions import TypeAliasType, TypedDict
 
-from .._utils import dataclasses_no_defaults_repr
 from ..settings import ThinkingLevel, ToolChoice
 
 AudioRetention = TypeAliasType('AudioRetention', Literal['transcript_only', 'input_audio', 'output_audio', 'all'])
@@ -33,8 +31,7 @@ into the user's part unless that output is present in the microphone input itsel
 """
 
 
-@dataclass(repr=False)
-class TurnDetection:
+class TurnDetection(TypedDict, total=False):
     """Cross-provider automatic voice-activity detection (VAD) knobs.
 
     Set as [`RealtimeModelSettings.turn_detection`][pydantic_ai.realtime.RealtimeModelSettings] to turn
@@ -44,22 +41,19 @@ class TurnDetection:
     `xai_turn_detection`, `google_vad`), which fully overrides this when set.
     """
 
-    _: KW_ONLY
-    sensitivity: Literal['low', 'medium', 'high'] | None = None
+    sensitivity: Literal['low', 'medium', 'high']
     """How readily the provider detects turn boundaries (speech start/end). Higher is snappier but more
-    prone to false triggers. Maps per provider: **OpenAI / Azure / xAI** → server-VAD `threshold`
+    prone to false triggers. Defaults to the provider default. Maps per provider: **OpenAI / Azure / xAI** → server-VAD `threshold`
     (`low`≈0.7, `medium`≈0.5, `high`≈0.3); **Gemini** → both start and end sensitivity (`low`→`low`,
-    `high`→`high`, `medium` leaves the provider default). `None` uses the provider default."""
+    `high`→`high`, `medium` leaves the provider default)."""
 
-    prefix_padding_ms: int | None = None
+    prefix_padding_ms: int
     """Audio retained before detected speech onset, in milliseconds. Honored by OpenAI, xAI, and
-    Gemini."""
+    Gemini. Defaults to the provider default."""
 
-    silence_duration_ms: int | None = None
+    silence_duration_ms: int
     """Silence required to mark the end of speech, in milliseconds. Honored by OpenAI, xAI, and
-    Gemini."""
-
-    __repr__ = dataclasses_no_defaults_repr
+    Gemini. Defaults to the provider default."""
 
 
 class RealtimeModelSettings(TypedDict, total=False):
@@ -203,8 +197,7 @@ not listed here still works — this is just an autocomplete aid, like
 """
 
 
-@dataclass(repr=False)
-class ReconnectPolicy:
+class ReconnectPolicy(TypedDict, total=False):
     """How to recover when a realtime connection drops mid-session.
 
     Set as the `reconnect` key of [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings],
@@ -220,10 +213,10 @@ class ReconnectPolicy:
     [`UserError`][pydantic_ai.exceptions.UserError]).
     """
 
-    _: KW_ONLY
-    max_attempts: int = 3
-    """Number of re-dial attempts per drop before giving up and raising [`RealtimeError`][pydantic_ai.realtime.RealtimeError]."""
-    max_reconnects: int = 50
+    max_attempts: int
+    """Number of re-dial attempts per drop before giving up and raising
+    [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. Defaults to `3`."""
+    max_reconnects: int
     """Total successful reconnects allowed for the life of the session.
 
     `max_attempts` bounds the retries for a single drop, and resets once a dial succeeds, so on its
@@ -233,12 +226,11 @@ class ReconnectPolicy:
     The default is generous for the case this exists to serve: providers end sessions at a duration
     cap (OpenAI at 60 minutes) and a long-running session legitimately renews at that boundary, so 50
     covers days of continuous conversation. It only bites a server that hangs up as fast as we dial.
+    Defaults to `50`.
     """
-    base_delay: float = 0.5
-    """Base backoff delay in seconds; doubles each attempt up to `max_delay`."""
-    max_delay: float = 30.0
-    """Maximum backoff delay in seconds."""
-    jitter: bool = True
-    """Whether to apply random jitter to each backoff delay to avoid thundering herds."""
-
-    __repr__ = dataclasses_no_defaults_repr
+    base_delay: float
+    """Base backoff delay in seconds; doubles each attempt up to `max_delay`. Defaults to `0.5`."""
+    max_delay: float
+    """Maximum backoff delay in seconds. Defaults to `30.0`."""
+    jitter: bool
+    """Whether to apply random jitter to each backoff delay to avoid thundering herds. Defaults to `True`."""

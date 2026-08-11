@@ -52,12 +52,11 @@ realtime model setting, it can be a default on the model or passed for one sessi
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.realtime import ReconnectPolicy
 
 agent = Agent()
 realtime = agent.realtime(
     'openai:gpt-realtime',
-    model_settings={'reconnect': ReconnectPolicy(max_attempts=5)},
+    model_settings={'reconnect': {'max_attempts': 5}},
 )
 ```
 

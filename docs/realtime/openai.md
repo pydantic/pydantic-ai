@@ -38,20 +38,18 @@ realtime counterpart of [model run settings](../agent.md#model-run-settings) —
 [turn detection](turns.md), and truncation:
 
 ```python
-from pydantic_ai.realtime import TurnDetection
 from pydantic_ai.realtime.openai import (
     OpenAIRealtimeModel,
     OpenAIRealtimeModelSettings,
-    SemanticVAD,
 )
 
 settings = OpenAIRealtimeModelSettings(
     max_tokens=2_000,
     openai_voice='alloy',
-    turn_detection=TurnDetection(sensitivity='high', silence_duration_ms=400),
+    turn_detection={'sensitivity': 'high', 'silence_duration_ms': 400},
     openai_input_noise_reduction='near_field',
     openai_output_speed=1.1,
-    openai_turn_detection=SemanticVAD(eagerness='high'),
+    openai_turn_detection={'type': 'semantic_vad', 'eagerness': 'high'},
     openai_truncation={'type': 'retention_ratio', 'retention_ratio': 0.8},
 )
 model = OpenAIRealtimeModel('gpt-realtime', settings=settings)

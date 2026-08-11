@@ -232,7 +232,6 @@ from pydantic_ai.messages import (
     SpeechPart,
     SpeechPartDelta,
 )
-from pydantic_ai.realtime import TurnDetection
 from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings
 
 agent = Agent(instructions='You are a helpful voice assistant.')
@@ -240,7 +239,7 @@ agent = Agent(instructions='You are a helpful voice assistant.')
 
 async def main(microphone_chunk: bytes):
     settings = OpenAIRealtimeModelSettings(
-        openai_voice='alloy', turn_detection=TurnDetection(sensitivity='high')
+        openai_voice='alloy', turn_detection={'sensitivity': 'high'}
     )
     async with agent.realtime(
         'openai:gpt-realtime', model_settings=settings

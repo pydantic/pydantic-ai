@@ -12,11 +12,10 @@ Automatic detection is enabled by default. Configure common behavior with
 control, while `prefix_padding_ms` and `silence_duration_ms` pass through where supported.
 
 ```python
-from pydantic_ai.realtime import TurnDetection
 from pydantic_ai.realtime.openai import OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 
 settings = OpenAIRealtimeModelSettings(
-    turn_detection=TurnDetection(sensitivity='high', silence_duration_ms=400)
+    turn_detection={'sensitivity': 'high', 'silence_duration_ms': 400}
 )
 model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
 ```

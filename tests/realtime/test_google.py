@@ -57,7 +57,6 @@ from pydantic_ai.realtime import (
     RealtimeSession,
     RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
-    TurnDetection,
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -85,13 +84,9 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.realtime import google as rt_google
     from pydantic_ai.realtime.google import (
-        AutomaticVAD,
-        ContextCompression,
         GoogleRealtimeConnection,
         GoogleRealtimeModel,
         GoogleRealtimeModelSettings,
-        MultiSpeaker,
-        ReconnectPolicy,
     )
 
 
@@ -168,6 +163,19 @@ def _conn(session: _RecordingSession) -> GoogleRealtimeConnection:
 
 
 # --- helpers -----------------------------------------------------------------
+
+
+def test_automatic_vad_from_turn_detection_mapping() -> None:
+    # All three cross-provider knobs map through; `'medium'` leaves Gemini's own default in charge.
+    assert rt_google._automatic_vad_from_turn_detection(  # pyright: ignore[reportPrivateUsage]
+        {'sensitivity': 'low', 'prefix_padding_ms': 100, 'silence_duration_ms': 300}
+    ) == {
+        'start_sensitivity': 'low',
+        'end_sensitivity': 'low',
+        'prefix_padding_ms': 100,
+        'silence_duration_ms': 300,
+    }
+    assert rt_google._automatic_vad_from_turn_detection({'sensitivity': 'medium'}) == {}  # pyright: ignore[reportPrivateUsage]
 
 
 def test_tool_def_to_genai_with_and_without_description() -> None:
@@ -853,7 +861,7 @@ def test_config_full() -> None:
         temperature=0.5,
         top_p=0.9,
         google_voice='Puck',
-        google_vad=AutomaticVAD(prefix_padding_ms=200, silence_duration_ms=400),
+        google_vad={'prefix_padding_ms': 200, 'silence_duration_ms': 400},
     )
     model = GoogleRealtimeModel(settings=settings)
     assert model.settings == settings
@@ -1797,7 +1805,7 @@ async def test_connect_reconnect_auto_enables_session_resumption() -> None:
     on = _model(
         _RecordingSession([[_turn('hi')]]),
         captured,
-        settings=GoogleRealtimeModelSettings(reconnect=ReconnectPolicy()),
+        settings=GoogleRealtimeModelSettings(reconnect={}),
     )
     async with _connect(on, 'x') as conn:
         assert conn._dial is not None and conn._reconnect is not None  # pyright: ignore[reportPrivateUsage]
@@ -1821,7 +1829,7 @@ async def test_connect_reconnect_from_session_model_settings() -> None:
     # defaults, following the standard model-settings layering.
     captured: dict[str, Any] = {}
     model = _model(_RecordingSession([[_turn('hi')]]), captured)
-    async with _connect(model, 'x', model_settings={'reconnect': ReconnectPolicy()}) as conn:
+    async with _connect(model, 'x', model_settings={'reconnect': {}}) as conn:
         assert conn._dial is not None and conn._reconnect is not None  # pyright: ignore[reportPrivateUsage]
     assert captured['config'].session_resumption == genai_types.SessionResumptionConfig(handle=None)
 
@@ -1834,7 +1842,7 @@ async def test_connect_rejects_reconnect_with_resumption_disabled() -> None:
     model = _model(
         _RecordingSession(),
         captured,
-        settings=GoogleRealtimeModelSettings(reconnect=ReconnectPolicy(), google_enable_session_resumption=False),
+        settings=GoogleRealtimeModelSettings(reconnect={}, google_enable_session_resumption=False),
     )
     with pytest.raises(UserError, match='requires Gemini session resumption'):
         async with _connect(model, 'x'):
@@ -1881,7 +1889,7 @@ def test_speech_config_multi_speaker_overrides_voice() -> None:
     # Multi-speaker and single-voice configs are mutually exclusive in the API, so multi-speaker wins.
     model = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(
-            google_voice='Puck', google_multi_speaker=MultiSpeaker(voices={'Joe': 'Puck', 'Jane': 'Kore'})
+            google_voice='Puck', google_multi_speaker={'voices': {'Joe': 'Puck', 'Jane': 'Kore'}}
         )
     )
     speech = model._config('hi', None, None).speech_config  # pyright: ignore[reportPrivateUsage]
@@ -1899,7 +1907,7 @@ def test_speech_config_absent_when_unset() -> None:
 def test_realtime_input_full() -> None:
     model = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(
-            google_vad=AutomaticVAD(start_sensitivity='high', end_sensitivity='low', silence_duration_ms=300),
+            google_vad={'start_sensitivity': 'high', 'end_sensitivity': 'low', 'silence_duration_ms': 300},
             google_activity_handling='no_interruption',
             google_turn_coverage='all_video',
         )
@@ -1924,7 +1932,7 @@ def test_cross_provider_turn_detection_sensitivity(sensitivity: Literal['low', '
         'high': (genai_types.StartSensitivity.START_SENSITIVITY_HIGH, genai_types.EndSensitivity.END_SENSITIVITY_HIGH),
     }[sensitivity]
     config = GoogleRealtimeModel(
-        settings=GoogleRealtimeModelSettings(turn_detection=TurnDetection(sensitivity=sensitivity))
+        settings=GoogleRealtimeModelSettings(turn_detection={'sensitivity': sensitivity})
     )._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     realtime_input_config = config.realtime_input_config
     assert realtime_input_config is not None
@@ -1937,8 +1945,8 @@ def test_cross_provider_turn_detection_sensitivity(sensitivity: Literal['low', '
 def test_google_vad_overrides_cross_provider_turn_detection() -> None:
     config = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(
-            turn_detection=TurnDetection(sensitivity='high'),
-            google_vad=AutomaticVAD(start_sensitivity='low', end_sensitivity='low'),
+            turn_detection={'sensitivity': 'high'},
+            google_vad={'start_sensitivity': 'low', 'end_sensitivity': 'low'},
         )
     )._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
     realtime_input_config = config.realtime_input_config
@@ -1958,7 +1966,7 @@ def test_cross_provider_turn_detection_false_is_rejected() -> None:
 
 
 def test_google_vad_disabled_is_rejected() -> None:
-    model = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_vad=AutomaticVAD(disabled=True)))
+    model = GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_vad={'disabled': True}))
 
     with pytest.raises(UserError, match='does not support disabling automatic turn detection'):
         model._config('hi', None, None)  # pyright: ignore[reportPrivateUsage]
@@ -1970,9 +1978,9 @@ def test_realtime_input_absent_when_unset() -> None:
 
 
 def test_vad_without_sensitivities() -> None:
-    # a bare `AutomaticVAD()` sets a detection block but leaves sensitivities/disabled unset.
+    # a bare `{}` sets a detection block but leaves sensitivities/disabled unset.
     rt = (
-        GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_vad=AutomaticVAD()))
+        GoogleRealtimeModel(settings=GoogleRealtimeModelSettings(google_vad={}))
         ._config(  # pyright: ignore[reportPrivateUsage]
             'hi', None, None
         )
@@ -2009,7 +2017,7 @@ def test_transcription_language_codes() -> None:
 def test_context_compression_and_session_resumption() -> None:
     model = GoogleRealtimeModel(
         settings=GoogleRealtimeModelSettings(
-            google_context_compression=ContextCompression(trigger_tokens=8000, target_tokens=4000),
+            google_context_compression={'trigger_tokens': 8000, 'target_tokens': 4000},
             google_enable_session_resumption=True,
         ),
     )
@@ -2088,7 +2096,7 @@ async def test_reconnect_resumes_then_gives_up() -> None:
     s2 = _RecordingSession([[_turn('back')]])
     dial, handles = _dialer(s2)
     conn = GoogleRealtimeConnection(
-        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=2, jitter=False)
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 2, 'jitter': False}
     )
     conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
     events = [e async for e in conn]
@@ -2119,7 +2127,7 @@ async def test_reconnect_reports_whether_state_was_actually_restored(handle: str
     s1 = _RecordingSession([messages] if messages else [])
     dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
     conn = GoogleRealtimeConnection(
-        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
     )
 
     events = [e async for e in conn]
@@ -2144,7 +2152,7 @@ async def test_reconnect_closes_orphaned_turn_with_interrupted_boundary() -> Non
     s1 = _RecordingSession([[_turn('done')], [partial]])
     dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
     conn = GoogleRealtimeConnection(
-        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
     )
     conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
 
@@ -2172,7 +2180,7 @@ async def test_reconnect_closes_orphaned_turn_opened_by_a_tool_call() -> None:
     s1 = _RecordingSession([[tool_call]])
     dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
     conn = GoogleRealtimeConnection(
-        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
     )
     conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
 
@@ -2199,7 +2207,7 @@ async def test_reconnect_without_state_abandons_outstanding_tool_calls() -> None
     s1 = _RecordingSession([[tool_call]])
     dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
     conn = GoogleRealtimeConnection(
-        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
     )
 
     events = [e async for e in conn]
@@ -2225,7 +2233,7 @@ async def test_reconnect_with_restored_state_keeps_outstanding_tool_calls() -> N
     s1 = _RecordingSession([[tool_call]])
     dial, _ = _dialer(_RecordingSession([[_turn('back')]]))
     conn = GoogleRealtimeConnection(
-        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}
     )
     conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
 
@@ -2253,7 +2261,7 @@ async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None
     s1 = _RecordingSession([])
     dial, _ = _dialer(_RecordingSession([[_turn('hi')]]))
     conn = GoogleRealtimeConnection(
-        cast('AsyncSession', s1), dial=dial, reconnect=ReconnectPolicy(base_delay=0.5, max_attempts=1, jitter=True)
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.5, 'max_attempts': 1, 'jitter': True}
     )
     conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
     events = [e async for e in conn]
@@ -2305,7 +2313,7 @@ async def test_connect_reconnect_closes_previous_session() -> None:
 
     model = GoogleRealtimeModel(
         provider=GoogleProvider(client=cast('Client', _Client())),
-        settings=GoogleRealtimeModelSettings(reconnect=ReconnectPolicy(base_delay=0.0, max_attempts=1, jitter=False)),
+        settings=GoogleRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}),
     )
     async with _connect(model, 'x') as conn:
         events = [e async for e in conn]

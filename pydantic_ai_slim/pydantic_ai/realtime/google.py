@@ -26,7 +26,7 @@ from urllib.parse import quote
 
 from anyio import Lock
 from anyio.lowlevel import RunVar
-from typing_extensions import assert_never
+from typing_extensions import TypedDict, assert_never
 
 try:
     import websockets
@@ -129,6 +129,46 @@ __all__ = (
 )
 
 
+class AutomaticVAD(TypedDict, total=False):
+    """Server-side voice activity detection — the default turn-taking mode for Gemini Live."""
+
+    disabled: bool
+    """Turn off automatic VAD entirely. Defaults to `False`.
+
+    Do not set this through `RealtimeSession`: Pydantic AI does not expose Gemini activity markers or
+    manual turn controls. Use automatic VAD instead; the shared `turn_detection=False` setting is
+    rejected for the same reason.
+    """
+    start_sensitivity: Literal['high', 'low']
+    """How readily speech onset is detected. `high` triggers on quieter audio; `low` is stricter.
+    Defaults to the provider default."""
+    end_sensitivity: Literal['high', 'low']
+    """How readily the end of speech is detected. `high` ends turns sooner; `low` waits longer.
+    Defaults to the provider default."""
+    prefix_padding_ms: int
+    """Audio to include before detected speech, in milliseconds. Defaults to the provider default."""
+    silence_duration_ms: int
+    """Silence required to detect the end of speech, in milliseconds. Defaults to the provider default."""
+
+
+class MultiSpeaker(TypedDict, total=False):
+    """Assign prebuilt voices to named speakers for multi-speaker audio output."""
+
+    voices: dict[str, str]
+    """Mapping of speaker label to prebuilt voice name, e.g. `{'Joe': 'Puck', 'Jane': 'Kore'}`.
+    Defaults to an empty mapping."""
+
+
+class ContextCompression(TypedDict, total=False):
+    """Sliding-window context compression so long sessions don't exceed the context window."""
+
+    trigger_tokens: int
+    """Compress once the context passes this many tokens. Defaults to the provider default."""
+    target_tokens: int
+    """Target size (in tokens) of the retained sliding window after compression.
+    Defaults to the provider default."""
+
+
 class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Settings used for a Gemini Live session."""
 
@@ -181,7 +221,7 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Gemini-specific server-side voice activity detection settings.
 
     When present, this fully overrides the cross-provider `turn_detection` setting.
-    `AutomaticVAD(disabled=True)` raises a `UserError`, like `turn_detection=False`: Pydantic AI does
+    `google_vad={'disabled': True}` raises a `UserError`, like `turn_detection=False`: Pydantic AI does
     not expose Gemini activity markers or manual turn controls, so the resulting session could not
     drive turns.
     """
@@ -227,47 +267,6 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
 
 INPUT_SAMPLE_RATE = 16000
 """Sample rate (Hz) Gemini expects for PCM16 input audio."""
-
-
-@dataclass
-class AutomaticVAD:
-    """Server-side voice activity detection — the default turn-taking mode for Gemini Live."""
-
-    _: KW_ONLY
-    disabled: bool = False
-    """Turn off automatic VAD entirely.
-
-    Do not set this through `RealtimeSession`: Pydantic AI does not expose Gemini activity markers or
-    manual turn controls. Use automatic VAD instead; the shared `turn_detection=False` setting is
-    rejected for the same reason.
-    """
-    start_sensitivity: Literal['high', 'low'] | None = None
-    """How readily speech onset is detected. `high` triggers on quieter audio; `low` is stricter."""
-    end_sensitivity: Literal['high', 'low'] | None = None
-    """How readily the end of speech is detected. `high` ends turns sooner; `low` waits longer."""
-    prefix_padding_ms: int | None = None
-    """Audio to include before detected speech, in milliseconds."""
-    silence_duration_ms: int | None = None
-    """Silence required to detect the end of speech, in milliseconds."""
-
-
-@dataclass
-class MultiSpeaker:
-    """Assign prebuilt voices to named speakers for multi-speaker audio output."""
-
-    voices: dict[str, str]
-    """Mapping of speaker label to prebuilt voice name, e.g. `{'Joe': 'Puck', 'Jane': 'Kore'}`."""
-
-
-@dataclass
-class ContextCompression:
-    """Sliding-window context compression so long sessions don't exceed the context window."""
-
-    _: KW_ONLY
-    trigger_tokens: int | None = None
-    """Compress once the context passes this many tokens; `None` uses the provider default."""
-    target_tokens: int | None = None
-    """Target size (in tokens) of the retained sliding window after compression."""
 
 
 # Literal -> SDK enum mappings, kept as small tables so the public API stays string-friendly.
@@ -330,13 +329,16 @@ def _thinking_to_config(thinking: ThinkingLevel) -> genai_types.ThinkingConfig:
 
 def _automatic_vad_from_turn_detection(turn_detection: TurnDetection) -> AutomaticVAD:
     """Map cross-provider turn detection to Gemini's automatic-VAD shape."""
-    sensitivity = turn_detection.sensitivity if turn_detection.sensitivity != 'medium' else None
-    return AutomaticVAD(
-        start_sensitivity=sensitivity,
-        end_sensitivity=sensitivity,
-        prefix_padding_ms=turn_detection.prefix_padding_ms,
-        silence_duration_ms=turn_detection.silence_duration_ms,
-    )
+    sensitivity = turn_detection.get('sensitivity')
+    result: AutomaticVAD = {}
+    if sensitivity is not None and sensitivity != 'medium':
+        result['start_sensitivity'] = sensitivity
+        result['end_sensitivity'] = sensitivity
+    if (prefix_padding_ms := turn_detection.get('prefix_padding_ms')) is not None:
+        result['prefix_padding_ms'] = prefix_padding_ms
+    if (silence_duration_ms := turn_detection.get('silence_duration_ms')) is not None:
+        result['silence_duration_ms'] = silence_duration_ms
+    return result
 
 
 async def _seed_turns(
@@ -837,7 +839,7 @@ class GoogleRealtimeModel(RealtimeModel):
                             prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(voice_name=voice)
                         ),
                     )
-                    for speaker, voice in multi_speaker.voices.items()
+                    for speaker, voice in multi_speaker.get('voices', {}).items()
                 ]
             )
         elif voice:
@@ -896,20 +898,21 @@ class GoogleRealtimeModel(RealtimeModel):
     ) -> genai_types.RealtimeInputConfig | None:
         """Build the turn-taking config from `vad`, `activity_handling`, and `turn_coverage`."""
         detection: genai_types.AutomaticActivityDetection | None = None
+        vad: AutomaticVAD | None
         if 'google_vad' in model_settings:
             vad = model_settings['google_vad']
         elif 'turn_detection' in model_settings:
             turn_detection = model_settings['turn_detection']
             # `True` means the provider default (on), same as an absent setting. `False` asks for the
-            # same thing as `google_vad=AutomaticVAD(disabled=True)`, so both land on the check below.
+            # same thing as `google_vad={'disabled': True}`, so both land on the check below.
             if turn_detection is False:
-                vad = AutomaticVAD(disabled=True)
+                vad = {'disabled': True}
             else:
                 vad = None if turn_detection is True else _automatic_vad_from_turn_detection(turn_detection)
         else:
             vad = None
         if vad is not None:
-            if vad.disabled:
+            if vad.get('disabled', False):
                 # Disabling VAD is push-to-talk, which needs manual turn control Gemini Live doesn't
                 # expose through this session API yet (no `commit_audio()`/`create_response()`), so a
                 # disabled session would connect but never take a turn. Fail loudly instead.
@@ -919,12 +922,14 @@ class GoogleRealtimeModel(RealtimeModel):
                     'automatic turn detection (the default) instead.'
                 )
             detection = genai_types.AutomaticActivityDetection(
-                start_of_speech_sensitivity=_START_SENSITIVITY[vad.start_sensitivity]
-                if vad.start_sensitivity
+                start_of_speech_sensitivity=_START_SENSITIVITY[start_sensitivity]
+                if (start_sensitivity := vad.get('start_sensitivity'))
                 else None,
-                end_of_speech_sensitivity=_END_SENSITIVITY[vad.end_sensitivity] if vad.end_sensitivity else None,
-                prefix_padding_ms=vad.prefix_padding_ms,
-                silence_duration_ms=vad.silence_duration_ms,
+                end_of_speech_sensitivity=_END_SENSITIVITY[end_sensitivity]
+                if (end_sensitivity := vad.get('end_sensitivity'))
+                else None,
+                prefix_padding_ms=vad.get('prefix_padding_ms'),
+                silence_duration_ms=vad.get('silence_duration_ms'),
             )
         activity_handling = model_settings.get('google_activity_handling')
         turn_coverage = model_settings.get('google_turn_coverage')
@@ -996,8 +1001,8 @@ class GoogleRealtimeModel(RealtimeModel):
             config.proactivity = genai_types.ProactivityConfig(proactive_audio=True)
         if (context_compression := settings.get('google_context_compression')) is not None:
             config.context_window_compression = genai_types.ContextWindowCompressionConfig(
-                trigger_tokens=context_compression.trigger_tokens,
-                sliding_window=genai_types.SlidingWindow(target_tokens=context_compression.target_tokens),
+                trigger_tokens=context_compression.get('trigger_tokens'),
+                sliding_window=genai_types.SlidingWindow(target_tokens=context_compression.get('target_tokens')),
             )
         if self._session_resumption_enabled(settings):
             config.session_resumption = genai_types.SessionResumptionConfig(handle=resumption_handle)

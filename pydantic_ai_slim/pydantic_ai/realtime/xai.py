@@ -357,7 +357,7 @@ class XaiRealtimeModel(RealtimeModel):
         elif 'turn_detection' in model_settings:
             turn_detection = resolve_base_turn_detection(model_settings['turn_detection'])
         else:
-            turn_detection = ServerVAD()
+            turn_detection: ServerVAD | None = {'type': 'server_vad'}
         config: dict[str, Any] = {
             'instructions': instructions,
             'turn_detection': turn_detection_config(turn_detection),

@@ -22,7 +22,7 @@ import json
 import time
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard, get_args
 from urllib.parse import quote
 
@@ -54,7 +54,7 @@ from openai.types.realtime import (
     ResponseTextDoneEvent,
 )
 from pydantic import BaseModel, ConfigDict, TypeAdapter
-from typing_extensions import assert_never
+from typing_extensions import Required, TypedDict, assert_never
 
 from .._utils import generate_tool_call_id
 from ..exceptions import ModelHTTPError, UserError
@@ -178,6 +178,46 @@ _KNOWN_EVENT_TYPES: frozenset[OpenAIProtocolEventType] = frozenset(get_args(Open
 
 # `loads_obj`'s contract in one pydantic-core pass: parse the JSON text and require a JSON object.
 _JSON_FRAME_ADAPTER: TypeAdapter[dict[str, Any]] = TypeAdapter(dict[str, Any])
+
+_VAD_SENSITIVITY_THRESHOLDS = {'low': 0.7, 'medium': 0.5, 'high': 0.3}
+
+
+class ServerVAD(TypedDict, total=False):
+    """Server-side voice activity detection — the default turn-taking mode.
+
+    The server detects when the user starts and stops speaking and (by default) commits the audio
+    and triggers a response automatically. Unset fields fall back to the provider defaults.
+    """
+
+    type: Required[Literal['server_vad']]
+    """The turn-detection type. Must be `'server_vad'`."""
+    threshold: float
+    """Activation threshold (0.0-1.0). Higher requires louder audio; better in noisy environments.
+    Defaults to the provider default."""
+    prefix_padding_ms: int
+    """Audio to include before detected speech, in milliseconds. Defaults to the provider default."""
+    silence_duration_ms: int
+    """Silence required to detect the end of speech, in milliseconds. Defaults to the provider default."""
+    create_response: bool
+    """Whether to automatically generate a response when the user stops speaking. Defaults to `True`."""
+    interrupt_response: bool
+    """Whether to interrupt an in-progress response when the user starts speaking. Defaults to `True`."""
+    idle_timeout_ms: int
+    """If set, auto-trigger a response after this much idle time with no detected speech.
+    Defaults to the provider default."""
+
+
+class SemanticVAD(TypedDict, total=False):
+    """Model-based semantic turn detection — uses a model to decide when the user is done speaking."""
+
+    type: Required[Literal['semantic_vad']]
+    """The turn-detection type. Must be `'semantic_vad'`."""
+    eagerness: Literal['low', 'medium', 'high', 'auto']
+    """How eagerly the model responds. Defaults to `'auto'`; `low` waits longer and `high` responds sooner."""
+    create_response: bool
+    """Whether to automatically generate a response when a turn ends. Defaults to `True`."""
+    interrupt_response: bool
+    """Whether to interrupt an in-progress response when the user starts speaking. Defaults to `True`."""
 
 
 class _ProtocolResponseOutputItem(BaseModel):
@@ -869,52 +909,17 @@ def map_connect_errors(model_name: str) -> Generator[None]:
         raise RealtimeError(model_name=model_name, message=f'Could not reach the realtime API: {e}') from e
 
 
-@dataclass
-class ServerVAD:
-    """Server-side voice activity detection — the default turn-taking mode.
-
-    The server detects when the user starts and stops speaking and (by default) commits the audio
-    and triggers a response automatically. Unset fields fall back to the provider defaults.
-    """
-
-    threshold: float | None = None
-    """Activation threshold (0.0-1.0). Higher requires louder audio; better in noisy environments."""
-    prefix_padding_ms: int | None = None
-    """Audio to include before detected speech, in milliseconds."""
-    silence_duration_ms: int | None = None
-    """Silence required to detect the end of speech, in milliseconds."""
-    create_response: bool = True
-    """Whether to automatically generate a response when the user stops speaking."""
-    interrupt_response: bool = True
-    """Whether to automatically interrupt an in-progress response when the user starts speaking."""
-    idle_timeout_ms: int | None = None
-    """If set, auto-trigger a response after this much idle time with no detected speech."""
-
-
-@dataclass
-class SemanticVAD:
-    """Model-based semantic turn detection — uses a model to decide when the user is done speaking."""
-
-    eagerness: Literal['low', 'medium', 'high', 'auto'] = 'auto'
-    """How eagerly the model responds. `low` waits longer for the user; `high` responds sooner."""
-    create_response: bool = True
-    """Whether to automatically generate a response when a turn ends."""
-    interrupt_response: bool = True
-    """Whether to automatically interrupt an in-progress response when the user starts speaking."""
-
-
 def server_vad_from_turn_detection(turn_detection: TurnDetection) -> ServerVAD:
     """Map cross-provider turn detection to the OpenAI-compatible server-VAD shape."""
-    threshold = (
-        {'low': 0.7, 'medium': 0.5, 'high': 0.3}[turn_detection.sensitivity]
-        if turn_detection.sensitivity is not None
-        else None
-    )
-    return ServerVAD(
-        threshold=threshold,
-        prefix_padding_ms=turn_detection.prefix_padding_ms,
-        silence_duration_ms=turn_detection.silence_duration_ms,
-    )
+    threshold = _VAD_SENSITIVITY_THRESHOLDS[turn_detection['sensitivity']] if 'sensitivity' in turn_detection else None
+    result: ServerVAD = {'type': 'server_vad'}
+    if threshold is not None:
+        result['threshold'] = threshold
+    if (prefix_padding_ms := turn_detection.get('prefix_padding_ms')) is not None:
+        result['prefix_padding_ms'] = prefix_padding_ms
+    if (silence_duration_ms := turn_detection.get('silence_duration_ms')) is not None:
+        result['silence_duration_ms'] = silence_duration_ms
+    return result
 
 
 def resolve_base_turn_detection(base: bool | TurnDetection) -> ServerVAD | None:
@@ -926,7 +931,7 @@ def resolve_base_turn_detection(base: bool | TurnDetection) -> ServerVAD | None:
     if base is False:
         return None
     if base is True:
-        return ServerVAD()
+        return {'type': 'server_vad'}
     return server_vad_from_turn_detection(base)
 
 
@@ -934,26 +939,26 @@ def turn_detection_config(turn_detection: ServerVAD | SemanticVAD | None) -> dic
     """Build the OpenAI `turn_detection` payload, or `None` to disable VAD (manual turn-taking)."""
     if turn_detection is None:
         return None
-    if isinstance(turn_detection, ServerVAD):
+    if turn_detection['type'] == 'server_vad':
         config: dict[str, Any] = {
             'type': 'server_vad',
-            'create_response': turn_detection.create_response,
-            'interrupt_response': turn_detection.interrupt_response,
+            'create_response': turn_detection.get('create_response', True),
+            'interrupt_response': turn_detection.get('interrupt_response', True),
         }
-        if turn_detection.threshold is not None:
-            config['threshold'] = turn_detection.threshold
-        if turn_detection.prefix_padding_ms is not None:
-            config['prefix_padding_ms'] = turn_detection.prefix_padding_ms
-        if turn_detection.silence_duration_ms is not None:
-            config['silence_duration_ms'] = turn_detection.silence_duration_ms
-        if turn_detection.idle_timeout_ms is not None:
-            config['idle_timeout_ms'] = turn_detection.idle_timeout_ms
+        if (threshold := turn_detection.get('threshold')) is not None:
+            config['threshold'] = threshold
+        if (prefix_padding_ms := turn_detection.get('prefix_padding_ms')) is not None:
+            config['prefix_padding_ms'] = prefix_padding_ms
+        if (silence_duration_ms := turn_detection.get('silence_duration_ms')) is not None:
+            config['silence_duration_ms'] = silence_duration_ms
+        if (idle_timeout_ms := turn_detection.get('idle_timeout_ms')) is not None:
+            config['idle_timeout_ms'] = idle_timeout_ms
         return config
     return {
         'type': 'semantic_vad',
-        'eagerness': turn_detection.eagerness,
-        'create_response': turn_detection.create_response,
-        'interrupt_response': turn_detection.interrupt_response,
+        'eagerness': turn_detection.get('eagerness', 'auto'),
+        'create_response': turn_detection.get('create_response', True),
+        'interrupt_response': turn_detection.get('interrupt_response', True),
     }
 
 
