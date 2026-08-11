@@ -321,7 +321,12 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
     ) -> AsyncGenerator[RealtimeSession]:
-        """Open a realtime session on the wrapped agent. See [`Agent.realtime`][pydantic_ai.agent.Agent.realtime]."""
+        """Open a realtime session on the wrapped agent. See [`Agent.realtime`][pydantic_ai.agent.Agent.realtime].
+
+        Note that realtime sessions do not route through [`iter()`][pydantic_ai.agent.AbstractAgent.iter]
+        (there is no graph run to iterate), so a wrapper that enforces policy by overriding `iter()`
+        must also override this method to gate realtime sessions.
+        """
         async with self.wrapped._open_realtime_session(
             model,
             deps=deps,

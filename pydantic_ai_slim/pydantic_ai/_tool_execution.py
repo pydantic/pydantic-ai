@@ -37,6 +37,30 @@ _OUTPUT_VALIDATION_FAILED = 'Output tool not used - output failed validation.'
 _TOOL_SKIPPED_FINAL_ALREADY_PROCESSED = 'Tool not executed - a final result was already processed.'
 
 
+def cancelled_sub_agent_return(
+    call: _messages.ToolCallPart, error: exceptions.RunCancelled
+) -> _messages.ToolReturnPart:
+    """The failed return that isolates a sub-agent's self-cancellation from the calling run.
+
+    A sub-agent run awaited inside a tool cancelled *itself* (`cancel()` on its own context).
+    `cancel()` cancels the run it belongs to, not the caller — and a `RunCancelled` seen inside a
+    tool body is always a nested run's, since the calling run's own cancellation arrives as
+    `CancelledError` and only becomes `RunCancelled` at the run's outer edge. So the caller isolates
+    it: a failed tool return its model can react to, rather than tearing the whole run (or realtime
+    session) down. A delegate tool that *wants* the caller cancelled too can catch `RunCancelled`
+    and call `ctx.cancel()` itself; whole-tree cancellation is spelled with a shared
+    `CancellationToken`. Shared by the graph path (`_call_tool`) and
+    `realtime._session._unsettled_call_return` so the two can't drift. See
+    https://github.com/pydantic/pydantic-ai/issues/7199.
+    """
+    return _messages.ToolReturnPart(
+        tool_name=call.tool_name,
+        content=f'The sub-agent run was cancelled: {error}',
+        tool_call_id=call.tool_call_id,
+        outcome='failed',
+    )
+
+
 def build_tool_return_part(
     tool_result: Any,
     *,
@@ -664,23 +688,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         except ToolFailedError as e:
             return [e.tool_failed], None
         except exceptions.RunCancelled as e:
-            # A sub-agent run awaited inside this tool cancelled *itself* (`cancel()` on its own
-            # context). `cancel()` cancels the run it belongs to, not this one — and a
-            # `RunCancelled` seen inside a tool body is always a nested run's, since this run's own
-            # cancellation arrives as `CancelledError` and only becomes `RunCancelled` at the run's
-            # outer edge. So isolate it: report a failed tool return the parent's model can react to,
-            # rather than tearing the parent run down. A delegate tool that *wants* the parent
-            # cancelled too can catch `RunCancelled` and call `ctx.cancel()` itself; whole-tree
-            # cancellation is spelled with a shared `CancellationToken`. See
-            # https://github.com/pydantic/pydantic-ai/issues/7199.
-            return [
-                _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content=f'The sub-agent run was cancelled: {e}',
-                    tool_call_id=call.tool_call_id,
-                    outcome='failed',
-                )
-            ], None
+            return [cancelled_sub_agent_return(call, e)], None
 
         # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
         # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the

@@ -13,32 +13,17 @@ from time import time_ns
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar, cast, overload
 
-import pydantic_core
 from anyio import Lock
 from opentelemetry import context as otel_context
 from opentelemetry.context import Context
-from opentelemetry.trace import Span, SpanKind, set_span_in_context
 from typing_extensions import TypeAliasType, assert_never
-
-from pydantic_graph._utils import get_traceparent
 
 from .. import _agent_graph
 from .._enqueue import PendingMessage, PendingMessagePriority
-from .._instrumentation import (
-    InstrumentationNames,
-    annotate_tool_call_otel_metadata,
-    build_tool_definitions,
-    model_metric_attributes,
-    model_request_parameters_attributes,
-    provider_attributes,
-    response_attributes,
-    response_price_calculation,
-    safe_to_json,
-    serialize_any,
-)
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
+    cancelled_sub_agent_return,
 )
 from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata
 from ..exceptions import ApprovalRequired, CallDeferred, RunCancelled, ToolFailedError, ToolRetryError, UserError
@@ -83,7 +68,6 @@ from ..run import AgentRunResult
 from ..tool_manager import ToolManager
 from ..usage import RequestUsage, RunUsage, UsageLimits
 from ._instrumentation import (
-    _REALTIME_SPAN_ATTRIBUTE,  # pyright: ignore[reportPrivateUsage]
     SessionInstrumentation,
 )
 from ._utils import seed_pcm_audio
@@ -394,12 +378,9 @@ def _unsettled_call_return(call: ToolCallPart, error: ApprovalRequired | CallDef
     misleading audit trail: `all_messages()` handed to `Agent.run` would read it as a tool that ran.
     """
     if isinstance(error, RunCancelled):
-        # A sub-agent run awaited inside this tool cancelled *itself*. As in a graph run
-        # (`_tool_execution._call_tool`), a `RunCancelled` seen inside a tool body is always a nested
-        # run's: this session's own cancellation arrives as `CancelledError`, which `_run_tool`
-        # re-raises untouched. So isolate it and keep the conversation alive, rather than tearing the
-        # session down over a sub-agent's decision. See https://github.com/pydantic/pydantic-ai/issues/7199.
-        content = f'The sub-agent run was cancelled: {error}'
+        # Exactly the graph path's settlement (this session's own cancellation arrives as
+        # `CancelledError`, which `_run_tool` re-raises untouched) — shared so the two can't drift.
+        return cancelled_sub_agent_return(call, error)
     else:
         # `handle_call` already gave the `HandleDeferredToolCalls` capability handler the chance to
         # resolve the deferral inline (approve, deny, retry, or substitute a result); reaching here
@@ -564,7 +545,6 @@ class RealtimeSession:
         self._tool_run_step = 0
         self._tool_manager_lock = Lock()
         self._instrumentation = instrumentation
-        self._session_instrumentation = SessionInstrumentation(instrumentation)
         self._profile = profile if profile is not None else model.profile if model is not None else _FULL_PROFILE
         self._model_name = model.model_name if model is not None else None
         self._provider_name = model.system if model is not None else None
@@ -582,9 +562,23 @@ class RealtimeSession:
         self._instructions = instructions
         self._metadata = metadata
         self._agent_description = agent_description
-        # The semconv `gen_ai.output.type` value for the session's configured output modality:
-        # `'speech'` for spoken audio (the enum's term for voice output), `'text'` for text-only.
-        self._otel_output_type = 'speech' if output_modality == 'audio' else 'text'
+        # All OTel span state and construction lives on the helper; the session hands it the static
+        # session metadata once and delegates every span operation (see `realtime/_instrumentation.py`).
+        self._session_instrumentation = SessionInstrumentation(
+            instrumentation,
+            agent_name=agent_name,
+            agent_description=agent_description,
+            model_name=self._model_name,
+            provider_name=self._provider_name,
+            provider_url=self._provider_url,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            instructions=instructions,
+            metadata=metadata,
+            model_request_parameters=model_request_parameters,
+            model_settings=model_settings,
+            output_type='speech' if output_modality == 'audio' else 'text',
+        )
         self._usage_limits = usage_limits
         self._audio_retention = audio_retention
         self._retain_input = audio_retention in ('input_audio', 'all')
@@ -630,8 +624,6 @@ class RealtimeSession:
         # execution), buffered as they arrive mid-turn and prepended to the response at finalization so
         # history reads native-tool-activity-then-speech, mirroring the classic `GoogleModel` order.
         self._native_tool_parts: list[ModelResponsePart] = []
-        # The `chat {model}` span for the response currently being assembled (see `_ensure_chat_span`).
-        self._chat_span: Span | None = None
         # When the provider's VAD reported the user's current speech segment starting, in OTel's
         # nanosecond clock, so the `user speech` span can be backdated to it (see
         # `_record_user_speech_span`). `None` while nobody is speaking.
@@ -748,11 +740,6 @@ class RealtimeSession:
         self._closing_error: BaseException | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
-        # The session span is deliberately not made current in the owner's task. Child spans receive
-        # this explicit context directly, or through the pump task's same-task attach/detach pair.
-        self._session_span: Span | None = None
-        self._session_span_context: Context | None = None
-        self._session_span_attributes: dict[str, Any] | None = None
         self._traceparent_value: str | None = None
         self._result: AgentRunResult[str] | None = None
 
@@ -768,101 +755,14 @@ class RealtimeSession:
             # support because that is the mechanism, and a no-op where the provider resumes natively.
             self._connection.set_message_history(self.all_messages)
 
-        settings = self._instrumentation
-        if settings is not None:
-            # The session is the realtime analog of an agent run, and the semconv operation-name enum has
-            # no realtime/speech value (nor do the OTel-native voice frameworks — LiveKit, Pipecat — emit
-            # one), so report it as an `invoke_agent` invocation like the classic agent-run span, with
-            # `gen_ai.output.type` (`speech`/`text`) marking the modality. `agent_name` defaults to
-            # `'agent'` like the classic span so an unnamed agent's session still carries the attribute
-            # that backends group runs by (e.g. Logfire's Runs view).
-            agent_name = self._agent_name or 'agent'
-            names = InstrumentationNames.for_version(settings.version)
-            attributes: dict[str, Any] = {
-                'gen_ai.operation.name': 'invoke_agent',
-                'gen_ai.output.type': self._otel_output_type,
-                # Both the semconv (`gen_ai.agent.name`) and legacy (`agent_name`) keys, matching the
-                # classic run span, so backends that group runs by either recognize the session as a run.
-                'gen_ai.agent.name': agent_name,
-                'agent_name': agent_name,
-                # An explicit marker so a backend can tell a realtime session (and its `chat` turns) apart
-                # from a classic run: the semconv has no realtime operation, and `gen_ai.output.type` only
-                # distinguishes audio from text, not realtime from a classic run that happens to be text.
-                _REALTIME_SPAN_ATTRIBUTE: True,
-                # Display the session as `<agent> realtime`, mirroring the classic run span's `<agent> run`
-                # message, so it reads as the realtime variant of an agent run regardless of span name.
-                'logfire.msg': f'{agent_name} realtime',
-            }
-            if self._model_name:
-                # Match the classic agent-run span, which reports the model under the plain `model_name`
-                # key (not `gen_ai.request.model`, which it keeps on its child `chat` spans only). The
-                # realtime `chat`/turn spans likewise carry `gen_ai.request.model`.
-                attributes['model_name'] = self._model_name
-            if self._provider_name:
-                # Provider/server attributes (`gen_ai.provider.name`, the deprecated `gen_ai.system`, and
-                # `server.address`) so the session span identifies the provider, like the `chat` spans.
-                attributes.update(provider_attributes(self._provider_name, self._provider_url))
-            if self._agent_description:
-                attributes['gen_ai.agent.description'] = self._agent_description
-            if self._conversation_id:
-                # Match the classic agent-run span's key (see `capabilities/instrumentation.py`) so a
-                # realtime session can be correlated with other runs sharing the conversation id.
-                attributes['gen_ai.conversation.id'] = self._conversation_id
-            if self._run_id:
-                attributes['gen_ai.agent.call.id'] = self._run_id
-            # `model_request_parameters` / `model_settings` are sent once at connect (not per turn), so this
-            # session span is their honest scope. They're also duplicated onto each per-turn span so
-            # Logfire's per-step rendering (native tools, tool definitions) fires there too; see
-            # `_request_config_attributes`.
-            attributes.update(self._request_config_attributes(settings))
-            # Follow the configured instrumentation version's agent-run naming: the semconv
-            # `invoke_agent {name}` when that version is active (v3+), otherwise a bare `realtime`
-            # operation name (the classic v2 span name is likewise a bare `agent run`).
-            if names.agent_run_span_name == 'invoke_agent':
-                span_name = names.get_agent_run_span_name(agent_name)
-            else:
-                span_name = 'realtime'
-            parent_context = otel_context.get_current()
-            span = settings.tracer.start_span(
-                span_name,
-                context=parent_context,
-                attributes=attributes,
-                kind=SpanKind.CLIENT,
-            )
-            self._session_span = span
-            self._session_span_context = set_span_in_context(span, parent_context)
-            self._session_instrumentation.context = self._session_span_context
-            self._session_span_attributes = attributes
+        self._session_instrumentation.start_session_span()
 
         return self
 
     def _record_user_speech_span(self) -> None:
-        """Record the segment the user just spoke, as a `user speech` span with a real duration.
-
-        Emitted on the *end* of speech, backdated to the onset, so the span only exists when the
-        provider reported both boundaries. Gemini Live reports onset but never the end, so it records
-        no span rather than one whose length was inferred from something else — a duration nobody
-        measured is worse than no duration at all.
-        """
+        """Consume the pending speech onset and record the spoken segment as a `user speech` span."""
         started_at, self._user_speech_started_at = self._user_speech_started_at, None
         self._session_instrumentation.record_user_speech(started_at)
-
-    def _record_lifecycle_event(self, name: str, *, message: str | None = None, **attributes: Any) -> None:
-        """Record a realtime lifecycle moment (barge-in, turn boundary) as a zero-duration child span.
-
-        Turn boundaries and barge-ins have no request/response of their own, so they surface as
-        instantaneous spans under the session span, making the stream's progression visible in a trace
-        (rather than `logfire.info` calls, which each app would otherwise have to add itself). A span
-        rather than a span event because backends surface spans immediately and predictably. Names are
-        lowercase to match the surrounding spans; attributes whose value is `None` are dropped so the
-        span stays clean. Every span carries `pydantic_ai.realtime` so backends can recognize the
-        whole session tree, lifecycle moments included. No-op when instrumentation is disabled.
-
-        `message` sets `logfire.msg` to vary the displayed text without splitting the span name into
-        more than one grouping key — e.g. an interrupted turn boundary reads "model turn complete
-        (interrupted)" while still counting as a `model turn complete` span.
-        """
-        self._session_instrumentation.record_lifecycle(name, message=message, **attributes)
 
     async def __aexit__(
         self,
@@ -892,10 +792,12 @@ class RealtimeSession:
             # Cancelled before state is settled below so the pump can't mutate it mid-settlement;
             # the task is awaited together with the rest afterwards.
             self._pump_task.cancel()
-        if (early_error := self._closing_error or self._pump_error) is not None and self._chat_span is not None:
+        if (early_error := self._closing_error or self._pump_error) is not None and (
+            chat_span := self._session_instrumentation.chat_span
+        ) is not None:
             # The reply this span covers is being torn down by a failure; record it now, before the
             # settlement below finalizes the interrupted response and ends the span cleanly.
-            self._record_span_error(self._chat_span, early_error)
+            SessionInstrumentation.record_error(chat_span, early_error)
         self._flush_pending_users()
         if (
             self._pending_response_usage != RequestUsage()
@@ -924,19 +826,15 @@ class RealtimeSession:
         # is dropped rather than turned into a span ending at teardown.
         self._user_speech_started_at = None
 
-        settings = self._instrumentation
-        span = self._session_span
-        attributes = self._session_span_attributes
-        if settings is not None and span is not None and attributes is not None:
-            if error is not None:
-                self._record_span_error(span, error)
-            self._finalize_span(settings, span)
-            self._traceparent_value = get_traceparent(span) or None
-            span.end()
-        self._session_span = None
-        self._session_span_context = None
-        self._session_instrumentation.context = None
-        self._session_span_attributes = None
+        self._traceparent_value = self._session_instrumentation.end_session_span(
+            error,
+            usage=self.usage,
+            messages=self.all_messages(),
+            new_message_index=len(self._seeded) if self._seeded else None,
+            final_result=self._final_result_text(),
+            audio_chunks_dropped=self._audio_tap_drops,
+            transcript_items_dropped=self._transcript_tap_drops,
+        )
         self._loop = None
 
         # A session that was never iterated has nowhere else to learn that it failed: the pump's error is
@@ -1080,10 +978,6 @@ class RealtimeSession:
         finally:
             taps.discard(queue)
 
-    @staticmethod
-    def _record_span_error(span: Span, error: BaseException) -> None:
-        SessionInstrumentation.record_error(span, error)
-
     def all_messages(self) -> list[ModelMessage]:
         """A snapshot of the seeded history plus messages recorded during this session.
 
@@ -1207,7 +1101,7 @@ class RealtimeSession:
             or self._pending_provider_response_id is not None
             or self._pending_finish_reason is not None
             or self._pending_response_usage != RequestUsage()
-            or self._chat_span is not None
+            or self._session_instrumentation.chat_span is not None
         )
 
     def _remove_sent_request(self, request: ModelRequest) -> None:
@@ -1305,7 +1199,7 @@ class RealtimeSession:
         # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
-        self._record_lifecycle_event('interrupt', played_ms=played_ms)
+        self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
 
     async def _send_frame(self, *contents: RealtimeInput) -> None:
         """Send inputs to the provider as one group, serialized against every other outbound frame.
@@ -1489,7 +1383,7 @@ class RealtimeSession:
             or self._pending_provider_response_id is not None
             or self._pending_finish_reason is not None
             or self._pending_response_usage != RequestUsage()
-            or self._chat_span is not None
+            or self._session_instrumentation.chat_span is not None
         )
         reason = finish_reason or self._pending_finish_reason
         if (
@@ -1511,7 +1405,7 @@ class RealtimeSession:
             # when the session ends, which the flush in `__aexit__` records rather than lose.
             self._pending_provider_response_id = provider_response_id or self._pending_provider_response_id
             self._pending_finish_reason = reason
-            self._end_chat_span(input_messages, None)
+            self._session_instrumentation.end_chat_span(input_messages, None)
             self._response_parts = []
             self._native_tool_parts = []
             self._response_limit_checked = False
@@ -1548,7 +1442,7 @@ class RealtimeSession:
         if self._pending_sent_requests:
             self._history.extend(self._pending_sent_requests)
             self._pending_sent_requests = []
-        self._end_chat_span(input_messages, response)
+        self._session_instrumentation.end_chat_span(input_messages, response)
         self._response_parts = []
         self._native_tool_parts = []
         self._pending_response_usage = RequestUsage()
@@ -1556,150 +1450,13 @@ class RealtimeSession:
         self._pending_finish_reason = None
         self._response_limit_checked = False
 
-    def _request_config_attributes(self, settings: InstrumentationSettings) -> dict[str, Any]:
-        """OTel attribute *values* for the request config the session was opened with.
-
-        A realtime session sends `model_request_parameters` and `model_settings` once at connect (not per
-        turn), so they're stable for the whole session. They go on the session span — their honest scope —
-        and are duplicated onto each per-turn span, matching where the classic path puts them (the `chat`
-        span) so Logfire's per-step rendering of native tools and `gen_ai.tool.definitions` still fires.
-        `model_request_parameters` (and the serialized realtime `model_settings`, whose vocabulary —
-        provider voice settings, `output_modality`, `thinking`, `turn_detection`, ... — has no OTel-spec `gen_ai.request.*`
-        equivalent) are gated on `include_model_request_parameters`; tool definitions and `max_tokens`,
-        which have spec homes, are set ungated like the classic path.
-
-        The `logfire.json_schema` declarations that make the serialized blobs render as objects (rather
-        than raw strings) are added at span *finalization*: the session span's in `_finalize_span`, the
-        `chat` span's by `handle_messages` (which redeclares `model_request_parameters`) — both rebuild
-        `logfire.json_schema` at the end, so declaring it here would be overwritten. See
-        `_request_config_schema_properties`.
-        """
-        attributes: dict[str, Any] = {}
-        if self._model_request_parameters is not None and (
-            tool_definitions := build_tool_definitions(self._model_request_parameters)
-        ):
-            attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
-        if settings.include_model_request_parameters:
-            if self._model_request_parameters is not None:
-                attributes.update(model_request_parameters_attributes(self._model_request_parameters))
-            if self._model_settings:
-                attributes['model_settings'] = safe_to_json(serialize_any(self._model_settings)).decode()
-        if self._model_settings and (max_tokens := self._model_settings.get('max_tokens')) is not None:
-            attributes['gen_ai.request.max_tokens'] = max_tokens
-        return attributes
-
-    def _request_config_schema_properties(self, settings: InstrumentationSettings) -> dict[str, dict[str, str]]:
-        """`logfire.json_schema` properties declaring the serialized config blobs as objects.
-
-        Merged into the session span's schema in `_finalize_span` so Logfire renders
-        `model_request_parameters` / `model_settings` richly instead of as raw JSON strings.
-        """
-        properties: dict[str, dict[str, str]] = {}
-        if settings.include_model_request_parameters:
-            if self._model_request_parameters is not None:
-                properties['model_request_parameters'] = {'type': 'object'}
-            if self._model_settings:
-                properties['model_settings'] = {'type': 'object'}
-        return properties
-
-    def _set_actual_output_type(self, output_type: Literal['speech', 'text']) -> None:
-        """Update telemetry from the response content the provider actually emitted."""
-        self._otel_output_type = output_type
-        if self._session_span is not None:
-            self._session_span.set_attribute('gen_ai.output.type', output_type)
-        if self._session_span_attributes is not None:
-            self._session_span_attributes['gen_ai.output.type'] = output_type
-        if self._chat_span is not None:
-            self._chat_span.set_attribute('gen_ai.output.type', output_type)
-
     def _ensure_chat_span(self) -> None:
-        """Open a `chat {model}` span for the assistant response now being assembled, if not already open.
+        """Begin assembling a response and open its `chat {model}` span if not already open.
 
-        A realtime turn isn't a single request/response, so the honest lifetime of a `chat` span is one
-        assistant `ModelResponse`: it opens when that response's first content arrives (the first
-        assistant part or tool call) and closes in `_finalize_response`. Tool calls split a turn into
-        multiple responses (mirroring a classic run), so each response gets its own span. The span is
-        deliberately *not* entered as the current span: `execute_tool` spans run after the response is
-        finalized and stay siblings under the session span, matching the classic agent-run tree.
-
-        The session-wide request config (`model_request_parameters`, `model_settings`,
-        `gen_ai.tool.definitions`) is duplicated here from the session span via
-        `_request_config_attributes`, matching where the classic `chat` span (`open_model_request_span`)
-        carries it so Logfire renders native tools and tool definitions per step. Provider and server
-        attributes, response metadata, usage, cost when pricing data is available, and per-response metrics
-        reuse the classic instrumentation helpers.
-        Added vs. the classic span: `gen_ai.output.type` (`speech`/`text`), the one semconv attribute
-        specific to voice output. The span keeps the semconv `chat` operation and `chat {model}` name, but
-        renders (via `logfire.msg`) as `response {model}`: nothing was "chatted" — no request was sent —
-        and this span covers exactly one `ModelResponse`, which is *not* the same as a conversational
-        turn (a turn that calls tools produces several). The turn boundary is the `model turn complete` span.
+        See `SessionInstrumentation.ensure_chat_span` for the span's shape and lifetime.
         """
         self._begin_response()
-        settings = self._instrumentation
-        if settings is None or self._chat_span is not None:
-            return
-        attributes: dict[str, Any] = {
-            'gen_ai.operation.name': 'chat',
-            'gen_ai.output.type': self._otel_output_type,
-            # Mark the turn as realtime too (see the session span), so a backend can tell a realtime
-            # `chat` span apart from a classic model-request `chat` span.
-            _REALTIME_SPAN_ATTRIBUTE: True,
-            # Render as `response {model}` while keeping the semconv `chat` operation + span name: this
-            # span covers one `ModelResponse`, and no request was sent, so "chat" misleads. Verb-first
-            # matches the other span messages (`chat {model}`, `execute_tool {name}`, `invoke_agent {name}`).
-            'logfire.msg': f'response {self._model_name}' if self._model_name else 'response',
-        }
-        if self._model_name:
-            attributes['gen_ai.request.model'] = self._model_name
-        if self._provider_name:
-            attributes.update(provider_attributes(self._provider_name, self._provider_url))
-        # The session-wide request config, duplicated here so Logfire's per-step rendering fires (see
-        # `_request_config_attributes`). `_end_chat_span`'s `handle_messages` redeclares
-        # `model_request_parameters` in the span's `logfire.json_schema`, so it stays richly rendered.
-        attributes.update(self._request_config_attributes(settings))
-        name = f'chat {self._model_name}' if self._model_name else 'chat'
-        context = self._session_span_context
-        assert context is not None
-        self._chat_span = settings.tracer.start_span(
-            name,
-            context=context,
-            attributes=attributes,
-            kind=SpanKind.CLIENT,
-        )
-
-    def _end_chat_span(self, input_messages: list[ModelMessage], response: ModelResponse | None) -> None:
-        """Close the current `chat` span, attaching the response's messages, usage, and state."""
-        settings = self._instrumentation
-        span = self._chat_span
-        if settings is None or span is None:
-            return
-        self._chat_span = None
-        price_calculation = response_price_calculation(response) if response is not None else None
-        if response is not None and span.is_recording():
-            # Reuse the exact message → gen_ai serialization and response-attribute helpers the
-            # instrumented model uses, so realtime `chat` spans can't drift from the classic path.
-            if self._model_request_parameters is not None:
-                annotate_tool_call_otel_metadata(response, self._model_request_parameters)
-            settings.handle_messages(input_messages, response, span)
-            span.set_attributes(
-                response_attributes(response, response.model_name or self._model_name, price_calculation)
-            )
-            if response.state != 'complete':
-                # How the response ended, when it didn't end normally: `'interrupted'` for a barge-in
-                # or an explicit `interrupt()`. The `interrupt` span records the request; this records
-                # the outcome on the response it actually cut off.
-                span.set_attribute('pydantic_ai.response.state', response.state)
-        span.end()
-        if response is not None:
-            settings.record_metrics(
-                response,
-                price_calculation,
-                model_metric_attributes(
-                    self._provider_name,
-                    self._model_name,
-                    response.model_name or self._model_name,
-                ),
-            )
+        self._session_instrumentation.ensure_chat_span()
 
     def _handle_turn_complete(self, event: ResponseDone) -> list[RealtimeEvent]:
         # Turn boundary for a user turn that wasn't finalized earlier, so history reads user-then-assistant.
@@ -1771,7 +1528,7 @@ class RealtimeSession:
             # An interrupted boundary says so in its display text: on providers that auto-respond per
             # VAD segment (OpenAI server VAD), a talking user cancels response after response, and a
             # bare "model turn complete" per cancellation reads as turns that never happened.
-            self._record_lifecycle_event(
+            self._session_instrumentation.record_lifecycle(
                 'model turn complete',
                 message='model turn complete (interrupted)' if event.interrupted else None,
                 interrupted=event.interrupted or None,
@@ -2182,12 +1939,12 @@ class RealtimeSession:
         if isinstance(event, AudioDelta):
             if not self._accept_item(event.item_id):
                 return []
-            self._set_actual_output_type('speech')
+            self._session_instrumentation.set_output_type('speech')
             return self._handle_assistant_audio(event.data, item_id=event.item_id)
         if isinstance(event, OutputTranscript):
             if not self._accept_item(event.item_id):
                 return []
-            self._set_actual_output_type('text' if event.output_text else 'speech')
+            self._session_instrumentation.set_output_type('text' if event.output_text else 'speech')
             # `is_final` doesn't end the part — the turn ends on `ResponseDone`; a final transcript just
             # carries the full text, which `_accumulate_transcript` reconciles against the deltas. Plain
             # text output (`output_text`) becomes a `TextPart`, an audio transcript a `SpeechPart`.
@@ -2232,49 +1989,6 @@ class RealtimeSession:
         assert_never(event)
 
     # --- instrumentation --------------------------------------------------------------------------
-
-    def _finalize_span(self, settings: InstrumentationSettings, span: Span) -> None:
-        """Attach cumulative usage, run context, and conversation messages to the session span."""
-        # Report cumulative usage under `gen_ai.aggregated_usage.*` (mirroring the classic agent-run
-        # span) so backends that sum span attributes don't double-count it against the per-turn `chat`
-        # spans, which carry each response's usage under `gen_ai.usage.*`. Shared with the classic span.
-        attributes: dict[str, Any] = {
-            **settings.aggregated_usage_attributes(self.usage),
-            **settings.system_instructions_attributes(self._instructions),
-            'pydantic_ai.audio_chunks_dropped': self._audio_tap_drops,
-            'pydantic_ai.transcript_items_dropped': self._transcript_tap_drops,
-        }
-        schema_properties: dict[str, Any] = {}
-        if 'gen_ai.system_instructions' in attributes:
-            schema_properties['gen_ai.system_instructions'] = {'type': 'array'}
-        # Mirror the classic agent-run span's end-of-run contract (the `Instrumentation`
-        # capability's `_run_span_end_attributes`): the full conversation — seeded history included —
-        # under `pydantic_ai.all_messages`, with `pydantic_ai.new_message_index` marking where this
-        # session's messages begin. Emitted regardless of `include_content`: `otel_message_parts`
-        # redacts part *content* when it is disabled, leaving the conversation structure. The
-        # `logfire.json_schema` entry marks the attribute as a JSON array so the Logfire UI
-        # deserializes and renders it as a conversation rather than as a string.
-        if messages := self.all_messages():
-            attributes['pydantic_ai.all_messages'] = safe_to_json(settings.messages_to_otel_messages(messages)).decode()
-            if self._seeded:
-                attributes['pydantic_ai.new_message_index'] = len(self._seeded)
-            schema_properties['pydantic_ai.all_messages'] = {'type': 'array'}
-        if self._metadata is not None:
-            attributes['metadata'] = safe_to_json(serialize_any(self._metadata)).decode()
-            schema_properties['metadata'] = {}
-        # Declare the session-wide `model_request_parameters` / `model_settings` blobs (set at start by
-        # `_request_config_attributes`) as objects here, since this rebuilds the span's `logfire.json_schema`.
-        schema_properties.update(self._request_config_schema_properties(settings))
-        # Mirror the classic run span's `final_result` (set by the `Instrumentation` capability): a
-        # realtime session has no single output, so use the most recent assistant reply's text, which the
-        # Logfire UI renders as the run's final response. Gated on `include_content` like the classic span.
-        if settings.include_content and (final_result := self._final_result_text()) is not None:
-            attributes['final_result'] = final_result
-        if schema_properties:
-            attributes['logfire.json_schema'] = pydantic_core.to_json(
-                {'type': 'object', 'properties': schema_properties}
-            ).decode()
-        span.set_attributes(attributes)
 
     def _final_result_text(self) -> str | None:
         """The most recent assistant reply's text, for the session span's `final_result`.
@@ -2328,6 +2042,13 @@ class RealtimeSession:
                     # already handed out — `replace()` below keeps the same list object — see the update
                     # too.
                     ctx.messages[:] = self.all_messages()
+                    # A run step here is one model turn: `_tool_run_step` increments when a
+                    # `ModelResponse` is finalized, so this re-prepares the *local* manager once per
+                    # turn — refreshing prepare hooks, availability filters, and retry state exactly
+                    # as the graph does per model request. It never re-advertises tools mid-call: the
+                    # tool list the provider sees is fixed at connect (`session.update` is sent
+                    # once), so a prepare filter changing here only affects whether a call the model
+                    # makes is accepted or settled as unknown-tool.
                     if ctx.run_step < run_step:
                         self._tool_manager = await self._tool_manager.for_run_step(replace(ctx, run_step=run_step))
                 # Pin the step-synchronized manager for this call: a concurrent tool task can swap
@@ -2728,7 +2449,7 @@ class RealtimeSession:
         # Only once the session owns its context: before `__aenter__` there is no session span to
         # attach the loop to, and teardown has nothing tracking the task.
         if self._entered and self._pump_task is None:
-            self._pump_task = asyncio.create_task(self._pump(self._session_span_context))
+            self._pump_task = asyncio.create_task(self._pump(self._session_instrumentation.context))
 
     def _publish_taps(self, event: RealtimeEvent) -> None:
         if isinstance(event, PartDeltaEvent) and isinstance(delta := event.delta, SpeechPartDelta):

@@ -171,8 +171,6 @@ def test_infer_realtime_model_gateway_google(env: TestEnv) -> None:
         # Both shorthands collapse onto the gateway's Google Cloud (Vertex) route, so the handshake
         # connects through the gateway rather than directly to Vertex.
         assert getattr(model, '_provider').base_url == 'https://gateway.pydantic.dev/proxy/google-vertex'
-        # `_gateway` gates the handshake bearer-auth injection in `connect`.
-        assert getattr(model, '_gateway') is True
 
 
 def test_azure_rejects_non_azure_provider(env: TestEnv) -> None:

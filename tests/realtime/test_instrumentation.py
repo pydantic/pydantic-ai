@@ -1123,7 +1123,7 @@ async def test_non_recording_spans_skip_events_but_still_record_metrics() -> Non
     _ = await collect_events(session)
     span = settings.tracer.start_span('not-recorded')
     assert not span.is_recording()
-    session._record_span_error(span, RuntimeError('not recorded'))  # pyright: ignore[reportPrivateUsage]
+    session._session_instrumentation.record_error(span, RuntimeError('not recorded'))  # pyright: ignore[reportPrivateUsage]
 
     metrics = metric_reader.get_metrics_data()
     assert metrics is not None
@@ -1132,10 +1132,10 @@ async def test_non_recording_spans_skip_events_but_still_record_metrics() -> Non
 def test_chat_span_without_response_ends_without_metrics() -> None:
     settings, exporter, metric_reader = _settings_with_metrics()
     session = RealtimeSession(_Connection([]), _ok_runner, instrumentation=settings)
-    session._session_span_context = Context()  # pyright: ignore[reportPrivateUsage]
+    session._session_instrumentation.context = Context()  # pyright: ignore[reportPrivateUsage]
     session._ensure_chat_span()  # pyright: ignore[reportPrivateUsage]
 
-    session._end_chat_span([], None)  # pyright: ignore[reportPrivateUsage]
+    session._session_instrumentation.end_chat_span([], None)  # pyright: ignore[reportPrivateUsage]
 
     assert [span.name for span in exporter.get_finished_spans()] == ['chat']
     assert metric_reader.get_metrics_data() is None

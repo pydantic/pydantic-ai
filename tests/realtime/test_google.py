@@ -726,7 +726,6 @@ async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyP
     # derivation and header stack are exercised, not a hand-built dict.
     provider = gateway_provider('google', api_key='gw-key', base_url='https://gateway.pydantic.dev/proxy')
     model = GoogleRealtimeModel('gemini-live-2.5-flash', provider=provider)
-    assert model._gateway is True  # pyright: ignore[reportPrivateUsage]
 
     captured: dict[str, Any] = {}
     monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect(captured))
@@ -734,12 +733,11 @@ async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyP
         async with _connect(model, 'hi'):
             pass  # pragma: no cover
 
-    # The SDK swaps https→wss and appends the Vertex BidiGenerateContent path onto the gateway base URL.
-    # TEMPORARY: the gateway relay only routes the OpenAI-shaped `/v1/realtime?model=` upgrade path, not
-    # this native Bidi path, so `_ws_gateway_url_rewrite` reshapes the dialed URL until the gateway accepts
-    # the Bidi path (see that helper). Once it does, this reverts to the native `.../BidiGenerateContent`.
+    # The SDK swaps https→wss and appends the Vertex BidiGenerateContent path onto the gateway base
+    # URL; the gateway's realtime relay routes this native Bidi path directly, so the dialed URL is
+    # exactly what the SDK built — no client-side reshaping.
     assert captured['uri'] == snapshot(
-        'wss://gateway.pydantic.dev/proxy/google-vertex/v1/realtime?model=gemini-live-2.5-flash'
+        'wss://gateway.pydantic.dev/proxy/google-vertex/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent'
     )
     assert captured['headers'].get('Authorization') == 'Bearer gw-key'
     # `_single_ws_user_agent` still runs, so the handshake carries exactly one user-agent header.
@@ -751,46 +749,10 @@ async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyP
     assert rest_headers is not None and rest_headers['Authorization'] == 'Bearer gw-key'
 
 
-async def test_gateway_url_rewrite_leaves_other_urls_alone() -> None:
-    # TEMPORARY, with `_ws_gateway_url_rewrite`: the rewrite only fires on the Vertex Bidi path it
-    # exists to reshape, *under this session's own gateway route*. Any other URI passes through
-    # untouched — a gateway route that already speaks the realtime path, and (because the patched
-    # `live.ws_connect` is a process global that unrelated `google-genai` code enters too) a Bidi dial
-    # belonging to another client, which would otherwise be sent to this session's endpoint and model.
-    dialed: list[str] = []
-
-    async def _fake_ws_connect(uri: str, *args: Any, **kwargs: Any) -> None:
-        dialed.append(uri)
-
-    from google.genai import live
-
-    bidi_path = '/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent'
-    original = live.ws_connect
-    live.ws_connect = _fake_ws_connect
-    try:
-        with rt_google._ws_gateway_url_rewrite(  # pyright: ignore[reportPrivateUsage]
-            'gemini-live-2.5-flash', 'https://gateway.pydantic.dev/proxy/google-vertex'
-        ):
-            await live.ws_connect('wss://gateway.pydantic.dev/proxy/openai/v1/realtime?model=gpt-realtime')
-            await live.ws_connect(f'wss://us-central1-aiplatform.googleapis.com{bidi_path}')
-            await live.ws_connect(f'wss://gateway.pydantic.dev/proxy/google-vertex{bidi_path}')
-    finally:
-        live.ws_connect = original
-
-    assert dialed == snapshot(
-        [
-            'wss://gateway.pydantic.dev/proxy/openai/v1/realtime?model=gpt-realtime',
-            'wss://us-central1-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent',
-            'wss://gateway.pydantic.dev/proxy/google-vertex/v1/realtime?model=gemini-live-2.5-flash',
-        ]
-    )
-
-
 async def test_non_gateway_handshake_has_no_bearer_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     # A plain `GoogleProvider` is not a gateway provider, so `connect` leaves the handshake auth to the
     # SDK (the API key travels as `x-goog-api-key`) and adds no `Authorization` header.
     model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(api_key='k'))
-    assert model._gateway is False  # pyright: ignore[reportPrivateUsage]
 
     captured: dict[str, Any] = {}
     monkeypatch.setattr('google.genai.live.ws_connect', _capture_ws_connect(captured))

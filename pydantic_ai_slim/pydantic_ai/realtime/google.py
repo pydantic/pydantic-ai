@@ -16,12 +16,10 @@ Application Default Credentials.
 
 from __future__ import annotations as _annotations
 
-import re
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, Literal, cast
-from urllib.parse import quote
 
 from anyio import Lock
 from anyio.lowlevel import RunVar
@@ -96,7 +94,6 @@ from ..profiles.google import (
     _drop_unsupported_schema_keywords,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
-from ..providers.gateway import is_gateway_provider
 from ..settings import ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
@@ -630,44 +627,6 @@ def _ws_trace_context(client: Client) -> Generator[None]:
             headers.pop(key, None)
 
 
-# Matches the native Vertex Bidi WebSocket path the `google-genai` SDK dials (both API versions).
-_VERTEX_BIDI_PATH_RE = re.compile(r'/ws/google\.cloud\.aiplatform\.v1(?:beta1)?\.LlmBidiService/BidiGenerateContent')
-
-
-@contextmanager
-def _ws_gateway_url_rewrite(model: str, base_url: str) -> Generator[None]:
-    """TEMPORARY: rewrite the Gemini Live handshake URL to the gateway's unified realtime path.
-
-    The `google-genai` SDK dials Vertex's native Bidi path
-    (`/proxy/<route>/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent`), but the
-    Pydantic AI Gateway's realtime relay currently only routes the OpenAI-shaped
-    `/proxy/<route>/v1/realtime?model=<model>` upgrade path, so a `gateway/google` session otherwise fails
-    the WebSocket upgrade with a 503. Until the gateway accepts the native Bidi path, rewrite the dialed
-    URI so a gateway session connects; the gateway relays the SDK's `setup` frame to the Vertex Bidi
-    upstream verbatim. Remove this once the gateway routes the Bidi path.
-    """
-    from google.genai import live
-
-    real_ws_connect = live.ws_connect  # pyright: ignore[reportPrivateImportUsage]
-    # `live.ws_connect` is a module global, so unrelated `google-genai` Live connections opened
-    # elsewhere in the process during this handshake also enter the wrapper below. Rewrite only URIs
-    # under *this* session's gateway route, so a concurrent connection dialing Vertex directly (or a
-    # different gateway route) passes through to its own endpoint untouched.
-    gateway_prefix = re.sub(r'^http', 'ws', base_url.rstrip('/'))
-
-    def rewritten(uri: str, *args: Any, **kwargs: Any) -> Any:
-        if uri.startswith(gateway_prefix) and _VERTEX_BIDI_PATH_RE.search(uri):
-            base = _VERTEX_BIDI_PATH_RE.sub('/v1/realtime', uri.partition('?')[0], count=1)
-            uri = f'{base}?model={quote(model)}'
-        return real_ws_connect(uri, *args, **kwargs)
-
-    live.ws_connect = rewritten  # pyright: ignore[reportPrivateImportUsage]
-    try:
-        yield
-    finally:
-        live.ws_connect = real_ws_connect  # pyright: ignore[reportPrivateImportUsage]
-
-
 @dataclass(init=False)
 class GoogleRealtimeModel(RealtimeModel):
     """Gemini Live API model.
@@ -701,7 +660,6 @@ class GoogleRealtimeModel(RealtimeModel):
     _: KW_ONLY
     settings: RealtimeModelSettings | None = None
     _provider: Provider[Client] = field(init=False, repr=False)
-    _gateway: bool = field(init=False, default=False, repr=False)
 
     # Written out rather than generated because `profile` has to be an init argument while
     # `RealtimeModel.profile` stays the *resolved* profile, exactly as on a standard `Model` — a
@@ -721,7 +679,6 @@ class GoogleRealtimeModel(RealtimeModel):
             provider_name = 'gateway/google-cloud' if provider == 'gateway' else provider
             provider = cast('Provider[Client]', infer_provider(provider_name))
         self._provider = provider
-        self._gateway = is_gateway_provider(provider)
 
     @property
     def client(self) -> Client:
@@ -994,13 +951,9 @@ class GoogleRealtimeModel(RealtimeModel):
                 with ExitStack() as stack:
                     stack.enter_context(_single_ws_user_agent(client))
                     stack.enter_context(_ws_trace_context(client))
-                    if self._gateway:
-                        # TEMPORARY: reshape the dialed URL to the gateway's unified realtime path until
-                        # the gateway routes the native Vertex Bidi path (see `_ws_gateway_url_rewrite`).
-                        # The gateway bearer auth reaches the handshake via a static header set on the
-                        # client at build time (see `_set_google_ws_gateway_auth`), so no per-connect
-                        # header injection is needed here.
-                        stack.enter_context(_ws_gateway_url_rewrite(self.model, self._provider.base_url))
+                    # A gateway route needs nothing extra here: the relay routes the SDK's native
+                    # Vertex Bidi path, and the gateway bearer auth reaches the handshake via a
+                    # static header set on the client at build time (see `_set_google_ws_gateway_auth`).
                     session = await opening.__aenter__()
             cm = opening
             return session

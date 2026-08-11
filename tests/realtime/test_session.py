@@ -4902,7 +4902,7 @@ async def test_iterator_reuses_receive_pump_started_by_session_owner() -> None:
     session = RealtimeSession(FakeRealtimeConnection([ResponseDone()]))
     async with session:
         session._pump_task = asyncio.create_task(  # pyright: ignore[reportPrivateUsage]
-            session._pump(session._session_span_context)  # pyright: ignore[reportPrivateUsage]
+            session._pump(session._session_instrumentation.context)  # pyright: ignore[reportPrivateUsage]
         )
         assert [event async for event in session] == [RealtimeTurnCompleteEvent()]
 
