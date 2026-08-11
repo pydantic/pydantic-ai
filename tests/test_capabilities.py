@@ -3036,6 +3036,45 @@ def test_single_purpose_capability_defaults_its_toolset_id(
     assert leaf.id == expected_toolset_id
 
 
+async def test_duplicate_single_purpose_capabilities_use_distinct_public_toolset_ids():
+    """Auto-deduplicated capability ids also disambiguate their public tool definitions.
+
+    The built-in local fallbacks have a stable default leaf id for durable execution, but two
+    same-kind capabilities remain valid on a plain agent. Their tools must still expose distinct
+    `toolset_id` values to callers inspecting the definitions.
+    """
+
+    def first_search(query: str) -> str:
+        """Search the first source."""
+        return query  # pragma: no cover
+
+    def second_search(query: str) -> str:
+        """Search the second source."""
+        return query  # pragma: no cover
+
+    seen_tools: list[ToolDefinition] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tools.extend(info.function_tools)
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            WebSearch(native=False, local=first_search),
+            WebSearch(native=False, local=second_search),
+        ],
+    )
+
+    result = await agent.run('search')
+
+    assert result.output == 'done'
+    assert {(tool.name, tool.toolset_id, tool.capability_id) for tool in seen_tools} == {
+        ('first_search', 'web_search', 'web_search'),
+        ('second_search', 'web_search_2', 'web_search_2'),
+    }
+
+
 def _noop_greet(name: str) -> str:
     return f'Hello, {name}!'  # pragma: no cover
 
@@ -9225,6 +9264,28 @@ class TestOverrideWithSpec:
         with agent.override(spec={'capabilities': [{'WebSearch': {'local': False}}]}):
             result = await agent.run('hello')
             assert result.output == 'ok'
+
+    async def test_override_with_spec_capabilities_reextracts_toolsets(self):
+        """A root override never reuses toolsets cached for the agent's replaced root."""
+
+        def static_lookup() -> str:
+            return 'static'  # pragma: no cover
+
+        seen_tool_names: list[list[str]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen_tool_names.append([tool.name for tool in info.function_tools])
+            return make_text_response('ok')
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            capabilities=[Capability(id='static', tools=[static_lookup])],
+        )
+
+        with agent.override(spec={'capabilities': [{'WebSearch': {'local': False}}]}):
+            assert (await agent.run('hello')).output == 'ok'
+
+        assert seen_tool_names == [[]]
 
 
 class TestRunWithSpec:

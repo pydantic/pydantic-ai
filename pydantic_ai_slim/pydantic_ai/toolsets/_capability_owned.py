@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from .._run_context import AgentDepsT, RunContext
 from ..messages import InstructionPart
+from ._dynamic import DynamicToolset
 from .abstract import AbstractToolset, ToolsetTool
 from .wrapper import WrapperToolset
 
@@ -47,6 +48,24 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         visitor(self)
         self.wrapped.apply(visitor)
+
+
+def normalize_capability_toolset(
+    capability: AbstractCapability[AgentDepsT],
+) -> CapabilityOwnedToolset[AgentDepsT] | None:
+    """Wrap one capability's toolset contribution with its run-time owner."""
+    toolset = capability.get_toolset()
+    if toolset is None:
+        return None
+    if isinstance(toolset, AbstractToolset):
+        return CapabilityOwnedToolset(
+            wrapped=toolset,  # pyright: ignore[reportUnknownArgumentType]
+            capability=capability,
+        )
+    return CapabilityOwnedToolset(
+        wrapped=DynamicToolset[AgentDepsT](toolset_func=toolset),
+        capability=capability,
+    )
 
 
 def resolve_capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapability[AgentDepsT]) -> str:

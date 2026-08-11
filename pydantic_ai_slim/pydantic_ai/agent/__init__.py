@@ -92,6 +92,7 @@ from ..tools import (
     ToolsPrepareFunc,
 )
 from ..toolsets import AbstractToolset, AgentToolset
+from ..toolsets._capability_owned import CapabilityOwnedToolset, normalize_capability_toolset
 from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
@@ -539,6 +540,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Initialize capability-contributed fields before binding so `for_agent` can safely
         # inspect `agent.toolsets`. Contributions from the bound capability are extracted below.
         self._cap_toolsets: list[AgentToolset[AgentDepsT]] = []
+        self._capability_toolset_occurrences: list[
+            tuple[AbstractCapability[AgentDepsT], CapabilityOwnedToolset[AgentDepsT]]
+        ] = []
         self._cap_instructions: list[str | SystemPromptFunc[AgentDepsT]] = []
         self._cap_native_tools: list[AgentNativeTool[AgentDepsT]] = []
         self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
@@ -551,9 +555,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # `self.toolsets`). The flip side is that `innermost` capabilities can't
         # contribute toolsets of their own.
         self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=False)
-        cap_toolset = self._root_capability.get_toolset()
-        if cap_toolset is not None:
-            self._cap_toolsets = [cap_toolset]
+        for capability in self._root_capability.capabilities:
+            if (toolset := normalize_capability_toolset(capability)) is not None:
+                self._capability_toolset_occurrences.append((capability, toolset))
+        if self._capability_toolset_occurrences:
+            self._cap_toolsets = [CombinedToolset([toolset for _, toolset in self._capability_toolset_occurrences])]
         self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=True)
 
         if model is not None and not defer_model_check and not self._root_capability.has_resolve_model_id:
@@ -1380,8 +1386,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Instrumentation capability is prepended (outermost) so its spans wrap everything,
         # but only if the user hasn't already added one themselves.
         run_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
+        base_layer_index = 0
         if instrumentation_cap is not None and not has_capability_type(run_layers, InstrumentationCap):
             run_layers.insert(0, instrumentation_cap)
+            base_layer_index = 1
 
         # Per-run capability: resolve `for_run` on the layers directly instead of composing a
         # `CombinedCapability` first and resolving that (which would gather over the same
@@ -1399,6 +1407,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # (which may span outermost and innermost tiers, e.g. `ToolSearch` and
         # `TemporalDurability`) re-flatten into siblings for the ordering pass.
         resolved_layers = await _utils.gather(*(cap.for_run(initial_ctx) for cap in run_layers))
+        resolved_base_capability = resolved_layers[base_layer_index]
         model_layer_start = len(run_layers) - len(model_layers)
         model_layers_unchanged = all(
             resolved_layers[model_layer_start + index] is layer for index, layer in enumerate(model_layers)
@@ -1441,8 +1450,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_instructions = _instructions.normalize_instructions(source_cap.get_instructions())
             cap_native_tools = list(source_cap.get_native_tools())
             cap_model_settings = source_cap.get_model_settings()
-            cap_ts = source_cap.get_toolset()
-            cap_toolsets = [cap_ts] if cap_ts is not None else []
+            assert isinstance(run_capability, CombinedCapability)
+            cached_toolsets_by_capability: dict[int, list[CapabilityOwnedToolset[AgentDepsT]]] = {}
+            if override_cap is None and isinstance(resolved_base_capability, CombinedCapability):
+                construction_toolsets_by_capability: dict[int, list[CapabilityOwnedToolset[AgentDepsT]]] = {}
+                for capability, toolset in self._capability_toolset_occurrences:
+                    construction_toolsets_by_capability.setdefault(id(capability), []).append(toolset)
+                for capability in resolved_base_capability.capabilities:
+                    if (toolsets := construction_toolsets_by_capability.get(id(capability))) is not None:
+                        cached_toolsets_by_capability.setdefault(id(capability), []).append(toolsets.pop(0))
+
+            capability_toolsets: list[CapabilityOwnedToolset[AgentDepsT]] = []
+            for capability in run_capability.capabilities:
+                if (toolsets := cached_toolsets_by_capability.get(id(capability))) is not None and toolsets:
+                    capability_toolsets.append(toolsets.pop(0))
+                elif (toolset := normalize_capability_toolset(capability)) is not None:
+                    capability_toolsets.append(toolset)
+            cap_toolsets = [CombinedToolset(capability_toolsets)] if capability_toolsets else []
         else:
             cap_instructions = None  # use init-time defaults
             cap_native_tools = self._cap_native_tools

@@ -83,7 +83,7 @@ from pydantic_ai.capabilities import (
     WebSearch,
     WrapperCapability,
 )
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
@@ -6938,8 +6938,208 @@ async def test_durability_run_level_capability_reusing_default_toolset_id_reject
         name='durability_run_level_dup',
         capabilities=[WebSearch(native=False, local=_alpha_search), TemporalDurability()],
     )
-    with pytest.raises(UserError, match="Two toolsets have the same `id` 'web_search'"):
+    with pytest.raises(UserError, match="Two toolsets have the same `id` 'web_search'") as exc_info:
         await agent.run('hi', capabilities=[WebSearch(native=False, local=_beta_search)])
+    assert "identify the toolset's activities within the workflow" in str(exc_info.value)
+
+
+async def test_durability_reuses_static_capability_toolsets_after_run_rebuild():
+    """A safe runtime layer preserves the construction-time wrapper for unchanged static leaves.
+
+    The static `WebSearch` leaf is registered when the agent is constructed. Adding
+    `Instrumentation` at run time rebuilds the capability contribution tree. The run assembly
+    reuses the cached wrapper only for the unchanged static capability occurrence. The second run
+    uses the durable-context branch without reaching a real activity.
+    """
+
+    @dataclass
+    class SkipRequest(AbstractCapability[None]):
+        async def before_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped')]))
+
+    agent = Agent(
+        TestModel(),
+        name='durability_static_web_search_rebuild',
+        deps_type=type(None),
+        capabilities=[
+            WebSearch(native=False, local=_alpha_search),
+            SkipRequest(),
+            TemporalDurability(),
+        ],
+    )
+
+    result = await agent.run('hi', capabilities=[Instrumentation(InstrumentationSettings())])
+    assert result.output == 'skipped'
+
+    with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
+        result = await agent.run('hi', capabilities=[Instrumentation(InstrumentationSettings())])
+    assert result.output == 'skipped'
+
+
+async def test_durability_reextracts_fresh_capability_owner_sharing_static_toolset():
+    """A fresh `for_run` capability owns a new wrapper around its stable registered leaf."""
+
+    def lookup() -> str:
+        return 'lookup'  # pragma: no cover
+
+    shared_toolset = FunctionToolset[None]([lookup], id='shared_toolset')
+
+    @dataclass
+    class FreshOwner(AbstractCapability[None]):
+        def get_toolset(self) -> FunctionToolset[None]:
+            return shared_toolset
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return replace(self)
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert [tool.name for tool in info.function_tools] == ['lookup']
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name='durability_fresh_owner_shared_leaf',
+        deps_type=type(None),
+        capabilities=[FreshOwner(id='fresh-owner'), TemporalDurability()],
+    )
+
+    assert (await agent.run('hi')).output == 'done'
+
+
+async def test_durability_rejects_rebuilt_capability_leaf_with_registered_id():
+    """A fresh leaf sharing a registered id fails rather than receiving the stale wrapper's tools."""
+
+    def construction_lookup() -> str:
+        return 'construction'  # pragma: no cover
+
+    def run_lookup() -> str:
+        return 'run'  # pragma: no cover
+
+    construction_toolset = FunctionToolset[None]([construction_lookup], id='rebuilt_toolset')
+    run_toolset = FunctionToolset[None]([run_lookup], id='rebuilt_toolset')
+
+    @dataclass
+    class RebuiltLeaf(AbstractCapability[None]):
+        toolset: FunctionToolset[None]
+
+        def get_toolset(self) -> FunctionToolset[None]:
+            return self.toolset
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return RebuiltLeaf(toolset=run_toolset)
+
+    model_called = False
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_called
+        model_called = True
+        return ModelResponse(parts=[TextPart(content='unexpected')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name='durability_rebuilt_leaf',
+        deps_type=type(None),
+        capabilities=[RebuiltLeaf(toolset=construction_toolset), TemporalDurability()],
+    )
+
+    with pytest.raises(UserError, match="Two toolsets have the same `id` 'rebuilt_toolset'"):
+        await agent.run('hi')
+    assert model_called is False
+
+
+async def test_durability_orders_cached_and_runtime_capability_toolsets_globally():
+    """Cached static contributions follow the final ordering around a runtime contribution."""
+
+    def first() -> str:
+        return 'first'  # pragma: no cover
+
+    def middle() -> str:
+        return 'middle'  # pragma: no cover
+
+    def last() -> str:
+        return 'last'  # pragma: no cover
+
+    @dataclass
+    class First(AbstractCapability[None]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[Middle])
+
+        def get_toolset(self) -> FunctionToolset[None]:
+            return FunctionToolset([first], id='first')
+
+    @dataclass
+    class Middle(AbstractCapability[None]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(wraps=[Last])
+
+        def get_toolset(self) -> FunctionToolset[None]:
+            return FunctionToolset([middle], id='middle')
+
+    @dataclass
+    class Last(AbstractCapability[None]):
+        def get_toolset(self) -> FunctionToolset[None]:
+            return FunctionToolset([last], id='last')
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content=','.join(tool.name for tool in info.function_tools))])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name='durability_global_capability_ordering',
+        deps_type=type(None),
+        capabilities=[Last(), First(), TemporalDurability()],
+    )
+
+    assert (await agent.run('hi', capabilities=[Middle()])).output == 'first,middle,last'
+
+
+async def test_durability_preserves_deferred_static_capability_when_rebuilding_toolsets():
+    """A cached static deferred contribution remains hidden while a runtime layer rebuilds the tree."""
+
+    def lookup() -> str:
+        return 'lookup'  # pragma: no cover
+
+    seen_tool_names: list[list[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tool_names.append([tool.name for tool in info.function_tools])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name='durability_deferred_static_rebuild',
+        deps_type=type(None),
+        capabilities=[
+            Capability(id='deferred', tools=[lookup], defer_loading=True),
+            TemporalDurability(),
+        ],
+    )
+
+    assert (await agent.run('hi', capabilities=[Instrumentation(InstrumentationSettings())])).output == 'done'
+    assert seen_tool_names == [['load_capability']]
+
+
+async def test_durability_allows_runtime_capability_with_distinct_toolset_id_outside_workflow():
+    """A genuinely runtime built-in remains valid when its leaf id does not collide.
+
+    Runtime executable toolsets are deliberately unsupported inside a workflow because their
+    activities were not registered with the worker; outside a workflow durability is transparent.
+    """
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content=','.join(sorted(tool.name for tool in info.function_tools)))])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name='durability_runtime_distinct',
+        capabilities=[WebSearch(native=False, local=_alpha_search), TemporalDurability()],
+    )
+
+    result = await agent.run('hi', capabilities=[WebSearch(native=False, local=_beta_search, id='runtime_web_search')])
+
+    assert result.output == '_alpha_search,_beta_search'
 
 
 def test_durability_same_toolset_instance_reused():
