@@ -15,7 +15,6 @@ import json
 import re
 import sys
 import warnings
-from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -55,14 +54,16 @@ with try_import() as imports_successful:
     except ImportError:
         # FastMCP 4 moved `TaskConfig`.
         from fastmcp.utilities.tasks import TaskConfig
+    # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
+    from mcp import types as mcp_types
+
     from pydantic_ai import mcp as mcp_module
     from pydantic_ai._mcp_compat import import_mcp_types
 
+    # `fastmcp_tasks` is never installed in the typecheck environment, so pyright only gets a declaration.
     if TYPE_CHECKING:
         TasksExtension: Any
-        from mcp import types as mcp_types
     else:
-        mcp_types = import_mcp_types('the MCP tests')
         try:
             from fastmcp_tasks import TasksExtension
         except ImportError:
@@ -109,7 +110,8 @@ def make_mcp_error(code: int, message: str) -> McpError:
     SDK v1 wraps an `ErrorData`; v2 takes the fields directly.
     """
     if MCP_SDK_V2:
-        return cast(Callable[..., McpError], McpError)(code=code, message=message)
+        # `cast` because the typecheck environment only knows the SDK v1 constructor signature.
+        return cast(Any, McpError)(code=code, message=message)
     return McpError(mcp_types.ErrorData(code=code, message=message))
 
 
@@ -200,14 +202,11 @@ def test_compat_readers_name_real_sdk_v2_fields():
     """
     v2_types = pytest.importorskip('mcp_types', reason='the `mcp-types` dev dependency is not installed')
 
-    def v1_spelling(class_name: str, v2_name: str) -> str | None:
+    for class_name, v1_name, v2_name in MCP_FIELD_RENAMES:
         model: type[BaseModel] = getattr(v2_types, class_name)
         field = model.model_fields.get(v2_name)
-        return field.alias if field else None
-
-    assert {
-        (class_name, v2_name): v1_spelling(class_name, v2_name) for class_name, _, v2_name in MCP_FIELD_RENAMES
-    } == {(class_name, v2_name): v1_name for class_name, v1_name, v2_name in MCP_FIELD_RENAMES}
+        assert field is not None, f'`{class_name}.{v2_name}` is not a field on the SDK v2 model'
+        assert field.alias == v1_name, f'`{class_name}.{v2_name}` has wire alias `{field.alias}`, not `{v1_name}`'
 
 
 def test_sdk_v2_image_content_accepts_wire_field_name():
@@ -1368,25 +1367,12 @@ class TestMCPToolsetIntegration:
             async with toolset:
                 assert toolset.is_running
 
-    def present_as_modern_session(self, monkeypatch: pytest.MonkeyPatch, **properties: Any) -> None:
-        """Present the client as a modern (sessionless) one: `initialize_result` is the era signal,
-        and the era-neutral properties named in `properties` are the only metadata available."""
-        monkeypatch.setattr(Client, 'initialize_result', property(lambda self: None))
-        era_neutral_properties = {
-            'server_info': None,
-            'server_capabilities': None,
-            'instructions': None,
-            **properties,
-        }
-        for name, value in era_neutral_properties.items():
-            monkeypatch.setattr(Client, name, property(lambda self, value=value: value), raising=False)
-
     async def test_server_metadata_read_from_era_neutral_properties(
         self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch, as_mcp_sdk_v2: None
     ):
         """A modern session has no `initialize` handshake, so server metadata comes off the
         client's era-neutral properties instead of `initialize_result`."""
-        self.present_as_modern_session(
+        present_as_modern_session(
             monkeypatch,
             server_info=mcp_types.Implementation(name='era-neutral', version='9.9'),
             server_capabilities=mcp_types.ServerCapabilities(),
@@ -1403,7 +1389,7 @@ class TestMCPToolsetIntegration:
     ):
         """`serverInfo` is an optional display-only stamp on modern sessions, so a server that
         omits it still connects; only reading `server_info` fails, and says why."""
-        self.present_as_modern_session(monkeypatch, server_capabilities=mcp_types.ServerCapabilities())
+        present_as_modern_session(monkeypatch, server_capabilities=mcp_types.ServerCapabilities())
 
         toolset = MCPToolset(fastmcp_server)
         async with toolset:
@@ -1415,7 +1401,7 @@ class TestMCPToolsetIntegration:
         self, fastmcp_server: FastMCP[None], monkeypatch: pytest.MonkeyPatch, as_mcp_sdk_v2: None
     ):
         """A malformed, non-string value in the era-neutral property is dropped rather than stored."""
-        self.present_as_modern_session(
+        present_as_modern_session(
             monkeypatch,
             server_info=mcp_types.Implementation(name='era-neutral', version='9.9'),
             server_capabilities=mcp_types.ServerCapabilities(),
@@ -1433,7 +1419,7 @@ class TestMCPToolsetIntegration:
         without capabilities to read fails with an actionable error. Deriving the era from the
         properties instead would send this case down the legacy path, where the missing
         `initialize_result` surfaces as a bare assertion."""
-        self.present_as_modern_session(monkeypatch)
+        present_as_modern_session(monkeypatch)
 
         toolset = MCPToolset(fastmcp_server)
         with pytest.raises(UserError, match=r'exposes no `server_capabilities`'):
@@ -1855,17 +1841,29 @@ def as_mcp_sdk_v2(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mcp_module, '_MCP_SDK_V2', True)
 
 
+def present_as_modern_session(monkeypatch: pytest.MonkeyPatch, **properties: Any) -> None:
+    """Present the client as a modern (sessionless) one: `initialize_result` is the era signal,
+    and the era-neutral properties named in `properties` are the only metadata available."""
+    monkeypatch.setattr(Client, 'initialize_result', property(lambda self: None))
+    era_neutral_properties = {
+        'server_info': None,
+        'server_capabilities': None,
+        'instructions': None,
+        **properties,
+    }
+    for name, value in era_neutral_properties.items():
+        monkeypatch.setattr(Client, name, property(lambda self, value=value: value), raising=False)
+
+
 @pytest.fixture
 def as_modern_mcp_session(monkeypatch: pytest.MonkeyPatch, as_mcp_sdk_v2: None) -> None:
-    """Additionally present the client as a modern (sessionless) session: server metadata comes
-    from the era-neutral properties FastMCP 4 adds, and there is no `initialize` handshake."""
-    server_info = mcp_types.Implementation(name='modern', version='9.9')
-    monkeypatch.setattr(Client, 'server_info', property(lambda self: server_info), raising=False)
-    monkeypatch.setattr(
-        Client, 'server_capabilities', property(lambda self: mcp_types.ServerCapabilities()), raising=False
+    """Additionally present the client as a modern (sessionless) session, with the metadata a
+    happy-path server would expose."""
+    present_as_modern_session(
+        monkeypatch,
+        server_info=mcp_types.Implementation(name='modern', version='9.9'),
+        server_capabilities=mcp_types.ServerCapabilities(),
     )
-    monkeypatch.setattr(Client, 'instructions', property(lambda self: None), raising=False)
-    monkeypatch.setattr(Client, 'initialize_result', property(lambda self: None))
 
 
 @pytest.fixture
