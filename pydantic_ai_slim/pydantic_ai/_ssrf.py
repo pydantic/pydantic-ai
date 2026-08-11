@@ -505,8 +505,8 @@ async def safe_download(
             is read as a stream and rejected once either the decoded body or the
             encoded stream it arrives in exceeds this limit.
         headers: Additional HTTP headers to include in the request.
-                The `Host` header is always set to the original hostname
-                and cannot be overridden. Sensitive headers (`Authorization`,
+                The `Host` header is always set to the original host, including a
+                non-default port, and cannot be overridden. Sensitive headers (`Authorization`,
                 `Cookie`, `Proxy-Authorization`) are stripped when a redirect
                 crosses origins (scheme + host + port), except for a same-host
                 http:80→https:443 upgrade.
@@ -548,7 +548,19 @@ async def safe_download(
                 extensions['sni_hostname'] = resolved.hostname
 
             request_headers: dict[str, str] = {k: v for k, v in effective_headers.items() if k.lower() != 'host'}
-            request_headers['Host'] = resolved.hostname
+            default_port = 443 if resolved.is_https else 80
+            if resolved.port == default_port:
+                request_headers['Host'] = resolved.hostname
+            else:
+                host = resolved.hostname
+                # Bracket an IPv6 literal before appending the port so the `:port` stays
+                # unambiguous (RFC 3986 §3.2.2), matching the connect URL from build_url_with_ip.
+                try:
+                    if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address):
+                        host = f'[{host}]'
+                except ValueError:
+                    pass
+                request_headers['Host'] = f'{host}:{resolved.port}'
             if max_bytes is not None and not any(k.lower() == 'accept-encoding' for k in request_headers):
                 request_headers['Accept-Encoding'] = _BOUNDED_ACCEPT_ENCODING
 
