@@ -68,7 +68,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import ManagedSandbox, Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -121,7 +121,7 @@ except ImportError:  # pragma: lax no cover
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
-from .sandbox_fakes import FakeSandboxHandle, RecordingSandboxProvider
+from .sandbox_fakes import FakeSandboxHandle, LifecycleSandboxProvider, RecordingSandboxProvider
 
 # `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warnings here
@@ -2319,6 +2319,34 @@ async def test_prefect_durability_keeps_default_local_sandbox() -> None:
         return (await agent.run('Use the sandbox tool.')).output
 
     assert await run_durable_agent() == '{"observe_sandbox":"local"}'
+
+
+async def test_prefect_durability_rejects_managed_sandbox() -> None:
+    """Prefect has no unit to run the lifecycle in, so a `ManagedSandbox` is rejected in a flow."""
+    provider = LifecycleSandboxProvider()
+    agent = Agent(
+        TestModel(),
+        name='prefect_managed_sandbox',
+        capabilities=[PrefectDurability(), ManagedSandbox(provider)],
+    )
+
+    @flow
+    async def run_durable_agent() -> str:
+        return (await agent.run('Use the sandbox tool.')).output
+
+    with pytest.raises(UserError) as exc_info:
+        await run_durable_agent()
+    assert str(exc_info.value) == snapshot(
+        '`ManagedSandbox` is not supported inside a Prefect flow: creating and destroying the sandbox '
+        'would be flow code, which Prefect replays. Temporal runs the sandbox lifecycle in activities '
+        'and does support it; on other engines, create the sandbox outside the flow and pass a '
+        '`SandboxRef` to the run instead.'
+    )
+    assert provider.events == []
+
+    # Outside a flow the very same agent uses the capability normally.
+    assert (await agent.run('Hello')).output == snapshot('success (no tool calls)')
+    assert provider.events == snapshot(['create:created-1', 'teardown:created-1'])
 
 
 def test_resolve_tool_task_config_reads_metadata() -> None:

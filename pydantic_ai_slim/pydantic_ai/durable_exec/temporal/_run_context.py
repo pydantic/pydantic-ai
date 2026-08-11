@@ -21,8 +21,9 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 
 TEMPORAL_SANDBOX_UNAVAILABLE_REASON = (
     'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
-    'the activity boundary. Pass a `SandboxRef` to the agent run and register a matching '
-    '`sandbox_providers=` entry on `TemporalDurability`.'
+    'the activity boundary. Attach a `ManagedSandbox` capability to let the run provision and destroy one, '
+    'or pass a `SandboxRef` to the agent run and register a matching `sandbox_providers=` entry on '
+    '`TemporalDurability`.'
 )
 
 # The serialized run context crosses the activity boundary as untyped JSON (`Any`, so

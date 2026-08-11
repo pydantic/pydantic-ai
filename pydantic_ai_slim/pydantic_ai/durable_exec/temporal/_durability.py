@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from contextlib import nullcontext
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, ClassVar, TypeAlias, cast
@@ -13,7 +13,7 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import messages as _messages
 from pydantic_ai._agent_graph import set_agent_graph_sleep
-from pydantic_ai._run_context import set_current_run_context
+from pydantic_ai._run_context import RunPreparationContext, set_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
@@ -41,7 +41,7 @@ from pydantic_ai.models import (
     infer_model,
 )
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import SandboxProvider
+from pydantic_ai.sandboxes import ManagedSandbox, Sandbox, SandboxBackend, SandboxProvider, SandboxRef
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
@@ -73,6 +73,18 @@ class _RequestParams:
     model_request_parameters: ModelRequestParameters
     serialized_run_context: Any
     model_id: str | None = None
+
+
+@dataclass
+class _SandboxIdentity:
+    """The identity of a `ManagedSandbox` sandbox, as it crosses the activity boundary.
+
+    Only the identity crosses: the live backend stays inside the activity that made it, and
+    every later activity re-opens the sandbox through the run context's serialized `SandboxRef`.
+    """
+
+    provider: str
+    sandbox_id: str
 
 
 @dataclass
@@ -153,6 +165,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     _durable_container_noun = 'workflow'
     _tool_config_key = 'temporal'
     _sandbox_unavailable_reason = TEMPORAL_SANDBOX_UNAVAILABLE_REASON
+    # Temporal is the one engine that can run a `ManagedSandbox`'s lifecycle: creation and
+    # destruction go into activities, and only the resulting identity crosses back into the workflow.
+    _supports_managed_sandbox = True
     _live_sandbox_error = live_sandbox_error(
         run_location='to an agent run inside a Temporal workflow',
         sandbox_constraint='it would exist in workflow code where I/O is forbidden and cannot cross into activities',
@@ -332,7 +347,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 params.serialized_run_context,
                 deps=deps,
                 agent=self._agent,
-                sandbox_providers=self._sandbox_providers,
+                sandbox_providers=self._worker_sandbox_providers,
             )
             model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
             async with heartbeating():
@@ -352,7 +367,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 params.serialized_run_context,
                 deps=deps,
                 agent=self._agent,
-                sandbox_providers=self._sandbox_providers,
+                sandbox_providers=self._worker_sandbox_providers,
             )
             model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
             async with heartbeating():
@@ -385,7 +400,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                         params.serialized_run_context,
                         deps=deps,
                         agent=self._agent,
-                        sandbox_providers=self._sandbox_providers,
+                        sandbox_providers=self._worker_sandbox_providers,
                     )
                     await handler(run_context, self._single_event_stream(params.event))
 
@@ -407,7 +422,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     params.serialized_run_context,
                     deps=deps,
                     agent=self._agent,
-                    sandbox_providers=self._sandbox_providers,
+                    sandbox_providers=self._worker_sandbox_providers,
                 )
                 model = await self._resolve_model_for_request(params.model_id, run_context)
             # The cancel activity shares `_model_activity_config`, whose default `heartbeat_timeout`
@@ -421,6 +436,45 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             name=f'{activity_name_prefix}__model_cancel_suspended_response',
         )
         activities.append(self.cancel_suspended_response_activity)
+
+        # --- Managed sandbox lifecycle activities ---
+
+        if (managed_sandbox := self._managed_sandbox) is not None:
+            # Registered through `activity.defn` directly rather than `register_activity`: neither
+            # takes `deps`, so there is no annotation for the payload converter to patch.
+
+            async def create_sandbox_activity() -> _SandboxIdentity:
+                async with heartbeating():
+                    backend = await managed_sandbox._create_backend()  # pyright: ignore[reportPrivateUsage]
+                return _SandboxIdentity(provider=backend.provider, sandbox_id=backend.sandbox_id)
+
+            self.create_sandbox_activity = activity.defn(name=f'{activity_name_prefix}__create_sandbox')(
+                create_sandbox_activity
+            )
+            activities.append(self.create_sandbox_activity)
+
+            async def teardown_sandbox_activity(identity: _SandboxIdentity) -> None:
+                async with heartbeating():
+                    try:
+                        await managed_sandbox.sandbox_provider.teardown(identity.sandbox_id)
+                    except Exception:
+                        # A provider's failure modes are its own SDK's, and teardown also runs
+                        # after a failure that may already have destroyed the sandbox, so anything
+                        # raised here is logged rather than retried: failing this activity would
+                        # fail an otherwise-finished run over cleanup the platform's idle timeout
+                        # covers anyway.
+                        activity.logger.warning(
+                            'Failed to tear down sandbox %r for provider %r; '
+                            'the provider must reap it on its own idle timeout.',
+                            identity.sandbox_id,
+                            identity.provider,
+                            exc_info=True,
+                        )
+
+            self.teardown_sandbox_activity = activity.defn(name=f'{activity_name_prefix}__teardown_sandbox')(
+                teardown_sandbox_activity
+            )
+            activities.append(self.teardown_sandbox_activity)
 
         # --- Toolset wrapping ---
         self._register_toolsets(agent)
@@ -444,7 +498,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._deps_type,
             self.run_context_type,
             self._agent,
-            sandbox_providers=self._sandbox_providers,
+            sandbox_providers=self._worker_sandbox_providers,
         )
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
 
@@ -462,6 +516,38 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     @property
     def in_durable_context(self) -> bool:
         return workflow.in_workflow()
+
+    def _managed_sandbox_context(
+        self, managed: ManagedSandbox, ctx: RunPreparationContext[AgentDepsT]
+    ) -> AbstractAsyncContextManager[SandboxBackend]:
+        """Own the run's sandbox from workflow code, with both lifecycle halves in activities."""
+
+        @asynccontextmanager
+        async def managed_sandbox_scope() -> AsyncGenerator[SandboxBackend]:
+            config: ActivityConfig = {'summary': 'create sandbox', **self.activity_config}
+            # Exactly once per run: the activity's result is recorded in workflow history, so a
+            # replay reuses the sandbox the first attempt created instead of provisioning another.
+            identity: _SandboxIdentity = await execute_activity(
+                activity=self.create_sandbox_activity, args=[], **config
+            )
+            try:
+                # Workflow code only ever holds identity. The deferred facade connects inside the
+                # activities that use it, reached through the `SandboxRef` that
+                # `TemporalRunContext` serializes into each one.
+                yield Sandbox.from_ref(
+                    SandboxRef(provider=identity.provider, sandbox_id=identity.sandbox_id),
+                    self._worker_sandbox_providers,
+                )
+            finally:
+                # The run enters this manager on its own exit stack, so teardown runs after a
+                # failed run too. Workflow *cancellation* can skip a `finally` outright, which is
+                # why `SandboxProvider.teardown` documents the platform's idle timeout as the
+                # backstop; whether Temporal should instead be given a cancellation-shielded
+                # teardown is an open question.
+                teardown_config: ActivityConfig = {'summary': 'destroy sandbox', **self.activity_config}
+                await execute_activity(activity=self.teardown_sandbox_activity, args=[identity], **teardown_config)
+
+        return managed_sandbox_scope()
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)

@@ -16,7 +16,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, RunContext, RunPreparationContext, UnavailableSandbox, UserError
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
-from pydantic_ai.durable_exec._sandbox import contributes_sandbox
+from pydantic_ai.durable_exec._sandbox import contributes_sandbox, managed_sandbox_supplier
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -806,8 +806,18 @@ def test_sandbox_providers_compose_and_latest_duplicate_wins():
     assert contributes_sandbox(combined) is False
     assert contributes_sandbox(WrapperCapability(wrapped=SandboxCapability())) is True
     assert contributes_sandbox(SandboxCapability(id='deferred-sandbox', defer_loading=True)) is False
-    # The visit short-circuits once a supplier is found, even with more capabilities after it.
     assert contributes_sandbox(CombinedCapability([SandboxCapability(), SandboxProviderCapability([])])) is True
+
+
+def test_managed_sandbox_supplier_only_reports_the_winner():
+    """Durable engines may only route the sandbox a non-durable run would actually have used."""
+    managed = ManagedSandbox(LifecycleSandboxProvider())
+    other = SandboxCapability(name='other')
+    assert managed_sandbox_supplier(CombinedCapability([other, managed])) is managed
+    assert managed_sandbox_supplier(WrapperCapability(wrapped=managed)) is managed
+    # A later non-managed supplier wins resolution, so there is no managed lifecycle to route.
+    assert managed_sandbox_supplier(CombinedCapability([managed, other])) is None
+    assert managed_sandbox_supplier(other) is None
 
 
 async def test_managed_sandbox_creates_at_run_start_and_tears_down_at_run_end():

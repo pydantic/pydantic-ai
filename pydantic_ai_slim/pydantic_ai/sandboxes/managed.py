@@ -72,17 +72,25 @@ class ManagedSandbox(AbstractCapability[Any]):
         # Not spec-loadable: a provider holds live clients and worker-side credentials.
         return None
 
+    async def _create_backend(self) -> SandboxBackend:
+        """Provision the run's sandbox, explaining a provider that cannot.
+
+        Shared with the durable integrations, which run creation inside a durable unit rather
+        than through `get_sandbox`, so both paths fail the same way.
+        """
+        try:
+            return await self.sandbox_provider.create()
+        except NotImplementedError as error:
+            raise UserError(
+                f'The sandbox provider {self.sandbox_provider.provider!r} passed to `ManagedSandbox` does not '
+                'implement `create()`, so it cannot provision a sandbox for this run. Implement `create()` on '
+                'the provider, or pass an existing sandbox backend or a `SandboxRef` to the run instead.'
+            ) from error
+
     def get_sandbox(self, ctx: RunPreparationContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
         @asynccontextmanager
         async def managed_sandbox() -> AsyncGenerator[SandboxBackend]:
-            try:
-                backend = await self.sandbox_provider.create()
-            except NotImplementedError as error:
-                raise UserError(
-                    f'The sandbox provider {self.sandbox_provider.provider!r} passed to `ManagedSandbox` does not '
-                    'implement `create()`, so it cannot provision a sandbox for this run. Implement `create()` on '
-                    'the provider, or pass an existing sandbox backend or a `SandboxRef` to the run instead.'
-                ) from error
+            backend = await self._create_backend()
             # Always torn down, including when the run fails: the default `teardown()` is a no-op,
             # so a provider that relies on its platform's idle timeout pays nothing for this.
             try:

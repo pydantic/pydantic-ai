@@ -69,7 +69,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import SandboxBackend, SandboxProvider, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import ManagedSandbox, SandboxBackend, SandboxProvider, SandboxRef, UnavailableSandbox
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .conftest import IsDatetime, IsNow, IsStr
@@ -120,6 +120,7 @@ from ._inline_snapshot import snapshot
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from .sandbox_fakes import (
     FakeSandboxHandle,
+    LifecycleSandboxProvider,
     RecordingSandboxProvider,
     SandboxContributingCapability,
 )
@@ -1469,6 +1470,36 @@ async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):
 
     with pytest.raises(UserError, match='cannot run in a DBOS durable workflow'):
         simple_dbos_agent.run_sync('Hello', capabilities=[SandboxContributingCapability()])
+
+
+async def test_dbos_durability_rejects_managed_sandbox(dbos: DBOS):
+    """DBOS has no unit to run the lifecycle in, so a `ManagedSandbox` is rejected, not suppressed."""
+    provider = LifecycleSandboxProvider()
+    agent = Agent(
+        TestModel(),
+        name='dbos_managed_sandbox',
+        capabilities=[DBOSDurability(), ManagedSandbox(provider)],
+    )
+
+    @DBOS.workflow(name='test_dbos_durability_rejects_managed_sandbox')
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with workflow_raises(
+        UserError,
+        snapshot(
+            '`ManagedSandbox` is not supported inside a DBOS workflow: creating and destroying the sandbox '
+            'would be workflow code, which DBOS replays. Temporal runs the sandbox lifecycle in activities '
+            'and does support it; on other engines, create the sandbox outside the workflow and pass a '
+            '`SandboxRef` to the run instead.'
+        ),
+    ):
+        await run_agent()
+    assert provider.events == []
+
+    # Outside a workflow the very same agent uses the capability normally.
+    assert (await agent.run('Hello')).output == snapshot('success (no tool calls)')
+    assert provider.events == snapshot(['create:created-1', 'teardown:created-1'])
 
 
 def test_dbos_durability_base_sandbox_suppressor_is_not_a_user_supplier(dbos: DBOS):
