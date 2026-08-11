@@ -89,8 +89,8 @@ def test_crusoe_provider_model_profile(mocker: MockerFixture):
     assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
     # Test qwen provider
-    qwen_profile = provider.model_profile('qwen/Qwen3-235B-A22B')
-    qwen_mock.assert_called_with('qwen3-235b-a22b')
+    qwen_profile = provider.model_profile('Qwen/Qwen3-235B-A22B-Instruct-2507')
+    qwen_mock.assert_called_with('qwen3-235b-a22b-instruct-2507')
     assert qwen_profile is not None
     assert qwen_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
@@ -117,13 +117,30 @@ def test_crusoe_provider_model_profile(mocker: MockerFixture):
     zai_mock.assert_called_with('glm-5.2')
     assert zai_profile is not None
 
-    # Test unknown provider
-    unknown_profile = provider.model_profile('unknown-provider/unknown-model')
+    # Test unknown vendor
+    unknown_profile = provider.model_profile('unknown-vendor/unknown-model')
     assert unknown_profile is not None
     assert unknown_profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
 
 
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'zai/GLM-5.2',  # `zai_model_profile` doesn't claim native structured output support
+        'meta-llama/Llama-3.3-70B-Instruct',
+        'unknown-vendor/unknown-model',
+        'bare-model-name',
+    ],
+)
+def test_crusoe_provider_supports_structured_output(model_name: str):
+    """Crusoe serves every model with guided decoding, so `response_format` works regardless of family."""
+    profile = CrusoeProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_json_schema_output') is True
+    assert profile.get('supports_json_object_output') is True
+
+
 def test_crusoe_provider_model_name_without_slash():
-    profile = CrusoeProvider.model_profile('invalid-model-name')
+    profile = CrusoeProvider.model_profile('bare-model-name')
     assert profile is not None
     assert profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer

@@ -522,38 +522,6 @@ Some models are served with a chat template (applied server-side, for example by
 
 Set `openai_chat_supports_multiple_system_messages=False` on the model's [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (as shown above) to merge the leading run of system messages into one, joined with two newlines, before the request is sent. The merge is lossless, so it's safe to enable whenever a backend rejects multiple system messages.
 
-### Crusoe
-
-Go to [Crusoe Cloud](https://crusoecloud.com/) and create an API key for Managed Inference.
-
-You can set the `CRUSOE_API_KEY` environment variable and use [`CrusoeProvider`][pydantic_ai.providers.crusoe.CrusoeProvider] by name:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('crusoe:zai/GLM-5.2')
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-#> The capital of France is Paris.
-```
-
-Or initialise the model and provider directly:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.crusoe import CrusoeProvider
-
-model = OpenAIChatModel(
-    'zai/GLM-5.2',
-    provider=CrusoeProvider(api_key='your-crusoe-api-key'),
-)
-agent = Agent(model)
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-#> The capital of France is Paris.
-```
-
 ### DeepSeek
 
 To use the [DeepSeek](https://deepseek.com) provider, first create an API key by following the [Quick Start guide](https://api-docs.deepseek.com/).
@@ -1032,6 +1000,40 @@ from pydantic_ai.providers.ovhcloud import OVHcloudProvider
 model = OpenAIChatModel(
     'gpt-oss-120b',
     provider=OVHcloudProvider(api_key='your-api-key'),
+)
+agent = Agent(model)
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+### Crusoe
+
+To use [Crusoe](https://crusoe.ai/) Serverless Inference, go to the [Crusoe Cloud console](https://console.crusoecloud.com/), select Models, and click `Get API Key`.
+
+You can explore the [model catalog](https://docs.crusoecloud.com/serverless-inference/overview) to find which models are available.
+
+You can set the `CRUSOE_API_KEY` environment variable and use [`CrusoeProvider`][pydantic_ai.providers.crusoe.CrusoeProvider] by name:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('crusoe:zai/GLM-5.2')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+If you need to configure the provider, you can use the [`CrusoeProvider`][pydantic_ai.providers.crusoe.CrusoeProvider] class:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.crusoe import CrusoeProvider
+
+model = OpenAIChatModel(
+    'zai/GLM-5.2',
+    provider=CrusoeProvider(api_key='your-crusoe-api-key'),
 )
 agent = Agent(model)
 result = agent.run_sync('What is the capital of France?')

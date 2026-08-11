@@ -1,0 +1,80 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '102'
+      content-type:
+      - application/json
+      host:
+      - api.inference.crusoecloud.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2 + 2?
+        role: user
+      model: zai/GLM-5.2
+      stream: false
+    uri: https://api.inference.crusoecloud.com/v1/chat/completions
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1242'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: null
+          audio: null
+          content: 2 + 2 = 4
+          function_call: null
+          reasoning: |-
+            1.  **Analyze the Input:** The user is asking a simple arithmetic question: "What is 2 + 2?"
+            2.  **Process the Query:**
+                *   Identify the operation: Addition (+)
+                *   Identify the operands: 2 and 2
+                *   Calculate the result: 2 + 2 = 4
+            3.  **Formulate the Output:** State the answer clearly and concisely. "2 + 2 = 4" or "2 + 2 is 4".
+            4.  **Final Output Generation:** "2 + 2 = 4."
+          refusal: null
+          role: assistant
+        routed_experts: null
+        stop_reason: 154827
+        token_ids: null
+      created: 1786474267
+      id: chatcmpl-___prefill_addr_10.234.2.166:8998___decode_addr_10.234.3.102:8998_bdf99f19e2a4e611
+      kv_transfer_params: null
+      metrics: null
+      model: zai/GLM-5.2
+      object: chat.completion
+      prompt_logprobs: null
+      prompt_text: null
+      prompt_token_ids: null
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 138
+        completion_tokens_details:
+          reasoning_tokens: 129
+        prompt_tokens: 20
+        prompt_tokens_details:
+          cached_tokens: 0
+          multimodal_tokens: null
+        total_tokens: 158
+    status:
+      code: 200
+      message: OK
+version: 1

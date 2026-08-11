@@ -29,7 +29,7 @@ except ImportError as _import_error:  # pragma: no cover
 
 
 class CrusoeProvider(Provider[AsyncOpenAI]):
-    """Provider for Crusoe Managed Inference API."""
+    """Provider for Crusoe Serverless Inference API."""
 
     @property
     def name(self) -> str:
@@ -45,7 +45,7 @@ class CrusoeProvider(Provider[AsyncOpenAI]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        provider_to_profile = {
+        vendor_to_profile = {
             'meta-llama': meta_model_profile,
             'deepseek-ai': deepseek_model_profile,
             'qwen': qwen_model_profile,
@@ -58,16 +58,21 @@ class CrusoeProvider(Provider[AsyncOpenAI]):
         profile = None
 
         model_name = model_name.lower()
-        if '/' not in model_name:
-            return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+        if '/' in model_name:
+            vendor, model_name = model_name.split('/', 1)
+            if vendor in vendor_to_profile:
+                profile = vendor_to_profile[vendor](model_name)
 
-        provider, model_name = model_name.split('/', 1)
-        if provider in provider_to_profile:
-            profile = provider_to_profile[provider](model_name)
-
-        # As CrusoeProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+        # `json_schema_transformer` is a fallback (the model family's profile wins if it sets one), as
+        # `CrusoeProvider` is always used with `OpenAIChatModel`, which used to unconditionally use
+        # `OpenAIJsonSchemaTransformer`.
+        # The structured output flags win on top: Crusoe serves every model with guided decoding, so
+        # `response_format` works even for families whose own profiles don't claim support for it.
+        return merge_profile(
+            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            profile,
+            ModelProfile(supports_json_schema_output=True, supports_json_object_output=True),
+        )
 
     @overload
     def __init__(self) -> None: ...
@@ -79,6 +84,9 @@ class CrusoeProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
+    def __init__(self, *, http_client: httpx.AsyncClient) -> None: ...
+
+    @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
 
     def __init__(
@@ -88,6 +96,14 @@ class CrusoeProvider(Provider[AsyncOpenAI]):
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
+        """Create a new Crusoe provider.
+
+        Args:
+            api_key: The API key to use for authentication, if not provided, the `CRUSOE_API_KEY` environment
+                variable will be used if available.
+            openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key` and `http_client` must be `None`.
+            http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
+        """
         api_key = api_key or os.getenv('CRUSOE_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
