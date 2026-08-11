@@ -25,6 +25,22 @@ nav:
           - tools.md
           - output.md
           - Multimodal Input: input.md
+          - Realtime (speech-to-speech):
+              - Overview: realtime/overview.md
+              - Audio, images, and transcripts: realtime/audio.md
+              - Events: realtime/events.md
+              - Turns and interruptions: realtime/turns.md
+              - Tools: realtime/tools.md
+              - Capabilities and hooks: realtime/capabilities.md
+              - History and handoff: realtime/history.md
+              - Connecting a frontend: realtime/deployment.md
+              - Connection lifecycle: realtime/lifecycle.md
+              - Usage and observability: realtime/observability.md
+              - Troubleshooting: realtime/troubleshooting.md
+              - OpenAI: realtime/openai.md
+              - Azure: realtime/azure.md
+              - Google Gemini: realtime/gemini.md
+              - xAI: realtime/xai.md
           - Hooks: hooks.md
           - Agent Specs: agent-spec.md
           - message-history.md
@@ -165,6 +181,11 @@ nav:
       - Streaming:
           - examples/stream-markdown.md
           - examples/stream-whales.md
+      - Realtime:
+          - examples/realtime-voice.md
+          - examples/realtime-text-to-audio.md
+          - examples/realtime-handoff.md
+          - examples/realtime-camera.md
       - Complex Workflows:
           - examples/flight-booking.md
           - examples/medical-agent-delegation.md
@@ -214,6 +235,12 @@ nav:
           - api/output.md
           - api/profiles.md
           - api/providers.md
+          - api/realtime.md
+          - api/realtime/codec.md
+          - api/realtime/openai.md
+          - api/realtime/google.md
+          - api/realtime/xai.md
+          - api/realtime/azure.md
           - api/result.md
           - api/retries.md
           - api/run.md
@@ -308,6 +335,11 @@ validation:
   absolute_links: warn
   unrecognized_links: warn
   anchors: warn
+
+# Agent instruction files live alongside the docs they govern but are not documentation pages.
+exclude_docs: |
+  AGENTS.md
+  CLAUDE.md
 
 extra_css:
   - "extra/tweaks.css"
@@ -461,7 +493,7 @@ plugins:
         Examples:
           - examples/*.md
 
-# DON'T PUT REDIRECTS IN THIS FILE! Add them to the `redirects` block in the unified-docs repo (pydantic/unified-docs, astro.config.mjs).
+# DON'T PUT REDIRECTS IN THIS FILE! Unified-docs redirects belong in docs/navigation.yml.
 
 hooks:
   - "docs/.hooks/main.py"

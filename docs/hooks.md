@@ -116,6 +116,8 @@ Use on-demand hooks for optional behavior that only applies after the capability
 
 Run hooks fire once per agent run. `wrap_run` (registered via `hooks.on.run`) wraps the entire run and supports error recovery.
 
+A [realtime session](realtime/capabilities.md) is a run: the same four hooks fire once around the session, with `wrap_run` recovery and `after_run` result transformation applied when the session closes.
+
 ### Node hooks
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
@@ -260,7 +262,7 @@ For pure application-level handler registration without other hooks, the dedicat
 | `run_event_stream` | `run_event_stream=` | `wrap_run_event_stream` |
 | `event` | `event=` | _(per-event convenience)_ |
 
-`run_event_stream` wraps the full event stream as an async generator. `event` is a convenience — it fires for each individual event during a streamed run. Tool and model events flow through this stream, along with framework events such as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] when queued messages enter run history:
+`run_event_stream` wraps the full event stream as an async generator. `event` is a convenience — it fires for each individual event during a streamed run. Tool and model events flow through this stream, along with framework events such as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] when queued messages enter run history. During a [realtime session](realtime/capabilities.md), both hooks also fire, and realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members flow through the same stream:
 
 ```python {title="hooks_event.py"}
 from pydantic_ai import Agent, AgentStreamEvent, RunContext

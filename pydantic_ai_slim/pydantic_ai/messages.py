@@ -136,9 +136,12 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
   transparently for both `agent.run` and `agent.run_stream`, merging every segment into a single
   completed [`ModelResponse`][pydantic_ai.messages.ModelResponse], so a finished turn in the message
   history is never left in this state.
-- `'interrupted'`: streaming was explicitly stopped via
-  [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel] before the model
-  finished generating.
+- `'interrupted'`: generation was explicitly stopped before the model finished. Set when a streamed
+  response is cancelled via [`StreamedResponse.cancel()`][pydantic_ai.models.StreamedResponse.cancel],
+  and when a realtime turn is cut off by a barge-in or
+  [`RealtimeSession.interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt] — in which case the
+  cut-off point is recorded on the last
+  [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms].
 """
 
 ModelRequestState: TypeAlias = Literal['complete', 'interrupted']
@@ -716,6 +719,35 @@ class BinaryImage(BinaryContent):
     def __post_init__(self):
         if not self.is_image:
             raise ValueError('`BinaryImage` must have a media type that starts with "image/"')
+
+
+@pydantic_dataclass(
+    repr=False,
+    config=pydantic.ConfigDict(
+        ser_json_bytes='base64',
+        val_json_bytes='base64',
+    ),
+)
+class BinaryAudio(BinaryContent):
+    """Binary content that's guaranteed to be audio."""
+
+    # `pydantic_dataclass` replaces `__init__` so this method is never used.
+    # The signature is kept so that pyright/IDE hints recognize the `identifier` alias for the `_identifier` field.
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: AudioMediaType | str,
+        identifier: str | None = None,
+        vendor_metadata: dict[str, Any] | None = None,
+        kind: Literal['binary'] = 'binary',
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _identifier: str | None = None,
+    ) -> None: ...  # pragma: no cover
+
+    def __post_init__(self):
+        if not self.is_audio:
+            raise ValueError('`BinaryAudio` must have a media type that starts with "audio/"')
 
 
 @dataclass
@@ -1830,6 +1862,15 @@ class ModelRequest:
     Appears in [`capture_run_messages`][pydantic_ai.capture_run_messages] output so consumers can detect partial state.
     """
 
+    def __post_init__(self) -> None:
+        for part in self.parts:
+            if isinstance(part, SpeechPart) and part.speaker != 'user':
+                # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
+                # message history, where a `ValueError` becomes a `ValidationError` with location info.
+                raise ValueError(
+                    f"`SpeechPart` in `ModelRequest.parts` must have `speaker='user'`, got {part.speaker!r}"
+                )
+
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
         """Create a `ModelRequest` with a single user prompt as text."""
@@ -2022,6 +2063,89 @@ class FilePart:
     def has_content(self) -> bool:
         """Return `True` if the file content is non-empty."""
         return bool(self.content.data)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class SpeechPart:
+    """Spoken audio exchanged during a realtime session, paired with its transcript.
+
+    This part is a member of both [`ModelRequestPart`][pydantic_ai.messages.ModelRequestPart] and
+    [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart], distinguished by `speaker`:
+    in `ModelRequest.parts` the speaker is always `'user'`; in `ModelResponse.parts` it is always
+    `'assistant'`. This invariant is enforced at runtime when a message is constructed.
+
+    Standard (non-realtime) models can't consume this part directly; when history containing it is
+    used in an agent run, [`Model.prepare_messages`][pydantic_ai.models.Model.prepare_messages]
+    converts user-speaker parts to [`UserPromptPart`][pydantic_ai.messages.UserPromptPart]s and
+    assistant-speaker parts to [`TextPart`][pydantic_ai.messages.TextPart]s.
+    """
+
+    speaker: Literal['user', 'assistant']
+    """Whether the audio was spoken by the end user or by the model."""
+
+    transcript: str | None = None
+    """The transcript of the audio. `None` if transcription was unavailable."""
+
+    audio: BinaryContent | None = None
+    """The audio data, if retained.
+
+    Audio is only retained when the realtime session is configured to do so
+    (see the `audio_retention` setting), so this is usually `None`.
+    """
+
+    interrupted_at_ms: int | None = None
+    """The offset into this part's audio where playback was interrupted, in milliseconds.
+
+    `None` when the part was not interrupted. It may also be `None` for an interrupted turn when
+    the provider reported the interruption without an offset. This is relative to this part's audio,
+    not wall-clock or session-relative time.
+    """
+
+    id: str | None = None
+    """The provider item ID, used to correlate the part with provider-side conversation items."""
+
+    provider_name: str | None = None
+    """The name of the provider that generated or transcribed the audio.
+
+    Required to be set when `provider_details` or `id` is set.
+    """
+
+    provider_details: dict[str, Any] | None = None
+    """Additional data returned by the provider that can't be mapped to standard fields.
+
+    This is used for data that is required to be sent back to APIs, as well as data users may want to access programmatically.
+    When this field is set, `provider_name` is required to identify the provider that generated this data.
+    """
+
+    part_kind: Literal['speech'] = 'speech'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    @property
+    def content(self) -> str:
+        """The transcript, or an empty string if transcription was unavailable.
+
+        Mirrors [`TextPart.content`][pydantic_ai.messages.TextPart.content] so code that renders
+        message parts generically can treat spoken content like text.
+        """
+        return self.transcript or ''
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        parts: list[_otel_messages.MessagePart] = []
+        if self.transcript is not None:
+            parts.append(
+                _otel_messages.TextPart(
+                    type='text', **({'content': self.transcript} if settings.include_content else {})
+                )
+            )
+        if (audio := self.audio) is not None:
+            parts.append(_convert_binary_to_otel_part(audio.media_type, lambda: audio.base64, settings))
+        return parts
+
+    def has_content(self) -> bool:
+        """Return `True` if the part has a transcript or retained audio."""
+        return bool(self.transcript) or self.audio is not None
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -2339,6 +2463,7 @@ def _model_request_part_discriminator(v: Any) -> str | None:
 ModelRequestPart = Annotated[
     Annotated[SystemPromptPart, pydantic.Tag('system-prompt')]
     | Annotated[UserPromptPart, pydantic.Tag('user-prompt')]
+    | Annotated[SpeechPart, pydantic.Tag('speech')]
     | Annotated[ToolSearchReturnPart, pydantic.Tag('tool-search-return')]
     | Annotated[LoadCapabilityReturnPart, pydantic.Tag('capability-load-return')]
     | Annotated[ToolReturnPart, pydantic.Tag('tool-return')]
@@ -2387,7 +2512,8 @@ ModelResponsePart = Annotated[
     | Annotated[NativeToolReturnPart, pydantic.Tag('builtin-tool-return')]
     | Annotated[ThinkingPart, pydantic.Tag('thinking')]
     | Annotated[CompactionPart, pydantic.Tag('compaction')]
-    | Annotated[FilePart, pydantic.Tag('file')],
+    | Annotated[FilePart, pydantic.Tag('file')]
+    | Annotated[SpeechPart, pydantic.Tag('speech')],
     pydantic.Discriminator(_model_response_part_discriminator),
 ]
 """A message part returned by a model."""
@@ -2469,24 +2595,39 @@ class ModelResponse:
       The agent graph will automatically send a continuation request.
       Set by providers that pause mid-turn (e.g. Anthropic `pause_turn`)
       or return background/async responses (e.g. OpenAI background mode).
-    - `'interrupted'` — Streaming was explicitly cancelled before the model finished generating.
-      Set when a streaming response is cancelled via `StreamedResponse.cancel()`.
+    - `'interrupted'` — Generation was explicitly stopped before the model finished.
+      Set when a streaming response is cancelled via `StreamedResponse.cancel()`, and when a realtime
+      turn is cut off by a barge-in or `RealtimeSession.interrupt()` — in which case the cut-off point
+      is recorded on the last [`SpeechPart.interrupted_at_ms`][pydantic_ai.messages.SpeechPart.interrupted_at_ms].
     """
+
+    def __post_init__(self) -> None:
+        for part in self.parts:
+            if isinstance(part, SpeechPart) and part.speaker != 'assistant':
+                # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
+                # message history, where a `ValueError` becomes a `ValidationError` with location info.
+                raise ValueError(
+                    f"`SpeechPart` in `ModelResponse.parts` must have `speaker='assistant'`, got {part.speaker!r}"
+                )
 
     @property
     def text(self) -> str | None:
-        """Get the text in the response."""
+        """Get the text in the response, including the transcript of anything spoken."""
         texts: list[str] = []
-        last_part: ModelResponsePart | None = None
+        adjacent = False
         for part in self.parts:
-            if isinstance(part, TextPart):
+            # A `SpeechPart` carries its transcript as `content`. One without a transcript is audio and
+            # nothing else, so it reads like any other non-text part rather than an empty string.
+            if isinstance(part, TextPart) or (isinstance(part, SpeechPart) and part.content):
                 # Adjacent text parts should be joined together, but if there are parts in between
                 # (like built-in tool calls) they should have newlines between them
-                if isinstance(last_part, TextPart):
+                if adjacent:
                     texts[-1] += part.content
                 else:
                     texts.append(part.content)
-            last_part = part
+                adjacent = True
+            else:
+                adjacent = False
         if not texts:
             return None
 
@@ -2564,21 +2705,7 @@ class ModelResponse:
                     _convert_binary_to_otel_part(part.content.media_type, lambda p=part: p.content.base64, settings)
                 )
             elif isinstance(part, BaseToolCallPart):
-                call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
-                if isinstance(part, NativeToolCallPart):
-                    call_part['builtin'] = True
-                if part.otel_metadata:
-                    if code_arg_name := part.otel_metadata.get('code_arg_name'):
-                        call_part['code_arg_name'] = code_arg_name
-                    if code_arg_language := part.otel_metadata.get('code_arg_language'):
-                        call_part['code_arg_language'] = code_arg_language
-                if settings.include_content and part.args is not None:
-                    if isinstance(part.args, str):
-                        call_part['arguments'] = part.args
-                    else:
-                        call_part['arguments'] = {k: serialize_any(v) for k, v in part.args.items()}
-
-                parts.append(call_part)
+                parts.append(_tool_call_otel_part(part, settings))
             elif isinstance(part, NativeToolReturnPart):
                 return_part = _otel_messages.ToolCallResponsePart(
                     type='tool_call_response',
@@ -2590,12 +2717,32 @@ class ModelResponse:
                     return_part['result'] = serialize_any(redact_binary_content(part.content, settings))
 
                 parts.append(return_part)
+            elif isinstance(part, SpeechPart):
+                parts.extend(part.otel_message_parts(settings))
             elif isinstance(part, CompactionPart):
                 # Compaction parts don't map to standard OTel message part types
                 pass
         return parts
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+def _tool_call_otel_part(part: BaseToolCallPart, settings: InstrumentationSettings) -> _otel_messages.ToolCallPart:
+    """Convert a tool-call part to its OTel `ToolCallPart`, including native/code metadata and arguments."""
+    call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
+    if isinstance(part, NativeToolCallPart):
+        call_part['builtin'] = True
+    if part.otel_metadata:
+        if code_arg_name := part.otel_metadata.get('code_arg_name'):
+            call_part['code_arg_name'] = code_arg_name
+        if code_arg_language := part.otel_metadata.get('code_arg_language'):
+            call_part['code_arg_language'] = code_arg_language
+    if settings.include_content and part.args is not None:
+        if isinstance(part.args, str):
+            call_part['arguments'] = part.args
+        else:
+            call_part['arguments'] = {k: serialize_any(v) for k, v in part.args.items()}
+    return call_part
 
 
 ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('kind')]
@@ -3506,8 +3653,91 @@ class ToolCallPartDelta:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False, kw_only=True)
+class SpeechPartDelta:
+    """A partial update (delta) for a `SpeechPart` to append transcript text and/or audio data."""
+
+    speaker: Literal['user', 'assistant'] | None = None
+    """Who is speaking, matching the [`SpeechPart`][pydantic_ai.messages.SpeechPart] this delta belongs to.
+
+    Realtime sessions are duplex: the user's transcript and the model's can stream at the same time,
+    interleaved delta by delta. Carrying the speaker here means rendering a live transcript needs
+    nothing but the delta itself — no correlating back to an earlier
+    [`PartStartEvent`][pydantic_ai.messages.PartStartEvent].
+
+    `None` only when a delta wasn't produced by a realtime session.
+    """
+
+    transcript_delta: str | None = None
+    """Transcript text this delta added, if any.
+
+    !!! warning "Not every transcript delta has one"
+        This is empty whenever the provider *revised* what it had already transcribed instead of
+        adding to it, because there is no addition to report. How often that happens is up to the
+        provider — xAI Grok Voice does it routinely, OpenAI and Gemini not at all today — so appending
+        this field means a live transcript that is right on some providers and stale on others.
+
+        Render [`transcript`][pydantic_ai.messages.SpeechPartDelta.transcript] instead, which is always
+        the turn's full text. Reach for this one only when you specifically want what changed.
+    """
+
+    transcript: str | None = None
+    """The whole transcript of this turn so far, when this delta carries transcript text.
+
+    Render this and a live transcript is correct on every provider, with no accumulating of your own.
+    Speech recognition is revisable — later audio changes how earlier audio is read — so some
+    providers correct words they already transcribed rather than only adding to them, which an
+    appended `transcript_delta` cannot express. Reading this field means never having to know which
+    providers do that. It also recovers a consumer that missed an earlier delta.
+    """
+
+    audio_chunk: bytes | None = None
+    """A raw audio chunk (e.g. PCM data), if any.
+
+    Suitable for live playback; only accumulated on the part if it is retaining audio (see
+    [`SpeechPartDelta.apply`][pydantic_ai.messages.SpeechPartDelta.apply]).
+    """
+
+    part_delta_kind: Literal['speech'] = 'speech'
+    """Part delta type identifier, used as a discriminator."""
+
+    def apply(self, part: ModelResponsePart) -> SpeechPart:
+        """Apply this delta to an existing `SpeechPart`.
+
+        `transcript` replaces the part's transcript when set, which is how a provider's revision of
+        what it already transcribed is applied; otherwise `transcript_delta` is appended (a part with
+        `transcript=None` gets `transcript=transcript_delta`). `audio_chunk` is appended to the part's
+        retained audio data, but only if the part already has `audio` set: a part with `audio=None` is
+        not retaining audio, so the chunk is intentionally not stored — it remains available on the
+        delta itself for live playback.
+
+        Args:
+            part: The existing model response part, which must be a `SpeechPart`.
+
+        Returns:
+            A new `SpeechPart` with the delta applied.
+
+        Raises:
+            ValueError: If `part` is not a `SpeechPart`.
+        """
+        if not isinstance(part, SpeechPart):
+            raise ValueError('Cannot apply SpeechPartDeltas to non-SpeechParts')
+        transcript = part.transcript
+        if self.transcript is not None:
+            transcript = self.transcript
+        elif self.transcript_delta:
+            transcript = (transcript or '') + self.transcript_delta
+        audio = part.audio
+        if self.audio_chunk and audio is not None:
+            audio = replace(audio, data=audio.data + self.audio_chunk)
+        return replace(part, transcript=transcript, audio=audio)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 ModelResponsePartDelta = Annotated[
-    TextPartDelta | ThinkingPartDelta | ToolCallPartDelta, pydantic.Discriminator('part_delta_kind')
+    TextPartDelta | ThinkingPartDelta | ToolCallPartDelta | SpeechPartDelta,
+    pydantic.Discriminator('part_delta_kind'),
 ]
 """A partial update (delta) for any model response part."""
 
@@ -3527,7 +3757,16 @@ class PartStartEvent:
     """The newly started `ModelResponsePart`."""
 
     previous_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'compaction',
+            'file',
+            'speech',
+        ]
         | None
     ) = None
     """The kind of the previous part, if any.
@@ -3568,7 +3807,16 @@ class PartEndEvent:
     """The complete `ModelResponsePart`."""
 
     next_part_kind: (
-        Literal['text', 'thinking', 'tool-call', 'builtin-tool-call', 'builtin-tool-return', 'compaction', 'file']
+        Literal[
+            'text',
+            'thinking',
+            'tool-call',
+            'builtin-tool-call',
+            'builtin-tool-return',
+            'compaction',
+            'file',
+            'speech',
+        ]
         | None
     ) = None
     """The kind of the next part, if any.
@@ -3787,6 +4035,168 @@ class DeferredToolResultsEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False)
+class RealtimeTurnCompleteEvent:
+    """The exchange is over: the model has finished replying and nothing is outstanding.
+
+    This is the event to stop consuming on. It is synthesized by the session once no tool calls are
+    still running and no further response is in flight.
+    """
+
+    _: KW_ONLY
+
+    event_kind: Literal['realtime_turn_complete'] = 'realtime_turn_complete'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RealtimeInputSpeechStartEvent:
+    """The provider detected that the user started speaking.
+
+    Useful for barge-in: stop playing any buffered model audio when this arrives, since the model's
+    in-progress turn is being interrupted.
+
+    Reported by OpenAI, Azure OpenAI, and xAI. Gemini Live does not report speech onset.
+    """
+
+    _: KW_ONLY
+
+    item_id: str | None = None
+    """Provider id of the user input item this speech segment belongs to, when reported."""
+
+    event_kind: Literal['realtime_input_speech_start'] = 'realtime_input_speech_start'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RealtimeResponseInterruptedEvent:
+    """The provider cut the model's in-progress response short.
+
+    Arrives as soon as the provider interrupts, ahead of its response terminal, so it's the point at
+    which to flush buffered model audio.
+
+    Reported by Gemini Live, which interrupts server-side when it hears the user speak. The other
+    providers report the user's speech onset as
+    [`RealtimeInputSpeechStartEvent`][pydantic_ai.realtime.RealtimeInputSpeechStartEvent] and leave the cancellation
+    to [`interrupt`][pydantic_ai.realtime.RealtimeSession.interrupt], so they never report this.
+    """
+
+    _: KW_ONLY
+
+    event_kind: Literal['realtime_response_interrupted'] = 'realtime_response_interrupted'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RealtimeInputSpeechEndEvent:
+    """The provider detected that the user stopped speaking.
+
+    Useful as a 'processing' indicator: the user's turn has ended and the model is about to respond.
+    """
+
+    _: KW_ONLY
+
+    item_id: str | None = None
+    """Provider id of the user input item this speech segment belongs to, when reported.
+
+    Used to attach retained input audio (`audio_retention='input_audio'`/`'all'`) to the right user turn
+    when turns overlap, since transcripts for different items can finalize out of order.
+    """
+
+    event_kind: Literal['realtime_input_speech_end'] = 'realtime_input_speech_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RealtimeInputTranscriptionErrorEvent:
+    """The provider failed to transcribe a user audio input turn, but the session continues.
+
+    This is recoverable; `item_id` and `content_index` locate the affected user turn.
+    """
+
+    message: str
+    """Human-readable error message."""
+
+    _: KW_ONLY
+
+    type: str | None = None
+    """Provider error category, if any."""
+    code: str | None = None
+    """Provider error code, if any."""
+    item_id: str | None = None
+    """Provider conversation-item ID for the affected user turn, when available."""
+    content_index: int | None = None
+    """Content index within the affected user turn, when available."""
+
+    event_kind: Literal['realtime_input_transcription_error'] = 'realtime_input_transcription_error'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RealtimeSessionReconnectEvent:
+    """The connection dropped and was automatically re-established; inspect `state_restored` for continuity.
+
+    Session configuration (instructions, tools, voice, ...) is restored on every reconnect.
+    Conversation state is restored either by the provider's native session resumption (Gemini Live
+    when enabled, xAI Grok Voice) or by the session replaying its local history into the fresh
+    server-side conversation (OpenAI/Azure OpenAI).
+    """
+
+    _: KW_ONLY
+
+    state_restored: bool = False
+    """Whether the reconnect carried the conversation through without cutting a turn off, regardless of
+    mechanism — native provider resumption or a local-history replay.
+
+    `True` means nothing in flight was lost: the provider either resumed the in-flight response itself
+    (Gemini Live, xAI Grok Voice) or there was no turn in progress when the connection dropped.
+
+    `False` means a turn the drop interrupted was settled before continuing — its partial reply is
+    recorded as an interrupted response and any running tool calls as cancelled returns — so
+    [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] stays a coherent history.
+    Finalized turns from before the drop survive where the provider restores them (the OpenAI/Azure
+    OpenAI local replay) and are lost where it does not; either way, treat the interrupted turn as over
+    and expect the model to stay quiet until the next input.
+    """
+
+    event_kind: Literal['realtime_session_reconnect'] = 'realtime_session_reconnect'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class RealtimeSessionErrorEvent:
+    """A provider-reported error occurred in the session."""
+
+    message: str
+    """Human-readable error message."""
+
+    _: KW_ONLY
+
+    type: str | None = None
+    """Provider error category, e.g. `invalid_request_error` or `server_error`."""
+    code: str | None = None
+    """Provider error code, if any."""
+    recoverable: bool = True
+    """Whether the session can continue. A protocol `error` is recoverable; a dropped connection is not."""
+
+    event_kind: Literal['realtime_session_error'] = 'realtime_session_error'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 HandleResponseEvent = Annotated[
     FunctionToolCallEvent
     | FunctionToolResultEvent
@@ -3799,7 +4209,20 @@ HandleResponseEvent = Annotated[
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""
 
-AgentStreamEvent = Annotated[
-    ModelResponseStreamEvent | EnqueuedMessagesEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')
+RealtimeSessionEvent = Annotated[
+    RealtimeTurnCompleteEvent
+    | RealtimeInputSpeechStartEvent
+    | RealtimeInputSpeechEndEvent
+    | RealtimeResponseInterruptedEvent
+    | RealtimeInputTranscriptionErrorEvent
+    | RealtimeSessionReconnectEvent
+    | RealtimeSessionErrorEvent,
+    pydantic.Discriminator('event_kind'),
 ]
-"""An event in the agent stream: model response stream events, enqueued-message delivery events, and response-handling events."""
+"""An event that occurs only in realtime session streams."""
+
+AgentStreamEvent = Annotated[
+    ModelResponseStreamEvent | EnqueuedMessagesEvent | HandleResponseEvent | RealtimeSessionEvent,
+    pydantic.Discriminator('event_kind'),
+]
+"""An event in an agent run or realtime session stream."""

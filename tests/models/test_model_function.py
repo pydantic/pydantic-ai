@@ -15,13 +15,20 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RunContext,
+    SpeechPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+    _estimate_usage,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import RunUsage
 from pydantic_ai.usage import RequestUsage
@@ -522,6 +529,11 @@ async def test_stream_text():
             ]
         )
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=50, output_tokens=2))
+
+
+async def test_speech_response_estimates_transcript_tokens() -> None:
+    response = ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='hello spoken world')])
+    assert _estimate_usage([response]) == RequestUsage(input_tokens=50, output_tokens=3)
 
 
 class Foo(BaseModel):
