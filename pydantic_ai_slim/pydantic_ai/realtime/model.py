@@ -71,8 +71,12 @@ class RealtimeClientSecret:
     _: KW_ONLY
     expires_at: datetime
     """When the secret expires (timezone-aware UTC)."""
-    provider_details: dict[str, Any] | None = None
-    """Raw provider fields returned alongside the secret (e.g. the resolved `session` object)."""
+    provider_details: dict[str, Any] | None = field(default=None, repr=False)
+    """Raw provider fields returned alongside the secret (e.g. the resolved `session` object).
+
+    Kept out of the `repr` alongside `value`: the resolved `session` carries the instructions and tool
+    definitions, so a logged `repr` would otherwise expose them. Access the field explicitly to read it.
+    """
 
 
 class RealtimeProviderSession(Protocol):

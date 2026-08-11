@@ -389,9 +389,16 @@ async def test_signaling_http_error_preserves_retry_after() -> None:
 
 
 def test_client_secret_value_absent_from_repr() -> None:
-    # The live ephemeral token must not leak into logs via the dataclass repr.
-    secret = RealtimeClientSecret(value='ek_live_secret', expires_at=datetime.now(timezone.utc))
-    assert 'ek_live_secret' not in repr(secret)
+    # Neither the live token nor the resolved session config (instructions/tools carried in
+    # `provider_details`) must leak into logs via the dataclass repr.
+    secret = RealtimeClientSecret(
+        value='ek_live_secret',
+        expires_at=datetime.now(timezone.utc),
+        provider_details={'session': {'instructions': 'secret system prompt'}},
+    )
+    rendered = repr(secret)
+    assert 'ek_live_secret' not in rendered
+    assert 'secret system prompt' not in rendered
 
 
 # --- WebRTC offer relay -----------------------------------------------------------------------------
