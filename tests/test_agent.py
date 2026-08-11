@@ -10251,23 +10251,26 @@ def test_toolsets():
 
 
 class _DescriptionAgent(AbstractAgent[None, str]):
-    """Concrete stub used to exercise `AbstractAgent.render_description`."""
+    """Minimal concrete `AbstractAgent` for pinning the `render_description` default.
+
+    Only `description` behaves; every member the test doesn't touch raises instead of
+    simulating behavior.
+    """
 
     def __init__(self) -> None:
-        self._name: str | None = None
         self._description: str | None = None
 
     @property
     def model(self) -> Model | str | None:
-        return None
+        raise NotImplementedError  # pragma: no cover
 
     @property
     def name(self) -> str | None:
-        return self._name
+        raise NotImplementedError  # pragma: no cover
 
     @name.setter
     def name(self, value: str | None) -> None:
-        self._name = value
+        raise NotImplementedError  # pragma: no cover
 
     @property
     def description(self) -> str | None:
@@ -10279,31 +10282,39 @@ class _DescriptionAgent(AbstractAgent[None, str]):
 
     @property
     def deps_type(self) -> type:
-        return type(None)
+        raise NotImplementedError  # pragma: no cover
 
     @property
     def output_type(self) -> type[str]:
-        return str
+        raise NotImplementedError  # pragma: no cover
 
     @property
     def event_stream_handler(self) -> None:
-        return None
+        raise NotImplementedError  # pragma: no cover
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[None]]:
-        return ()
+        raise NotImplementedError  # pragma: no cover
 
     def iter(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover
 
     def override(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError
+        raise NotImplementedError  # pragma: no cover
 
     async def __aenter__(self) -> Any:
-        return self
+        raise NotImplementedError  # pragma: no cover
 
     async def __aexit__(self, *args: Any) -> None:
-        pass
+        raise NotImplementedError  # pragma: no cover
+
+
+def test_abstract_agent_render_description_default():
+    """`AbstractAgent.render_description` defaults to returning `description` unchanged."""
+    stub = _DescriptionAgent()
+    assert stub.render_description() is None
+    stub.description = 'plain description'
+    assert stub.render_description() == 'plain description'
 
 
 async def test_wrapper_agent():
@@ -10334,19 +10345,6 @@ async def test_wrapper_agent():
     # delegates rendering.
     assert agent.render_description() == 'wrapped description'
     assert wrapper_agent.render_description() == 'wrapped description'
-    default_agent = _DescriptionAgent()
-    default_agent.description = 'wrapped description'
-    assert default_agent.render_description() == 'wrapped description'
-    # Exercise the stub's full abstract surface so its conformance is real, not dead code.
-    assert default_agent.model is None
-    default_agent.name = 'stub'
-    assert default_agent.name == 'stub'
-    assert default_agent.deps_type is type(None)
-    assert default_agent.output_type is str
-    assert default_agent.event_stream_handler is None
-    assert default_agent.toolsets == ()
-    async with default_agent:
-        pass
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
     assert wrapper_agent.root_capability is agent.root_capability

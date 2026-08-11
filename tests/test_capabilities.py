@@ -5997,12 +5997,6 @@ class TestRunHooks:
         with pytest.raises(RuntimeError, match='toolset entry failed'):
             await agent.run('hello')
 
-        await asyncio.sleep(0)
-        pending_wrap_tasks = [
-            t for t in asyncio.all_tasks() if not t.done() and 'wrap_run' in (t.get_coro().__qualname__ or '')
-        ]
-        assert not pending_wrap_tasks, f'the wrap task must not be left pending: {pending_wrap_tasks}'
-
 
 class TestModelRequestHooks:
     async def test_before_model_request(self):

@@ -84,18 +84,19 @@ class _Fs:
 
 
 class _WaitOnlyProcess:
+    # Conformance-only test double: never called.
     pid = None
 
     async def wait(self) -> SandboxResult:
-        return FakeSandboxResult(exit_code=0, stdout='', stderr='')
+        raise NotImplementedError  # pragma: no cover
 
     async def kill(self) -> None:
-        pass
+        raise NotImplementedError  # pragma: no cover
 
 
 class _StreamingProcess(_WaitOnlyProcess):
     def stream(self) -> AsyncIterator[SandboxOutputChunk]:
-        raise AssertionError('conformance-only test double')
+        raise NotImplementedError  # pragma: no cover
 
 
 async def test_stream_support_is_separate_from_process_protocol():
@@ -103,9 +104,6 @@ async def test_stream_support_is_separate_from_process_protocol():
     streaming: SupportsStream = _StreamingProcess()
     assert not isinstance(wait_only, SupportsStream)
     assert isinstance(streaming, SupportsStream)
-    assert (await wait_only.wait()).exit_code == 0
-    with pytest.raises(AssertionError, match='conformance-only'):
-        streaming.stream()
 
 
 _SED_WINDOW_EXPR = re.compile(r'^(\d+),(\d+)p$')
@@ -418,27 +416,6 @@ async def test_read_file_on_unavailable_sandbox_surfaces_reason():
         await sandbox.read_file('/file', limit=3)
 
 
-async def test_capability_serving_existing_facade_is_passed_through_unchanged():
-    """Pins the documented `get_sandbox` contract: serving an existing `Sandbox` facade
-    passes it through unchanged. A facade conforms to `SandboxBackend` structurally, so the
-    backend-first classification treats it as warm/caller-owned, and `Sandbox.wrap` returns
-    it as-is instead of double-wrapping — `ctx.sandbox` is the very same object the
-    capability served.
-    """
-    facade = Sandbox.wrap(FakeSandbox('warm'))
-
-    @dataclass
-    class ServeFacade(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: RunPreparationContext[Any]) -> SandboxBackend:
-            return facade
-
-    seen: list[Sandbox] = []
-    agent = make_identity_probe_agent(seen, capabilities=[ServeFacade()])
-    await agent.run('go')
-
-    assert seen == [facade]
-
-
 async def test_read_file_shell_and_full_paths_have_window_parity():
     content = b'one\r\ntwo\r\nthree\nfour\r\nfive'
     shell_backend = FakeSandbox('shell')
@@ -727,10 +704,25 @@ async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection(
             sandbox.working_dir(),
             sandbox.fs.exists('/workspace/missing'),
         )
+        assert [result.stdout for result in run_results[:2]] == ["ran:['one']", "ran:['two']"]
         assert run_results[2:] == ['/workspace', False]
         assert sandbox.backend is backend
+        return 'ok'
 
-        # The pre-connection adapter keeps delegating after the connection is made.
+    result = await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-deferred'))
+    assert result.output == 'done'
+    assert len(observed) == 1
+    assert provider.calls == ['fake-deferred']
+
+
+async def test_deferred_filesystem_adapter_delegates_after_connection():
+    """The `fs` adapter handed out before the ref connects keeps working afterwards."""
+    provider = FakeSandboxProvider(FakeSandbox('deferred'))
+    agent: Agent = Agent(_tool_call_then_text(), capabilities=[SandboxProviderCapability([provider])])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        deferred_fs = ctx.sandbox.fs  # handed out before anything has connected
         await deferred_fs.make_dir('/workspace/dir')
         await deferred_fs.write_bytes('/workspace/notes.txt', b'data')
         assert await deferred_fs.read_bytes('/workspace/notes.txt') == b'data'
@@ -742,7 +734,6 @@ async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection(
 
     result = await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-deferred'))
     assert result.output == 'done'
-    assert len(observed) == 1
     assert provider.calls == ['fake-deferred']
 
 
@@ -790,20 +781,27 @@ async def test_sandbox_ref_wins_over_sandbox_supplier():
     assert supplier.events == []
 
 
-def test_sandbox_providers_compose_and_latest_duplicate_wins():
+async def test_sandbox_providers_compose_and_latest_duplicate_wins():
     first = FakeSandboxProvider(FakeSandbox('first'))
     other = FakeSandboxProvider(FakeSandbox('other'), provider_name='other')
     last = FakeSandboxProvider(FakeSandbox('last'))
-    combined = CombinedCapability(
-        [
-            SandboxProviderCapability([first]),
-            WrapperCapability(wrapped=SandboxProviderCapability([other, last])),
-        ]
-    )
-    providers = combined.get_sandbox_providers()
-    assert providers == [first, other, last]
-    assert {provider.provider: provider for provider in providers} == {'fake': last, 'other': other}
-    assert contributes_sandbox(combined) is False
+    capabilities = [
+        SandboxProviderCapability([first]),
+        WrapperCapability(wrapped=SandboxProviderCapability([other, last])),
+    ]
+    assert CombinedCapability(capabilities).get_sandbox_providers() == [first, other, last]
+
+    # `first` and `last` share the 'fake' provider name; resolving a ref must use `last`.
+    seen: list[str] = []
+    agent = make_connecting_probe_agent(seen, capabilities=capabilities)
+    await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-1'))
+    assert seen == ['last']
+    assert first.calls == []
+    assert last.calls == ['fake-1']
+
+
+def test_contributes_sandbox_detection():
+    assert contributes_sandbox(SandboxProviderCapability([])) is False  # providers alone supply nothing
     assert contributes_sandbox(WrapperCapability(wrapped=SandboxCapability())) is True
     assert contributes_sandbox(SandboxCapability(id='deferred-sandbox', defer_loading=True)) is False
     assert contributes_sandbox(CombinedCapability([SandboxCapability(), SandboxProviderCapability([])])) is True
@@ -1014,10 +1012,25 @@ async def test_context_manager_shaped_backend_returned_bare_stays_warm():
     assert (warm.enters, warm.exits) == (1, 1)
 
 
+async def test_capability_serving_existing_facade_is_passed_through_unchanged():
+    """A capability's `get_sandbox` may serve an existing `Sandbox` facade; the run passes it
+    through unchanged, so `ctx.sandbox` is the very object the capability served."""
+    facade = Sandbox.wrap(FakeSandbox('warm'))
+
+    @dataclass
+    class ServeFacade(AbstractCapability[Any]):
+        def get_sandbox(self, ctx: RunPreparationContext[Any]) -> SandboxBackend:
+            return facade
+
+    seen: list[Sandbox] = []
+    agent = make_identity_probe_agent(seen, capabilities=[ServeFacade()])
+    await agent.run('go')
+
+    assert seen == [facade]
+
+
 async def test_deferred_capability_never_contributes():
-    cap = SandboxCapability(name='deferred')
-    cap.id = 'deferred-sandbox'
-    cap.defer_loading = True
+    cap = SandboxCapability(name='deferred', id='deferred-sandbox', defer_loading=True)
     seen: list[str] = []
     await make_probe_agent(seen, capabilities=[cap]).run('go')
     assert len(seen) == 1

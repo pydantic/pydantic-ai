@@ -2968,7 +2968,7 @@ async def test_temporal_agent_run_in_workflow_with_executing_toolsets(allow_mode
 class SimpleAgentWorkflowWithRunSandbox:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        result = await simple_temporal_agent.run(prompt, sandbox=cast(SandboxBackend, FakeSandboxHandle()))
+        result = await simple_temporal_agent.run(prompt, sandbox=FakeSandboxHandle())
         return result.output  # pragma: no cover
 
 
@@ -4561,7 +4561,7 @@ def test_temporal_run_context_omits_live_backend_identity():
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        sandbox=Sandbox(cast(SandboxBackend, FakeSandboxHandle('live'))),
+        sandbox=Sandbox(FakeSandboxHandle('live')),
     )
     serialized = TemporalRunContext.serialize_run_context(ctx)
     assert '_sandbox_state' not in serialized
@@ -7103,8 +7103,7 @@ async def test_temporal_durability_suppresses_default_sandbox_in_workflow(client
 
 
 async def test_temporal_durability_reconnects_sandbox_ref_inside_activity(client: Client):
-    _temporal_sandbox_provider.sandbox_ids.clear()
-    _temporal_sandbox_provider.backends.clear()
+    _temporal_sandbox_provider.reset()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -7124,7 +7123,7 @@ async def test_temporal_durability_reconnects_sandbox_ref_inside_activity(client
 
 class SandboxContributingTemporalDurability(TemporalDurability[Any]):
     def get_sandbox(self, ctx: RunPreparationContext[Any]) -> SandboxBackend:
-        return cast(SandboxBackend, FakeSandboxHandle())  # pragma: no cover
+        return FakeSandboxHandle()  # pragma: no cover
 
 
 def test_temporal_durability_base_sandbox_suppressor_is_not_a_user_supplier():
@@ -7239,6 +7238,7 @@ async def test_temporal_durability_manages_the_sandbox_lifecycle_in_activities(c
     the environment through `connect` — the ordering assertion is what proves creation happened
     exactly once, outside the workflow, before any tool ran.
     """
+    _managed_sandbox_provider.reset()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -7259,6 +7259,7 @@ async def test_temporal_durability_manages_the_sandbox_lifecycle_in_activities(c
 
 
 async def test_temporal_durability_tears_down_the_managed_sandbox_when_a_tool_fails(client: Client):
+    _failing_managed_sandbox_provider.reset()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -7278,6 +7279,7 @@ async def test_temporal_durability_tears_down_the_managed_sandbox_when_a_tool_fa
 
 async def test_temporal_durability_managed_sandbox_without_teardown_succeeds(client: Client):
     """The inherited no-op `teardown` runs as an activity like any other and leaves the run alone."""
+    _teardownless_sandbox_provider.reset()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -7297,6 +7299,7 @@ async def test_temporal_durability_managed_sandbox_without_teardown_succeeds(cli
 
 async def test_temporal_durability_logs_a_failed_managed_sandbox_teardown(client: Client):
     """A failed teardown must not fail an otherwise-finished run; the idle timeout is the backstop."""
+    _unteardownable_sandbox_provider.reset()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -7317,6 +7320,7 @@ async def test_temporal_durability_logs_a_failed_managed_sandbox_teardown(client
 
 
 async def test_temporal_durability_managed_sandbox_without_create_fails_the_run(client: Client):
+    _uncreatable_sandbox_provider.reset()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,

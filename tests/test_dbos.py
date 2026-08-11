@@ -1314,7 +1314,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
 
 class SandboxContributingDBOSDurability(DBOSDurability[Any]):
     def get_sandbox(self, ctx: RunPreparationContext[Any]) -> SandboxBackend:
-        return cast(SandboxBackend, FakeSandboxHandle())  # pragma: no cover
+        return FakeSandboxHandle()  # pragma: no cover
 
 
 _SANDBOX_REJECTION_MESSAGE = (
@@ -1332,7 +1332,7 @@ _DBOS_UNAVAILABLE_SANDBOX_MESSAGE = (
 async def test_dbos_agent_run_rejects_sandbox(dbos: DBOS, run_method: Literal['run', 'run_sync']):
     # Rejected before the wrapped workflow is entered, i.e. before its arguments are pickled.
     with pytest.raises(UserError, match=re.escape(_SANDBOX_REJECTION_MESSAGE)):
-        sandbox = cast(SandboxBackend, FakeSandboxHandle())
+        sandbox = FakeSandboxHandle()
         if run_method == 'run':
             await simple_dbos_agent.run('Hello', sandbox=sandbox)
         else:
@@ -1424,7 +1424,7 @@ async def test_dbos_durability_rejects_live_sandbox_inside_durable_run(dbos: DBO
 
     @DBOS.workflow(name='test_dbos_durability_rejects_live_sandbox')
     async def run_durable_agent() -> str:
-        return (await agent.run('Hello', sandbox=cast(SandboxBackend, FakeSandboxHandle()))).output
+        return (await agent.run('Hello', sandbox=FakeSandboxHandle())).output
 
     with workflow_raises(UserError, _DBOS_DURABILITY_LIVE_SANDBOX_MESSAGE):
         await run_durable_agent()

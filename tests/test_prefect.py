@@ -1852,7 +1852,7 @@ def _ctx_with_sandbox(sandbox_id: str | None) -> RunContext[None]:
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        sandbox=Sandbox(cast(SandboxBackend, FakeSandboxHandle(sandbox_id))),
+        sandbox=Sandbox(FakeSandboxHandle(sandbox_id)),
     )
 
 
@@ -1927,7 +1927,7 @@ async def test_cache_policy_includes_deferred_sandbox_identity_without_connectin
 
 
 async def test_prefect_flow_forwards_sandbox_to_tools():
-    backend = cast(SandboxBackend, FakeSandboxHandle('flow-sandbox'))
+    backend = FakeSandboxHandle('flow-sandbox')
     seen: list[Sandbox] = []
 
     def call_tool_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

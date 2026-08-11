@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from pydantic_ai import RunPreparationContext
 from pydantic_ai.capabilities import AbstractCapability
@@ -20,12 +20,27 @@ class FakeSandboxResult:
 
 
 class FakeSandboxHandle:
-    """Minimal sandbox identity for paths that do not touch backend operations."""
+    """Sandbox identity for paths that must never execute operations: doing so fails loudly."""
 
     provider = 'fake'
 
     def __init__(self, sandbox_id: str = 'fake-sandbox') -> None:
         self.sandbox_id = sandbox_id
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+        output_limit: int | None = None,
+    ) -> FakeSandboxResult:
+        raise AssertionError('FakeSandboxHandle must not execute commands')  # pragma: no cover
+
+    async def working_dir(self) -> str:
+        raise AssertionError('FakeSandboxHandle must not execute operations')  # pragma: no cover
 
 
 class RecordingSandboxBackend:
@@ -57,6 +72,11 @@ class RecordingSandboxProvider(SandboxProvider):
         self.sandbox_ids: list[str] = []
         self.backends: list[RecordingSandboxBackend] = []
 
+    def reset(self) -> None:
+        """Restore pristine state, so module-level providers can be shared across tests."""
+        self.sandbox_ids.clear()
+        self.backends.clear()
+
     @property
     def provider(self) -> str:
         return 'fake'
@@ -78,6 +98,12 @@ class CreateOnlySandboxProvider(SandboxProvider):
     def __init__(self) -> None:
         self.events: list[str] = []
         self.backends: list[RecordingSandboxBackend] = []
+        self._created = 0
+
+    def reset(self) -> None:
+        """Restore pristine state, so module-level providers can be shared across tests."""
+        self.events.clear()
+        self.backends.clear()
         self._created = 0
 
     @property
@@ -117,4 +143,4 @@ class SandboxContributingCapability(AbstractCapability[Any]):
     """Capability whose sandbox contribution is rejected before the handle is used."""
 
     def get_sandbox(self, ctx: RunPreparationContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
-        return nullcontext(cast(SandboxBackend, FakeSandboxHandle()))  # pragma: no cover
+        return nullcontext(FakeSandboxHandle())  # pragma: no cover
