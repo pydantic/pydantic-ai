@@ -2,9 +2,10 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import warnings
+from collections.abc import Mapping
 from copy import copy
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from functools import cache
 from typing import Annotated, Any, cast
 
@@ -132,6 +133,9 @@ class UsageBase:
 
     Calculated with [genai-prices](https://github.com/pydantic/genai-prices). `None` (rather than zero) when the
     model or provider can't be priced, so "unknown" stays distinguishable from a genuine zero cost.
+
+    Requests made through the Pydantic AI Gateway use the cost the gateway itself reported for the
+    request, which takes precedence over the genai-prices estimate.
     """
 
     def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
@@ -324,14 +328,19 @@ class RequestUsage(UsageBase):
             details: Becomes the `details` field on the returned `RequestUsage` for convenience.
         """
         details = details or {}
+        cost = _gateway_reported_cost(data)
         for provider_id, provider_api_url in [(None, provider_url), (provider, None), (provider_fallback, None)]:
             try:
                 provider_obj = get_snapshot().find_provider(None, provider_id, provider_api_url)
                 _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)
-                return cls(**{k: v for k, v in extracted_usage.__dict__.items() if v is not None}, details=details)
+                return cls(
+                    **{k: v for k, v in extracted_usage.__dict__.items() if v is not None},
+                    details=details,
+                    cost=cost,
+                )
             except Exception:
                 pass
-        return cls(details=details)
+        return cls(details=details, cost=cost)
 
 
 @dataclass(repr=False, init=False, eq=False)
@@ -388,6 +397,30 @@ class RunUsage(UsageBase):
         new_usage = copy(self)
         new_usage.incr(other)
         return new_usage
+
+
+def _gateway_reported_cost(data: Any) -> Decimal | None:
+    """Cost the Pydantic AI Gateway injected into the response usage, if any.
+
+    The gateway adds `usage.pydantic_ai_gateway = {'cost_estimate': ...}` (a decimal string, or a
+    JSON number from older gateway versions) to non-streaming responses. A reported cost lands on
+    `RequestUsage.cost` at extraction time and wins over the genai-prices estimate, which
+    `fill_response_cost` only computes when `cost` is still unset.
+    """
+    usage_data = cast('Mapping[str, Any]', data).get('usage') if isinstance(data, Mapping) else None
+    if not isinstance(usage_data, Mapping):
+        return None
+    gateway_usage = cast('Mapping[str, Any]', usage_data).get('pydantic_ai_gateway')
+    if not isinstance(gateway_usage, Mapping):
+        return None
+    cost_estimate: Any = cast('Mapping[str, Any]', gateway_usage).get('cost_estimate')
+    if not isinstance(cost_estimate, (str, int, float)) or isinstance(cost_estimate, bool):
+        return None
+    try:
+        cost = Decimal(str(cost_estimate))
+    except InvalidOperation:
+        return None
+    return cost if cost.is_finite() and cost >= 0 else None
 
 
 def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:

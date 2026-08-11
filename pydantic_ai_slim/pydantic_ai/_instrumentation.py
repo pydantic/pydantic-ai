@@ -466,13 +466,16 @@ def open_model_request_span(
 
                 # Compute cost before the `is_recording()` gate so `_record_metrics`
                 # always emits cost data, even when the span is dropped by sampling.
-                price_calculation = best_effort_price(
-                    response.usage,
-                    model_name=response.model_name,
-                    provider_api_url=response.provider_url,
-                    provider_name=response.provider_name,
-                    genai_request_timestamp=response.timestamp,
-                )
+                # A cost already on the usage (e.g. reported by the Pydantic AI Gateway) wins
+                # over the genai-prices estimate, mirroring `fill_response_cost`.
+                if response.usage.cost is None:
+                    price_calculation = best_effort_price(
+                        response.usage,
+                        model_name=response.model_name,
+                        provider_api_url=response.provider_url,
+                        provider_name=response.provider_name,
+                        genai_request_timestamp=response.timestamp,
+                    )
 
                 if not span.is_recording():
                     return
@@ -489,8 +492,11 @@ def open_model_request_span(
                     **response.usage.opentelemetry_attributes(),
                     'gen_ai.response.model': response_model,
                 }
-                if price_calculation is not None:
-                    attributes_to_set['operation.cost'] = float(price_calculation.total_price)
+                cost = response.usage.cost
+                if cost is None and price_calculation is not None:
+                    cost = price_calculation.total_price
+                if cost is not None:
+                    attributes_to_set['operation.cost'] = float(cost)
                 if response.provider_response_id is not None:
                     attributes_to_set['gen_ai.response.id'] = response.provider_response_id
                 if response.finish_reason is not None:
