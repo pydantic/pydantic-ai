@@ -7,8 +7,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, 
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from datetime import datetime
-from functools import cached_property
+from datetime import datetime, timedelta
 from itertools import count
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast, overload
@@ -631,11 +630,20 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
-    @cached_property
-    def profile(self) -> BedrockModelProfile:
-        # The resolved profile dict may also carry cross-class fields (e.g. `anthropic_*` for Anthropic-on-Bedrock
-        # models) — read those with `cast` or `.get()`, since the narrowed type only exposes `bedrock_*` keys.
-        return cast(BedrockModelProfile, super().profile)
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Resolve the longest retention requested by supported Bedrock cache settings."""
+        settings = merge_model_settings(self.settings, model_settings) or {}
+        return self._max_prompt_cache_retention(
+            settings.get('bedrock_cache_instructions')
+            if self.profile.get('bedrock_supports_prompt_caching', False)
+            else None,
+            settings.get('bedrock_cache_messages')
+            if self.profile.get('bedrock_supports_prompt_caching', False)
+            else None,
+            settings.get('bedrock_cache_tool_definitions')
+            if self.profile.get('bedrock_supports_tool_caching', False)
+            else None,
+        )
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -810,7 +818,7 @@ class BedrockConverseModel(Model[BaseClient]):
         yield BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
-            _model_profile=self.profile,
+            _model_profile=cast(BedrockModelProfile, self.profile),
             _event_stream=response['stream'],
             _provider_name=self._provider.name,
             _provider_url=self.base_url,
@@ -1058,9 +1066,9 @@ class BedrockConverseModel(Model[BaseClient]):
         model_settings: BedrockModelSettings | None,
     ) -> ToolConfigurationTypeDef | None:
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
-        profile = self.profile
+        profile = cast(BedrockModelProfile, self.profile)
         supports = _support_tool_forcing(
             self.model_name, profile, model_settings, model_request_parameters, resolved_tool_choice
         )
