@@ -75,6 +75,9 @@ provider-prefixed equivalents on the generator. The local tool requires exactly 
 [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] remains the native implementation. Pass an
 explicit instance through `native=ImageGenerationTool(...)` when you need its full provider-native configuration.
 
+!!! warning "Durable execution with Temporal"
+    Generated images have to cross Temporal's activity boundary, where the payload size limit leaves roughly 1.5MB for raw image bytes. A larger image fails with a `UserError` — naming the tool when it came from a local generator (the subagent fallback or your own `local=` callable or toolset), or naming the model when the native tool put it on the response. See [Large Payloads](../durable_execution/temporal.md#large-payloads) for the options.
+
 ## Compatibility Fallback
 
 `fallback_model='…'` remains available for applications that delegate to an image-capable conversational subagent. It

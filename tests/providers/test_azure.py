@@ -13,15 +13,19 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
+from pydantic_ai.settings import ModelSettings
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
+from ..models.mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
     from openai import AsyncAzureOpenAI, AsyncOpenAI
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 
 pytestmark = [
@@ -64,6 +68,49 @@ def test_azure_provider_with_azure_openai_client():
     )
     provider = AzureProvider(openai_client=client)
     assert isinstance(provider.client, AsyncAzureOpenAI)
+
+
+def test_azure_provider_api_key_required_when_absent():
+    """`AzureProvider.api_key` raises when no API key is available (e.g. a client built for Entra auth)."""
+    provider = AzureProvider(
+        api_version='2024-12-01-preview',
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_key='1234567890',
+    )
+    provider._api_key = None  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='has no API key'):
+        _ = provider.api_key
+
+
+@pytest.mark.parametrize('auth', ['api-key-provider', 'token', 'token-provider'])
+def test_azure_provider_realtime_rejects_entra_auth(auth: str, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv('AZURE_OPENAI_API_KEY', raising=False)
+
+    async def token_provider() -> str:  # pragma: no cover - the SDK stores it, nothing here calls it
+        return 'token'
+
+    if auth == 'api-key-provider':
+        client = AsyncAzureOpenAI(
+            api_version='2024-12-01-preview',
+            azure_endpoint='https://project-id.openai.azure.com/',
+            api_key=token_provider,
+        )
+    elif auth == 'token':
+        client = AsyncAzureOpenAI(
+            api_version='2024-12-01-preview',
+            azure_endpoint='https://project-id.openai.azure.com/',
+            azure_ad_token='token',
+        )
+    else:
+        client = AsyncAzureOpenAI(
+            api_version='2024-12-01-preview',
+            azure_endpoint='https://project-id.openai.azure.com/',
+            azure_ad_token_provider=token_provider,
+        )
+    provider = AzureProvider(openai_client=client)
+
+    with pytest.raises(UserError, match='has no API key'):
+        _ = provider.api_key
 
 
 def test_azure_provider_with_http_client():
@@ -225,6 +272,31 @@ def test_azure_provider_openai_v1_ga_endpoint():
     assert provider.base_url == 'https://project-id.openai.azure.com/openai/v1/'
 
 
+def test_azure_provider_for_realtime_normalizes_bare_endpoint(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv('OPENAI_API_VERSION', raising=False)
+
+    provider = AzureProvider.for_realtime(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_key='test-key-123',
+    )
+
+    assert type(provider.client) is AsyncOpenAI
+    assert provider.azure_endpoint == 'https://project-id.openai.azure.com/openai/v1'
+    assert provider.base_url == 'https://project-id.openai.azure.com/openai/v1/'
+
+
+def test_azure_provider_for_realtime_preserves_api_version_policy(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('OPENAI_API_VERSION', '2024-10-01')
+
+    provider = AzureProvider.for_realtime(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_key='test-key-123',
+    )
+
+    assert isinstance(provider.client, AsyncAzureOpenAI)
+    assert provider.azure_endpoint == 'https://project-id.openai.azure.com'
+
+
 def test_azure_provider_foundry_serverless_with_openai_model():
     model = OpenAIChatModel(
         model_name='gpt-oss-120b',
@@ -234,3 +306,84 @@ def test_azure_provider_foundry_serverless_with_openai_model():
         ),
     )
     assert type(model.client) is AsyncOpenAI
+
+
+def test_azure_mistral_model_profile_disables_max_completion_tokens():
+    """Reported for Azure AI Foundry's Mistral gateway (see #6593): it rejects
+    `max_completion_tokens` with a 422 and accepts the legacy `max_tokens` field.
+
+    The profile must set `openai_chat_supports_max_completion_tokens=False` so the
+    `max_tokens` setting is sent as the legacy `max_tokens` field instead.
+    """
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_version='2023-03-15-preview',
+        api_key='1234567890',
+    )
+
+    # Mistral-family models must disable max_completion_tokens.
+    mistral_profile = provider.model_profile('mistral-medium-2505')
+    assert mistral_profile is not None
+    assert mistral_profile.get('openai_chat_supports_max_completion_tokens') is False
+
+    mistralai_profile = provider.model_profile('mistralai-Mixtral-8x22B-Instruct-v0-1')
+    assert mistralai_profile is not None
+    assert mistralai_profile.get('openai_chat_supports_max_completion_tokens') is False
+
+    ministral_profile = provider.model_profile('ministral-3b')
+    assert ministral_profile is not None
+    assert ministral_profile.get('openai_chat_supports_max_completion_tokens') is False
+
+    magistral_profile = provider.model_profile('magistral-small-latest')
+    assert magistral_profile is not None
+    assert magistral_profile.get('openai_chat_supports_max_completion_tokens') is False
+
+    # Non-Mistral models must NOT be affected.
+    openai_profile = provider.model_profile('gpt-4o')
+    assert openai_profile is not None
+    # Default is True (or absent, which falls through to True in the model code).
+    assert openai_profile.get('openai_chat_supports_max_completion_tokens', True) is True
+
+    deepseek_profile = provider.model_profile('DeepSeek-R1')
+    assert deepseek_profile is not None
+    assert deepseek_profile.get('openai_chat_supports_max_completion_tokens', True) is True
+
+
+async def test_azure_mistral_sends_max_tokens_not_max_completion_tokens(allow_model_requests: None):
+    """Reported for Azure AI Foundry's Mistral gateway (see #6593): the model must send
+    `max_tokens`, not `max_completion_tokens`.
+    """
+    provider = AzureProvider(
+        azure_endpoint='https://project-id.openai.azure.com/',
+        api_version='2023-03-15-preview',
+        api_key='1234567890',
+    )
+    model = OpenAIChatModel('mistral-medium-2505', provider=provider)
+
+    # Verify the profile has the correct flag set.
+    profile = model.profile
+    assert profile.get('openai_chat_supports_max_completion_tokens') is False
+
+
+@pytest.mark.parametrize('model_name', ['Ministral-3B', 'magistral-small-latest'])
+async def test_azure_mistral_family_sends_max_tokens(allow_model_requests: None, model_name: str):
+    """Wire-level regression: a Mistral-family model with no `mistral` prefix (Ministral,
+    Magistral) must still route the `max_tokens` setting to the legacy `max_tokens` field
+    and omit `max_completion_tokens`. Uses a mock client because VCR matchers ignore the
+    request body. Reported for Azure AI Foundry's Mistral gateway (see #6593).
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+
+    # Resolve the profile exactly as the Azure provider would, then confirm the flag.
+    profile = AzureProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_chat_supports_max_completion_tokens') is False
+
+    model = OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+    agent = Agent(model, model_settings=ModelSettings(max_tokens=100))
+    await agent.run('Hello')
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['max_tokens'] == 100
+    assert 'max_completion_tokens' not in kwargs

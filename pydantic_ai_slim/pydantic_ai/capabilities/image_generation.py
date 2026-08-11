@@ -474,7 +474,12 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         async def _warn_when_native_supersedes_direct(
             ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
         ) -> list[ToolDefinition]:
-            if ImageGenerationTool in ctx.model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
+            # `ctx.model` is an `AbstractModel`, and only a regular `Model` carries the profile that
+            # says whether the native tool supersedes the generator.
+            model = ctx.model
+            if isinstance(model, Model) and ImageGenerationTool in model.profile.get(
+                'supported_native_tools', SUPPORTED_NATIVE_TOOLS
+            ):
                 warnings.warn(
                     f'The `ImageGeneration` native tool supersedes the direct generator on {ctx.model.model_name}, '
                     f'so direct-only setting(s) go unapplied: {", ".join(direct_only)}. '

@@ -99,6 +99,10 @@ To demonstrate how Logfire can let you visualise the flow of a Pydantic AI run, 
 
 {{ video('a764aff5840534dc77eba7d028707bfa', 25) }}
 
+[Realtime (speech-to-speech) sessions](realtime/observability.md) are instrumented by the same
+`logfire.instrument_pydantic_ai()` call: a session appears as an agent run whose child spans mark
+each model response, tool call, and turn boundary as the live conversation unfolds.
+
 ### Monitoring Performance
 
 We can also query data with SQL in Logfire to monitor the performance of an application. Here's a real world example of using Logfire to monitor Pydantic AI runs inside Logfire itself:
@@ -359,6 +363,10 @@ Agent.instrument_all(instrumentation_settings)
 ```
 
 ### Excluding binary content
+
+When `include_binary_content=False` is set, binary file data (images, audio, documents) is excluded from telemetry: from user prompts and model responses, from tool returns, from the agent's own output and the arguments its output function receives, and from run and tool deferral metadata. The media type is still recorded everywhere; where the value is recorded as the file itself rather than as a message part, so are its vendor metadata and its identifier, which is derived from the content when you don't set one.
+
+Binary content is found inside dictionaries, lists and [`ToolReturn`][pydantic_ai.messages.ToolReturn]s, but not inside your own types: a [`BinaryContent`][pydantic_ai.messages.BinaryContent] held as a field of a model or dataclass you define is still recorded in full.
 
 ```python {title="excluding_binary_content.py"}
 from pydantic_ai import Agent, InstrumentationSettings

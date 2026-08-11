@@ -30,6 +30,8 @@ graph RL
 
 ::: pydantic_ai.messages.ToolAvailabilityDeltaPart
 
+::: pydantic_ai.messages.ToolAvailabilityDeltaEvent
+
 ::: pydantic_ai.messages.NativeToolSearchCallPart
 
 ::: pydantic_ai.messages.NativeToolSearchReturnPart
