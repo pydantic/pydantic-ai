@@ -544,7 +544,10 @@ async def test_post_chat_streams_tool_approval(allow_model_requests: None, sdk_v
 def test_chat_app_options_endpoint():
     """Test the OPTIONS /api/chat endpoint (CORS preflight).
 
-    Pins the headers the standalone app returns, which were previously unasserted.
+    The absence of `Access-Control-Allow-*` is the load-bearing half of the CSRF defence: it is what
+    makes a browser reject the preflight that `Content-Type: application/json` forces. Pinned here
+    so mounting a permissive `CORSMiddleware` on this app can't silently re-open cross-origin
+    access to the chat endpoint.
     """
     agent = Agent('test')
     app = create_web_app(agent)
@@ -558,20 +561,21 @@ def test_chat_app_options_endpoint():
 @pytest.mark.parametrize(
     'content_type',
     [
-        # Media types that can carry a JSON body without declaring it as JSON.
+        # The three CORS-safelisted content types: a browser can send each of these cross-origin
+        # with no preflight, and each can carry a raw JSON body from a page the developer visits.
         pytest.param('text/plain', id='text-plain'),
         pytest.param('multipart/form-data; boundary=x', id='multipart-form-data'),
         pytest.param('application/x-www-form-urlencoded', id='form-urlencoded'),
-        # A request can also omit the content type entirely.
+        # `fetch()` with a `Blob` that has no type sends no content type at all.
         pytest.param(None, id='no-content-type'),
     ],
 )
 def test_chat_rejects_non_json_content_type(content_type: str | None, monkeypatch: pytest.MonkeyPatch):
-    """The chat endpoint turns away request bodies that aren't declared as JSON.
+    """A cross-origin-forgeable request is rejected before the agent runs.
 
-    Asserting the status alone would be too weak: the contract is that a request the endpoint won't
-    accept costs nothing to reject, so this pins that the adapter is never built — which is what
-    puts the check ahead of both reading the body and starting a run.
+    Asserting the status alone would be too weak: an attacker never needs to read the response, so
+    what matters is that nothing runs. This pins that the adapter is never built, which puts the
+    check ahead of both reading the body and starting a run.
 
     This is a unit test rather than a VCR one because the check runs before any model request, so
     there is no HTTP traffic to record.
