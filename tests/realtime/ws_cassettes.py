@@ -22,6 +22,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import json
+import os
 import re
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
@@ -59,8 +60,29 @@ _OPENAI_AUDIO_DELTA_TYPES = frozenset({'response.output_audio.delta', 'response.
 
 # Value patterns that must never land in a cassette (API keys / bearer tokens). Belt-and-braces:
 # keys travel in connection headers / the URL, not in frames, but a provider could echo one back.
-_SECRET_RE = re.compile(r'(sk-[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,}|Bearer\s+\S+)')
+_SECRET_RE = re.compile(
+    r'(sk-[A-Za-z0-9_\-]{8,}|ek_[A-Za-z0-9_\-]{8,}|AIza[A-Za-z0-9_\-]{10,}|xai-[A-Za-z0-9_\-]{8,}|Bearer\s+\S+)'
+)
 _SECRET_PLACEHOLDER = '<scrubbed>'
+
+# The credential values actually configured for a recording session. Azure keys are opaque strings
+# with no recognizable prefix, so pattern matching can't catch them: any exact occurrence of a
+# configured value is redacted from every frame instead.
+_SECRET_ENV_VARS = (
+    'OPENAI_API_KEY',
+    'AZURE_OPENAI_API_KEY',
+    'AZURE_VOICELIVE_API_KEY',
+    'GEMINI_API_KEY',
+    'GOOGLE_API_KEY',
+    'XAI_API_KEY',
+)
+
+
+def _configured_secret_values() -> tuple[str, ...]:
+    """The non-trivial credential values currently configured, longest first so prefixes can't shadow."""
+    values = {value for var in _SECRET_ENV_VARS if (value := os.environ.get(var)) and len(value) >= 8}
+    return tuple(sorted(values, key=len, reverse=True))
+
 
 # Frame keys whose values are internal provider backend config, not part of the public wire protocol
 # the session consumes. Providers can echo these back on inbound frames (xAI's `session.updated`
@@ -162,7 +184,10 @@ def realtime_cassette_plan(*, cassette_exists: bool, record_mode: str | None) ->
 def _scrub(value: Any) -> Any:
     """Recursively redact secret-looking strings and internal provider config from a frame."""
     if isinstance(value, str):
-        return _SECRET_RE.sub(_SECRET_PLACEHOLDER, value)
+        value = _SECRET_RE.sub(_SECRET_PLACEHOLDER, value)
+        for secret in _configured_secret_values():
+            value = value.replace(secret, _SECRET_PLACEHOLDER)
+        return value
     if isinstance(value, dict):
         return {
             key: _SECRET_PLACEHOLDER if key in _INTERNAL_CONFIG_KEYS else _scrub(item)

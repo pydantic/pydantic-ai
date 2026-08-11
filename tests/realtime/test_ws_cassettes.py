@@ -53,15 +53,22 @@ class _FakeWebSocket:
 
 
 @pytest.mark.anyio
-async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path) -> None:
+async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Unit test: recording safety must be pinned without putting real credentials on the wire."""
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', '0paque-azure-key-value-42')
     sent_frame = {
         'type': 'client.config',
         'headers': {
             'Authorization': 'Bearer fake-bearer-token',
             'api-key': 'sk-fake_api_key_123456',
             'google-api-key': 'AIzaFakeApiKey123456',
+            'xai-key': 'xai-fake_api_key_123456',
         },
+        # A WebRTC ephemeral client secret a provider echoes back inside a frame body.
+        'client_secret': 'ek_fake_secret_123456',
+        # An opaque configured credential (e.g. an Azure key) with no recognizable prefix: caught by
+        # exact-value redaction of the configured environment credentials, not by pattern.
+        'note': 'the key is 0paque-azure-key-value-42 here',
     }
     received_frame = {
         'type': 'session.updated',
@@ -87,6 +94,9 @@ async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path) -> N
         'fake-bearer-token',
         'sk-fake_api_key_123456',
         'AIzaFakeApiKey123456',
+        'xai-fake_api_key_123456',
+        'ek_fake_secret_123456',
+        '0paque-azure-key-value-42',
         'internal.service:443',
         'internal-model',
     ):
@@ -100,7 +110,10 @@ async def test_recording_scrubs_secrets_and_internal_config(tmp_path: Path) -> N
                     'Authorization': '<scrubbed>',
                     'api-key': '<scrubbed>',
                     'google-api-key': '<scrubbed>',
+                    'xai-key': '<scrubbed>',
                 },
+                'client_secret': '<scrubbed>',
+                'note': 'the key is <scrubbed> here',
             },
         ),
         CassetteMessage(
