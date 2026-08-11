@@ -2520,9 +2520,11 @@ class ModelResponse:
         ]
 
     def cost(self) -> genai_types.PriceCalculation:
-        """Calculate the cost of the usage.
+        """Calculate the genai-prices estimate of the cost of the usage.
 
-        Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
+        Uses [`genai-prices`](https://github.com/pydantic/genai-prices), and always returns the
+        estimate even when `usage.cost` carries a provider-reported cost (e.g. from the Pydantic AI
+        Gateway); `usage.cost` is the authoritative value.
         """
         assert self.model_name, 'Model name is required to calculate price'
         return calculate_price_for_usage(

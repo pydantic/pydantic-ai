@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -29,6 +29,7 @@ from pydantic_ai.embeddings import (
     Embedder,
     EmbeddingResult,
     EmbeddingSettings,
+    EmbedInputType,
     InstrumentedEmbeddingModel,
     KnownEmbeddingModelName,
     TestEmbeddingModel,
@@ -2196,6 +2197,32 @@ async def test_instrumented_embedding_model_server_attributes(
 
     [span] = capfire.exporter.exported_spans_as_dict()
     assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == expected_server_attributes
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumented_embedding_reported_cost_wins(capfire: CaptureLogfire):
+    """A cost already on the usage (e.g. gateway-reported) is what embeddings telemetry records.
+
+    `TestEmbeddingModel` is unpriceable by genai-prices, so telemetry would previously record
+    no cost at all. Unit test: no cassette can put a reported cost on an unpriceable model.
+    """
+
+    class ReportedCostEmbeddingModel(TestEmbeddingModel):
+        async def embed(
+            self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
+        ) -> EmbeddingResult:
+            result = await super().embed(inputs, input_type=input_type, settings=settings)
+            result.usage.cost = Decimal('0.125')
+            return result
+
+    model = InstrumentedEmbeddingModel(ReportedCostEmbeddingModel(), InstrumentationSettings())
+    await model.embed('Hello, world!', input_type='query')
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert span['attributes']['operation.cost'] == 0.125
+
+    [cost_metric] = [m for m in capfire.get_collected_metrics() if m['name'] == 'operation.cost']
+    assert cost_metric['data']['data_points'][0]['sum'] == 0.125
 
 
 def test_override():
