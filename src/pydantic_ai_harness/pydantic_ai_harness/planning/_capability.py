@@ -51,10 +51,10 @@ class Planning(AbstractCapability[AgentDepsT]):
     `add_task`, `update_task_status`, `update_task_statuses`, `remove_task`, and
     -- when `enable_subtasks` is set -- `add_subtask`, `set_dependency`,
     `get_available_tasks`); `tools` narrows that surface to an allowlist. The
-    current plan is surfaced back as an *ephemeral*
-    reminder appended to the tail of each request behind a `CachePoint`, so the
-    cached prefix stays byte-identical across turns; only the reminder is
-    re-read each turn.
+    current plan is surfaced back as an *ephemeral* reminder appended to the
+    tail of each request. Its cache-stable opening tag precedes a `CachePoint`,
+    so the cached prefix stays byte-identical across turns; only the mutable
+    plan content is re-read each turn.
 
     By default the plan lives in memory for the duration of a single run (a
     fresh, isolated plan per run). Pass a `store` (or `store_resolver`) to
@@ -85,7 +85,7 @@ class Planning(AbstractCapability[AgentDepsT]):
     """
 
     cache_ttl: Literal['5m', '1h'] = '5m'
-    """TTL for the cache breakpoint placed before the plan reminder."""
+    """TTL for the cache breakpoint placed after the stable plan-reminder opening tag."""
 
     store: PlanStore | None = None
     """Storage backend. `None` keeps a fresh in-memory plan per run (the original
@@ -168,7 +168,7 @@ class Planning(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        """Append the current plan as an ephemeral tail reminder behind a cache breakpoint."""
+        """Append the current plan as an ephemeral tail reminder with a cache breakpoint."""
         if not self.inject:
             return await handler(request_context)
         items = await self.resolve_store(ctx).get_items()
@@ -177,7 +177,9 @@ class Planning(AbstractCapability[AgentDepsT]):
         messages = request_context.messages
         last = messages[-1]
         if isinstance(last, ModelRequest):
-            reminder = UserPromptPart(content=[CachePoint(ttl=self.cache_ttl), _reminder_text(render_plan(items))])
+            reminder = UserPromptPart(
+                content=['<plan-reminder>\n', CachePoint(ttl=self.cache_ttl), _reminder_text(render_plan(items))]
+            )
             messages[-1] = replace(last, parts=[*last.parts, reminder])
         return await handler(request_context)
 
@@ -224,4 +226,4 @@ class Planning(AbstractCapability[AgentDepsT]):
 
 
 def _reminder_text(plan: str) -> str:
-    return f'<plan-reminder>\nYour current plan (keep it updated with the planning tools):\n\n{plan}\n</plan-reminder>'
+    return f'Your current plan (keep it updated with the planning tools):\n\n{plan}\n</plan-reminder>'

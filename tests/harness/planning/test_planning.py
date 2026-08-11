@@ -926,10 +926,10 @@ class TestReminder:
         reminder = cast(UserPromptPart, seen[-1].parts[-1])
         content = reminder.content
         assert isinstance(content, list)
-        assert isinstance(content[0], CachePoint)
-        assert content[0].ttl == '1h'
-        assert '<plan-reminder>' in cast(str, content[1])
-        assert 'Do X' in cast(str, content[1])
+        assert content[0] == '<plan-reminder>\n'
+        assert isinstance(content[1], CachePoint)
+        assert content[1].ttl == '1h'
+        assert 'Do X' in cast(str, content[2])
 
     async def test_last_not_model_request_passthrough(self) -> None:
         store = InMemoryPlanStore()
@@ -982,6 +982,17 @@ class TestEndToEnd:
         )
         assert '<plan-reminder>' in sent
         assert 'Step A' in sent
+        reminder = next(
+            part
+            for message in captured['messages']
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+            and isinstance(part.content, list)
+            and '<plan-reminder>\n' in part.content
+        )
+        assert reminder.content[0] == '<plan-reminder>\n'
+        assert isinstance(reminder.content[1], CachePoint)
+        assert 'Step A' in cast(str, reminder.content[2])
         # ephemeral: never written to durable history
         durable = '\n'.join(
             part.content

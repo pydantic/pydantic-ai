@@ -22,10 +22,10 @@ Long agentic runs drift: the model loses track of what it set out to do and what
 
 ## The solution
 
-`Planning` gives the model a small toolset that owns the plan. The current plan is surfaced back to the model as an *ephemeral* reminder appended to the tail of each request, behind a cache breakpoint:
+`Planning` gives the model a small toolset that owns the plan. The current plan is surfaced back to the model as an *ephemeral* reminder appended to the tail of each request, with a cache breakpoint after its stable opening tag:
 
 - The reminder is added after the durable history is persisted, so it reaches the model but is never written to `message_history`. No reminders accumulate across turns.
-- A `CachePoint` is placed immediately *before* the reminder, so the cached prefix (tools + system + real conversation) stays byte-identical turn over turn. Only the reminder falls outside the cache.
+- A `CachePoint` follows the stable `<plan-reminder>` opening tag, so the cached prefix (tools + system + real conversation + that tag) stays byte-identical turn over turn. Only the mutable reminder content falls outside the cache.
 
 So the plan stays current in the model's view while the cached prefix is never invalidated; the only added cost is re-reading the reminder each turn.
 
@@ -146,7 +146,7 @@ Addressing steps by mutable integer index (insert/remove/reorder) is error-prone
 
 ## Caching guarantee
 
-The plan is never injected into the system prompt or instructions. Static usage guidance goes there (cache-stable); only the mutable plan rides the ephemeral tail reminder. Set `inject=False` to disable the reminder entirely. `CachePoint` is supported on Anthropic and Amazon Bedrock; on providers without prompt caching it's simply ignored.
+The plan is never injected into the system prompt or instructions. Static usage guidance goes there (cache-stable); only the mutable plan rides the ephemeral tail reminder. Set `inject=False` to disable the reminder entirely. Pydantic AI maps `CachePoint` for models whose profiles support prompt caching; on other models it is ignored.
 
 ## Configuration
 
@@ -155,7 +155,7 @@ from pydantic_ai_harness.planning import Planning
 
 Planning(
     guidance=None,           # static system-prompt guidance; None = default, '' = omit
-    cache_ttl='5m',          # TTL for the cache breakpoint before the reminder ('5m' | '1h')
+    cache_ttl='5m',          # TTL for the cache breakpoint after the stable opening tag ('5m' | '1h')
     store=None,              # None = fresh in-memory plan per run; or a PlanStore to persist
     enable_subtasks=False,   # add subtask/dependency tools and the 'blocked' status
     inject=True,             # surface the current plan as a cache-safe tail reminder
