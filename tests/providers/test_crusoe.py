@@ -20,6 +20,8 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     import openai
 
+    from pydantic_ai.models import infer_model
+    from pydantic_ai.models.crusoe import CrusoeModel
     from pydantic_ai.providers.crusoe import CrusoeProvider
 
 
@@ -138,6 +140,14 @@ def test_crusoe_provider_supports_structured_output(model_name: str):
     assert profile is not None
     assert profile.get('supports_json_schema_output') is True
     assert profile.get('supports_json_object_output') is True
+
+
+def test_infer_crusoe_model(env: TestEnv):
+    """`crusoe:` resolves to `CrusoeModel`, not the bare `OpenAIChatModel`."""
+    env.set('CRUSOE_API_KEY', 'test-api-key')
+    model = infer_model('crusoe:zai/GLM-5.2')
+    assert isinstance(model, CrusoeModel)
+    assert model.model_name == 'zai/GLM-5.2'
 
 
 def test_crusoe_provider_model_name_without_slash():

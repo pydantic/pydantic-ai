@@ -9,6 +9,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Bedrock](bedrock.md)
 * [Cerebras](cerebras.md)
 * [Cohere](cohere.md)
+* [Crusoe](crusoe.md)
 * [Groq](groq.md)
 * [Hugging Face](huggingface.md)
 * [Mistral](mistral.md)
@@ -22,7 +23,6 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 
 - [Alibaba Cloud Model Studio (DashScope)](openai.md#alibaba-cloud-model-studio-dashscope)
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
-- [Crusoe](openai.md#crusoe)
 - [DeepSeek](openai.md#deepseek)
 - [Fireworks AI](openai.md#fireworks-ai)
 - [GitHub Models](openai.md#github-models) (retired, deprecated)

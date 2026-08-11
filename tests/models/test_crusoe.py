@@ -1,4 +1,4 @@
-"""Tests for models served by Crusoe Serverless Inference through `OpenAIChatModel`.
+"""Tests for `CrusoeModel`.
 
 Crusoe serves open-weight models from many labs behind one OpenAI-compatible endpoint, so the
 interesting behavior is what `CrusoeProvider.model_profile()` resolves per model family and what
@@ -32,7 +32,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.crusoe import CrusoeModel
     from pydantic_ai.providers.crusoe import CrusoeProvider
 
 
@@ -75,7 +75,7 @@ async def test_crusoe_model_simple(allow_model_requests: None, crusoe_api_key: s
     field, so the `ThinkingPart` is recovered without `CrusoeProvider` configuring one — which it
     can't, as Crusoe uses `reasoning` for most models but `reasoning_content` for DeepSeek.
     """
-    model = OpenAIChatModel('zai/GLM-5.2', provider=CrusoeProvider(api_key=crusoe_api_key))
+    model = CrusoeModel('zai/GLM-5.2', provider=CrusoeProvider(api_key=crusoe_api_key))
     agent = Agent(model)
     result = await agent.run('What is 2 + 2?')
     assert result.all_messages() == snapshot(
@@ -119,7 +119,7 @@ async def test_crusoe_model_simple(allow_model_requests: None, crusoe_api_key: s
 
 
 async def test_crusoe_model_streaming(allow_model_requests: None, crusoe_api_key: str):
-    model = OpenAIChatModel('meta-llama/Llama-3.3-70B-Instruct', provider=CrusoeProvider(api_key=crusoe_api_key))
+    model = CrusoeModel('meta-llama/Llama-3.3-70B-Instruct', provider=CrusoeProvider(api_key=crusoe_api_key))
     agent = Agent(model)
     async with agent.run_stream('Count from 1 to 5, comma separated.') as result:
         deltas = [c async for c in result.stream_text(delta=True)]
@@ -128,7 +128,7 @@ async def test_crusoe_model_streaming(allow_model_requests: None, crusoe_api_key
 
 async def test_crusoe_tool_calling(allow_model_requests: None, crusoe_api_key: str):
     """A tool call round trip, which also sends the model's own thinking back on the second request."""
-    model = OpenAIChatModel('zai/GLM-5.2', provider=CrusoeProvider(api_key=crusoe_api_key))
+    model = CrusoeModel('zai/GLM-5.2', provider=CrusoeProvider(api_key=crusoe_api_key))
     agent = Agent(model)
 
     @agent.tool_plain
@@ -227,7 +227,7 @@ async def test_crusoe_native_output(allow_model_requests: None, crusoe_api_key: 
     `UserError: Native structured output is not supported by this model` if `CrusoeProvider` didn't
     set the flag for every model it serves.
     """
-    model = OpenAIChatModel('zai/GLM-5.2', provider=CrusoeProvider(api_key=crusoe_api_key))
+    model = CrusoeModel('zai/GLM-5.2', provider=CrusoeProvider(api_key=crusoe_api_key))
     agent = Agent(model, output_type=NativeOutput(City))
     result = await agent.run('Where is the Eiffel Tower?')
     assert result.output == snapshot(City(city='Paris', country='France'))

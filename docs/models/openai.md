@@ -1007,40 +1007,6 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-### Crusoe
-
-To use [Crusoe](https://crusoe.ai/) Serverless Inference, go to the [Crusoe Cloud console](https://console.crusoecloud.com/), select Models, and click `Get API Key`.
-
-You can explore the [model catalog](https://docs.crusoecloud.com/serverless-inference/overview) to find which models are available.
-
-You can set the `CRUSOE_API_KEY` environment variable and use [`CrusoeProvider`][pydantic_ai.providers.crusoe.CrusoeProvider] by name:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('crusoe:zai/GLM-5.2')
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-#> The capital of France is Paris.
-```
-
-If you need to configure the provider, you can use the [`CrusoeProvider`][pydantic_ai.providers.crusoe.CrusoeProvider] class:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.crusoe import CrusoeProvider
-
-model = OpenAIChatModel(
-    'zai/GLM-5.2',
-    provider=CrusoeProvider(api_key='your-crusoe-api-key'),
-)
-agent = Agent(model)
-result = agent.run_sync('What is the capital of France?')
-print(result.output)
-#> The capital of France is Paris.
-```
-
 ### SambaNova
 
 To use [SambaNova Cloud](https://cloud.sambanova.ai/), you need to obtain an API key from the [SambaNova Cloud dashboard](https://cloud.sambanova.ai/dashboard).
