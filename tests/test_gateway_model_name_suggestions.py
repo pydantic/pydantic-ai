@@ -130,8 +130,9 @@ async def test_gateway_direct_model_suggests_gateway_model_id(
         await Agent(model).run('hello')
 
     model_id_namespace = expected_suggestion.split(':', maxsplit=1)[0]
-    assert model.system == model_id_namespace.removeprefix('gateway/')
-    assert model.model_id == f'{model_id_namespace}:{model_name}'
+    expected_system = model_id_namespace.removeprefix('gateway/')
+    assert model.system == expected_system
+    assert model.model_id == f'{expected_system}:{model_name}'
     assert exc_info.value.suggested_model_id == expected_suggestion
 
 
@@ -184,7 +185,7 @@ async def test_inferred_gateway_model_suggests_gateway_model_id(
     model = infer_model('gateway/openai:gpt-5.2-proo')
 
     assert model.system == 'openai'
-    assert model.model_id == 'gateway/openai:gpt-5.2-proo'
+    assert model.model_id == 'openai:gpt-5.2-proo'
     with pytest.raises(ModelHTTPError) as exc_info:
         await Agent(model).run('hello')
 
@@ -204,7 +205,7 @@ async def test_explicit_gateway_provider_suggests_gateway_model_id(allow_model_r
 
         assert provider.name == 'openai'
         assert model.system == 'openai'
-        assert model.model_id == 'gateway/openai:gpt-5.2-proo'
+        assert model.model_id == 'openai:gpt-5.2-proo'
         with pytest.raises(ModelHTTPError) as exc_info:
             await Agent(model).run('hello')
 

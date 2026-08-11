@@ -122,11 +122,11 @@ class WrapperModel(Model):
 
     @property
     def model_id(self) -> str:
-        # `Model.model_id` derives from the provider's model-ID namespace and `model_name`, both of
-        # which are forwarded above, so for most models this override is redundant. It matters for a
-        # wrapped model that computes its own ID: `FallbackModel` joins its sub-models' `model_id`s,
-        # which recombining the two joined strings can't reproduce. The ID names a Temporal activity
-        # and keys a Prefect cache, so a mangled one isn't only a telemetry concern.
+        # `Model.model_id` derives from `system` and `model_name`, which are forwarded above, so for
+        # most models this override is redundant. It matters for a wrapped model that computes its own
+        # ID: `FallbackModel` joins its sub-models' `model_id`s, which recombining the two joined
+        # strings can't reproduce. The ID names a Temporal activity and keys a Prefect cache, so a
+        # mangled one isn't only a telemetry concern.
         return self.wrapped.model_id
 
     @property

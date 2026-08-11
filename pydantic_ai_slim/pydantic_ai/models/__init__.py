@@ -944,8 +944,7 @@ class Model(ABC, Generic[InterfaceClient]):
     @property
     def model_id(self) -> str:
         """The fully qualified model name in `'provider:model_name'` format."""
-        namespace = provider.model_id_namespace if (provider := self.provider) is not None else self.system
-        return f'{namespace}:{self.model_name}'
+        return f'{self.system}:{self.model_name}'
 
     @property
     def label(self) -> str:

@@ -907,7 +907,7 @@ async def test_gateway_model_name_suggestion_midstream(
         expected_system = expected_namespace.removeprefix('gateway/')
         assert provider.name == expected_system
         assert model.system == expected_system
-        assert model.model_id == f'{expected_namespace}:{model_name}'
+        assert model.model_id == f'{expected_system}:{model_name}'
         with pytest.raises(ModelHTTPError) as exc_info:
             async with Agent(model).run_stream('hello') as result:
                 async for _ in result.stream_text():
