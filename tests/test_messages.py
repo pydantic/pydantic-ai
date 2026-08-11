@@ -16,6 +16,7 @@ from pydantic_ai import (
     Agent,
     AgentStreamEvent,
     AudioUrl,
+    BinaryAudio,
     BinaryContent,
     BinaryImage,
     DeferredToolRequests,
@@ -186,6 +187,16 @@ def test_binary_image_requires_image_media_type():
     # Non-image media type should raise
     with pytest.raises(ValueError, match='`BinaryImage` must have a media type that starts with "image/"'):
         BinaryImage(data=b'test', media_type='text/plain')
+
+
+def test_binary_audio_requires_audio_media_type():
+    # Valid audio media type should work
+    audio = BinaryAudio(data=b'test', media_type='audio/pcm')
+    assert audio.is_audio
+
+    # Non-audio media type should raise
+    with pytest.raises(ValueError, match='`BinaryAudio` must have a media type that starts with "audio/"'):
+        BinaryAudio(data=b'test', media_type='text/plain')
 
 
 @pytest.mark.parametrize(
