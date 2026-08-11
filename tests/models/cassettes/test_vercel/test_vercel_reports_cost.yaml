@@ -1,0 +1,136 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '143'
+      content-type:
+      - application/json
+      host:
+      - ai-gateway.vercel.sh
+      http-referer:
+      - https://ai.pydantic.dev/
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is 2+2? Reply with just the number.
+        role: user
+      model: deepseek/deepseek-v4-flash
+      stream: false
+    uri: https://ai-gateway.vercel.sh/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-headers:
+      - Content-Type, Authorization, ai-gateway-auth-method, ai-gateway-protocol-version, ai-model-id, ai-language-model-id,
+        ai-language-model-specification-version, ai-image-model-specification-version, ai-embedding-model-specification-version,
+        ai-language-model-streaming, ai-reporting-tags, ai-reporting-user, http-referer, x-title, anthropic-beta, x-vercel-ai-gateway-team
+      access-control-allow-methods:
+      - GET, POST, PUT, PATCH, DELETE, OPTIONS
+      access-control-allow-origin:
+      - '*'
+      cache-control:
+      - public, max-age=0, must-revalidate
+      content-length:
+      - '2490'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=63072000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '4'
+          provider_metadata:
+            deepseek:
+              promptCacheHitTokens: 0
+              promptCacheMissTokens: 96
+            gateway:
+              cost: '0.00001652'
+              gatewayCost: '0.00001652'
+              generationId: gen_01KZ0CGNEN0YK9WAQ4BFR2ZH5V
+              inferenceCost: '0.00001652'
+              inputInferenceCost: '0.00001344'
+              marketCost: '0.00001652'
+              outputInferenceCost: '0.00000308'
+              routing:
+                canonicalSlug: deepseek/deepseek-v4-flash
+                fallbacksAvailable:
+                - fireworks
+                - alibaba
+                - baseten
+                - digitalocean
+                - novita
+                - azure
+                - deepinfra
+                finalProvider: deepseek
+                modelAttemptCount: 1
+                modelAttempts:
+                - canonicalSlug: deepseek/deepseek-v4-flash
+                  providerAttemptCount: 1
+                  providerAttempts:
+                  - credentialType: system
+                    endTime: 1785645784438
+                    provider: deepseek
+                    providerRequestId: 3dae6f11a2fb795be41a1c5f790d0a8d
+                    providerResponseId: a96ec50e-114f-4b60-8b32-f02aa5b14b1a
+                    startTime: 1785645782672
+                    statusCode: 200
+                    success: true
+                  success: true
+                originalModelId: deepseek/deepseek-v4-flash
+                planningReasoning: 'Weighted tie pick: fireworks won tier 1 over alibaba. System credentials planned for:
+                  deepseek, fireworks, alibaba, baseten, digitalocean, novita, azure, deepinfra. Total execution order: deepseek(system)
+                  → fireworks(system) → alibaba(system) → baseten(system) → digitalocean(system) → novita(system) → azure(system)
+                  → deepinfra(system)'
+                resolvedProvider: deepseek
+                totalProviderAttemptCount: 1
+              surchargeCost: '0'
+          reasoning: We need answer just number. 4.
+          reasoning_details:
+          - format: unknown
+            index: 0
+            text: We need answer just number. 4.
+            type: reasoning.text
+          role: assistant
+      created: 1785645784
+      generationId: gen_01KZ0CGNEN0YK9WAQ4BFR2ZH5V
+      id: gen_01KZ0CGNEN0YK9WAQ4BFR2ZH5V
+      model: deepseek/deepseek-v4-flash
+      object: chat.completion
+      system_fingerprint: fp_xgayn3mkoj
+      usage:
+        cache_creation_input_tokens: 0
+        completion_tokens: 11
+        completion_tokens_details:
+          image_tokens: 0
+          reasoning_tokens: 9
+        cost: 1.652e-05
+        cost_details:
+          upstream_inference_completions_cost: 0
+          upstream_inference_cost: null
+          upstream_inference_prompt_cost: 0
+        gateway_cost: 1.652e-05
+        is_byok: false
+        market_cost: 1.652e-05
+        prompt_tokens: 96
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+          video_tokens: 0
+        total_tokens: 107
+    status:
+      code: 200
+      message: OK
+version: 1

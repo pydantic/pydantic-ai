@@ -209,6 +209,7 @@ nav:
           - api/models/openrouter.md
           - api/models/snowflake.md
           - api/models/test.md
+          - api/models/vercel.md
           - api/models/zai.md
           - api/models/wrapper.md
           - api/output.md

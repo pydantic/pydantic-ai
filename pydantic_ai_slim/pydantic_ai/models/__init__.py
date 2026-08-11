@@ -1669,7 +1669,7 @@ def infer_model(  # noqa: C901
             return BedrockMantleChatModel(model_name, provider=provider)
         return BedrockMantleResponsesModel(model_name, provider=provider)
 
-    # OpenRouter, Cerebras, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
+    # OpenRouter, Cerebras, Ollama, Vercel, Z.AI and Snowflake need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
@@ -1687,6 +1687,10 @@ def infer_model(  # noqa: C901
         from .ollama import OllamaModel
 
         return OllamaModel(model_name, provider=provider)
+    elif model_kind == 'vercel':
+        from .vercel import VercelModel
+
+        return VercelModel(model_name, provider=provider)
     elif model_kind == 'zai':
         from .zai import ZaiModel
 
