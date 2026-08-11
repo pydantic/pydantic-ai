@@ -245,14 +245,15 @@ Not every voice product needs the realtime agent loop:
 | Path | Best for | Where Pydantic AI fits |
 | --- | --- | --- |
 | **Native speech-to-speech with Pydantic AI** | Low-latency voice agents with server-side tools and shared history | Runs the complete realtime agent described here |
-| **Browser talks directly to the provider** | Provider-native, UI-only experiences using an ephemeral token | Native WebRTC transport is [coming to Pydantic AI](deployment.md) ([#6676](https://github.com/pydantic/pydantic-ai/pull/6676)); until then, the provider SDK owns the media session and gives up the server-side agent loop |
+| **Browser WebRTC + server sideband** | Browser voice agents that need direct media plus server-side tools and history | Negotiates the call and runs the agent over its [control plane](lifecycle.md#browser-webrtc) while the browser owns the audio |
+| **Browser talks directly to the provider** | Provider-native, UI-only experiences using an ephemeral token | The provider SDK owns the session; Pydantic AI can power separate backend workflows |
 | **Batch STT → text agent → TTS** | Text-model choice, structured output, or independent speech components | Compose a standard [agent](../agent.md) with chosen speech-to-text and text-to-speech services |
 
 ## Limitations
 
 | Limitation | Tracking |
 | --- | --- |
-| Sessions run server-side over WebSocket; browser-direct WebRTC and SIP are not built in yet. | [#6676](https://github.com/pydantic/pydantic-ai/pull/6676), [#6642](https://github.com/pydantic/pydantic-ai/pull/6642) |
+| SIP is not built in. Browser-direct WebRTC with a server sideband is supported on OpenAI and Azure OpenAI, but not Gemini Live or xAI. | [WebRTC lifecycle](lifecycle.md#browser-webrtc) |
 | New tools cannot be advertised mid-session, so `defer_loading=True` tools and tool-contributing capabilities are [rejected](capabilities.md#deferred-capability-loading). | [#7288](https://github.com/pydantic/pydantic-ai/issues/7288) |
 | Realtime-specific exchange hooks are not yet available; use supported [tool hooks](capabilities.md) and [session events](events.md). | [#7190](https://github.com/pydantic/pydantic-ai/issues/7190), [#7191](https://github.com/pydantic/pydantic-ai/issues/7191) |
 | Provider resumption handles cannot be persisted and resumed in another process. | [#7302](https://github.com/pydantic/pydantic-ai/issues/7302) |

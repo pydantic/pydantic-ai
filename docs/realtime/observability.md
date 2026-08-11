@@ -89,6 +89,11 @@ session usage remains authoritative.
 When providers report both user speech start and end, Pydantic AI records a `user speech` span.
 Providers without both boundaries do not get a guessed duration.
 
+On a [WebRTC sideband](lifecycle.md#browser-webrtc) a `speak {model}` span additionally covers how
+long the model was *audible*, which the response spans can't show: the provider generates audio far
+ahead of playing it, so this span routinely outlasts the `model turn complete` that ended the
+response.
+
 The session span also reports `pydantic_ai.audio_chunks_dropped` and
 `pydantic_ai.transcript_items_dropped`, summed across bounded
 [audio and transcript consumers](audio.md#consuming-audio-and-transcripts). These totals are written

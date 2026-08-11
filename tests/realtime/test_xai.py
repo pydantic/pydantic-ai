@@ -273,6 +273,7 @@ def test_profile() -> None:
         supports_output_truncation=False,
         supports_text_output=False,  # Grok Voice always speaks
         supports_session_seeding=True,
+        supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
         supports_thinking=True,

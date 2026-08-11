@@ -14,6 +14,7 @@ from collections.abc import (
 )
 from concurrent.futures import Executor
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from dataclasses import dataclass
 from types import FrameType, TracebackType
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
@@ -59,13 +60,19 @@ from ..toolsets import AbstractToolset
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
     from pydantic_ai.capabilities import CombinedCapability
+    from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.realtime import (
         AudioRetention,
         KnownRealtimeModelName,
+        RealtimeClientSecret,
         RealtimeModel,
+        RealtimeModelProfile,
         RealtimeModelSettings,
+        RealtimeProviderSession,
         RealtimeSession,
+        WebRTCAnswer,
     )
+    from pydantic_ai.tools import ToolDefinition
 
 
 T = TypeVar('T')
@@ -1784,6 +1791,34 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         )
 
     @asynccontextmanager
+    async def _resolve_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        run_lifecycle: bool = False,
+    ) -> AsyncGenerator[_RealtimeSessionResolution[AgentDepsT]]:
+        """Resolve the agent configuration shared by realtime sessions and WebRTC signaling.
+
+        With `run_lifecycle`, the run-lifecycle hooks are dispatched around the resolved configuration
+        so they wrap the toolset — and the session the caller opens inside them — exactly as `iter`
+        does. Only `_open_realtime_session` asks for that: signaling only reads back the instructions
+        and tools a session would advertise, and is not itself a run.
+        """
+        raise NotImplementedError
+        yield
+
+    @asynccontextmanager
     async def _open_realtime_session(
         self,
         model: RealtimeModel | KnownRealtimeModelName | str,
@@ -1802,6 +1837,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
+        provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Worker behind [`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session].
 
@@ -2026,6 +2062,44 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         )
 
 
+@dataclass
+class _RealtimeSessionLifecycle:
+    """Hand-off between the run-lifecycle hooks entered during resolution and the session they wrap.
+
+    The hooks are entered before the session exists — and a `wrap_run` that short-circuits means it
+    never will — so the session, and the result returned in its place, are handed back through this
+    mutable holder once `_open_realtime_session` has built them.
+    """
+
+    session: RealtimeSession | None = None
+    short_result: AgentRunResult[Any] | None = None
+
+
+@dataclass
+class _RealtimeSessionResolution(Generic[AgentDepsT]):
+    """The resolved inputs shared by `AgentRealtime.session()` and its WebRTC signaling methods."""
+
+    model: RealtimeModel
+    run_context: RunContext[AgentDepsT]
+    tool_manager: ToolManager[AgentDepsT]
+    tool_defs: list[ToolDefinition]
+    model_request_parameters: models.ModelRequestParameters
+    model_settings: RealtimeModelSettings | None
+    instructions: str | None
+    request_messages: list[_messages.ModelMessage]
+    model_profile: RealtimeModelProfile
+    instrumentation_settings: InstrumentationSettings | None
+    conversation_id: str
+    run_id: str
+    wrap_event_stream: (
+        Callable[[AsyncIterable[_messages.AgentStreamEvent]], AsyncIterable[_messages.AgentStreamEvent]] | None
+    ) = None
+    lifecycle: _RealtimeSessionLifecycle | None = None
+    """Set only when the caller asked for run-lifecycle hooks, i.e. by `_open_realtime_session`."""
+    short_circuited: bool = False
+    """A `wrap_run` hook returned a result without opening the session; nothing below was resolved."""
+
+
 class AgentRealtime(Generic[AgentDepsT]):
     """An agent bound to a realtime model, returned by [`AbstractAgent.realtime`][pydantic_ai.agent.AbstractAgent.realtime].
 
@@ -2067,6 +2141,89 @@ class AgentRealtime(Generic[AgentDepsT]):
         self._run_id = _run_id
         self._message_history = _message_history
 
+    async def answer_webrtc_offer(self, sdp_offer: str) -> WebRTCAnswer:
+        """Resolve this agent's realtime configuration and relay a browser WebRTC SDP offer.
+
+        The resolved instructions and tool definitions are baked into the call, so the provider session
+        is fully configured before (or without) a server sideband attaching. If a sideband later attaches
+        with [`session(provider_session=...)`][pydantic_ai.agent.AgentRealtime.session], it resolves and
+        pushes the same configuration over the control channel again.
+
+        Resolution uses the same machinery as opening a session: dynamic `@agent.instructions` functions
+        and capability `for_run` hooks run, and toolsets are set up (including starting MCP servers) to list
+        their tools, then torn down. Bound `message_history` is not baked into the offer; a sideband session
+        seeds it when it attaches.
+
+        This delegates to
+        [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer], which is implemented
+        by the OpenAI and Azure OpenAI realtime models. Other models raise
+        [`UserError`][pydantic_ai.exceptions.UserError]; branch on
+        [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] to check up front.
+        """
+        async with self._agent._resolve_realtime_session(  # pyright: ignore[reportPrivateUsage]
+            self._model,
+            deps=self._deps,
+            model_settings=self._model_settings,
+            instructions=self._instructions,
+            toolsets=self._toolsets,
+            capabilities=self._capabilities,
+            usage=self._usage,
+            usage_limits=self._usage_limits,
+            metadata=self._metadata,
+            conversation_id=self._conversation_id,
+            run_id=self._run_id,
+            message_history=self._message_history,
+        ) as resolved:
+            return await resolved.model.answer_webrtc_offer(
+                sdp_offer,
+                instructions=resolved.instructions,
+                tools=resolved.tool_defs,
+                model_settings=resolved.model_settings,
+            )
+
+    async def create_client_secret(self, *, expires_after_seconds: int | None = None) -> RealtimeClientSecret:
+        """Resolve this agent's realtime configuration and mint a browser client secret.
+
+        The resolved instructions and tool definitions are baked into the secret, so the provider session
+        is fully configured before (or without) a server sideband attaching. If a sideband later attaches
+        with [`session(provider_session=...)`][pydantic_ai.agent.AgentRealtime.session], it resolves and
+        pushes the same configuration over the control channel again.
+
+        Resolution uses the same machinery as opening a session: dynamic `@agent.instructions` functions
+        and capability `for_run` hooks run, and toolsets are set up (including starting MCP servers) to list
+        their tools, then torn down. Bound `message_history` is not baked into the secret; a sideband session
+        seeds it when it attaches.
+
+        This delegates to [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret],
+        which is implemented by the OpenAI and Azure OpenAI realtime models. Other models raise
+        [`UserError`][pydantic_ai.exceptions.UserError]; branch on
+        [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] to check up front.
+
+        Args:
+            expires_after_seconds: Requested lifetime of the client secret in seconds. The provider may
+                constrain the accepted value.
+        """
+        async with self._agent._resolve_realtime_session(  # pyright: ignore[reportPrivateUsage]
+            self._model,
+            deps=self._deps,
+            model_settings=self._model_settings,
+            instructions=self._instructions,
+            toolsets=self._toolsets,
+            capabilities=self._capabilities,
+            usage=self._usage,
+            usage_limits=self._usage_limits,
+            metadata=self._metadata,
+            conversation_id=self._conversation_id,
+            run_id=self._run_id,
+            message_history=self._message_history,
+        ) as resolved:
+            return await resolved.model.create_client_secret(
+                instructions=resolved.instructions,
+                tools=resolved.tool_defs,
+                model_settings=resolved.model_settings,
+                expires_after_seconds=expires_after_seconds,
+            )
+
     @asynccontextmanager
     async def session(
         self,
@@ -2074,6 +2231,7 @@ class AgentRealtime(Generic[AgentDepsT]):
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
+        provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session backed by the agent's tools.
 
@@ -2091,6 +2249,13 @@ class AgentRealtime(Generic[AgentDepsT]):
             retain_images_max: Bound on how many images stay in message history; once exceeded, the
                 oldest retained image is evicted. Defaults to `100` so a long-running frame stream
                 can't grow memory without limit; `0` retains no images, `None` removes the bound.
+            provider_session: A [`RealtimeProviderSession`][pydantic_ai.realtime.RealtimeProviderSession] to attach a **sideband**
+                control session to, from
+                [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer]. When set,
+                the browser exchanges audio with the provider directly over WebRTC and this session runs
+                only the control plane (instructions, tools, transcripts, history) — the audio methods
+                (`send_audio`/`commit_audio`/`clear_audio`) are unavailable and `audio_retention` must be
+                left at `'transcript_only'`. See the realtime docs for the full browser/WebRTC flow.
         """
         async with self._agent._open_realtime_session(  # pyright: ignore[reportPrivateUsage]
             self._model,
@@ -2108,5 +2273,6 @@ class AgentRealtime(Generic[AgentDepsT]):
             audio_retention=audio_retention,
             retain_images_every_n=retain_images_every_n,
             retain_images_max=retain_images_max,
+            provider_session=provider_session,
         ) as session:
             yield session

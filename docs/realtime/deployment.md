@@ -9,14 +9,10 @@ backend that accepts the browser's microphone audio and pumps it into
 [`stream_audio()`][pydantic_ai.realtime.RealtimeSession.stream_audio] output back for playback. The
 [realtime camera example](../examples/realtime-camera.md) demonstrates this shape end to end.
 
-**Browser-direct WebRTC.** Native WebRTC transport — the browser exchanging media directly with the
-provider using an ephemeral token, while your backend keeps running the agent loop, tools, and
-history — is coming to Pydantic AI for OpenAI and Azure OpenAI in
-[#6676](https://github.com/pydantic/pydantic-ai/pull/6676), with Azure Voice Live support in
-[#6642](https://github.com/pydantic/pydantic-ai/pull/6642). Until those land, use the WebSocket
-relay above. (Third-party media platforms such as LiveKit can also terminate WebRTC — handling echo
-cancellation, jitter, and devices — with a server-side participant bridging the room's audio track
-to the realtime session.)
+**Browser-direct WebRTC.** On OpenAI and Azure OpenAI, the browser can exchange media directly with
+the provider while your backend attaches a sideband to the same call and keeps running the agent
+loop, tools, and history. See [Browser / WebRTC](lifecycle.md#browser-webrtc) and the runnable
+[WebRTC example](../examples/realtime-webrtc.md). Gemini Live and xAI are WebSocket-only.
 
 **SIP/telephony bridge.** Terminate the phone call with a telephony provider such as Twilio, then
 build the service that connects its media stream (e.g. Twilio Media Streams over WebSocket) to the

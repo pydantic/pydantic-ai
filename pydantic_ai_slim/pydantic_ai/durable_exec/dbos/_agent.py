@@ -26,7 +26,14 @@ from pydantic_ai.agent import (
     ParallelExecutionMode,
     WrapperAgent,
 )
-from pydantic_ai.agent.abstract import AgentMetadata, AgentModelSettings, AgentRetries, AgentRunEvents, RunOutputDataT
+from pydantic_ai.agent.abstract import (
+    AgentMetadata,
+    AgentModelSettings,
+    AgentRetries,
+    AgentRunEvents,
+    RunOutputDataT,
+    _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
@@ -52,6 +59,7 @@ if TYPE_CHECKING:
         KnownRealtimeModelName,
         RealtimeModel,
         RealtimeModelSettings,
+        RealtimeProviderSession,
         RealtimeSession,
     )
 
@@ -1157,6 +1165,55 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 yield run
 
     @asynccontextmanager
+    async def _resolve_realtime_session(
+        self,
+        model: RealtimeModel | KnownRealtimeModelName | str,
+        *,
+        deps: AgentDepsT = None,
+        model_settings: RealtimeModelSettings | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        usage: _usage.RunUsage | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        message_history: Sequence[_messages.ModelMessage] | None = None,
+        run_lifecycle: bool = False,
+    ) -> AsyncGenerator[_RealtimeSessionResolution[AgentDepsT]]:
+        """Resolve realtime configuration; backs the browser-call signaling helpers.
+
+        Signaling issues a live provider request (and runs dynamic instructions and toolset setup to
+        build it), so it is non-deterministic and cannot run in DBOS workflow code directly; calling
+        it there raises a `UserError`. Inside a step — where DBOS records non-deterministic I/O, the
+        same boundary `run()`/`run_stream()` use — and outside workflows entirely, it delegates to
+        the wrapped agent unchanged.
+        """
+        if DBOS.workflow_id is not None and DBOS.step_id is None:
+            raise UserError(
+                '`agent.realtime(...).answer_webrtc_offer()` and `.create_client_secret()` cannot be used '
+                'directly inside a DBOS workflow, as they issue non-deterministic provider requests. Call '
+                'them from inside a DBOS step, or outside the workflow.'
+            )
+        async with super()._resolve_realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            message_history=message_history,
+            run_lifecycle=run_lifecycle,
+        ) as resolved:
+            yield resolved
+
+    @asynccontextmanager
     async def _open_realtime_session(
         self,
         model: RealtimeModel | KnownRealtimeModelName | str,
@@ -1175,6 +1232,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         audio_retention: AudioRetention = 'transcript_only',
         retain_images_every_n: int = 1,
         retain_images_max: int | None = 100,
+        provider_session: RealtimeProviderSession | None = None,
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session; see [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] for the parameters.
 
@@ -1203,6 +1261,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             audio_retention=audio_retention,
             retain_images_every_n=retain_images_every_n,
             retain_images_max=retain_images_max,
+            provider_session=provider_session,
         ) as session:
             yield session
 

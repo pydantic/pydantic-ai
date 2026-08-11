@@ -503,6 +503,68 @@ async def test_on_run_error_recovers_session_error() -> None:
     assert session.result.output == 'error hook recovered'
 
 
+async def test_on_run_error_recovers_connect_failure() -> None:
+    """A recovered *pre-session* failure (connecting) yields a closed session carrying the result.
+
+    The lifecycle hooks suppress the connect error before any session was yielded; without the
+    recovery yield in `_open_realtime_session`, `asynccontextmanager` would turn that clean exit
+    into `RuntimeError: generator didn't yield` and defeat the documented run-error recovery.
+    """
+
+    class _FailingConnectModel(_RecordingModel):
+        @asynccontextmanager
+        async def connect(
+            self,
+            *,
+            messages: Sequence[ModelMessage],
+            model_settings: RealtimeModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> AsyncGenerator[RealtimeConnection]:
+            raise RuntimeError('connect failed')
+            yield  # pragma: no cover
+
+    class RecoveryCapability(AbstractCapability[None]):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            assert str(error) == 'connect failed'
+            return AgentRunResult(output='recovered before connecting')
+
+    agent = Agent(capabilities=[RecoveryCapability()], deps_type=type(None))
+
+    async with agent.realtime(_FailingConnectModel()).session() as session:
+        # No connection was ever opened, so the recovered session is yielded closed.
+        with pytest.raises(UserError, match='session is closed'):
+            await session.send('hello')
+
+    assert session.result is not None
+    assert session.result.output == 'recovered before connecting'
+
+
+async def test_on_run_error_recovers_toolset_enter_failure() -> None:
+    """A recovered failure *during resolution* (entering the toolset) also yields a closed session.
+
+    This error fires inside `_resolve_realtime_session` after the lifecycle hooks are entered but
+    before the resolution is yielded, exercising the resolver's own recovery yield.
+    """
+
+    class _FailingToolset(FunctionToolset[None]):
+        async def __aenter__(self) -> _FailingToolset:
+            raise RuntimeError('toolset failed')
+
+    class RecoveryCapability(AbstractCapability[None]):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            assert str(error) == 'toolset failed'
+            return AgentRunResult(output='recovered before resolving')
+
+    agent = Agent(capabilities=[RecoveryCapability()], toolsets=[_FailingToolset()], deps_type=type(None))
+
+    async with agent.realtime(_RecordingModel()).session() as session:
+        with pytest.raises(UserError, match='session is closed'):
+            await session.send('hello')
+
+    assert session.result is not None
+    assert session.result.output == 'recovered before resolving'
+
+
 async def test_unrecovered_session_error_propagates() -> None:
     """A session error still propagates unchanged when no run hook recovers it."""
     agent = Agent(deps_type=type(None))
