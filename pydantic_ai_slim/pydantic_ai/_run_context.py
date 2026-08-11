@@ -15,7 +15,6 @@ from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from . import _utils, messages as _messages
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
 from .exceptions import UserError
-from .sandboxes import Sandbox, UnavailableSandbox
 
 if TYPE_CHECKING:
     from ._cancel import RunCancellation
@@ -23,6 +22,7 @@ if TYPE_CHECKING:
     from .agent.abstract import AbstractAgent
     from .capabilities.abstract import AbstractCapability
     from .models import Model
+    from .sandboxes import Sandbox
     from .settings import ModelSettings
     from .tool_manager import ToolManager
     from .tools import ToolDefinition
@@ -36,6 +36,11 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 
 
 def _default_sandbox() -> Sandbox:
+    # Imported here rather than at module scope: `pydantic_ai.sandboxes` exports the
+    # `ManagedSandbox` capability, which needs `RunPreparationContext` from this module, and this
+    # factory only runs when a `RunContext` is constructed — long after imports have settled.
+    from .sandboxes import Sandbox, UnavailableSandbox
+
     return Sandbox.wrap(
         UnavailableSandbox(
             reason='No sandbox is attached: this `RunContext` was created outside an agent run. '

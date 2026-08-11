@@ -6,8 +6,9 @@
             - Sandbox
             - FileWindow
             - SandboxBackend
-            - SandboxRef
+            - ManagedSandbox
             - SandboxProvider
+            - SandboxRef
             - SupportsFilesystem
             - SupportsStart
             - SupportsStream

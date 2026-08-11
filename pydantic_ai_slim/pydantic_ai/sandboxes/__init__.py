@@ -1,6 +1,7 @@
 """Sandbox facade, backend protocols, and implementations."""
 
 from .local import LocalSandbox
+from .managed import ManagedSandbox
 from .protocol import (
     SandboxBackend,
     SandboxCommand,
@@ -20,6 +21,7 @@ from .unavailable import UnavailableSandbox
 __all__ = (
     'FileWindow',
     'LocalSandbox',
+    'ManagedSandbox',
     'Sandbox',
     'SandboxBackend',
     'SandboxProvider',

@@ -68,6 +68,43 @@ class RecordingSandboxProvider(SandboxProvider):
         return backend
 
 
+class CreateOnlySandboxProvider(SandboxProvider):
+    """Provisions and reconnects, inheriting `SandboxProvider`'s no-op `teardown`.
+
+    Every lifecycle call is appended to `events`, so tests can pin both the counts and the
+    order in which creation, connection, and destruction happened.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self.backends: list[RecordingSandboxBackend] = []
+        self._created = 0
+
+    @property
+    def provider(self) -> str:
+        return 'fake'
+
+    async def create(self) -> SandboxBackend:
+        self._created += 1
+        return self._backend('create', f'created-{self._created}')
+
+    async def connect(self, sandbox_id: str) -> SandboxBackend:
+        return self._backend('connect', sandbox_id)
+
+    def _backend(self, event: str, sandbox_id: str) -> RecordingSandboxBackend:
+        self.events.append(f'{event}:{sandbox_id}')
+        backend = RecordingSandboxBackend(sandbox_id)
+        self.backends.append(backend)
+        return backend
+
+
+class LifecycleSandboxProvider(CreateOnlySandboxProvider):
+    """A `CreateOnlySandboxProvider` that also destroys the sandboxes it made."""
+
+    async def teardown(self, sandbox_id: str) -> None:
+        self.events.append(f'teardown:{sandbox_id}')
+
+
 class SandboxContributingCapability(AbstractCapability[Any]):
     """Capability whose sandbox contribution is rejected before the handle is used."""
 

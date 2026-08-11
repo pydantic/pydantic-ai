@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext, RunPreparationContext, UnavailableSandbox, UserError
 from pydantic_ai.agent import WrapperAgent
@@ -21,6 +22,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.sandboxes import (
+    ManagedSandbox,
     Sandbox,
     SandboxBackend,
     SandboxOutputChunk,
@@ -35,7 +37,12 @@ from pydantic_ai.sandboxes import (
 from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage
 
-from .sandbox_fakes import FakeSandboxResult
+from .sandbox_fakes import (
+    CreateOnlySandboxProvider,
+    FakeSandboxResult,
+    LifecycleSandboxProvider,
+    RecordingSandboxProvider,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -801,6 +808,85 @@ def test_sandbox_providers_compose_and_latest_duplicate_wins():
     assert contributes_sandbox(SandboxCapability(id='deferred-sandbox', defer_loading=True)) is False
     # The visit short-circuits once a supplier is found, even with more capabilities after it.
     assert contributes_sandbox(CombinedCapability([SandboxCapability(), SandboxProviderCapability([])])) is True
+
+
+async def test_managed_sandbox_creates_at_run_start_and_tears_down_at_run_end():
+    """`ManagedSandbox` gives the run the whole lifecycle: no ref, no manual teardown."""
+    provider = LifecycleSandboxProvider()
+    agent: Agent = Agent(_tool_call_then_text(), capabilities=[ManagedSandbox(provider)])
+    seen: list[str] = []
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        seen.append(ctx.sandbox.sandbox_id)
+        # Not yet torn down while the run is still going.
+        assert provider.events == ['create:created-1']
+        return (await ctx.sandbox.run(['echo', 'hello'])).stdout
+
+    result = await agent.run('go')
+    assert result.output == 'done'
+    assert seen == ['created-1']
+    assert provider.events == ['create:created-1', 'teardown:created-1']
+    # The tool's command ran against the very backend `create()` returned; no reconnection here.
+    assert [backend.commands for backend in provider.backends] == [[['echo', 'hello']]]
+
+
+async def test_managed_sandbox_tears_down_when_a_tool_raises():
+    provider = LifecycleSandboxProvider()
+
+    def model_func(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('explode', {})])
+
+    agent: Agent = Agent(FunctionModel(model_func), capabilities=[ManagedSandbox(provider)])
+
+    @agent.tool
+    async def explode(ctx: RunContext[Any]) -> str:
+        raise RuntimeError('boom')
+
+    with pytest.raises(RuntimeError, match='boom'):
+        await agent.run('go')
+    assert provider.events == ['create:created-1', 'teardown:created-1']
+
+
+async def test_managed_sandbox_tolerates_a_provider_without_teardown():
+    """The inherited no-op `teardown` is what lets a provider lean on its platform's idle timeout."""
+    provider = CreateOnlySandboxProvider()
+    seen: list[str] = []
+    agent = make_probe_agent(seen, capabilities=[ManagedSandbox(provider)])
+    result = await agent.run('go')
+    assert result.output == 'done'
+    assert seen == ['created-1']
+    assert provider.events == ['create:created-1']
+
+
+async def test_managed_sandbox_rejects_a_provider_that_cannot_create():
+    provider = RecordingSandboxProvider()
+    agent = make_probe_agent([], capabilities=[ManagedSandbox(provider)])
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('go')
+    assert str(exc_info.value) == snapshot(
+        "The sandbox provider 'fake' passed to `ManagedSandbox` does not implement `create()`, so it cannot "
+        'provision a sandbox for this run. Implement `create()` on the provider, or pass an existing sandbox '
+        'backend or a `SandboxRef` to the run instead.'
+    )
+    assert isinstance(exc_info.value.__cause__, NotImplementedError)
+
+
+def test_managed_sandbox_is_not_spec_loadable():
+    """A provider holds live clients and worker-side credentials, so it can't come from a spec."""
+    assert ManagedSandbox.get_serialization_name() is None
+
+
+async def test_managed_sandbox_publishes_its_provider_for_ref_resolution():
+    """One registration covers both jobs, so a `SandboxRef` run argument resolves without a second one."""
+    provider = LifecycleSandboxProvider()
+    seen: list[str] = []
+    agent = make_connecting_probe_agent(seen, capabilities=[ManagedSandbox(provider)])
+    await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='pre-existing'))
+    assert seen == ['pre-existing']
+    # The run argument wins outright: nothing was created, and the run does not destroy a sandbox it
+    # was merely lent.
+    assert provider.events == ['connect:pre-existing']
 
 
 async def test_context_manager_served_backend_is_exposed_through_facade():
