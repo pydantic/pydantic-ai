@@ -212,7 +212,7 @@ OpenRouter supports web search through its [Beta server tool](https://openrouter
 
 You can configure search context, approximate user location, domain filters, and a limit on searches with [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]:
 
-```python
+```python {title="web_search_openrouter.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.openrouter import OpenRouterModel
