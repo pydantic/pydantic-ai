@@ -29,6 +29,7 @@ from pydantic_ai._utils import (
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
+    replace_no_init,
     run_in_executor,
     strip_markdown_fences,
     using_thread_executor,
@@ -203,34 +204,42 @@ async def test_peekable_async_stream_aclose_before_iteration():
     assert await peekable_async_stream.is_exhausted()
 
 
-@pytest.mark.anyio
-async def test_peekable_async_stream_aclose_cancels_in_flight_pull():
+@pytest.mark.parametrize('peek_pull', [False, True])
+async def test_peekable_async_stream_aclose_cancels_in_flight_pull(peek_pull: bool):
+    """Closing independently of a stalled pull must finalize the source without cancelling its consumer."""
     pull_started = anyio.Event()
-    pull_cancelled = anyio.Event()
+    finalized = anyio.Event()
+    followup_ran = anyio.Event()
 
     async def source() -> AsyncIterator[int]:
-        yield 1
-        pull_started.set()
         try:
-            await anyio.sleep_forever()
-        except BaseException:
-            pull_cancelled.set()
-            raise
+            yield 1
+            pull_started.set()
+            await asyncio.sleep(30)
+        finally:
+            finalized.set()
 
     stream: PeekableAsyncStream[int, AsyncIterator[int]] = PeekableAsyncStream(source())
     assert await anext(stream) == 1
 
-    async def pull() -> None:
-        with pytest.raises(StopAsyncIteration):
-            await anext(stream)
+    async def consume() -> None:
+        if peek_pull:
+            assert await stream.peek() is UNSET
+        else:
+            with pytest.raises(StopAsyncIteration):
+                await anext(stream)
+        followup_ran.set()
 
-    async with anyio.create_task_group() as task_group:
-        task_group.start_soon(pull)
-        await pull_started.wait()
-        with anyio.fail_after(1):
-            await stream.aclose()
-            await pull_cancelled.wait()
-        task_group.cancel_scope.cancel()
+    pull = asyncio.create_task(consume())
+    await pull_started.wait()
+
+    with anyio.fail_after(5):
+        await stream.aclose()
+        await finalized.wait()
+        await pull
+
+    assert followup_ran.is_set()
+    assert not pull.cancelled()
 
 
 @pytest.mark.anyio
@@ -264,7 +273,7 @@ async def test_peekable_async_stream_aclose_cancels_all_in_flight_pulls():
         await pull_started.wait()
         task_group.start_soon(pull)
         await anyio.sleep(0)
-        assert len(stream._source_pull_cancel_scopes) == 2  # pyright: ignore[reportPrivateUsage]
+        assert len(stream._pull_scopes) == 2  # pyright: ignore[reportPrivateUsage]
         with anyio.fail_after(1):
             await stream.aclose()
             await source_closed.wait()
@@ -1146,3 +1155,43 @@ def test_format_inlined_text_file() -> None:
     )
     assert 'text/plain' in result
     assert 'abc123' in result
+
+
+def test_replace_no_init() -> None:
+    """`replace_no_init` swaps declared fields on a copy without touching `__init__`.
+
+    Unit test rather than public-API driven because the misuse branch (an unknown field
+    name) is unreachable through the capability call sites that use the helper.
+    """
+
+    @dataclass
+    class Config:
+        name: str
+        tags: list[str] = field(default_factory=list[str])
+
+    original = Config(name='a', tags=['x'])
+    replaced = replace_no_init(original, name='b')
+
+    assert replaced is not original
+    assert (replaced.name, original.name) == ('b', 'a')
+    assert replaced.tags is original.tags, 'unchanged fields are carried over by reference, matching `replace`'
+
+    with pytest.raises(TypeError, match=r'Invalid field name\(s\) for Config: nom, tag'):
+        replace_no_init(original, nom='b', tag=['y'])
+
+    @dataclass(frozen=True)
+    class FrozenConfig:
+        name: str
+
+    frozen = FrozenConfig(name='a')
+    replaced_frozen = replace_no_init(frozen, name='b')
+    assert (replaced_frozen.name, frozen.name) == ('b', 'a'), 'frozen instances are supported, like `replace`'
+
+    class SelfCopyingConfig(Config):
+        def __copy__(self) -> SelfCopyingConfig:
+            return self
+
+    self_copying = SelfCopyingConfig(name='a')
+    with pytest.raises(TypeError, match='its `__copy__` does not return a new instance'):
+        replace_no_init(self_copying, name='b')
+    assert self_copying.name == 'a', 'the original must not be mutated in place'

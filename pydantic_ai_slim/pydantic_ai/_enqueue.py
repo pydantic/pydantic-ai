@@ -19,6 +19,7 @@ from .messages import (
     ModelResponse,
     RetryPromptPart,
     SystemPromptPart,
+    ToolAvailabilityDeltaPart,
     ToolReturnPart,
     ToolSearchReturnPart,
     UserPromptPart,
@@ -97,7 +98,15 @@ def _build_enqueue_messages(items: Sequence[EnqueueContent]) -> list[ModelMessag
             flush_request()
             messages.append(item)
         elif isinstance(
-            item, (SystemPromptPart, UserPromptPart, ToolReturnPart, RetryPromptPart, ToolSearchReturnPart)
+            item,
+            (
+                SystemPromptPart,
+                UserPromptPart,
+                ToolReturnPart,
+                RetryPromptPart,
+                ToolSearchReturnPart,
+                ToolAvailabilityDeltaPart,
+            ),
         ):
             flush_content()
             parts.append(item)

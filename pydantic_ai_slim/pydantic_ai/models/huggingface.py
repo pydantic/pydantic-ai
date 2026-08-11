@@ -33,6 +33,7 @@ from ..messages import (
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -48,6 +49,7 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
 from ._tool_choice import resolve_tool_choice
@@ -351,7 +353,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         Returns a tuple of (tools, tool_choice).
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         tool_choice: Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None
         if resolved_tool_choice in ('auto', 'required'):
@@ -487,6 +489,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                             'content': part.model_response(),
                         }
                     )
+            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                raise _unsynthesized_tool_availability_delta_error()
             else:
                 assert_never(part)
         if file_content:

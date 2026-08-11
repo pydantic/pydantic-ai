@@ -4,6 +4,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from functools import cached_property
 from typing import Any, Literal, cast
 from unittest.mock import Mock
@@ -35,7 +36,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
@@ -76,6 +77,25 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.filterwarnings('ignore::ResourceWarning'),
 ]
+
+
+def test_huggingface_hidden_tools_stay_off_the_wire():
+    """Guard Hugging Face's single-line switch from `tool_defs` to `declared_tool_defs`."""
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(provider_name='nebius', api_key='x'))
+    hidden = ToolDefinition(
+        name='process_refund',
+        description='Process a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    visible = ToolDefinition(name='visible')
+
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+    assert prepared.tool_visibility == {'process_refund': 'withheld', 'visible': 'visible'}
+
+    tools, _ = model._get_tool_choice({}, prepared)  # pyright: ignore[reportPrivateUsage]
+    assert [tool['function']['name'] for tool in tools] == ['visible']
 
 
 @dataclass
@@ -193,7 +213,7 @@ Hello! 👋 How can I help you today?\
 """
                 ),
             ],
-            usage=RequestUsage(input_tokens=4, output_tokens=197),
+            usage=RequestUsage(input_tokens=4, output_tokens=197, cost=Decimal('0.001391')),
             model_name='deepseek-ai/DeepSeek-R1',
             timestamp=IsDatetime(),
             provider_name='huggingface',
@@ -217,7 +237,7 @@ async def test_request_simple_usage(allow_model_requests: None, huggingface_api_
 
     result = await agent.run('Hello')
     assert result.output == IsStr()
-    assert result.usage == snapshot(RunUsage(input_tokens=4, output_tokens=258, requests=1))
+    assert result.usage == snapshot(RunUsage(input_tokens=4, output_tokens=258, requests=1, cost=Decimal('0.001818')))
 
 
 @pytest.mark.vcr()
@@ -251,7 +271,7 @@ async def test_request_structured_response(allow_model_requests: None, huggingfa
                         tool_call_id='call_7qxjvbuxpm6017n3jcq1uqwt',
                     )
                 ],
-                usage=RequestUsage(input_tokens=19, output_tokens=29),
+                usage=RequestUsage(input_tokens=19, output_tokens=29, cost=Decimal('0.000260')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
@@ -717,7 +737,7 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                         content='Hello! How can I assist you with the image of the potato? Do you have any specific questions or need information about it?'
                     )
                 ],
-                usage=RequestUsage(input_tokens=269, output_tokens=27),
+                usage=RequestUsage(input_tokens=269, output_tokens=27, cost=Decimal('0.00008750')),
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='huggingface',
@@ -810,7 +830,7 @@ That's correct! Paris is not only the political center but also the cultural, ec
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=16, output_tokens=216),
+                usage=RequestUsage(input_tokens=16, output_tokens=216, cost=Decimal('0.001560')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
@@ -1094,7 +1114,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                     IsInstance(ThinkingPart),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=995),
+                usage=RequestUsage(input_tokens=10, output_tokens=995, cost=Decimal('0.006995')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
@@ -1137,7 +1157,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                     IsInstance(ThinkingPart),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=32, output_tokens=1425),
+                usage=RequestUsage(input_tokens=32, output_tokens=1425, cost=Decimal('0.010071')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',
@@ -1188,7 +1208,7 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                     ThinkingPart(content=IsStr()),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=955),
+                usage=RequestUsage(input_tokens=10, output_tokens=955, cost=Decimal('0.006715')),
                 model_name='deepseek-ai/DeepSeek-R1',
                 timestamp=IsDatetime(),
                 provider_name='huggingface',

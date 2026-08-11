@@ -3,6 +3,8 @@
 Pydantic AI provides retry functionality for HTTP requests made by model providers through custom HTTP transports.
 This is particularly useful for handling transient failures like rate limits, network timeouts, or temporary server errors.
 
+This is the lowest of the [several layers that can retry](../retries.md) in an agent run, and the only one the model never sees.
+
 ## Overview
 
 The retry functionality is built on top of the [tenacity](https://github.com/jd/tenacity) library and integrates

@@ -23,20 +23,23 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 # it arrives in and the adapter that turns it back into the real thing, so activity-side code gets
 # the objects it would get in a non-durable run: `usage`/`usage_limits` drive the mid-chain
 # continuation usage check, and `loaded_capability_ids`/`discovered_tool_names` are combined with
-# other sets (by `available_tool_names`) and added to (by the `load_capability` tool).
+# other sets by `available_tool_names`. Activity-side mutations are discarded; reveal deltas are
+# applied to workflow state after the activity result returns.
 _str_set_ta: TypeAdapter[set[str]] = TypeAdapter(set[str])
 _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
     ('usage', dict, TypeAdapter(RunUsage)),
     ('usage_limits', dict, TypeAdapter(UsageLimits)),
     ('loaded_capability_ids', list, _str_set_ta),
     ('discovered_tool_names', list, _str_set_ta),
+    ('available_tool_names', list, _str_set_ta),
 )
 
 # Fields that `serialize_run_context` doesn't carry but that are still readable inside an activity,
 # as `None` unless the framework attaches something: `agent` and `root_capability` are re-attached
 # from the worker's agent instance, `pending_messages` is replaced by an `EnqueueGuard` so
 # `ctx.enqueue()` raises an explanation, and `tool_manager` is documented to be `None` inside
-# activities, which is what makes `available_tool_names` fall back to `discovered_tool_names`.
+# activities — `available_tool_names` then reads the snapshot serialized at dispatch time (see
+# the property override below), or falls back to `discovered_tool_names` without one.
 _NONE_UNLESS_ATTACHED = ('agent', 'root_capability', 'pending_messages', 'tool_manager')
 
 # Reading any other omitted field raises instead of returning the `RunContext` dataclass default,
@@ -50,7 +53,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
 
     By default, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `partial_output`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, and `capability_loaded` attributes will be available. Reading any other attribute raises a `UserError` explaining how to make it available, rather than returning its default value, so a field that didn't cross the boundary can't be mistaken for real run state.
 
-    `agent` and `root_capability` are re-attached from the worker's agent instance, `pending_messages` holds a guard that makes [`enqueue`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, and `tool_manager` is `None`: it holds live tool state that isn't serializable, so `available_tool_names` falls back to `discovered_tool_names`. The `capabilities` registry is excluded for the same reason — it holds live capability objects (toolsets, hooks, callables) — which means `available_capability_ids` (which reads it) is unavailable inside an activity. `model` and `tracer` are excluded as live objects too. `messages` is excluded because the full history would be duplicated into every activity payload, and `prompt` is excluded because a multi-modal prompt can carry large `BinaryContent` that would likewise ride in every activity payload, risking Temporal's 2 MB limit. `model_settings` is excluded because it's only set for model requests, which receive it as their own activity parameter, and `validation_context` because it's an arbitrary user object with no serialization contract.
+    `agent` and `root_capability` are re-attached from the worker's agent instance, `pending_messages` holds a guard that makes [`enqueue`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, and `tool_manager` is `None`: it holds live tool state that isn't serializable, so `available_tool_names` returns the resolved snapshot serialized at activity dispatch time (falling back to `discovered_tool_names` if a custom subclass doesn't carry it). The `capabilities` registry is excluded for the same reason — it holds live capability objects (toolsets, hooks, callables) — which means `available_capability_ids` (which reads it) is unavailable inside an activity. `model` and `tracer` are excluded as live objects too. `messages` is excluded because the full history would be duplicated into every activity payload, and `prompt` is excluded because a multi-modal prompt can carry large `BinaryContent` that would likewise ride in every activity payload, risking Temporal's 2 MB limit. `model_settings` is excluded because it's only set for model requests, which receive it as their own activity parameter, and `validation_context` because it's an arbitrary user object with no serialization contract.
     To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A subclass can use this escape hatch to opt in to carrying `prompt` if it knows its prompts are text-only.
     """
 
@@ -75,6 +78,21 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             )
         return super().__getattribute__(name)
 
+    @property
+    def available_tool_names(self) -> set[str]:
+        """The availability snapshot serialized at activity dispatch time.
+
+        Live tool state doesn't cross the activity boundary, but availability was already
+        resolved when the activity was dispatched — so the name form of
+        [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answers correctly
+        for always-visible tools too, instead of degrading to the `discovered_tool_names`
+        fallback. Custom subclasses whose `serialize_run_context` doesn't carry the snapshot
+        keep the base fallback behavior.
+        """
+        if (snapshot := self.__dict__.get('available_tool_names')) is not None:
+            return snapshot
+        return super().available_tool_names
+
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
         """Serialize the run context to a `dict[str, Any]`."""
@@ -97,6 +115,9 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'usage_limits': ctx.usage_limits,
             'loaded_capability_ids': ctx.loaded_capability_ids,
             'discovered_tool_names': ctx.discovered_tool_names,
+            # A resolved snapshot: at dispatch time live tool state exists, so this carries the
+            # always-visible tools that the in-activity `discovered_tool_names` fallback misses.
+            'available_tool_names': ctx.available_tool_names,
             'capability_loaded': ctx.capability_loaded,
         }
 
