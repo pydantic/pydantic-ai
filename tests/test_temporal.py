@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import gc
+import importlib
 import inspect
 import os
 import re
 import sys
 import uuid
 import warnings
+import weakref
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
@@ -7219,6 +7222,63 @@ async def test_durability_child_workflow_per_toolset_class_isolates_cross_worker
 
     assert result_a == 'Parent got: marker-A'
     assert result_b == 'Parent got: marker-B'
+
+
+def _temporalize_for_class_lookup(toolset_id: str) -> type[Any]:
+    """Build a per-toolset child-workflow class the way `TemporalDurability` does, and return it.
+
+    The class is built per toolset regardless of whether any tool asks for `child_workflow`, so the
+    toolset needs no tools to exercise how the class is stored and looked up.
+    """
+    durable_toolset = temporalize_function_toolset(
+        FunctionToolset[None](id=toolset_id),
+        activity_name_prefix=f'test__{toolset_id}',
+        activity_config=BASE_ACTIVITY_CONFIG,
+        tool_activity_config={},
+        deps_type=type(None),
+    )
+    (workflow_class,) = durable_toolset.durable_container_registrations
+    return cast('type[Any]', workflow_class)
+
+
+def test_durability_child_workflow_class_resolves_as_module_attribute():
+    """The per-toolset class is reachable as an attribute of its module, by name.
+
+    Unit test: the sandboxed runner resolves the class by exec'ing
+    `from {__module__} import {__name__}` inside the sandbox, which needs the module to answer for a
+    name that is deliberately not a real module attribute (holding every class ever built strongly
+    would grow the namespace for as long as the worker lives -- see the retention test below).
+    `test_durability_child_workflow_per_toolset_class_isolates_cross_worker_bindings` covers the
+    sandbox path end to end; this pins the lookup itself, hit and miss.
+    """
+    workflow_class = _temporalize_for_class_lookup('module_attr_toolset')
+    module = importlib.import_module(workflow_class.__module__)
+
+    assert getattr(module, workflow_class.__name__) is workflow_class
+    assert workflow_class.__name__ not in vars(module)
+    with pytest.raises(AttributeError, match="has no attribute '_ToolCallWorkflow_never_built'"):
+        getattr(module, '_ToolCallWorkflow_never_built')
+
+
+def test_durability_child_workflow_class_is_released_with_its_binding():
+    """A class stops being reachable once nothing holds the binding it belongs to.
+
+    A worker's sandbox re-imports the workflow module on every workflow task, re-running the
+    module-level `Agent(...)` construction and building a fresh class each time, so anything that
+    keeps every class alive (as assigning it into the module namespace did) is an unbounded leak in
+    a long-lived worker, not just a tidiness concern.
+    """
+    workflow_class = _temporalize_for_class_lookup('released_toolset')
+    class_name = workflow_class.__name__
+    module = importlib.import_module(workflow_class.__module__)
+    reference = weakref.ref(workflow_class)
+
+    del workflow_class
+    gc.collect()
+
+    assert reference() is None
+    with pytest.raises(AttributeError):
+        getattr(module, class_name)
 
 
 def _colliding_child_workflow_class(durability: TemporalDurability) -> type[Any]:

@@ -5,6 +5,7 @@ import itertools
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from weakref import WeakValueDictionary
 
 from temporalio import activity, workflow
 from temporalio.exceptions import ApplicationError, FailureError
@@ -39,6 +40,23 @@ if TYPE_CHECKING:
 # Per-process-unique class attribute names so two bindings with colliding workflow type names never
 # overwrite each other's module attribute (the sandbox resolves the class by its `__name__`).
 _tool_call_workflow_counter = itertools.count(1)
+
+# The sandboxed runner resolves a child-workflow class with `from {module} import {class_name}`,
+# which module-level `__getattr__` (PEP 562) serves just as well as a real module attribute -- and
+# unlike a module attribute, weak values don't pin every class ever built for the lifetime of the
+# process. That distinction matters: the sandbox re-imports the workflow module on every workflow
+# task, re-running the module-level `Agent(...)` construction and building a fresh class each time,
+# so strong module attributes would grow without bound for as long as the worker lives. A class is
+# kept alive by the toolset that closes over it and by every worker it's registered on, which is
+# exactly as long as it can be asked for.
+_tool_call_workflow_classes: WeakValueDictionary[str, type] = WeakValueDictionary()
+
+
+def __getattr__(name: str) -> Any:
+    try:
+        return _tool_call_workflow_classes[name]
+    except KeyError:
+        raise AttributeError(f'module {__name__!r} has no attribute {name!r}') from None
 
 
 class _ChildWorkflowClass(Protocol):
@@ -201,20 +219,18 @@ def temporalize_function_toolset(
     # here satisfies both SDK checks for a dynamically-built class.
     _run.__qualname__ = f'{class_name}.run'
     _run.__annotations__['deps'] = deps_type
-    registered_workflow = cast(
-        '_ChildWorkflowClass',
-        workflow.defn(name=workflow_name)(
-            type(
-                class_name,
-                (),
-                {'__qualname__': class_name, 'run': workflow.run(_run)},  # pyright: ignore[reportUnknownArgumentType]
-            )
-        ),
+    workflow_class = workflow.defn(name=workflow_name)(
+        type(
+            class_name,
+            (),
+            {'__qualname__': class_name, 'run': workflow.run(_run)},  # pyright: ignore[reportUnknownArgumentType]
+        )
     )
     # Sandboxed runners re-resolve the class via `from {__module__} import {__name__}`; make the
-    # class available under its sanitized name. Safe because `pydantic_ai` is a passthrough module
-    # under `PydanticAIPlugin`.
-    globals()[class_name] = registered_workflow
+    # class available under its sanitized name (see `__getattr__` above). Safe because `pydantic_ai`
+    # is a passthrough module under `PydanticAIPlugin`, so the sandbox sees this same registry.
+    _tool_call_workflow_classes[class_name] = workflow_class
+    registered_workflow = cast('_ChildWorkflowClass', workflow_class)
 
     def resolve_tool_config(tool: ToolsetTool[Any] | None, name: str) -> ToolConfig:
         config = resolve_tool_temporal_wrapping(tool, name, tool_activity_config)
