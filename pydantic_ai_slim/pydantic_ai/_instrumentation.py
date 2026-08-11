@@ -636,6 +636,9 @@ class InstrumentationNames:
     tool_deferral_name_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.name'
     tool_deferral_metadata_attr: ClassVar[str] = 'pydantic_ai.tool.deferral.metadata'
 
+    # Set on tool spans for calls that failed before execution; absent on execution failures
+    tool_failure_stage_attr: ClassVar[str] = 'pydantic_ai.tool.failure_stage'
+
     @classmethod
     def for_version(cls, version: int) -> Self:
         """Create instrumentation configuration for a specific version.

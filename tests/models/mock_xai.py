@@ -39,6 +39,7 @@ def _get_proto_finish_reason(finish_reason: FinishReason) -> sample_pb2.FinishRe
         'stop': sample_pb2.FinishReason.REASON_STOP,
         'length': sample_pb2.FinishReason.REASON_MAX_LEN,
         'tool_call': sample_pb2.FinishReason.REASON_TOOL_CALLS,
+        'error': sample_pb2.FinishReason.REASON_TIME_LIMIT,
         'content_filter': sample_pb2.FinishReason.REASON_STOP,
     }.get(finish_reason, sample_pb2.FinishReason.REASON_STOP)
 
@@ -199,7 +200,7 @@ def create_logprob(
 def create_response(
     content: str = '',
     tool_calls: list[chat_pb2.ToolCall] | None = None,
-    finish_reason: FinishReason = 'stop',
+    finish_reason: FinishReason | None = 'stop',
     usage: Any | None = None,
     reasoning_content: str = '',
     encrypted_content: str = '',
@@ -209,7 +210,9 @@ def create_response(
     """Create a Response with a single output."""
     output = chat_pb2.CompletionOutput(
         index=index,
-        finish_reason=_get_proto_finish_reason(finish_reason),
+        finish_reason=sample_pb2.FinishReason.REASON_INVALID
+        if finish_reason is None
+        else _get_proto_finish_reason(finish_reason),
         message=chat_pb2.CompletionMessage(
             content=content,
             role=chat_pb2.MessageRole.ROLE_ASSISTANT,
@@ -333,7 +336,7 @@ def get_grok_tool_chunk(
     chunk = create_stream_chunk(
         content='',
         tool_calls=chunk_tool_calls,
-        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+        finish_reason=finish_reason or None,  # type: ignore[arg-type]
     )
 
     # Create response tool calls (accumulated view)
@@ -354,7 +357,7 @@ def get_grok_tool_chunk(
     response = create_response(
         content='',
         tool_calls=response_tool_calls,
-        finish_reason=finish_reason if finish_reason else 'stop',  # type: ignore[arg-type]
+        finish_reason=finish_reason or None,  # type: ignore[arg-type]
         usage=usage,
     )
 
@@ -369,13 +372,13 @@ def get_grok_text_chunk(text: str, finish_reason: str = 'stop') -> tuple[chat_ty
     """
     chunk = create_stream_chunk(
         content=text,
-        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+        finish_reason=finish_reason or None,  # type: ignore[arg-type]
     )
 
     usage = usage_pb2.SamplingUsage(prompt_tokens=2, completion_tokens=1) if finish_reason else None
     response = create_response(
         content=text,
-        finish_reason=finish_reason if finish_reason else 'stop',  # type: ignore[arg-type]
+        finish_reason=finish_reason or None,  # type: ignore[arg-type]
         usage=usage,
     )
 
@@ -393,13 +396,13 @@ def get_grok_reasoning_text_chunk(
         content=text,
         reasoning_content=reasoning_content,
         encrypted_content=encrypted_content,
-        finish_reason=finish_reason if finish_reason else None,  # type: ignore[arg-type]
+        finish_reason=finish_reason or None,  # type: ignore[arg-type]
     )
 
     usage = usage_pb2.SamplingUsage(prompt_tokens=2, completion_tokens=1) if finish_reason else None
     response = create_response(
         content=text,
-        finish_reason=finish_reason if finish_reason else 'stop',  # type: ignore[arg-type]
+        finish_reason=finish_reason or None,  # type: ignore[arg-type]
         usage=usage,
         reasoning_content=reasoning_content,
         encrypted_content=encrypted_content,

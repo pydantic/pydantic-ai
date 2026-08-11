@@ -34,6 +34,7 @@ from pydantic_ai import (
     CodeExecutionTool,
     DocumentUrl,
     ExternalToolset,
+    FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -151,7 +152,13 @@ try:
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
-    from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
+    from temporalio.converter import (
+        DataConverter,
+        DefaultPayloadConverter,
+        ExternalStorage,
+        PayloadCodec,
+        StorageDriver,
+    )
     from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError
     from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
@@ -4087,13 +4094,132 @@ async def test_image_agent(allow_model_requests: None, client: Client):
     ):
         with workflow_raises(
             UserError,
-            snapshot('Image output is not supported with Temporal because of the 2MB payload size limit.'),
+            snapshot(
+                'Image output is not supported with Temporal because the image would ride the activity payload, '
+                'which is capped by the server blob-size limit (2MB by default, leaving about 1.5MB of raw image '
+                'bytes once base64-encoded).'
+            ),
         ):
             await client.execute_workflow(
                 ImageAgentWorkflow.run,
                 args=['Generate an image of an axolotl.'],
                 id=ImageAgentWorkflow.__name__,
                 task_queue=TASK_QUEUE,
+            )
+
+
+async def _call_oversized_image_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('get_oversized_image', {})])
+    return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+
+oversized_tool_return_agent = Agent(
+    FunctionModel(_call_oversized_image_tool, model_name='oversized-image-model'),
+    name='oversized_tool_return_agent',
+    deps_type=type(None),
+    # Deliberately no `retry_policy`: Temporal's default is unlimited attempts, and half of what this
+    # test pins is that an over-limit payload is non-retryable, so the run fails instead of hanging.
+    capabilities=[TemporalDurability(activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)))],
+)
+
+
+@oversized_tool_return_agent.tool_plain
+def get_oversized_image() -> BinaryImage:
+    # Under Temporal's 2MB blob limit as raw bytes, over it once base64-encoded into the activity
+    # payload — which is exactly why the usable budget is ~1.5MB rather than the nominal 2MB.
+    return BinaryImage(data=b'\x00' * 1_600_000, media_type='image/png')
+
+
+@workflow.defn
+class OversizedToolReturnWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await oversized_tool_return_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_oversized_tool_return_payload(client: Client):
+    """A tool returning binary content over Temporal's payload limit points at the cause (#7110).
+
+    Without the guard the run gets Temporal's own `[TMPRL1103] ... Size: N bytes, Limit: M bytes`,
+    which names neither the tool, the image, nor Pydantic AI — and because Temporal treats an
+    over-limit payload as retryable, the default policy resends it forever and the workflow never
+    fails at all. The `execution_timeout` is what turns a regression of that second half into a test
+    failure instead of a hang.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[OversizedToolReturnWorkflow],
+        plugins=[AgentPlugin(oversized_tool_return_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                "Tool 'get_oversized_image' returned a result too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2133494 bytes, Limit: 2097152 bytes. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference instead of the value itself, like a URL or a key your application resolves later. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://ai.pydantic.dev/durable_execution/temporal/#large-payloads"
+            ),
+        ):
+            await client.execute_workflow(
+                OversizedToolReturnWorkflow.run,
+                args=['Get the image.'],
+                id=OversizedToolReturnWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+
+
+async def _respond_with_oversized_image(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # A native image-generation tool puts the image on the response like this, so it rides the
+    # model-request activity payload rather than a tool-call one.
+    return ModelResponse(
+        parts=[
+            TextPart('here is your image'),
+            FilePart(content=BinaryImage(data=b'\x00' * 1_600_000, media_type='image/png')),
+        ]
+    )
+
+
+oversized_model_response_agent = Agent(
+    FunctionModel(_respond_with_oversized_image, model_name='oversized-response-model'),
+    name='oversized_model_response_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)))],
+)
+
+
+@workflow.defn
+class OversizedModelResponseWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await oversized_model_response_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_oversized_model_response_payload(client: Client):
+    """A model response carrying binary content over Temporal's payload limit points at the cause (#7110).
+
+    The `allow_image_output` guard doesn't cover this: it fires on the agent's `output_type`, while a
+    native image-generation tool returns the image as a `FilePart` on the model response instead.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[OversizedModelResponseWorkflow],
+        plugins=[AgentPlugin(oversized_model_response_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                "The response from model 'function:oversized-response-model' is too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2134150 bytes, Limit: 2097152 bytes. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://ai.pydantic.dev/durable_execution/temporal/#large-payloads"
+            ),
+        ):
+            await client.execute_workflow(
+                OversizedModelResponseWorkflow.run,
+                args=['Draw me something.'],
+                id=OversizedModelResponseWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
             )
 
 
@@ -6120,6 +6246,34 @@ def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
     assert result['data_converter'].failure_converter_class is converter.failure_converter_class
 
 
+def test_pydantic_ai_plugin_preserves_external_storage() -> None:
+    """A user's Temporal external storage config survives the payload converter swap.
+
+    The Temporal docs point large-payload users at `external_storage`, so this has to keep working.
+    """
+
+    class MockStorageDriver(StorageDriver):
+        def name(self) -> str:
+            return 'mock'
+
+        async def store(self, context: Any, payloads: Any) -> Any:
+            raise NotImplementedError
+
+        async def retrieve(self, context: Any, claims: Any) -> Any:
+            raise NotImplementedError
+
+    external_storage = ExternalStorage(drivers=[MockStorageDriver()])
+    plugin = PydanticAIPlugin()
+    converter = DataConverter(
+        payload_converter_class=DefaultPayloadConverter,
+        external_storage=external_storage,
+    )
+    config: dict[str, Any] = {'data_converter': converter}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
+    assert result['data_converter'].external_storage is external_storage
+
+
 def test_pydantic_ai_plugin_with_non_pydantic_converter_warns() -> None:
     """When converter uses a non-Pydantic payload converter, warn and replace."""
     plugin = PydanticAIPlugin()
@@ -7357,14 +7511,19 @@ def test_durability_rejects_construction_inside_workflow(monkeypatch: pytest.Mon
 
 
 def test_durability_image_output_rejected():
-    """TemporalDurability rejects image output because of the 2MB payload limit."""
+    """TemporalDurability rejects image output rather than letting it fail on payload size."""
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    with pytest.raises(UserError, match='Image output is not supported'):
+    with pytest.raises(UserError) as exc_info:
         bound._validate_model_request_parameters(  # pyright: ignore[reportPrivateUsage]
             ModelRequestParameters(allow_image_output=True),
         )
+    assert str(exc_info.value) == snapshot(
+        'Image output is not supported with Temporal because the image would ride the activity payload, '
+        'which is capped by the server blob-size limit (2MB by default, leaving about 1.5MB of raw image '
+        'bytes once base64-encoded).'
+    )
 
 
 # --- Model registry ---
@@ -7492,6 +7651,27 @@ def test_durability_activity_config_not_mutated():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
+    ]
+
+
+def test_temporal_agent_retry_policy_non_retryable_errors():
+    """The deprecated wrapper builds its own list, so its entries need their own assertion.
+
+    `TemporalAgent` doesn't go through `with_non_retryable_errors`, and every line of its
+    inline list runs on any construction — so without this, dropping `PayloadSizeError`
+    would leave coverage at 100% while restoring the infinite retry of #7110.
+    """
+    temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='retry_policy_probe_agent'),
+    )
+
+    retry_policy = temporal_agent.activity_config.get('retry_policy')
+    assert retry_policy is not None
+    assert retry_policy.non_retryable_error_types == [
+        'UserError',
+        'PydanticUserError',
+        'PayloadSizeError',
     ]
 
 
@@ -7533,6 +7713,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
     toolset_wrapper = bound._toolsets_by_id['my_toolset']  # pyright: ignore[reportPrivateUsage]
@@ -7546,6 +7727,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
 
@@ -7567,6 +7749,7 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
 
@@ -8591,6 +8774,7 @@ def test_resolve_tool_activity_config_reads_metadata():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
     inherited_retry_policy = RetryPolicy(maximum_attempts=7)
@@ -8652,6 +8836,7 @@ def test_resolve_tool_activity_config_restores_round_tripped_types():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
 

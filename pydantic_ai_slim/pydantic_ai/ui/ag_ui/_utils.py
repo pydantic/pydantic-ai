@@ -57,6 +57,9 @@ Keep this string stable — clients may persist `Interrupt.id` across page reloa
 FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_file'
 """Activity type for agent-generated files stored as AG-UI ActivityMessages."""
 
+COMPACTION_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_compaction'
+"""Activity type for compaction parts stored as AG-UI ActivityMessages."""
+
 UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 """Activity type for uploaded files stored as AG-UI ActivityMessages."""
 

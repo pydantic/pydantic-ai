@@ -10,6 +10,7 @@ from pydantic_core import to_json
 
 from ...exceptions import RunCancelled
 from ...messages import (
+    CompactionPart,
     FilePart,
     FinishReason as PydanticFinishReason,
     FunctionToolCallEvent,
@@ -33,7 +34,9 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
+from .._adapter import compaction_payload
 from ._utils import (
+    COMPACTION_DATA_TYPE,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     dump_message_metadata,
     dump_provider_metadata,
@@ -386,6 +389,12 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_file(self, part: FilePart) -> AsyncIterator[BaseChunk]:
         file = part.content
         yield FileChunk(url=file.data_uri, media_type=file.media_type)
+
+    async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[BaseChunk]:
+        yield DataChunk(
+            type=COMPACTION_DATA_TYPE,
+            data=compaction_payload(part),
+        )
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):
