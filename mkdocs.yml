@@ -57,6 +57,7 @@ nav:
           - models/bedrock.md
           - models/cerebras.md
           - models/cohere.md
+          - models/crusoe.md
           - models/groq.md
           - models/huggingface.md
           - models/mistral.md
@@ -216,6 +217,7 @@ nav:
           - api/models/bedrock_mantle.md
           - api/models/cerebras.md
           - api/models/cohere.md
+          - api/models/crusoe.md
           - api/models/fallback.md
           - api/models/function.md
           - api/models/google.md
