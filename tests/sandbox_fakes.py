@@ -105,6 +105,14 @@ class LifecycleSandboxProvider(CreateOnlySandboxProvider):
         self.events.append(f'teardown:{sandbox_id}')
 
 
+class FailingTeardownSandboxProvider(CreateOnlySandboxProvider):
+    """A provider whose `teardown` always fails, e.g. because the sandbox is already gone."""
+
+    async def teardown(self, sandbox_id: str) -> None:
+        self.events.append(f'teardown-failed:{sandbox_id}')
+        raise RuntimeError(f'sandbox {sandbox_id!r} is already gone')
+
+
 class SandboxContributingCapability(AbstractCapability[Any]):
     """Capability whose sandbox contribution is rejected before the handle is used."""
 

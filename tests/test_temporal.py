@@ -136,6 +136,7 @@ from ._inline_snapshot import snapshot
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from .sandbox_fakes import (
     CreateOnlySandboxProvider,
+    FailingTeardownSandboxProvider,
     FakeSandboxHandle,
     LifecycleSandboxProvider,
     RecordingSandboxProvider,
@@ -7008,6 +7009,11 @@ _teardownless_durable_agent = _managed_sandbox_agent(
     'teardownless_sandbox_durability_agent', _teardownless_sandbox_provider
 )
 
+_unteardownable_sandbox_provider = FailingTeardownSandboxProvider()
+_unteardownable_durable_agent = _managed_sandbox_agent(
+    'unteardownable_sandbox_durability_agent', _unteardownable_sandbox_provider
+)
+
 _uncreatable_sandbox_provider = RecordingSandboxProvider()
 _uncreatable_durable_agent = _managed_sandbox_agent(
     'uncreatable_sandbox_durability_agent', _uncreatable_sandbox_provider
@@ -7047,6 +7053,13 @@ class TeardownlessManagedSandboxWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         return (await _teardownless_durable_agent.run(prompt)).output
+
+
+@workflow.defn
+class UnteardownableManagedSandboxWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _unteardownable_durable_agent.run(prompt)).output
 
 
 @workflow.defn
@@ -7126,6 +7139,27 @@ async def test_temporal_durability_managed_sandbox_without_teardown_succeeds(cli
 
     assert output == 'done'
     assert _teardownless_sandbox_provider.events == snapshot(['create:created-1', 'connect:created-1'])
+
+
+async def test_temporal_durability_logs_a_failed_managed_sandbox_teardown(client: Client):
+    """A failed teardown must not fail an otherwise-finished run; the idle timeout is the backstop."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UnteardownableManagedSandboxWorkflow],
+        plugins=[AgentPlugin(_unteardownable_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            UnteardownableManagedSandboxWorkflow.run,
+            args=['Use the sandbox.'],
+            id=UnteardownableManagedSandboxWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'done'
+    assert _unteardownable_sandbox_provider.events == snapshot(
+        ['create:created-1', 'connect:created-1', 'teardown-failed:created-1']
+    )
 
 
 async def test_temporal_durability_managed_sandbox_without_create_fails_the_run(client: Client):

@@ -32,6 +32,9 @@ def sandbox_suppliers(capability: AbstractCapability[Any]) -> list[AbstractCapab
     counting a leaf twice. A durability subclass that overrides `get_sandbox` itself is still
     treated as a contributor.
 
+    The result is a chain-ordered list rather than a set because the *last* supplier is the one
+    that wins sandbox resolution.
+
     The check is static, so a contributor only produced at run time by a dynamic capability
     function is not visible here.
     """
@@ -49,9 +52,8 @@ def sandbox_suppliers(capability: AbstractCapability[Any]) -> list[AbstractCapab
         get_sandbox = type(leaf).get_sandbox
         if isinstance(leaf, WrapperCapability) and get_sandbox is WrapperCapability.get_sandbox:
             for supplier in sandbox_suppliers(leaf.wrapped):
-                if id(supplier) not in seen:
-                    seen.add(id(supplier))
-                    suppliers.append(supplier)
+                seen.add(id(supplier))
+                suppliers.append(supplier)
             return
         if get_sandbox not in (AbstractCapability.get_sandbox, BaseDurabilityCapability.get_sandbox):
             suppliers.append(leaf)
