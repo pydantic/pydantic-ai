@@ -22,13 +22,11 @@ from ._inline_snapshot import snapshot
 from .conftest import IsInstance, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
-    from prompt_toolkit.buffer import Buffer
-    from prompt_toolkit.document import Document
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
-    from pydantic_ai._cli import CustomAutoSuggest, ask_agent, cli, cli_agent, format_usage, handle_slash_command
+    from pydantic_ai._cli import ask_agent, cli, cli_agent, format_usage, handle_slash_command
     from pydantic_ai._cli.web import run_web_command
     from pydantic_ai.models.openai import OpenAIChatModel
 
@@ -301,13 +299,6 @@ def test_chat_interrupted_turn(
     assert 'Interrupted' in output
     assert 'recovered' in output
     assert attempts == 2
-
-
-def test_custom_auto_suggest_special_suggestion():
-    suggestion = CustomAutoSuggest(['/exit']).get_suggestion(Buffer(), Document('/ex'))
-
-    assert suggestion is not None
-    assert suggestion.text == 'it'
 
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):

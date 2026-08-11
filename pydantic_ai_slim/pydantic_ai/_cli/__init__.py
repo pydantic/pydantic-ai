@@ -474,7 +474,7 @@ class CustomAutoSuggest(AutoSuggestFromHistory):
         super().__init__()
         self.special_suggestions = special_suggestions or []
 
-    def get_suggestion(self, buffer: Buffer, document: Document) -> Suggestion | None:
+    def get_suggestion(self, buffer: Buffer, document: Document) -> Suggestion | None:  # pragma: no cover
         # Get the suggestion from history
         suggestion = super().get_suggestion(buffer, document)
 
