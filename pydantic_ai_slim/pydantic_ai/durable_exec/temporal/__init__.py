@@ -135,13 +135,14 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # through alongside the rest of the HTTP stack.
             'genai_prices',
             'httpx2',
-            # Registering a `child_workflow`-tagged tool's `_ToolCallWorkflow` (`_function_toolset.py`)
-            # with a worker makes the sandbox re-import its defining module to confirm the
-            # `workflow_failure_exception_types` classes resolve to the same objects inside and
-            # outside the sandbox. That re-import transitively pulls in `opentelemetry.context`,
-            # which reads `os.environ` at import time — restricted unless passed through.
+            # Registering a per-toolset `child_workflow`-tagged tool-call workflow class
+            # (`_function_toolset.py`) with a worker makes the sandbox re-import its defining module
+            # to confirm the `workflow_failure_exception_types` classes resolve to the same objects
+            # inside and outside the sandbox. That re-import transitively pulls in
+            # `opentelemetry.context`, which reads `os.environ` at import time — restricted unless
+            # passed through.
             'opentelemetry',
-            # Decoding a `_ToolCallWorkflow` child-workflow argument (`CallToolParams`, a dataclass)
+            # Decoding a `child_workflow` tool-call workflow argument (`CallToolParams`, a dataclass)
             # is the first schema Pydantic builds for a dataclass field *inside* the sandbox on some
             # code paths; that lazily imports `annotated_types` (a core pydantic dependency) after
             # the sandbox's initial workflow-module load, which the sandbox otherwise warns about —
@@ -150,6 +151,49 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             'annotated_types',
         ),
     )
+
+
+def _temporal_workflow_name(workflow_class: type[Any]) -> str | None:
+    """The registered Temporal workflow type name for a `@workflow.defn`-decorated class, if any."""
+    defn = getattr(workflow_class, '__temporal_workflow_definition', None)
+    return getattr(defn, 'name', None)
+
+
+def _merge_temporal_workflows(existing: list[type[Any]], new: Sequence[type[Any]]) -> list[type[Any]]:
+    """Append `new` onto `existing` in place, deduped by identity; raise on a colliding workflow name.
+
+    Mutates `existing` rather than returning a copy so a caller iterating over the same list object
+    while appending to it (as `PydanticAIPlugin.configure_worker` does below) keeps working.
+
+    Temporal's own `Worker()` construction already rejects two entries for the same workflow name (the
+    same protection activities get natively, scoped per `Worker`) — this gives the same protection
+    earlier, with a message naming the collision, for the case that check is built to catch: two
+    different `TemporalDurability` bindings whose agent name and toolset `id` happen to collide,
+    combined onto the same worker (see the per-toolset workflow class built in `_function_toolset.py`).
+
+    Deliberately scoped to *here* — the point classes are actually combined for a specific worker —
+    rather than eagerly wherever `temporalize_function_toolset` runs: that would also flag benign
+    cases, like two independently-bound agents that are never registered on the same worker together
+    (e.g. an old and a new implementation of the same agent kept side by side, sharing a name on
+    purpose, for replay testing across a capability migration).
+    """
+    names = {name: wf for wf in existing if (name := _temporal_workflow_name(wf)) is not None}
+    for wf in new:
+        if wf in existing:
+            continue
+        name = _temporal_workflow_name(wf)
+        colliding = names.get(name) if name is not None else None
+        if colliding is not None:
+            raise UserError(
+                f'Two different toolsets are both registered for child-workflow dispatch under the '
+                f'workflow name {name!r} ({colliding.__qualname__!r} and {wf.__qualname__!r}). Give '
+                'each agent or toolset a distinct name/`id` so their child-workflow dispatch names '
+                'do not collide.'
+            )
+        existing.append(wf)
+        if name is not None:
+            names[name] = wf
+    return existing
 
 
 class PydanticAIPlugin(SimplePlugin):
@@ -204,12 +248,12 @@ class PydanticAIPlugin(SimplePlugin):
                             '`TemporalDurability` capability; add one to `capabilities=[...]`.'
                         )
                     activities.extend(durability.temporal_activities)  # type: ignore[reportUnknownMemberType]
-                    # `_ToolCallWorkflow` is one shared class every agent using `child_workflow`
-                    # lists unconditionally — dedupe by identity, since multiple agents (or the
-                    # user's own `workflows=[...]`) could otherwise register it more than once.
-                    for wf in durability.temporal_workflows:
-                        if wf not in workflows:
-                            workflows.append(wf)
+                    # The same bound agent can be reachable via multiple plugins or also listed in
+                    # user `workflows=[...]`, contributing the identical per-toolset workflow class
+                    # object twice; dedupe by identity. Two *different* agents whose child-workflow
+                    # dispatch name collides is a separate, real misconfiguration — see
+                    # `_merge_temporal_workflows`.
+                    workflows = _merge_temporal_workflows(workflows, durability.temporal_workflows)
                 else:
                     raise TypeError(  # pragma: no cover
                         f'__pydantic_ai_agents__ items must be TemporalAgent or AbstractAgent, got {type(agent)}'  # type: ignore[reportUnknownVariableType]
@@ -255,15 +299,11 @@ class AgentPlugin(SimplePlugin):
         # `SimplePlugin.configure_worker` (just called via `super()`) appends this plugin's own
         # `workflows=` to whatever earlier plugins already contributed, without deduplicating —
         # unlike activities, the Temporal `Worker` itself rejects two entries for the same
-        # workflow name outright. `_ToolCallWorkflow` (`_function_toolset.py`) is one shared class
-        # every agent using `child_workflow` lists unconditionally, so two `AgentPlugin`s for two
-        # different agents (or the same agent twice) can otherwise collide here. Dedupe the
-        # cumulative list by identity each time a plugin runs, so it's clean by the last one.
+        # workflow name outright. The same bound agent can be registered through multiple plugins,
+        # contributing identical per-toolset workflow class objects twice; dedupe by identity, and
+        # raise if two *different* agents' collide on the registered workflow name (see
+        # `_merge_temporal_workflows`) each time a plugin runs, so it's clean by the last one.
         workflows = config.get('workflows')  # type: ignore[reportUnknownMemberType]
         if workflows:
-            deduped: list[type[Any]] = []
-            for wf in workflows:
-                if wf not in deduped:
-                    deduped.append(wf)
-            config['workflows'] = deduped
+            config['workflows'] = _merge_temporal_workflows([], workflows)
         return config

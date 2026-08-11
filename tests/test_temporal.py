@@ -143,7 +143,7 @@ try:
     )
     from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError, ChildWorkflowError
     from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
-    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker, WorkerConfig
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
     from temporalio.workflow import ActivityCancellationType, ActivityConfig, ChildWorkflowConfig
 
@@ -7007,10 +7007,10 @@ async def test_durability_child_workflow_tool_bug_fails_cleanly(client: Client):
 
     Regression test for an error-propagation gap found during review: an exception that isn't
     already a Temporal `FailureError` fails the workflow *task* by default, which Temporal retries
-    forever -- `_ToolCallWorkflow.run` converts it to an `ApplicationError` so the child fails
-    promptly and cleanly instead, which surfaces to the parent as a `ChildWorkflowError` (not
-    directly as an `ApplicationError`, unlike a same-shaped activity failure -- one extra layer of
-    wrapping for the extra hop through the child workflow).
+    forever -- the per-toolset child-workflow class converts it to an `ApplicationError` so the
+    child fails promptly and cleanly instead, which surfaces to the parent as a `ChildWorkflowError`
+    (not directly as an `ApplicationError`, unlike a same-shaped activity failure -- one extra layer
+    of wrapping for the extra hop through the child workflow).
     """
     async with Worker(
         client,
@@ -7085,6 +7085,201 @@ async def test_durability_child_workflow_rejects_sync_tool(client: Client):
                 SyncChildWorkflowRejectWorkflow.run,
                 args=['go'],
                 id='SyncChildWorkflowRejectWorkflow_test',
+                task_queue=TASK_QUEUE,
+            )
+
+
+# --- Child-workflow class isolation / collision behavior ---
+
+
+async def _marker_a_tool() -> str:
+    return 'marker-A'
+
+
+async def _marker_b_tool() -> str:
+    return 'marker-B'
+
+
+def _marker_parent_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(content=f'Parent got: {part.content}')])
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(tool_name='marker_tool', args={})])
+    return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+
+_COLLIDING_TOOLSET_ID = 'collision_toolset'
+_COLLIDING_AGENT_NAME = 'collision_agent'
+
+_marker_a_toolset = FunctionToolset[object](id=_COLLIDING_TOOLSET_ID)
+_marker_a_toolset.add_function(
+    _marker_a_tool,
+    name='marker_tool',
+    metadata={'temporal': {'child_workflow': {}}},
+)
+_marker_a_agent = Agent(
+    FunctionModel(_marker_parent_model_fn),
+    name=_COLLIDING_AGENT_NAME,
+    toolsets=[_marker_a_toolset],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+_marker_b_toolset = FunctionToolset[object](id=_COLLIDING_TOOLSET_ID)
+_marker_b_toolset.add_function(
+    _marker_b_tool,
+    name='marker_tool',
+    metadata={'temporal': {'child_workflow': {}}},
+)
+_marker_b_agent = Agent(
+    FunctionModel(_marker_parent_model_fn),
+    name=_COLLIDING_AGENT_NAME,
+    toolsets=[_marker_b_toolset],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class _MarkerAWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _marker_a_agent.run(prompt)
+        return result.output
+
+
+@workflow.defn
+class _MarkerBWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _marker_b_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_child_workflow_per_toolset_class_isolates_cross_worker_bindings(client: Client):
+    """Two same-named agents with same-id toolsets on separate Workers never misroute child workflows.
+
+    Under the old shared `_ToolCallWorkflow` + `_child_workflow_handlers` dict, the second binding
+    silently overwrote the first in process-global state, so the first Worker's child workflow would
+    run the second toolset's tool. With one dynamically-built class per toolset, each sandbox
+    resolves its own class and the two bindings are isolated.
+    """
+    task_queue_a = f'{TASK_QUEUE}-cross-a'
+    task_queue_b = f'{TASK_QUEUE}-cross-b'
+    async with Worker(
+        client,
+        task_queue=task_queue_a,
+        workflows=[_MarkerAWorkflow],
+        plugins=[AgentPlugin(_marker_a_agent)],
+    ):
+        async with Worker(
+            client,
+            task_queue=task_queue_b,
+            workflows=[_MarkerBWorkflow],
+            plugins=[AgentPlugin(_marker_b_agent)],
+        ):
+            result_a = await client.execute_workflow(
+                _MarkerAWorkflow.run,
+                args=['go'],
+                id='MarkerAWorkflow_cross',
+                task_queue=task_queue_a,
+            )
+            result_b = await client.execute_workflow(
+                _MarkerBWorkflow.run,
+                args=['go'],
+                id='MarkerBWorkflow_cross',
+                task_queue=task_queue_b,
+            )
+
+    assert result_a == 'Parent got: marker-A'
+    assert result_b == 'Parent got: marker-B'
+
+
+def _colliding_child_workflow_class(durability: TemporalDurability) -> type[Any]:
+    """The per-toolset workflow class for the shared `collision_toolset` id."""
+    for wf in durability.temporal_workflows:
+        if 'collision_toolset' in wf.__name__:
+            return wf
+    raise AssertionError('colliding child-workflow class not found')  # pragma: no cover
+
+
+async def test_durability_child_workflow_same_worker_collision_fails_loudly(client: Client):
+    """Two colliding per-toolset workflow classes on the same Worker are rejected immediately.
+
+    The workflow *type name* is deterministic (agent name + toolset id), so two such bindings on
+    one Worker produce a duplicate workflow-name error from Temporal — the same per-Worker check
+    that already protects activities.
+    """
+    durability_a = TemporalDurability.from_agent(_marker_a_agent)
+    durability_b = TemporalDurability.from_agent(_marker_b_agent)
+    assert durability_a is not None and durability_b is not None
+    wf_a = _colliding_child_workflow_class(durability_a)
+    wf_b = _colliding_child_workflow_class(durability_b)
+    assert wf_a is not wf_b
+
+    with pytest.raises(ValueError, match='More than one workflow named'):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[wf_a, wf_b],
+        ):
+            pass  # pragma: no cover
+
+
+def test_durability_child_workflow_same_worker_collision_via_plugins_names_the_collision():
+    """Combining two colliding agents through `AgentPlugin`s raises a `UserError` naming both toolsets.
+
+    Passing the raw classes straight to `Worker(workflows=[...])` (the test above) only gets
+    Temporal's own generic "More than one workflow named X" at `Worker()` construction. Going through
+    `AgentPlugin`/`PydanticAIPlugin.configure_worker` -- the way real callers combine agents -- catches
+    the same collision earlier, with a message identifying which two toolsets collided.
+    """
+    config: WorkerConfig = {'workflows': [], 'activities': []}  # pyright: ignore[reportAssignmentType]
+    config = AgentPlugin(_marker_a_agent).configure_worker(config)
+    # `_marker_a_agent`/`_marker_b_agent` share a name, so both their explicit `collision_toolset`-id
+    # toolset *and* their implicit per-agent (`'<agent>'`-id) toolset collide; whichever the merge
+    # reaches first is the one named, so match generically rather than pin a specific toolset id.
+    with pytest.raises(
+        UserError,
+        match=r"Two different toolsets are both registered for child-workflow dispatch under the workflow name 'agent__collision_agent__toolset__.+__call_tool_workflow'",
+    ):
+        AgentPlugin(_marker_b_agent).configure_worker(config)
+
+
+async def test_durability_child_workflow_rejects_direct_start(client: Client):
+    """Starting the child-workflow type directly (not as a child) raises a `UserError`.
+
+    Regression test for the security review finding that the workflow type is public and registered
+    on the worker, so any client with queue access could start it directly. The per-toolset class
+    preserves the parent-is-None rejection from the old shared `_ToolCallWorkflow`.
+    """
+    durability = TemporalDurability.from_agent(_marker_a_agent)
+    assert durability is not None
+    child_workflow_class = _colliding_child_workflow_class(durability)
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[_MarkerAWorkflow, child_workflow_class],
+        plugins=[AgentPlugin(_marker_a_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            "'agent__collision_agent__toolset__collision_toolset__call_tool_workflow' must be started "
+            'as a child workflow of an agent run, not invoked directly.',
+        ):
+            await client.execute_workflow(
+                child_workflow_class.run,
+                args=[
+                    CallToolParams(
+                        name='marker_tool',
+                        tool_args={},
+                        serialized_run_context=None,
+                        tool_def=None,
+                    ),
+                    None,
+                ],
+                id='DirectStartChildWorkflow_test',
                 task_queue=TASK_QUEUE,
             )
 

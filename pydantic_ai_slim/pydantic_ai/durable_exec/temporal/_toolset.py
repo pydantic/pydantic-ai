@@ -49,11 +49,6 @@ class CallToolParams:
     tool_def: ToolDefinition | None
     original_name: str | None = None
     """The name the toolset holds the tool under, when a `prepare` function renamed it in `tool_def.name`."""
-    handler_key: str | None = None
-    """Only set for the child-workflow path: looks up the per-toolset handler in `_ToolCallWorkflow`'s
-    registry. `_ToolCallWorkflow` is one shared, module-level class (`@workflow.run` rejects locally-scoped
-    classes), so dispatch to the right toolset happens through this key rather than through which class
-    was invoked."""
 
 
 @asynccontextmanager
