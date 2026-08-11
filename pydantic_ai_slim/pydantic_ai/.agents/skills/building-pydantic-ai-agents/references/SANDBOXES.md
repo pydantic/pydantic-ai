@@ -72,15 +72,22 @@ sandbox = UnavailableSandbox(reason='Local execution is disabled by application 
 
 ## Durable execution
 
-Split durable sandbox state into identity and connection:
+A `SandboxProvider` subclass is the glue for one provider, holding worker-side credentials:
+`create()` provisions, `connect()` re-opens an existing environment, `teardown()` destroys.
+Only `connect()` is required; `create()` raises `NotImplementedError` by default and
+`teardown()` is a no-op.
 
-- `SandboxRef(provider, sandbox_id)` is serializable identity with no credentials.
-- A `SandboxProvider` subclass holds worker-side credentials and implements
-  `connect(sandbox_id) -> SandboxBackend` for an existing environment.
-- Register providers with `TemporalDurability(sandbox_providers=[...])`,
+Two ways to use it:
+
+- `ManagedSandbox(provider)` as a capability: the run creates a sandbox at start and destroys
+  it at end, including on failure. No reference is ever handled by hand. Supported under
+  `TemporalDurability` (both halves run as activities); DBOS and Prefect reject it.
+- `SandboxRef(provider, sandbox_id)` passed as `sandbox=` for a sandbox that outlives the run,
+  with the provider registered via `TemporalDurability(sandbox_providers=[...])`,
   `DBOSDurability(sandbox_providers=[...])`, or `PrefectDurability(sandbox_providers=[...])`.
-- Pass the reference through `sandbox=`. Tools continue to use `await ctx.sandbox.run(...)`; the
-  deferred facade connects once on its first operation.
+
+Either way tools keep calling `await ctx.sandbox.run(...)`; the deferred facade connects once on
+its first operation inside the engine's I/O boundary.
 
 Temporal serializes the identity into activities. DBOS pickles it as a workflow input and
 reconnects to the same environment when recovery re-executes the workflow. Sandbox I/O must still
@@ -88,15 +95,15 @@ run in the engine's I/O boundary: do not connect in Temporal workflow code, and 
 DBOS sandbox tools as steps. Prefect includes deferred `(provider, sandbox_id)` identity in cache
 keys without connecting.
 
-Without a reference, Temporal and DBOS retain `UnavailableSandbox`. They reject live backends.
+Without either, Temporal and DBOS retain `UnavailableSandbox`. They reject live backends.
 `LocalSandbox` is intentionally not reconnectable because its temporary directory is worker-local.
 
 Provider rules:
 
 - `connect()` re-opens only; raise when the environment expired. Never silently open-or-create.
+- `teardown()` must tolerate an already-gone sandbox.
 - Keep credentials on the provider, not in `SandboxRef` or workflow history.
-- Create idempotently in a separate activity or before workflow start.
-- Destroy in workflow cleanup and also configure a server-side TTL or reaper.
+- Always configure a server-side TTL or reaper: a terminated or cancelled workflow runs no cleanup.
 
 See the full [sandbox guide](https://ai.pydantic.dev/sandbox/) for protocol contracts,
 lifecycle rules, and implementation guidance.

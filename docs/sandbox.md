@@ -113,7 +113,11 @@ its state between those runs.
 
 ### From a capability
 
-A sandbox-supplying capability overrides
+For a fresh sandbox per run from a provider you can create and destroy, reach for the ready-made
+[`ManagedSandbox`][pydantic_ai.sandboxes.ManagedSandbox] capability, which is also the one path
+that works inside a Temporal workflow — see [durable execution](#durable-execution).
+
+To supply a sandbox some other way, write a capability that overrides
 [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox]. Capabilities that only
 consume the sandbox read `ctx.sandbox` and do not override this method.
 
@@ -251,42 +255,58 @@ constrained, use argv form and validate arguments.
 
 ## Durable execution
 
-Durable sandboxes split **identity** from **connection**:
+Durable engines can't hold a live sandbox handle: workflow code is replayed, and the handle
+can't cross into the activities, steps, or tasks that do the I/O. Two pieces solve that:
 
-- [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] is pure serializable identity:
-  `provider` plus `sandbox_id`, with no credentials or live client.
-- [`SandboxProvider`][pydantic_ai.sandboxes.SandboxProvider] holds worker-side credentials and
-  configuration. Its `connect()` method re-opens that existing environment.
+- [`SandboxProvider`][pydantic_ai.sandboxes.SandboxProvider] is the glue for one provider,
+  holding worker-side credentials and configuration. `create()` provisions an environment,
+  `connect()` re-opens an existing one, and `teardown()` destroys it.
+- [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] is pure serializable identity — `provider`
+  plus `sandbox_id` — with no credentials or live client.
 
-Pass the reference through `sandbox=` and register its provider on the durability capability.
-Pydantic AI reconstructs a deferred [`Sandbox`][pydantic_ai.sandboxes.Sandbox] inside the durable
-I/O boundary, so tool code continues to call `await ctx.sandbox.run(...)`. The first operation
-connects once and caches the live backend for that activity, step, or task.
+### A sandbox per run
 
-```python {title="durable_sandbox_pattern.py" test="skip" lint="skip"}
+Attach [`ManagedSandbox`][pydantic_ai.sandboxes.ManagedSandbox] and the run owns the whole
+lifecycle: it creates a sandbox before any hook sees `ctx.sandbox` and destroys it after the last
+one, including when the run fails. Tool code calls `await ctx.sandbox.run(...)` exactly as it does
+outside a workflow, and no reference is ever handled by hand.
+
+```python {title="managed_sandbox_pattern.py" test="skip" lint="skip"}
 from my_sandboxes import SandboxClient
 from temporalio import workflow
 
-from pydantic_ai import Agent, RunContext, SandboxBackend, SandboxRef
+from pydantic_ai import Agent, RunContext, SandboxBackend
 from pydantic_ai.durable_exec.temporal import TemporalDurability
-from pydantic_ai.sandboxes import SandboxProvider
+from pydantic_ai.sandboxes import ManagedSandbox, SandboxProvider
 
 
 class MySandboxProvider(SandboxProvider):
-    provider = 'my-sandbox'
-
     def __init__(self, client: SandboxClient):
         self.client = client  # credentials stay on the worker
+
+    @property
+    def provider(self) -> str:
+        return 'my-sandbox'
+
+    async def create(self) -> SandboxBackend:
+        return await self.client.create()
 
     async def connect(self, sandbox_id: str) -> SandboxBackend:
         # Re-open only: raise if the environment expired. Never create a replacement here.
         return await self.client.connect(sandbox_id)
 
+    async def teardown(self, sandbox_id: str) -> None:
+        await self.client.destroy(sandbox_id)
 
-durability = TemporalDurability(
-    sandbox_providers=[MySandboxProvider(SandboxClient.from_environment())]
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    name='workspace_agent',
+    capabilities=[
+        TemporalDurability(),
+        ManagedSandbox(MySandboxProvider(SandboxClient.from_environment())),
+    ],
 )
-agent = Agent('anthropic:claude-sonnet-5', name='workspace_agent', capabilities=[durability])
 
 
 @agent.tool
@@ -298,6 +318,44 @@ async def sh(ctx: RunContext[None], command: str) -> str:
 @workflow.defn
 class WorkspaceWorkflow:
     @workflow.run
+    async def run(self, task: str) -> str:
+        result = await agent.run(task)
+        return result.output
+```
+
+Only `connect()` is required. `create()` is for providers that can provision, and `teardown()`
+defaults to a no-op for platforms that reap idle sandboxes themselves.
+
+Under [Temporal](durable_execution/temporal.md), creation and destruction each run as their own
+activity and only the resulting identity returns to workflow code, so creation happens exactly
+once per run even across replays. Teardown runs at the end of the run, including a failed one, but
+a cancelled workflow may skip it — **always configure a server-side idle timeout or reaper as the
+backstop.** [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) have no
+equivalent boundary and reject `ManagedSandbox`; use a reference there.
+
+### A sandbox that outlives the run
+
+When the environment is provisioned elsewhere — by an operator, another service, or an earlier
+workflow — pass its [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] through `sandbox=` and
+register its provider on the durability capability:
+
+```python {title="durable_sandbox_ref_pattern.py" test="skip" lint="skip"}
+from temporalio import workflow
+
+from pydantic_ai import Agent, SandboxRef
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+
+from managed_sandbox_pattern import MySandboxProvider, SandboxClient
+
+durability = TemporalDurability(
+    sandbox_providers=[MySandboxProvider(SandboxClient.from_environment())]
+)
+agent = Agent('anthropic:claude-sonnet-5', name='workspace_agent', capabilities=[durability])
+
+
+@workflow.defn
+class ExistingWorkspaceWorkflow:
+    @workflow.run
     async def run(self, sandbox_id: str) -> str:
         result = await agent.run(
             'Inspect the workspace and fix the failing tests.',
@@ -306,8 +364,11 @@ class WorkspaceWorkflow:
         return result.output
 ```
 
-`provider` and `sandbox_id` are available before connection. The synchronous `sandbox.backend`
-property raises until an async operation has connected the facade.
+A run argument wins over every capability contribution, so the run uses the referenced sandbox and
+never destroys it. Pydantic AI reconstructs a deferred [`Sandbox`][pydantic_ai.sandboxes.Sandbox]
+inside the durable I/O boundary; the first operation connects once and caches the live backend for
+that activity, step, or task. `provider` and `sandbox_id` are readable before connection, but the
+synchronous `sandbox.backend` property raises until an async operation has connected the facade.
 
 - **[Temporal](durable_execution/temporal.md)** serializes the reference into
   `TemporalRunContext` and rebuilds the deferred facade in activities. Workflow code may inspect
@@ -320,18 +381,19 @@ property raises until an async operation has connected the facade.
   without connecting. The fresh framework default and `UnavailableSandbox` add no sandbox
   component.
 
-Without a `SandboxRef`, Temporal and DBOS keep their `UnavailableSandbox` default. A live backend
-is still rejected because it cannot cross their durable boundaries. `LocalSandbox` has no
-provider: its worker-local temporary directory cannot survive worker replacement.
+With neither a `ManagedSandbox` nor a `SandboxRef`, Temporal and DBOS keep their
+`UnavailableSandbox` default. A live backend is still rejected because it cannot cross their
+durable boundaries. `LocalSandbox` has no provider: its worker-local temporary directory cannot
+survive worker replacement.
 
 Rules of thumb for provider authors:
 
-- **Create the sandbox in an activity** (or before the workflow starts), keyed idempotently
-  (for example, on the workflow id) so an activity retry cannot create duplicates.
-- **Destroy in a workflow `finally` — and still set a server-side TTL.** A terminated workflow
-  runs no cleanup; without a TTL or reaper, the sandbox leaks.
+- **`connect()` re-opens, never creates.** If the sandbox was reaped while the workflow slept, an
+  open-or-create fallback silently swaps in an empty environment that the model's message history
+  contradicts. Recreate only as an explicit, logged decision.
+- **`teardown()` tolerates an already-gone sandbox.** It also runs after a failure that may have
+  destroyed the environment already.
+- **Still set a server-side TTL.** A terminated workflow runs no cleanup; without a TTL or reaper,
+  the sandbox leaks.
 - **Ids only in `SandboxRef`.** The reference is recorded in workflow history; credentials belong
-  on the worker-side provider.
-- **Fail loudly on expiry.** If the sandbox was reaped while the workflow slept, an
-  open-or-create fallback silently swaps in an empty environment that the model's message
-  history contradicts. Recreate only as an explicit, logged decision.
+  on the provider.
