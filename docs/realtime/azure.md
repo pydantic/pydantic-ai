@@ -1,7 +1,8 @@
-# Azure OpenAI Realtime
+# Azure Realtime
 
-[`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] connects to Azure OpenAI's GA
-realtime protocol with the server-side Pydantic AI agent loop. Start with the
+[`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] connects to Azure's realtime
+speech-to-speech with the server-side Pydantic AI agent loop — either the **Azure OpenAI GA** protocol
+(the default) or **Azure AI Voice Live** (opt-in). Start with the
 [realtime quickstart](overview.md#quickstart) or [text-to-audio example](../examples/realtime-text-to-audio.md).
 
 ## Setup
@@ -135,6 +136,103 @@ model = AzureRealtimeModel(
 # bearer token; the browser only ever receives the short-lived ephemeral secret, never it or the API key.
 ```
 
+## Azure AI Voice Live
+
+[Azure AI Voice Live](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live) is
+Microsoft's managed speech-to-speech service, with extra session options and a wider model catalog than
+the GA realtime API — including cascade pipelines (Azure speech-to-text → a chat model → Azure
+text-to-speech) over models like `gpt-4o`, `gpt-4.1`, and `gpt-5`. It's the **same
+[`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel]**: set
+[`azure_voice_live=True`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live] and the
+model targets the Voice Live endpoint and beta session protocol.
+
+Voice Live is a distinct Azure resource with its own credentials, so set `AZURE_VOICELIVE_ENDPOINT`,
+`AZURE_VOICELIVE_API_KEY`, and `AZURE_VOICELIVE_API_VERSION`, or pass `voice_live_endpoint`,
+`voice_live_api_key`, and `voice_live_api_version` to
+[`AzureProvider`][pydantic_ai.providers.azure.AzureProvider]. Each value resolves explicit argument
+first, then its own `AZURE_VOICELIVE_*` variable, then the Azure OpenAI endpoint/key — so a Voice Live
+user who only has one resource doesn't need to configure both, and one who has both never gets a
+mixture of the two.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.providers.azure import AzureProvider
+from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings
+
+provider = AzureProvider(
+    voice_live_endpoint='https://my-voice-live.services.ai.azure.com',
+    voice_live_api_key='...',
+    voice_live_api_version='2026-04-10',
+)
+
+agent = Agent(instructions='You are a helpful voice assistant.')
+# Pass the Voice Live `provider`, and set `azure_voice_live` on the model rather than per session so
+# `model.profile` reflects Voice Live (see the note below).
+model = AzureRealtimeModel(
+    'gpt-realtime', provider=provider, settings=AzureRealtimeModelSettings(azure_voice_live=True)
+)
+
+
+async def main():
+    async with agent.realtime(model).session() as session:
+        await session.send('Say hello.')
+        async for event in session:
+            ...
+```
+
+Voice-Live-only knobs use the `azure_voice_live_*` prefix (e.g.
+[`azure_voice_live_turn_detection`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_turn_detection]).
+
+### Which models use which API
+
+`azure_voice_live` isn't always needed: `AzureRealtimeModel` routes by model. The two APIs overlap but
+neither contains the other, so each recognized model is served by the GA realtime API, by Voice Live, or
+by both:
+
+- **Both** (e.g. `gpt-realtime`, `gpt-realtime-mini`) — default to GA;
+  `azure_voice_live=True` selects Voice Live.
+- **Voice Live only** (e.g. `gpt-5` and the other cascade chat models, `phi4-mm-realtime`) — routed to
+  Voice Live automatically, with or without the setting.
+- **GA only** (e.g. `gpt-realtime-2`, `gpt-4o-realtime-preview`) — `azure_voice_live=True` raises a
+  [`UserError`][pydantic_ai.exceptions.UserError], since Voice Live doesn't serve them.
+
+An unrecognized model (a future release, or a deployment named after something else) defaults to GA and
+reaches Voice Live only with `azure_voice_live=True`. When a deployment's name doesn't match its model,
+pass a [`profile=`][pydantic_ai.realtime.RealtimeModel.profile]
+[`AzureRealtimeModelProfile`][pydantic_ai.realtime.azure.AzureRealtimeModelProfile] with
+[`azure_realtime_apis`][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_realtime_apis] to
+correct the routing:
+
+```python
+from pydantic_ai.providers.azure import AzureProvider
+from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelProfile
+
+# A Voice-Live-only model deployed under a custom name.
+model = AzureRealtimeModel(
+    'my-voice-bot',
+    provider=AzureProvider(
+        voice_live_endpoint='https://my-voice-live.services.ai.azure.com', voice_live_api_key='...'
+    ),
+    profile=AzureRealtimeModelProfile(azure_realtime_apis=frozenset({'voice_live'})),
+)
+```
+
+!!! note "Browser WebRTC is WebSocket-only for Voice Live"
+    The [browser WebRTC](#browser-webrtc-and-microsoft-entra-id) flow above is for the GA Azure OpenAI
+    realtime path. Voice Live negotiates WebRTC over its own WebSocket control channel instead, which
+    isn't implemented yet, so `answer_webrtc_offer` / `create_client_secret` raise `UserError` whenever
+    the session resolves to Voice Live — set with `azure_voice_live=True`, or auto-routed because the
+    model is only served by Voice Live (e.g. `gpt-5`). Use a WebSocket session with Voice Live for now
+    ([issue #6702](https://github.com/pydantic/pydantic-ai/issues/6702)).
+
+    [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] reports `False`
+    whenever the **model** resolves to Voice Live — forced by `azure_voice_live=True` at construction, or
+    auto-routed for a Voice-Live-only model.
+    [`profile`][pydantic_ai.realtime.RealtimeModel.profile] is a property of the model and cannot see
+    `model_settings` passed per session, so a per-session `azure_voice_live=True` on an otherwise-GA
+    model isn't reflected in the flag. The signaling methods still refuse at the point of use in that
+    case, so the flag is an early check and the point-of-use guard is the safety net.
+
 ## Feature support and limitations
 
 | Feature | Support | Notes |
@@ -157,5 +255,5 @@ See [Audio, images, and transcripts](audio.md), [Turns and interruptions](turns.
 - A failed input transcription leaves the user turn represented as
   [retained audio](history.md#retaining-audio) when available, or as a content-less `SpeechPart`
   otherwise.
-- This page covers Azure OpenAI Realtime only; Azure AI Voice Live support is coming in
-  [#6642](https://github.com/pydantic/pydantic-ai/pull/6642).
+- Azure AI Voice Live rides the same model behind `azure_voice_live=True`, against its own
+  resource and beta session protocol; browser WebRTC is GA-only for now.
