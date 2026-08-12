@@ -138,24 +138,20 @@ make
 
 ## Documentation Changes
 
-Pydantic AI publishes documentation on two sites. Keep their navigation files in sync when adding,
-removing, or moving a page:
+[`docs/navigation.yml`](https://github.com/pydantic/pydantic-ai/blob/main/docs/navigation.yml)
+owns the sidebar, public routes, and redirects for
+[Pydantic AI's documentation](https://pydantic.dev/docs/ai/). Update it when adding, removing,
+or moving a page.
 
-- [`mkdocs.yml`](https://github.com/pydantic/pydantic-ai/blob/main/mkdocs.yml) drives
-  [ai.pydantic.dev](https://ai.pydantic.dev/).
-- [`docs/navigation.yml`](https://github.com/pydantic/pydantic-ai/blob/main/docs/navigation.yml)
-  owns the sidebar and public routes under
-  [pydantic.dev/docs/ai](https://pydantic.dev/docs/ai/).
-
-`docs/nav.json` is retained temporarily for compatibility while unified-docs switches to the
-repository-owned manifest. Do not add a third navigation design there; mirror `navigation.yml`
-until the compatibility file is removed.
+[`mkdocs.yml`](https://github.com/pydantic/pydantic-ai/blob/main/mkdocs.yml) remains the
+configuration for the repository's local documentation build and validation. Keep its page list
+in sync with `docs/navigation.yml` until that build is retired.
 
 All routes in `docs/navigation.yml` are relative to the Pydantic AI documentation root. Give each
 page its complete canonical route in `slug`; use `aliases` only for redirect sources. Do not prefix
 either value with `/ai` or a leading slash.
 
-To run the documentation page locally, run:
+To validate the documentation source locally, run:
 
 ```bash
 uv run mkdocs serve

@@ -1,7 +1,6 @@
 # Canonical Pydantic AI sidebar, public routes, and redirects for pydantic/unified-docs.
 # Keep source paths relative to their named content root. Page slugs are complete
 # library-relative canonical routes; aliases are library-relative redirect sources.
-# docs/nav.json remains temporarily for release compatibility during the consumer cutover.
 # yaml-language-server: $schema=https://pydantic.dev/docs/schemas/repository-navigation.schema.json
 version: 1
 navigation:
