@@ -344,7 +344,8 @@ def anyio_backend():
 # Each entry should say why the blocking call is acceptable; anything not listed here should be
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
 BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
-    # coverage reads Python source files while collecting coverage data.
+    # coverage reads Python source files while collecting coverage data. Remove these once
+    # https://github.com/cbornet/blockbuster/pull/63 is released in a compatible version.
     ('os.stat', 'coverage/python.py', 'get_python_source'),
     ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source'),
     # `load_mcp_toolsets` is a sync config-file loader; reading the file is its documented job.

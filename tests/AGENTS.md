@@ -168,11 +168,11 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 - Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
 - Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.
 - Override `blockbuster_excluded_modules` when one integration module intentionally provides synchronous APIs.
-- Override `blockbuster_enabled` only when one specific test intentionally performs blocking work.
+- Override `blockbuster_enabled` at the narrowest test or integration-module boundary that intentionally performs blocking work.
 - Use the narrowest module or test boundary. Do not replace the autouse `blockbuster` fixture.
 - Each pytest worker configures one detector per exclusion set and activates it separately for each test.
 - CI enables BlockBuster in Python 3.13 slim, evals, and standard jobs, plus unique compatibility or live-provider jobs.
-- The all-extras job disables BlockBuster because its stack-inspection overhead exceeds the seven-minute CI budget.
+- The all-extras job disables BlockBuster because its stack-inspection overhead exceeds the seven-minute CI budget. Rebenchmark after [BlockBuster #61](https://github.com/cbornet/blockbuster/pull/61) is released in a compatible version, and re-enable it if the job stays within seven minutes.
 - Redundant Python-version and lowest-version lanes disable BlockBuster to avoid repeated stack-inspection overhead.
 - Local targeted tests enable BlockBuster by default.
 

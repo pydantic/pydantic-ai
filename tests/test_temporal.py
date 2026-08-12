@@ -281,7 +281,9 @@ def blockbuster_enabled() -> bool:
     """Disable detection for Temporal's synchronous worker and integration setup.
 
     It performs module/config introspection above Pydantic AI plugin frames; BlockBuster changes
-    its error handling and makes these tests unusably slow.
+    its error handling and makes these tests unusably slow. Rebenchmark after
+    https://github.com/cbornet/blockbuster/pull/61 is released, but retain this opt-out until the
+    synchronous-introspection false positives are isolated too.
     """
     return False
 
