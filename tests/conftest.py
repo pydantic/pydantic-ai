@@ -951,7 +951,7 @@ def snowflake_token() -> str:
 
 
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
-def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]:
+async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvider | None]:
     """xAI provider fixture backed by protobuf cassettes.
 
     Mirrors the `bedrock_provider` pattern: yields a provider, and callers can use `provider.client`.
@@ -987,6 +987,7 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]
         yield provider
     finally:
         session.dump_if_recording()
+        await session.aclose()
 
 
 @pytest.fixture(scope='session')

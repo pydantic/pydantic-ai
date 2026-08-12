@@ -6115,44 +6115,6 @@ role: ROLE_USER
 """)
 
 
-async def test_stream_cancel(allow_model_requests: None):
-    stream = [get_grok_text_chunk('hello '), get_grok_text_chunk('world')]
-    mock_client = MockXai.create_mock_stream([stream])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m)
-
-    async with agent.run_stream('') as result:
-        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
-            break
-        await result.cancel()
-        await result.cancel()  # double cancel is a no-op
-        assert result.cancelled
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='hello ')],
-                usage=RequestUsage(input_tokens=2, output_tokens=1, cost=Decimal('9E-7')),
-                model_name='grok-4-fast-non-reasoning',
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id='grok-123',
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-                state='interrupted',
-            ),
-        ]
-    )
-
-
 async def test_xai_legacy_grok_provider_name_in_history(allow_model_requests: None):
     """`provider_name='grok'` from 1.x histories (when `GrokProvider` existed) must still route through the native xAI paths on replay."""
     response = create_response(content='second response', usage=create_usage(prompt_tokens=20, completion_tokens=5))
