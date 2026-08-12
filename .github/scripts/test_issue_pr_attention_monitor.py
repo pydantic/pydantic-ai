@@ -61,6 +61,7 @@ class FakeClient(monitor.GitHubClient):
         self.items = items or {}
         self.calls: list[tuple[str, str, object | None]] = []
         self.fail_get: set[int] = set()
+        self.fail_get_network: set[int] = set()
         self.fail_delete_labels: set[str] = set()
         self.assignment_succeeds = True
         self.permissions: dict[str, str] = {}
@@ -113,6 +114,8 @@ class FakeClient(monitor.GitHubClient):
             number = int(path.split('/issues/')[1].split('/')[0])
             if number in self.fail_get:
                 raise urllib.error.HTTPError(path, 500, 'boom', {}, None)
+            if number in self.fail_get_network:
+                raise urllib.error.URLError(OSError('certificate verify failed'))
             return self.items[number]
         if '/comments?' in path:
             return []
@@ -1359,6 +1362,21 @@ def test_one_item_failure_does_not_block_later_items():
     assert lines == ['#2: queued channel reminder']
     assert failures and failures[0].startswith('#1: HTTPError')
     assert not any(call[0] == 'POST' and call[1].endswith('/issues/2/comments') for call in client.calls)
+
+
+def test_network_failure_on_dormant_item_does_not_abort_the_run():
+    client = FakeClient(
+        {
+            1: item(1, labels=[monitor._ACTION_LABEL]),
+            7: item(7, labels=[monitor._ESCALATED_LABEL]),
+        }
+    )
+    client.fail_get_network.add(7)
+
+    lines, failures = monitor.reconcile(client, 'pydantic/pydantic-ai', now=NOW)
+
+    assert lines == ['#1: queued channel reminder']
+    assert failures and failures[0].startswith('#7: URLError')
 
 
 def test_invalid_event_timestamp_does_not_block_later_items():
