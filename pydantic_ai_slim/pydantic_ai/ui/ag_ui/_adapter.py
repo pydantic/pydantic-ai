@@ -35,6 +35,7 @@ from ...messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -749,6 +750,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
                 else:
                     user_content.append(TextInputContent(type='text', text=part.model_response()))
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                pass  # Realtime audio parts are not rendered in AG-UI
             else:
                 assert_never(part)
 
@@ -886,6 +889,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         content=compaction_payload(part),
                     )
                 )
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                pass  # Realtime audio parts are not rendered in AG-UI
             else:
                 assert_never(part)
 

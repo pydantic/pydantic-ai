@@ -6,10 +6,11 @@ enabling streaming event-based communication for interactive AI applications.
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from uuid import uuid4
+
+from pydantic_core import to_json
 
 from ..._utils import now_utc
 from ...exceptions import RunCancelled
@@ -301,7 +302,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             tool_call_id = self._builtin_tool_call_ids[tool_call_id]
         yield ToolCallArgsEvent(
             tool_call_id=tool_call_id,
-            delta=delta.args_delta if isinstance(delta.args_delta, str) else json.dumps(delta.args_delta),
+            delta=delta.args_delta if isinstance(delta.args_delta, str) else to_json(delta.args_delta).decode(),
         )
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseEvent]:

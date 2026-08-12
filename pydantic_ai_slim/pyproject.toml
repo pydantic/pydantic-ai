@@ -90,6 +90,8 @@ bedrock = ["boto3>=1.42.63"]
 bedrock-mantle = ["openai>=2.45.0", "botocore>=1.42.63"]
 zai = ["openai>=2.45.0"]
 snowflake = ["openai>=2.45.0"]
+crusoe = ["openai>=2.45.0"]
+cerebras = ["openai>=2.45.0"]
 huggingface = [
     "huggingface-hub>=1.3.4,<2.0.0",
     # huggingface_hub 1.3.x still calls the deprecated hf_xet.download_files() API.
@@ -111,6 +113,16 @@ cli = [
     "pyperclip>=1.9.0",
     "pyyaml>=6.0.2",
 ]
+# Realtime (bidirectional speech-to-speech streaming sessions)
+realtime = ["websockets>=14.0"]
+# Per-provider realtime bundles: the provider SDK group plus the realtime transport deps.
+# `websockets` is intentionally a direct dependency here (via `realtime`) even where a provider
+# SDK happens to bring it transitively, so the realtime stack never leans on another package's
+# dependency tree. xAI includes `openai` because its realtime API reuses the OpenAI codec, whose
+# event types come from the OpenAI SDK.
+openai-realtime = ["pydantic-ai-slim[openai,realtime]"]
+google-realtime = ["pydantic-ai-slim[google,realtime]"]
+xai-realtime = ["pydantic-ai-slim[xai,openai,realtime]"]
 # MCP — `fastmcp-slim[client]` is the lightweight client-only distribution (no Starlette /
 # Uvicorn server stack). Pulls the `mcp` SDK transitively. For an in-process FastMCP server,
 # install the full `fastmcp` package directly alongside `[mcp]`. FastMCP 4 uses MCP SDK v2,
@@ -122,8 +134,12 @@ evals = ["pydantic-evals=={{ version }}"]
 ui = ["starlette>=0.46.2"]
 # AG-UI
 ag-ui = ["ag-ui-protocol>=0.1.10", "starlette>=0.46.2"]
-# Web
-web = ["starlette>=0.46.2", "httpx>=0.27.0", "uvicorn>=0.38.0"]
+# Web — Starlette is floored higher here than in the `ui` and `ag-ui` extras because this extra
+# runs an HTTP server we ship (`Agent.to_web()` / `clai web`), so its Starlette version is ours to
+# pick. The adapters in `ui`/`ag-ui` are mounted into the user's own application, which owns its
+# own Starlette version; raising their floor would force a FastAPI upgrade on them for surfaces
+# they, not we, expose.
+web = ["starlette>=1.3.1", "httpx>=0.27.0", "uvicorn>=0.38.0"]
 # Retries
 retries = ["tenacity>=8.2.3"]
 # Temporal

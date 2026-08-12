@@ -56,6 +56,8 @@
 
 ::: pydantic_ai.providers.ovhcloud.OVHcloudProvider
 
+::: pydantic_ai.providers.crusoe.CrusoeProvider
+
 ::: pydantic_ai.providers.alibaba.AlibabaProvider
 
 ::: pydantic_ai.providers.sambanova.SambaNovaProvider

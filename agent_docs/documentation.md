@@ -19,7 +19,7 @@
 <!-- rule:138 -->
 - Update all related docs in the same PR when changing functionality, APIs, or capabilities — includes docstrings, comments, external docs (e.g., `ai.pydantic.dev`), and API references — Prevents documentation drift that misleads users about actual behavior, limitations, or API contracts
 <!-- rule:107 -->
-- Register new `docs/` files in `mkdocs.yml` nav section — Ensures documentation files are discoverable in the generated site navigation; orphaned files won't appear in the docs site
+- Register new `docs/` files in both `mkdocs.yml` and `docs/navigation.yml` — Keeps the ai.pydantic.dev and pydantic.dev/docs/ai navigation trees complete and prevents orphaned pages or route drift between the two published documentation sites
 <!-- rule:31 -->
 - Use consistent terminology across code, docs, comments, and errors (e.g., `freeform` vs `free-form`, `messages` vs `last message`) — prevents user confusion and makes codebase searchable — Inconsistent terminology fragments documentation searches, confuses users trying to map concepts between docs and code, and signals poor API design quality
 <!-- rule:76 -->

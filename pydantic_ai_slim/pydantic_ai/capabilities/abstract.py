@@ -475,7 +475,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
     ) -> None:
-        """Called before the agent run starts. Observe-only; use wrap_run for modification."""
+        """Called before the agent run starts. Observe-only; use `wrap_run` for modification.
+
+        A realtime session is a run. ContextVars set here are ambient in its instruction
+        resolution, pump and tool tasks, and the caller's `async with` block.
+        """
 
     async def after_run(
         self,
@@ -491,6 +495,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         cancellation still propagates after this hook returns and the run still ends cancelled.
         Put cancellation-safe cleanup in [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
         (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
+
+        For a realtime session, the result is produced when the session closes; a transformed result
+        becomes `session.result` before the caller leaves the `async with` boundary.
         """
         return result
 
@@ -513,6 +520,12 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         `iter()` loop), this method receives an `asyncio.CancelledError`.
         Implementations that hold resources should handle cleanup accordingly. Cancellation is
         terminal: the hook may observe it and clean up, but cannot recover the run to success.
+
+        A realtime session is a run: `handler()` resolves when the session closes. ContextVars set
+        before calling it are ambient in instruction resolution, pumps, tool tasks, and the caller's
+        block. Downward ContextVar propagation is one-way; keep bidirectional per-run state on the
+        `for_run` copy's instance attributes. Suppression and result transformation apply at the
+        session's `async with` boundary, after the caller may have observed events in real time.
         """
         return await handler()
 
@@ -538,6 +551,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         run to success.
 
         Not called for `GeneratorExit` or `KeyboardInterrupt`.
+
+        For a realtime session, returning a recovery result sets `session.result` and suppresses the
+        error at the caller's `async with` boundary, after events may already have been observed.
         """
         raise error
 
@@ -638,11 +654,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        """Wraps the event stream for a streamed node. Can observe or transform events.
+        """Wrap a run or realtime session's consumer-facing event stream.
 
-        The wrapper is applied where the node's stream is produced, so it fires however the run
-        is driven — including under [`agent.iter()`][pydantic_ai.agent.Agent.iter] and when the
-        caller streams a node itself with `node.stream()`.
+        For classic runs, the wrapper is applied where each node's stream is produced, so it fires
+        however the run is driven — including under [`agent.iter()`][pydantic_ai.agent.Agent.iter]
+        and when the caller streams a node itself with `node.stream()`. For realtime sessions, it
+        wraps the `async for event in session` view. A wrapper must yield events appropriate for the
+        stream it wraps.
+
+        Transformations affect only what the stream consumer sees. They never change realtime
+        session history, tool execution, or the classic run's accumulated response and output.
 
         Note: when this method is overridden (or [`Hooks.on.event`][pydantic_ai.capabilities.hooks.Hooks.on]
         / [`Hooks.on.run_event_stream`][pydantic_ai.capabilities.hooks.Hooks.on] are registered),
