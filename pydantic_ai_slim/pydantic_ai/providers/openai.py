@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, overload
 
 import httpx
@@ -23,7 +24,36 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
-class OpenAIProvider(Provider[AsyncOpenAI]):
+class _OpenAICompatibleProvider(Provider[AsyncOpenAI]):
+    """Shared HTTP client lifecycle for providers backed by the OpenAI SDK."""
+
+    def _get_http_client(self, http_client: httpx.AsyncClient | None) -> httpx.AsyncClient:
+        if http_client is None:
+            http_client = create_async_http_client()
+            self._own_http_client = http_client
+            self._http_client_factory = create_async_http_client
+        return http_client
+
+    def _create_openai_client(
+        self,
+        *,
+        base_url: str | None,
+        api_key: str | None,
+        http_client: httpx.AsyncClient | None,
+        default_headers: Mapping[str, str] | None = None,
+    ) -> AsyncOpenAI:
+        return AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key,
+            http_client=self._get_http_client(http_client),
+            default_headers=default_headers,
+        )
+
+    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+
+
+class OpenAIProvider(_OpenAICompatibleProvider):
     """Provider for OpenAI API."""
 
     @property
@@ -110,13 +140,5 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
             assert http_client is None, 'Cannot provide both `openai_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+            self._client = self._create_openai_client(base_url=base_url, api_key=api_key, http_client=http_client)

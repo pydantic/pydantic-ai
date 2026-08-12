@@ -6,7 +6,6 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
@@ -16,7 +15,8 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
-from pydantic_ai.providers import Provider
+
+from .openai import _OpenAICompatibleProvider  # pyright: ignore[reportPrivateUsage]
 
 try:
     from openai import AsyncOpenAI
@@ -27,7 +27,7 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
-class OllamaProvider(Provider[AsyncOpenAI]):
+class OllamaProvider(_OpenAICompatibleProvider):
     """Provider for local or remote Ollama API."""
 
     @property
@@ -111,13 +111,4 @@ class OllamaProvider(Provider[AsyncOpenAI]):
             # openai compatible models do not always need an API key, but a placeholder (non-empty) key is required.
             api_key = api_key or os.getenv('OLLAMA_API_KEY') or 'api-key-not-set'
 
-            if http_client is not None:
-                self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
-            else:
-                http_client = create_async_http_client()
-                self._own_http_client = http_client
-                self._http_client_factory = create_async_http_client
-                self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, http_client=http_client)
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+            self._client = self._create_openai_client(base_url=base_url, api_key=api_key, http_client=http_client)

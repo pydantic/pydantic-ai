@@ -10,7 +10,6 @@ from typing_extensions import Self
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
@@ -18,8 +17,9 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
-from pydantic_ai.providers import Provider
 from pydantic_ai.providers.openai import OpenAIProvider
+
+from .openai import _OpenAICompatibleProvider  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
     from pydantic_ai.realtime import RealtimeModelProfile
@@ -45,7 +45,7 @@ _DEFAULT_VOICE_LIVE_API_VERSION = '2026-04-10'
 """Default Azure AI Voice Live API version when neither `AZURE_VOICELIVE_API_VERSION` nor an argument is set."""
 
 
-class AzureProvider(Provider[AsyncOpenAI]):
+class AzureProvider(_OpenAICompatibleProvider):
     """Provider for Azure OpenAI API.
 
     See <https://azure.microsoft.com/en-us/products/ai-foundry> for more information.
@@ -322,10 +322,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
             self._api_key = None if api_key == _api_key_sentinel else api_key
             self._resolve_voice_live_credentials(voice_live_endpoint, voice_live_api_key, voice_live_api_version)
 
-            if http_client is None:
-                http_client = create_async_http_client()
-                self._own_http_client = http_client
-                self._http_client_factory = create_async_http_client
+            http_client = self._get_http_client(http_client)
 
             # The Azure OpenAI v1 GA API and Azure AI Foundry serverless model
             # endpoints expose an OpenAI-compatible `/v1` API that rejects the
@@ -389,9 +386,6 @@ class AzureProvider(Provider[AsyncOpenAI]):
         self._voice_live_api_version = (
             voice_live_api_version or os.getenv('AZURE_VOICELIVE_API_VERSION') or _DEFAULT_VOICE_LIVE_API_VERSION
         )
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
 
 
 def _openai_compatible_v1_base_url(endpoint: str) -> str | None:
