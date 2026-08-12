@@ -146,6 +146,15 @@ constraint-dependencies = [
     "torch>=2.13.0",
     "transformers>=5.5.0",
 ]
+build-constraint-dependencies = [
+    # hatchling 1.32.0 (2026-08-11) bumped its default core metadata version to 2.5,
+    # which the pinned gh-action-pypi-publish validator rejects as "not a valid
+    # metadata version". Ceiling until the publish action (or PyPI's own validator)
+    # catches up. Affects `uv build`'s PEP 517 build isolation, not runtime installs.
+    # Not covered by `exclude-newer` above: hatchling 1.32.0 rolls out of that
+    # 7-day window on 2026-08-18, so this needs its own explicit ceiling.
+    "hatchling<1.32",
+]
 
 [tool.uv.exclude-newer-package]
 # These are our own packages, not worth defending from supply chain attacks on them.
