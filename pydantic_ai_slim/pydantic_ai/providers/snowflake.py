@@ -16,7 +16,7 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 
-from .openai import _OpenAICompatibleProvider  # pyright: ignore[reportPrivateUsage]
+from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 try:
     from openai import AsyncOpenAI

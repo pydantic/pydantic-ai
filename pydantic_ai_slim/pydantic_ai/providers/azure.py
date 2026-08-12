@@ -19,7 +19,7 @@ from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers.openai import OpenAIProvider
 
-from .openai import _OpenAICompatibleProvider  # pyright: ignore[reportPrivateUsage]
+from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 if TYPE_CHECKING:
     from pydantic_ai.realtime import RealtimeModelProfile

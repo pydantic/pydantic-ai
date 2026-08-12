@@ -1,16 +1,14 @@
 from __future__ import annotations as _annotations
 
 import os
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, overload
 
 import httpx
 
 from pydantic_ai import ModelProfile
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile, openai_realtime_model_profile
-from pydantic_ai.providers import Provider, missing_api_key_error
+from pydantic_ai.providers import missing_api_key_error
 
 if TYPE_CHECKING:
     from pydantic_ai.realtime import RealtimeModelProfile
@@ -23,34 +21,7 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
-
-class _OpenAICompatibleProvider(Provider[AsyncOpenAI]):
-    """Shared HTTP client lifecycle for providers backed by the OpenAI SDK."""
-
-    def _get_http_client(self, http_client: httpx.AsyncClient | None) -> httpx.AsyncClient:
-        if http_client is None:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
-        return http_client
-
-    def _create_openai_client(
-        self,
-        *,
-        base_url: str | None,
-        api_key: str | None,
-        http_client: httpx.AsyncClient | None,
-        default_headers: Mapping[str, str] | None = None,
-    ) -> AsyncOpenAI:
-        return AsyncOpenAI(
-            base_url=base_url,
-            api_key=api_key,
-            http_client=self._get_http_client(http_client),
-            default_headers=default_headers,
-        )
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 
 class OpenAIProvider(_OpenAICompatibleProvider):

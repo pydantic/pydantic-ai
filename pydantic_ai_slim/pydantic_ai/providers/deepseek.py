@@ -12,7 +12,7 @@ from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
-from .openai import _OpenAICompatibleProvider  # pyright: ignore[reportPrivateUsage]
+from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 try:
     from openai import AsyncOpenAI

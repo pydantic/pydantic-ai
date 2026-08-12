@@ -11,7 +11,7 @@ from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.zai import zai_model_profile
 
-from .openai import _OpenAICompatibleProvider  # pyright: ignore[reportPrivateUsage]
+from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 try:
     from openai import AsyncOpenAI

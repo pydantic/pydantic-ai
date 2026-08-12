@@ -15,7 +15,7 @@ from pydantic_ai.profiles.openai import (
     OpenAIModelProfile,
 )
 
-from .openai import _OpenAICompatibleProvider  # pyright: ignore[reportPrivateUsage]
+from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 MoonshotAIModelName = Literal[
     'moonshot-v1-8k',
