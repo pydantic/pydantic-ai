@@ -462,18 +462,16 @@ async def test_cache_read_and_write_do_not_overlap_on_windows(monkeypatch: pytes
     real_replace = app_module.os.replace
 
     def blocked_read_bytes(path: Path) -> bytes:
-        if path == cache_file:
-            reader_open.set()
-            try:
-                release_reader.wait()
-                return real_read_bytes(path)
-            finally:
-                reader_open.clear()
-        return real_read_bytes(path)
+        assert path == cache_file
+        reader_open.set()
+        try:
+            release_reader.wait()
+            return real_read_bytes(path)
+        finally:
+            reader_open.clear()
 
     def windows_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
-        if reader_open.is_set():
-            raise PermissionError('The process cannot access the file because it is being used by another process')
+        assert not reader_open.is_set(), 'The cache file must be closed before it is replaced'
         real_replace(src, dst)
 
     class InstrumentedLock:
