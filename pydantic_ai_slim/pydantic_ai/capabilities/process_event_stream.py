@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 import anyio
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from pydantic_ai import _utils
 from pydantic_ai.messages import AgentStreamEvent
@@ -25,8 +26,8 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
     """A capability that forwards the agent's event stream to a user-provided async handler.
 
     The handler receives the stream of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s
-    emitted during model streaming and tool execution for each `ModelRequestNode` and
-    `CallToolsNode`. Two forms are supported:
+    emitted during classic model streaming and tool execution, or the shared and realtime-only
+    events emitted by a realtime session. Two forms are supported:
 
     - An [`EventStreamHandler`][pydantic_ai.agent.EventStreamHandler] — an `async def`
       returning `None`. Events are forwarded to the handler while also being passed
@@ -59,6 +60,9 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
       [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] and the final
       validated output are unaffected (dropping events can only change when a partial snapshot is
       emitted, not its content). Use the observer form if you only want to watch events.
+
+      In a realtime session, this is likewise only a consumer-facing view. Transforming or dropping
+      events does not affect session history or tool execution.
 
     When this capability is registered, `agent.run()` and
     [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable streaming so the
@@ -103,7 +107,9 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         cast('Coroutine[Any, Any, None]', probe).close()
 
         observer = cast('EventStreamHandlerFunc[AgentDepsT]', self.handler)
-        send_stream, receive_stream = anyio.create_memory_object_stream[AgentStreamEvent]()
+        send_stream: MemoryObjectSendStream[AgentStreamEvent]
+        receive_stream: MemoryObjectReceiveStream[AgentStreamEvent]
+        send_stream, receive_stream = anyio.create_memory_object_stream()
 
         async def run_handler() -> None:
             async with receive_stream:

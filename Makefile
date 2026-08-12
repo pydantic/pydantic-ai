@@ -86,10 +86,11 @@ update-examples: ## Update documentation examples
 update-vcr-tests: ## Update tests using VCR that hit LLM APIs; note you'll need to set API keys as appropriate
 	uv run -m pytest --record-mode=rewrite tests
 
-# `--no-strict` so you can build the docs without fixing all warnings
+# Strict (from mkdocs.yml) so warnings — e.g. broken cross-links — fail the build in CI instead of
+# slipping onto the live site. Use `make docs-serve` to iterate without fixing every warning first.
 .PHONY: docs
 docs: ## Build the documentation
-	uv run mkdocs build --no-strict
+	uv run mkdocs build
 
 # `--no-strict` so you can build the docs without fixing all warnings
 .PHONY: docs-serve

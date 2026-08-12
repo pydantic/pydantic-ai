@@ -879,6 +879,21 @@ def test_model_json_schema_with_capabilities():
                         'cohere:command-r-08-2024',
                         'cohere:command-r-plus-08-2024',
                         'cohere:command-r7b-12-2024',
+                        'crusoe:Qwen/Qwen3-235B-A22B-Instruct-2507',
+                        'crusoe:deepseek-ai/DeepSeek-V3-0324',
+                        'crusoe:deepseek-ai/DeepSeek-V4-Pro',
+                        'crusoe:deepseek-ai/Deepseek-V4-Flash',
+                        'crusoe:google/gemma-4-31b-it',
+                        'crusoe:meta-llama/Llama-3.3-70B-Instruct',
+                        'crusoe:moonshotai/Kimi-K2.6',
+                        'crusoe:nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B',
+                        'crusoe:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B',
+                        'crusoe:nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B',
+                        'crusoe:nvidia/Nemotron-3.5-Lightning-30B-A3B',
+                        'crusoe:openai/gpt-oss-120b',
+                        'crusoe:yutori/n1.5',
+                        'crusoe:zai/GLM-5.1',
+                        'crusoe:zai/GLM-5.2',
                         'deepseek:deepseek-chat',
                         'deepseek:deepseek-reasoner',
                         'deepseek:deepseek-v4-flash',
@@ -16570,6 +16585,25 @@ async def test_resolve_model_id_capability_async_resolver() -> None:
         return target if model_id == 'alias' else None
 
     agent = Agent(name='resolve_cap_async', capabilities=[ResolveModelId(resolver)])
+    result = await agent.run('hi', model='alias')
+    assert result.output == 'ok'
+
+
+async def test_resolve_model_id_capability_sync_resolver_returning_coroutine() -> None:
+    """A plain-`def` resolver returning a coroutine is awaited, not mistaken for the resolved model.
+
+    `ModelIdResolver` permits a sync function whose return value is an `Awaitable[Model | None]`;
+    the hook must await that coroutine to obtain the model rather than returning the coroutine itself.
+    """
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='coroutine-resolved')
+
+    async def _resolve(model_id: str) -> FunctionModel | None:
+        return target if model_id == 'alias' else None
+
+    def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> Awaitable[FunctionModel | None]:
+        return _resolve(model_id)
+
+    agent = Agent(name='resolve_cap_sync_coroutine', capabilities=[ResolveModelId(resolver)])
     result = await agent.run('hi', model='alias')
     assert result.output == 'ok'
 
