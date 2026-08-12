@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
-from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, validate_instruction_id_segment
+from pydantic_ai._instructions import (
+    AgentInstruction,
+    AgentInstructions,
+    SourcedInstruction,
+    validate_instruction_id_segment,
+)
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
@@ -17,7 +22,6 @@ from pydantic_ai.tools import (
     DeferredToolRequests,
     DeferredToolResults,
     RunContext,
-    SystemPromptFunc,
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
@@ -149,7 +153,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             capability._validate_runtime_capabilities(ctx, capabilities)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        instructions: list[str | SystemPromptFunc[AgentDepsT]] = [
+        instructions: list[AgentInstruction[AgentDepsT]] = [
             sourced.instruction for sourced in self._collect_instructions()
         ]
         return instructions or None

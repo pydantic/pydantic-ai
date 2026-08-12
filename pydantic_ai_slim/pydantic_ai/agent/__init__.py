@@ -378,7 +378,7 @@ class _ResolvedSpec:
     """Result of resolving an AgentSpec for use at run/override time."""
 
     capability: CombinedCapability[Any] | None
-    instructions: list[str | SystemPromptFunc[Any]]
+    instructions: list[_instructions.AgentInstruction[Any]]
     model: str | None
     model_settings: ModelSettings | None
     metadata: dict[str, Any] | None
@@ -707,8 +707,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_native_tools: ContextVar[_utils.Option[Sequence[AgentNativeTool[AgentDepsT]]]] = ContextVar(
             '_override_native_tools', default=None
         )
-        self._override_instructions: ContextVar[_utils.Option[list[str | SystemPromptFunc[AgentDepsT]]]] = ContextVar(
-            '_override_instructions', default=None
+        self._override_instructions: ContextVar[_utils.Option[list[_instructions.AgentInstruction[AgentDepsT]]]] = (
+            ContextVar('_override_instructions', default=None)
         )
         self._override_metadata: ContextVar[_utils.Option[AgentMetadata[AgentDepsT]]] = ContextVar(
             '_override_metadata', default=None
@@ -3036,7 +3036,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         for sourced in instructions:
             instruction = sourced.instruction
-            if isinstance(instruction, str):
+            if isinstance(instruction, _messages.InstructionPart):
+                if not (content := instruction.content.strip()):
+                    continue
+                # An author who writes a part is describing one block, so it never merges into a
+                # neighbour: its `dynamic` (which decides what falls inside the cacheable prefix)
+                # applies to that text alone. `sourced.id` is the part's own id already resolved
+                # against its source's key.
+                flush_group()
+                group_key = None
+                static_parts.append(dataclasses.replace(instruction, content=content, id=sourced.id))
+            elif isinstance(instruction, str):
                 if not (content := instruction.strip()):
                     continue
                 if group and group_key != (sourced.id, sourced.source):

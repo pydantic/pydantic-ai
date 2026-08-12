@@ -772,3 +772,103 @@ async def test_resuming_does_not_stamp_instructions_onto_a_mock_request():
 
     assert tool_returns.instructions is None
     assert rendered_instructions(result.all_messages()) == 'Managed instructions.'
+
+
+async def test_a_declared_id_is_resolved_against_its_source_key():
+    """One rule for declaring a block id, wherever the block comes from.
+
+    An author names a block relative to what they own — `'persona'`, `'limits'` — and the framework
+    qualifies it against the key of the source contributing it. Nobody repeats their own identity,
+    and nobody can claim a top-level key: the toolset block below asks for `'agent'` and gets
+    `'toolset:weather:agent'` rather than colliding with the agent's own.
+    """
+
+    class Coder(AbstractCapability[Any]):
+        id = 'coder'
+
+        def get_instructions(self) -> Any:
+            return [InstructionPart(content='Style.', id='style'), InstructionPart(content='Scope.')]
+
+    agent = Agent(
+        instructions=[InstructionPart(content='Persona.', id='persona'), 'Unnamed.'],
+        capabilities=[Coder(), Capability[Any](id='budget', instructions=[InstructionPart(content='Cap.', id='cap')])],
+        toolsets=[InstructionsToolset([InstructionPart(content='Tool.', id='agent')], id='weather')],
+    )
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Persona.', id='agent:persona'),
+        InstructionPart(content='Unnamed.', id='agent'),
+        InstructionPart(content='Style.', id='capability:coder:style'),
+        InstructionPart(content='Scope.', id='capability:coder'),
+        InstructionPart(content='Cap.', id='capability:budget:cap'),
+        InstructionPart(content='Tool.', id='toolset:weather:agent'),
+    ]
+
+
+async def test_a_declared_id_already_carrying_its_source_key_is_left_alone():
+    """Writing the qualified form yields what the author meant, not a doubled key."""
+    agent = Agent(
+        toolsets=[
+            InstructionsToolset(
+                [
+                    InstructionPart(content='Limits.', id='toolset:weather:limits'),
+                    InstructionPart(content='All.', id='toolset:weather'),
+                ],
+                id='weather',
+            )
+        ]
+    )
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Limits.', id='toolset:weather:limits'),
+        InstructionPart(content='All.', id='toolset:weather'),
+    ]
+
+
+async def test_declared_ids_reject_colons():
+    """A declared segment is one segment, so it can't smuggle in the delimiter."""
+    agent = Agent(toolsets=[InstructionsToolset([InstructionPart(content='X.', id='a:b')], id='weather')])
+
+    with pytest.raises(
+        UserError,
+        match=r"Declared instruction id 'a:b' cannot contain a colon because `:` is reserved as an instruction ID delimiter\.",
+    ):
+        await run_and_capture(agent)
+
+
+async def test_an_instruction_part_keeps_its_own_dynamic_flag_and_block():
+    """`dynamic` decides what falls inside the cacheable prefix, so a part never merges into a neighbour.
+
+    Declaring it is the only way to say "computed once, then stable for the run" about literal text;
+    a bare string from the same source would otherwise be fused into one block with one flag.
+    """
+    agent = Agent(
+        capabilities=[
+            Capability[Any](
+                id='budget',
+                instructions=[
+                    InstructionPart(content='Stable.', id='stable'),
+                    InstructionPart(content='Varies.', id='varies', dynamic=True),
+                ],
+            )
+        ]
+    )
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Stable.', id='capability:budget:stable'),
+        InstructionPart(content='Varies.', dynamic=True, id='capability:budget:varies'),
+    ]
+
+
+async def test_a_run_level_part_stays_unidentified_even_if_it_declares_an_id():
+    """Per-run instructions have no source key, so a declared segment has nothing to hang off.
+
+    Same rule as an anonymous capability's blocks: staying unidentified is better than claiming a
+    top-level key the caller never got to place among the agent's own.
+    """
+    agent = Agent(instructions='Agent block.')
+
+    assert await run_and_capture(agent, instructions=[InstructionPart(content='Per run.', id='urgent')]) == [
+        InstructionPart(content='Agent block.', id='agent'),
+        InstructionPart(content='Per run.'),
+    ]

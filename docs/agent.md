@@ -1413,8 +1413,16 @@ A block whose source the framework can name carries a stable [`id`][pydantic_ai.
 | `'agent'` | The agent's own `instructions` |
 | `'toolset:<toolset id>'` | Everything a [toolset](toolsets.md) with an [`id`][pydantic_ai.toolsets.AbstractToolset.id] contributes |
 | `'capability:<capability id>'` | Everything a [capability](capabilities/overview.md) with an [`id`][pydantic_ai.capabilities.AbstractCapability.id] contributes |
-| `'agent:<declared id>'` | One [`@agent.instructions`][pydantic_ai.agent.Agent.instructions] function that declares `id=` |
-| `'capability:<capability id>:<declared id>'` | One [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions] function that declares `id=` |
+| `'agent:<declared id>'` | One block the agent declared an id for |
+| `'toolset:<toolset id>:<declared id>'` | One block that toolset declared an id for |
+| `'capability:<capability id>:<declared id>'` | One block that capability declared an id for |
+
+Declaring an id works the same way wherever the block comes from: name it relative to what you own — `'limits'`, not `'toolset:weather:limits'` — and the framework qualifies it against your source key. You never repeat your own identity, and a declared segment can never claim a top-level key or collide with another source's.
+
+There are two ways to declare one, depending on what the block is:
+
+- **A function** registers its id where it is registered: [`@agent.instructions(id=...)`][pydantic_ai.agent.Agent.instructions], [`@capability.instructions(id=...)`][pydantic_ai.capabilities.Capability.instructions].
+- **Literal text** carries its id on the text itself, by passing an [`InstructionPart`][pydantic_ai.messages.InstructionPart] anywhere instructions are accepted — `Agent(instructions=...)`, `Capability(instructions=...)`, or a `get_instructions()` implementation on a [capability](capabilities/custom.md) or [toolset](toolsets.md#building-a-custom-toolset). The part also decides whether the block counts as [`dynamic`][pydantic_ai.messages.InstructionPart.dynamic], which is what keeps it outside the cacheable prefix (see [prompt caching](models/anthropic.md#prompt-caching)), and a part is always its own block rather than being merged with its neighbours.
 
 Because a block's id is stable across runs, an application that stores instruction configuration elsewhere (say, a UI where a user edits the instructions an MCP server contributes) can key that configuration on the id instead of on the block's position or wording, both of which change as the agent evolves.
 
@@ -1464,6 +1472,8 @@ Two consequences worth knowing before you key configuration on an id:
 
 - **A key covers everything under it.** Where a source contributes several blocks and none of them declare an id, they all carry the source key, so replacing that key's text replaces all of them — computed blocks included. That is the honest meaning of "I control what this capability tells the model", but it means blocks a source didn't declare ids for can't be addressed one by one. `'agent'` is the deliberate exception: it covers only the literal instructions the agent was built with, so taking over the base prompt doesn't silently swallow an `@agent.instructions` function that injects the date or the user's name.
 - **Unidentified blocks can't be addressed at all.** They take part in the prompt like any other block, but nothing keys them: an instructions function that declares no `id` (a function's name isn't unique, and a lambda or [template string](agent-spec.md#template-strings) has none), a callable passed to `Agent(instructions=...)`, anything passed as runtime instructions to a specific run, and anything from a toolset or capability without an `id`. If you need one of your own callables to be overridable, register it with `@agent.instructions(id=...)` or [`@capability.instructions(id=...)`][pydantic_ai.capabilities.Capability.instructions] instead of passing it to the constructor.
+
+    A declared id needs a source key to hang off, so a source without an `id` of its own gets nothing from declaring one — the blocks stay unidentified rather than claiming top-level keys the application never got to place. The same goes for instructions passed to a single run: they belong to that call rather than to the agent, so they stay unidentified even when passed as an `InstructionPart` with an `id`.
 
 ## Reflection and self-correction
 

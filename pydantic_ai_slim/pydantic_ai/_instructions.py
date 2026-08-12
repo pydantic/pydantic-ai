@@ -12,13 +12,13 @@ from pydantic_ai.template import TemplateStr
 from . import _system_prompt
 from .tools import SystemPromptFunc
 
-AgentInstructions = (
-    TemplateStr[AgentDepsT]
-    | str
-    | SystemPromptFunc[AgentDepsT]
-    | Sequence[TemplateStr[AgentDepsT] | str | SystemPromptFunc[AgentDepsT]]
-    | None
-)
+AgentInstruction = TemplateStr[AgentDepsT] | str | InstructionPart | SystemPromptFunc[AgentDepsT]
+"""One instruction: literal text, a function computing it, or an `InstructionPart` declaring both the
+text and how it should be treated — its [`id`][pydantic_ai.messages.InstructionPart.id] (resolved
+against the key of whatever source contributes it) and whether it counts as
+[`dynamic`][pydantic_ai.messages.InstructionPart.dynamic] for prompt caching."""
+
+AgentInstructions = AgentInstruction[AgentDepsT] | Sequence[AgentInstruction[AgentDepsT]] | None
 
 
 PreparedInstruction = str | _system_prompt.SystemPromptRunner[AgentDepsT]
@@ -61,11 +61,34 @@ def declared_instruction_id(source_id: str, declared_id: str) -> str:
     return f'{source_id}:{declared_id}'
 
 
+def resolve_declared_id(source_id: str | None, declared_id: str | None) -> str | None:
+    """Resolve one block's declared id against the key of the source that contributed it.
+
+    The single place the rule lives, so every source applies it the same way: an author writing a
+    block declares a bare name for it (`'limits'`) and the framework qualifies that against the
+    source key it belongs to (`'toolset:weather:limits'`). Authors don't repeat their own identity,
+    and can't accidentally claim a top-level key — including one that already means something, like
+    the agent's own `'agent'`.
+
+    Without a source key there is nothing for a declared segment to hang off, so the block stays
+    unidentified rather than claiming a top-level key of its own. An id that already carries the
+    source key is passed through, so writing the qualified form yields what the author meant rather
+    than `'toolset:weather:toolset:weather:limits'`.
+    """
+    if source_id is None:
+        return None
+    if declared_id is None:
+        return source_id
+    if declared_id == source_id or declared_id.startswith(f'{source_id}:'):
+        return declared_id
+    return declared_instruction_id(source_id, declared_id)
+
+
 @dataclass(frozen=True)
 class SourcedInstruction(Generic[AgentDepsT]):
     """An agent-level instruction along with the `InstructionPart.id` its content should be addressed by."""
 
-    instruction: str | SystemPromptFunc[AgentDepsT]
+    instruction: str | InstructionPart | SystemPromptFunc[AgentDepsT]
     id: str | None = None
     source: object = field(default_factory=object)
     """Identity of the source this came from, so blocks can be grouped by it rather than by `id`.
@@ -85,7 +108,7 @@ class DeclaredInstruction(Generic[AgentDepsT]):
     `id`) store this and combine the two halves then.
     """
 
-    instruction: str | SystemPromptFunc[AgentDepsT]
+    instruction: str | InstructionPart | SystemPromptFunc[AgentDepsT]
     declared_id: str | None = None
 
 
@@ -97,16 +120,30 @@ class SourcedInstructionRunner(Generic[AgentDepsT]):
     id: str | None = None
 
 
+def declared_id_of(instruction: AgentInstruction[AgentDepsT]) -> str | None:
+    """The id an author declared on an instruction itself, if any.
+
+    Only an [`InstructionPart`][pydantic_ai.messages.InstructionPart] can carry one — it's the shape
+    an author reaches for when a block needs more than its text. Every other shape leaves the block
+    to be addressed by its source key alone.
+    """
+    return instruction.id if isinstance(instruction, InstructionPart) else None
+
+
 def source_instructions(
-    instructions: Sequence[str | SystemPromptFunc[AgentDepsT]], id: str | None
+    instructions: Sequence[AgentInstruction[AgentDepsT]], id: str | None
 ) -> list[SourcedInstruction[AgentDepsT]]:
     """Attribute every one of `instructions` to the source identified by `id`.
 
     Literal and computed instructions alike: addressing a source's id means addressing everything
-    it tells the model, the same way a toolset's id covers every block it returns.
+    it tells the model, the same way a toolset's id covers every block it returns. A block that
+    declared an id of its own is addressed by that, qualified against the source key.
     """
     source = object()
-    return [SourcedInstruction(instruction, id, source) for instruction in instructions]
+    return [
+        SourcedInstruction(instruction, resolve_declared_id(id, declared_id_of(instruction)), source)
+        for instruction in instructions
+    ]
 
 
 def source_declared_instructions(
@@ -114,16 +151,15 @@ def source_declared_instructions(
 ) -> list[SourcedInstruction[AgentDepsT]]:
     """Resolve each declared id against its source key, falling back to the source key itself.
 
-    Without a source key there is nothing for a declared id to hang off, so those blocks stay
-    unidentified rather than claiming a top-level key of their own.
+    A declared id can come from the registration (`@capability.instructions(id=...)`) or from an
+    `InstructionPart` the author wrote; the two never both apply, since only a function is
+    registered with an id and only a part carries one.
     """
     source = object()
-    if source_id is None:
-        return [SourcedInstruction(declared.instruction, None, source) for declared in instructions]
     return [
         SourcedInstruction(
             declared.instruction,
-            declared_instruction_id(source_id, declared.declared_id) if declared.declared_id else source_id,
+            resolve_declared_id(source_id, declared.declared_id or declared_id_of(declared.instruction)),
             source,
         )
         for declared in instructions
@@ -131,7 +167,7 @@ def source_declared_instructions(
 
 
 def source_agent_instructions(
-    instructions: Sequence[str | SystemPromptFunc[AgentDepsT]],
+    instructions: Sequence[AgentInstruction[AgentDepsT]],
 ) -> list[SourcedInstruction[AgentDepsT]]:
     """Attribute the agent's own instructions to `AGENT_INSTRUCTION_ID`, literals only.
 
@@ -141,18 +177,24 @@ def source_agent_instructions(
     """
     source = object()
     return [
-        SourcedInstruction(instruction, AGENT_INSTRUCTION_ID if isinstance(instruction, str) else None, source)
+        SourcedInstruction(
+            instruction,
+            resolve_declared_id(AGENT_INSTRUCTION_ID, declared_id_of(instruction))
+            if isinstance(instruction, (str, InstructionPart))
+            else None,
+            source,
+        )
         for instruction in instructions
     ]
 
 
 def normalize_instructions(
     instructions: AgentInstructions[AgentDepsT],
-) -> list[str | SystemPromptFunc[AgentDepsT]]:
+) -> list[AgentInstruction[AgentDepsT]]:
     if instructions is None:
         return []
     # Note: TemplateStr is callable (__call__) so it's handled by the callable branch
-    if isinstance(instructions, str) or callable(instructions):
+    if isinstance(instructions, (str, InstructionPart)) or callable(instructions):
         return [instructions]
     return list(instructions)
 
@@ -170,7 +212,12 @@ def prepare_instructions(
     """
     prepared: list[PreparedInstruction[AgentDepsT]] = []
     for instruction in normalize_instructions(instructions):
-        if isinstance(instruction, str):
+        if isinstance(instruction, InstructionPart):
+            # Callers of this path render instructions as plain text (a toolset's own literal
+            # instructions, a loaded capability's tool-return text), so a part contributes its
+            # content; its `id` and `dynamic` are carried by the part-producing paths instead.
+            prepared.append(instruction.content)
+        elif isinstance(instruction, str):
             prepared.append(instruction)
         else:
             # TemplateStr instances land here too: they are callable with a
@@ -191,21 +238,25 @@ def normalize_toolset_instructions(
     whitespace-only content is dropped. Shared by `_agent_graph._get_instructions` and the
     deferred-capability loader's owned-toolset instruction collection so the two stay in sync.
 
-    When `toolset_id` is provided, parts that don't already have an
-    [`id`][pydantic_ai.messages.InstructionPart.id] are stamped with the contributing toolset's,
-    so consumers can address them. Composition points pass the id of the toolset they're calling:
-    an id already set by a toolset closer to the source always wins.
+    When `toolset_id` is provided, each part's [`id`][pydantic_ai.messages.InstructionPart.id] is
+    resolved against the toolset's key by `resolve_declared_id`, so a part without one is addressed
+    by `'toolset:<id>'` and a part declaring `'limits'` by `'toolset:<id>:limits'`. Composition
+    points pass the id of the toolset they're calling, and only the point that reaches the authoring
+    toolset has one to pass — a wrapper reports no `id`, so nothing resolves an id twice.
     """
     if not result:
         return []
     items = [result] if isinstance(result, (str, InstructionPart)) else result
+    source_id = toolset_instruction_id(toolset_id) if toolset_id is not None else None
     parts: list[InstructionPart] = []
     for item in items:
         part = item if isinstance(item, InstructionPart) else InstructionPart(content=item, dynamic=True)
         if not part.content.strip():
             continue
-        if part.id is None and toolset_id is not None:
-            part = replace(part, id=toolset_instruction_id(toolset_id))
+        # Only the layer that knows the toolset's id resolves against it; the outer layers pass a
+        # part straight through, so an id already resolved closer to the source is never dropped.
+        if source_id is not None and (resolved_id := resolve_declared_id(source_id, part.id)) != part.id:
+            part = replace(part, id=resolved_id)
         parts.append(part)
     return parts
 
