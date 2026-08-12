@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -433,19 +432,6 @@ Used to tell whether an array's `items` actually types its elements. A node with
 _sentinel = object()
 
 
-def _is_homogeneous_bounded_tuple(schema: JsonSchema, prefix_items: list[Any]) -> bool:
-    """Whether an array schema is a tuple of elements sharing one schema, length-capped to the prefix.
-
-    Such a schema (e.g. `tuple[int, int]`) means the same as `items` + `maxItems`, which strict mode
-    supports. Elements are compared as canonical JSON: Python `==` conflates `True` with `1`, which
-    JSON Schema distinguishes.
-    """
-    if schema.get('maxItems') != len(prefix_items):
-        return False
-    first = json.dumps(prefix_items[0], sort_keys=True)
-    return all(json.dumps(item, sort_keys=True) == first for item in prefix_items[1:])
-
-
 def _regex_contains_lookaround(pattern: str) -> bool:
     escaped = False
     for i, char in enumerate(pattern):
@@ -572,29 +558,16 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                             self.is_strict_compatible = False
 
         if schema_type == 'array':
-            # OpenAI strict mode does not support `prefixItems` (tuple types). A homogeneous
-            # length-capped tuple (e.g. `tuple[int, int]`) is rewritten to the equivalent supported
-            # `items` + `minItems`/`maxItems` form; any other `prefixItems` schema (heterogeneous, or
-            # no `maxItems` cap) can't be rewritten without changing its meaning, so it's not
-            # strict-compatible.
+            # OpenAI strict mode does not support `prefixItems` (tuple types): the API ignores the
+            # keyword and rejects the array as missing `items`.
             # See https://github.com/pydantic/pydantic-ai/issues/7315
-            prefix_items = schema.get('prefixItems')
-            if prefix_items is not None and self.strict is not False:
-                if not prefix_items:
-                    # empty `prefixItems` constrains nothing
-                    del schema['prefixItems']
-                elif _is_homogeneous_bounded_tuple(schema, prefix_items):
-                    # Any existing `items` only governs elements past the prefix, which `maxItems`
-                    # makes unreachable, so it's dead and safe to overwrite.
-                    schema['items'] = prefix_items[0]
-                    del schema['prefixItems']
-                elif self.strict is True:
+            if schema.get('prefixItems'):
+                if self.strict is True:
                     raise UserError(
-                        'OpenAI strict mode does not support `prefixItems`. A tuple field can only be '
-                        'used in strict mode when all its elements have the same schema, e.g. '
-                        '`tuple[int, int]`. Use such a tuple, another field type, or set `strict=False`.'
+                        'OpenAI strict mode does not support tuple types (`prefixItems`). '
+                        'Use a different field type, or set `strict=False`.'
                     )
-                else:  # self.strict is None
+                elif self.strict is None:
                     self.is_strict_compatible = False
 
             # OpenAI strict mode requires an array to describe its elements' type via `items`. A bare
