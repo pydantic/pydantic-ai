@@ -160,9 +160,11 @@ class AzureProvider(Provider[AsyncOpenAI]):
                 `openai_client` lands in.
             http_client: An existing `httpx.AsyncClient` used to construct the provider client.
         """
-        if entra_authenticated and not api_key and 'AZURE_OPENAI_API_KEY' not in os.environ:
+        if entra_authenticated and not api_key and not os.getenv('AZURE_OPENAI_API_KEY'):
             # The SDK's own placeholder for "Entra-authenticated, no key", which `__init__` normalizes
-            # back to `None` below. Satisfies the key requirement without inventing a credential.
+            # back to `None` below. Satisfies the key requirement without inventing a credential. A
+            # truthiness check (not membership) so an empty `AZURE_OPENAI_API_KEY=""` still takes the
+            # placeholder rather than resolving to an empty key that trips the key-required error.
             api_key = _api_key_sentinel
         endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT')
         resolved_api_version = api_version or os.getenv('OPENAI_API_VERSION')
