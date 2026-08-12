@@ -279,6 +279,32 @@ async def test_function_toolset_with_defaults_overridden():
         return a - b  # pragma: no cover
 
 
+async def test_prepared_combined_toolset_dispatches_updated_tool_definition():
+    received_metadata: list[dict[str, str] | None] = []
+
+    class SpyToolset(FunctionToolset[None]):
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            received_metadata.append(tool.tool_def.metadata)
+            return await super().call_tool(name, tool_args, ctx, tool)
+
+    source_toolset = SpyToolset()
+
+    @source_toolset.tool_plain
+    def echo(value: int) -> int:
+        return value
+
+    def prepare_metadata(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [replace(tool_def, metadata={'source': 'prepared'}) for tool_def in tool_defs]
+
+    prepared_toolset = PreparedToolset(CombinedToolset([source_toolset]), prepare_metadata)
+    managed_toolset = await ToolManager(prepared_toolset).for_run_step(build_run_context(None))
+
+    assert await managed_toolset.handle_call(ToolCallPart(tool_name='echo', args={'value': 1})) == 1
+    assert received_metadata == [{'source': 'prepared'}]
+
+
 async def test_prepared_toolset_sync_prepare_func():
     """`PreparedToolset` accepts a synchronous prepare function (no await needed)."""
     base_toolset = FunctionToolset()
