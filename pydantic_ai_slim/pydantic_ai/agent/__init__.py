@@ -64,7 +64,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities.abstract import leaf_capabilities, create_run_sandbox
+from ..capabilities.abstract import leaf_capabilities, resolve_run_sandbox
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1556,10 +1556,20 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # facade connects on first use); teardown is routed back to the supplier when
                 # the run ends, including on failure.
                 if sandbox_facade is None:
-                    supplied = await create_run_sandbox(preparation_capability, initial_ctx)
+                    supplied = await resolve_run_sandbox(preparation_capability, initial_ctx)
                     if supplied is not None:
                         sandbox_supplier, sandbox_ref = supplied
-                        stack.push_async_callback(sandbox_supplier.destroy_sandbox, initial_ctx, sandbox_ref)
+
+                        async def _destroy_run_sandbox(
+                            supplier: AbstractCapability[AgentDepsT] = sandbox_supplier,
+                            ref: SandboxRef = sandbox_ref,
+                        ) -> None:
+                            # Shielded because the exit stack can unwind inside an
+                            # already-cancelled scope, and an aborted destroy leaks the sandbox.
+                            with anyio.CancelScope(shield=True):
+                                await supplier.destroy_sandbox(initial_ctx, ref)
+
+                        stack.push_async_callback(_destroy_run_sandbox)
                         sandbox_facade = Sandbox.from_ref(sandbox_ref, _resolve_sandbox_ref)
                     else:
                         sandbox_facade = Sandbox.wrap(default_sandbox_backend())

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+
+import anyio
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -941,6 +943,40 @@ async def test_failing_teardown_propagates():
     with pytest.raises(RuntimeError, match="sandbox 'created-1' is already gone"):
         await agent.run('go')
     assert failing.events == ['create:created-1', 'teardown-failed:created-1']
+
+
+async def test_teardown_survives_run_cancellation():
+    """Cancelling the run must not abort `destroy_sandbox`: the exit stack unwinds inside an
+    already-cancelled scope, so an unshielded teardown would die at its first await and leak
+    the sandbox.
+    """
+
+    class AwaitingTeardownCapability(SandboxCapability):
+        async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            await asyncio.sleep(0)  # a real teardown awaits provider I/O; an unshielded cancel lands here
+            await super().destroy_sandbox(ctx, ref)
+
+    capability = AwaitingTeardownCapability()
+    agent: Agent = Agent(_tool_call_then_text(), capabilities=[capability])
+    entered = anyio.Event()
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:  # pragma: no cover
+        entered.set()
+        await asyncio.sleep(10)
+        return 'never'
+
+    # An anyio cancel scope is level-triggered: once cancelled, every await during the
+    # unwind re-raises, unlike a one-shot `task.cancel()`.
+    async with anyio.create_task_group() as tg:
+
+        async def run_agent() -> None:  # pragma: no cover
+            await agent.run('go')
+
+        tg.start_soon(run_agent)
+        await entered.wait()
+        tg.cancel_scope.cancel()
+    assert capability.events == ['cap:setup', 'cap:teardown']
 
 
 async def test_setup_declined_falls_through_to_default():
