@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequen
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
-from functools import cached_property
+from functools import cache, cached_property
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
@@ -340,15 +340,6 @@ def anyio_backend():
     return 'asyncio'
 
 
-# Modules that library or instrumentation code imports lazily, potentially inside the event loop.
-# Import them eagerly here: blockbuster would otherwise raise mid-import and leave the module
-# permanently half-initialized for every later test in the process (e.g. logfire's schema
-# introspection imports `pandas` on first use).
-for _lazy_module in ('pandas', 'ddgs.ddgs'):
-    with suppress(ImportError):
-        importlib.import_module(_lazy_module)
-
-
 # Calls that are allowed to block in the event loop, as (blockbuster function, file, functions).
 # Each entry should say why the blocking call is acceptable; anything not listed here should be
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
@@ -372,20 +363,19 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.BufferedReader.read', 'pydantic_ai/providers/google_cloud.py', '__init__'),
     # Anthropic's async Bedrock clients synchronously resolve/sign AWS credentials
     # (https://github.com/anthropics/anthropic-sdk-python/issues/1770); remove after upstream
-    # covers both paths.
-    ('os.stat', 'pydantic_ai/models/_anthropic_bedrock_count_tokens.py', 'count_tokens_via_bedrock'),
-    ('io.TextIOWrapper.read', 'pydantic_ai/models/_anthropic_bedrock_count_tokens.py', 'count_tokens_via_bedrock'),
-    ('io.BufferedReader.read', 'pydantic_ai/models/_anthropic_bedrock_count_tokens.py', 'count_tokens_via_bedrock'),
-    ('os.stat', 'pydantic_ai/models/anthropic.py', ('_messages_create', '_messages_count_tokens')),
-    ('io.TextIOWrapper.read', 'pydantic_ai/models/anthropic.py', ('_messages_create', '_messages_count_tokens')),
-    ('io.BufferedReader.read', 'pydantic_ai/models/anthropic.py', ('_messages_create', '_messages_count_tokens')),
+    # covers both auth paths.
+    ('os.stat', 'anthropic/lib/bedrock/_auth.py', 'get_auth_headers'),
+    ('io.TextIOWrapper.read', 'anthropic/lib/bedrock/_auth.py', 'get_auth_headers'),
+    ('io.BufferedReader.read', 'anthropic/lib/bedrock/_auth.py', 'get_auth_headers'),
+    ('os.stat', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    ('io.TextIOWrapper.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    ('io.BufferedReader.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
     # pydantic extracts field docstrings from source (`inspect`/`linecache`) the first time a
     # tool schema is built, which can happen during an agent run.
     ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),
     ('io.TextIOWrapper.read', 'pydantic_ai/_function_schema.py', 'function_schema'),
-    # logfire resolves source locations (working directory, file paths) when starting a span.
-    ('os.getcwd', 'logfire/_internal/main.py', ('_span', 'span')),
-    ('os.stat', 'logfire/_internal/main.py', ('_span', 'span')),
+    # logfire resolves the current working directory while classifying user stack frames.
+    ('os.getcwd', 'logfire/_internal/stack_info.py', 'is_user_code'),
     # `Dataset.to_file`/`from_file` and schema saving are sync serialization APIs; file I/O is
     # their documented job, even when called from async user code.
     ('os.stat', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
@@ -396,8 +386,49 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
 ]
 
 
+def _configure_blockbuster(
+    exemptions: Sequence[tuple[str, str, str | tuple[str, ...]]] = BLOCKBUSTER_EXEMPTIONS,
+    excluded_modules: tuple[str, ...] = (),
+) -> BlockBuster:
+    bb = BlockBuster(
+        ['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai'],
+        excluded_modules=excluded_modules or None,
+    )
+    for func, filename, functions in exemptions:
+        bb.functions[func].can_block_in(filename, functions)
+    return bb
+
+
+@cache
+def _configured_blockbuster(excluded_modules: tuple[str, ...]) -> BlockBuster:
+    """Create one configured detector for each module-exclusion set in a pytest worker."""
+    return _configure_blockbuster(excluded_modules=excluded_modules)
+
+
+@pytest.fixture
+def blockbuster_excluded_modules() -> tuple[str, ...]:
+    return ()
+
+
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    return True
+
+
+@contextmanager
+def _activated_blockbuster(blockbuster: BlockBuster) -> Generator[BlockBuster]:
+    try:
+        blockbuster.activate()
+        yield blockbuster
+    finally:
+        blockbuster.deactivate()
+
+
 @pytest.fixture(autouse=True)
-def blockbuster() -> Iterator[BlockBuster | None]:
+def blockbuster(
+    blockbuster_enabled: bool,
+    blockbuster_excluded_modules: tuple[str, ...],
+) -> Iterator[BlockBuster | None]:
     """Raise `BlockingError` when library code makes a blocking call inside the event loop.
 
     Scanned modules are the shipped packages only, so test-only and third-party stacks (e.g. VCR
@@ -405,18 +436,13 @@ def blockbuster() -> Iterator[BlockBuster | None]:
     scanned library frame is below them. CI enables the detector on one complete Python-version
     lane to avoid multiplying its stack-inspection overhead across the version matrix.
     """
-    if os.getenv('BLOCKBUSTER_ENABLED') == 'false':
+    if os.getenv('BLOCKBUSTER_ENABLED') == 'false' or not blockbuster_enabled:
         yield None
         return
 
-    bb = BlockBuster(['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai'])
-    try:
-        bb.activate()
-        for func, filename, functions in BLOCKBUSTER_EXEMPTIONS:
-            bb.functions[func].can_block_in(filename, functions)
+    bb = _configured_blockbuster(blockbuster_excluded_modules)
+    with _activated_blockbuster(bb):
         yield bb
-    finally:
-        bb.deactivate()
 
 
 @pytest.fixture

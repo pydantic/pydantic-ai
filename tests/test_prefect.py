@@ -174,12 +174,9 @@ def setup_prefect_test_harness() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def blockbuster() -> None:
-    """Disable blocking-call detection: Prefect's flow engine blocks in the event loop by design.
-
-    Flow and task creation reads source via `inspect`, and the ephemeral test server is driven
-    through sync socket calls.
-    """
+def blockbuster_excluded_modules() -> tuple[str, ...]:
+    """Prefect's `@flow` constructor synchronously inspects its decorated function's source."""
+    return ('pydantic_ai.durable_exec.prefect',)
 
 
 @contextmanager

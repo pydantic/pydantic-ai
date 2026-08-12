@@ -79,12 +79,11 @@ code_examples: dict[str, CodeExample] = {}
 
 
 @pytest.fixture(autouse=True)
-def blockbuster() -> None:
-    """Disable blocking-call detection for docs examples.
-
-    Examples deliberately show simplified user-level code (`print(...)`, sync file access), and
-    pytest-examples' print-capturing machinery itself does blocking I/O inside the event loop.
-    """
+def blockbuster_enabled(example: CodeExample) -> bool:
+    """Skip the detector for pytest-examples' synchronous output-file reader."""
+    if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
+        return False
+    return True
 
 
 @dataclass

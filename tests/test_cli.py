@@ -31,14 +31,10 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
 
-@pytest.fixture(autouse=True)
-def blockbuster() -> None:
-    """Disable blocking-call detection: the CLI hosts a prompt_toolkit terminal app.
-
-    The sync `cli()` entry point keeps a `pydantic_ai` frame at the base of the event loop's
-    stack, so prompt_toolkit's terminal rendering and history I/O — blocking by design — would
-    all be flagged.
-    """
+@pytest.fixture
+def blockbuster_excluded_modules() -> tuple[str, ...]:
+    """The CLI owns intentionally synchronous terminal and history operations."""
+    return ('pydantic_ai._cli',)
 
 
 @pytest.fixture(autouse=True)

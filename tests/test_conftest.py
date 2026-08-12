@@ -15,6 +15,11 @@ from . import conftest
 from .conftest import BLOCKBUSTER_EXEMPTIONS, check_vcr_cassette_usage, pytest_recording_configure
 
 
+@pytest.fixture(autouse=True)
+def blockbuster() -> None:
+    """Test the root fixture directly without activating its shared instance for this module."""
+
+
 class RecordingVCR:
     before_record_request: Callable[[Request], Request | None] | None = None
 
@@ -85,15 +90,12 @@ async def test_blockbuster_exemption_contract() -> None:
         bb.deactivate()
 
 
-def test_blockbuster_deactivates_when_exemption_setup_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('BLOCKBUSTER_ENABLED', 'true')
-    monkeypatch.setattr(conftest, 'BLOCKBUSTER_EXEMPTIONS', [('missing', 'test_conftest.py', 'test')])
+def test_blockbuster_does_not_activate_when_configuration_fails() -> None:
     stat = os.stat
     buffered_read = io.BufferedReader.read
-    fixture = conftest.blockbuster._fixture_function()  # pyright: ignore[reportPrivateUsage]
 
     with pytest.raises(KeyError):
-        next(fixture)
+        conftest._configure_blockbuster([('missing', 'test_conftest.py', 'test')])  # pyright: ignore[reportPrivateUsage]
 
     assert os.stat is stat
     assert io.BufferedReader.read is buffered_read
@@ -102,7 +104,7 @@ def test_blockbuster_deactivates_when_exemption_setup_fails(monkeypatch: pytest.
 def test_blockbuster_disabled_when_explicitly_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('BLOCKBUSTER_ENABLED', 'false')
     stat = os.stat
-    fixture = conftest.blockbuster._fixture_function()  # pyright: ignore[reportPrivateUsage]
+    fixture = conftest.blockbuster._fixture_function(True, ())  # pyright: ignore[reportPrivateUsage]
 
     assert next(fixture) is None
     assert os.stat is stat
@@ -110,12 +112,40 @@ def test_blockbuster_disabled_when_explicitly_configured(monkeypatch: pytest.Mon
         next(fixture)
 
 
-def test_blockbuster_enabled_by_default_in_ci(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv('CI', 'true')
-    monkeypatch.delenv('BLOCKBUSTER_ENABLED', raising=False)
-    fixture = conftest.blockbuster._fixture_function()  # pyright: ignore[reportPrivateUsage]
+def test_configured_blockbusters_are_cached_per_exclusion_set() -> None:
+    default = conftest._configured_blockbuster(())  # pyright: ignore[reportPrivateUsage]
+    same_default = conftest._configured_blockbuster(())  # pyright: ignore[reportPrivateUsage]
+    excluding_clai = conftest._configured_blockbuster(('clai',))  # pyright: ignore[reportPrivateUsage]
 
-    bb = next(fixture)
-    assert isinstance(bb, BlockBuster)
-    assert bb.functions['os.stat'].activated
-    fixture.close()
+    assert isinstance(default, BlockBuster)
+    assert default is same_default
+    assert default is not excluding_clai
+    assert not default.functions['os.stat'].activated
+    assert not excluding_clai.functions['os.stat'].activated
+
+
+def test_blockbuster_deactivates_when_a_test_fails() -> None:
+    bb = BlockBuster(['tests.test_conftest'])
+    stat = os.stat
+
+    with pytest.raises(RuntimeError), conftest._activated_blockbuster(bb):  # pyright: ignore[reportPrivateUsage]
+        assert bb.functions['os.stat'].activated
+        raise RuntimeError
+
+    assert os.stat is stat
+
+
+def test_blockbuster_deactivates_when_activation_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    bb = BlockBuster(['tests.test_conftest'])
+    stat = os.stat
+
+    def fail_after_partial_activation() -> None:
+        bb.functions['os.stat'].activate()
+        raise RuntimeError
+
+    monkeypatch.setattr(bb, 'activate', fail_after_partial_activation)
+
+    with pytest.raises(RuntimeError), conftest._activated_blockbuster(bb):  # pyright: ignore[reportPrivateUsage]
+        pass
+
+    assert os.stat is stat
