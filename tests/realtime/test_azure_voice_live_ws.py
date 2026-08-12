@@ -30,7 +30,9 @@ from .ws_cassettes import RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
+    from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.realtime import WebRTCSession
     from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings
 
 pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='websockets not installed')]
@@ -413,6 +415,16 @@ async def test_voice_live_rejects_webrtc_signaling() -> None:
     # `answer_webrtc_offer` mints through `create_client_secret`, so it is rejected too.
     with pytest.raises(UserError, match='not yet supported for Azure AI Voice Live'):
         await model.answer_webrtc_offer('v=0\r\n')
+    # `connect_webrtc` (attaching a server sideband to an already-negotiated call) is the third signaling
+    # entry point; it is guarded on the same setting so a Voice Live session can't be sidebanded onto the
+    # inherited GA endpoint. The guard fires eagerly, before the call handle or messages are touched.
+    webrtc_session = WebRTCSession('azure', session_id='call_mock')
+    params = ModelRequestParameters()
+    with pytest.raises(UserError, match='not yet supported for Azure AI Voice Live'):
+        async with model.connect_webrtc(
+            webrtc_session, messages=[], model_settings=None, model_request_parameters=params
+        ):
+            pass  # pragma: no cover — the guard raises on enter, before the body runs
 
     # The guard reads *merged* settings, so a per-call `azure_voice_live=True` is rejected on a GA-default
     # model too (not only when it's a model-level default).
@@ -422,3 +434,8 @@ async def test_voice_live_rejects_webrtc_signaling() -> None:
         await ga_model.create_client_secret(model_settings=per_call)
     with pytest.raises(UserError, match='not yet supported for Azure AI Voice Live'):
         await ga_model.answer_webrtc_offer('v=0\r\n', model_settings=per_call)
+    with pytest.raises(UserError, match='not yet supported for Azure AI Voice Live'):
+        async with ga_model.connect_webrtc(
+            webrtc_session, messages=[], model_settings=per_call, model_request_parameters=params
+        ):
+            pass  # pragma: no cover — the guard raises on enter, before the body runs
