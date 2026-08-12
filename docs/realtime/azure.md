@@ -155,22 +155,22 @@ user who only has one resource doesn't need to configure both, and one who has b
 mixture of the two.
 
 ```python
+from pydantic_ai import Agent
 from pydantic_ai.providers.azure import AzureProvider
+from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings
 
 provider = AzureProvider(
     voice_live_endpoint='https://my-voice-live.services.ai.azure.com',
     voice_live_api_key='...',
     voice_live_api_version='2026-04-10',
 )
-```
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.realtime.azure import AzureRealtimeModel, AzureRealtimeModelSettings
 
 agent = Agent(instructions='You are a helpful voice assistant.')
-# Set on the model rather than per session, so `model.profile` reflects Voice Live (see the note below).
-model = AzureRealtimeModel('gpt-realtime', settings=AzureRealtimeModelSettings(azure_voice_live=True))
+# Pass the Voice Live `provider`, and set `azure_voice_live` on the model rather than per session so
+# `model.profile` reflects Voice Live (see the note below).
+model = AzureRealtimeModel(
+    'gpt-realtime', provider=provider, settings=AzureRealtimeModelSettings(azure_voice_live=True)
+)
 
 
 async def main():
