@@ -15,11 +15,17 @@ import pytest
 from ..conftest import sanitize_filename, try_import
 from .ws_cassettes import ProviderName, RealtimeCassette, patched_ws_connect, realtime_cassette_plan
 
+# `imports_successful` gates only the `google-genai` import, so a Gemini cassette test is the only one
+# that needs it. `gateway_provider` has no optional dependency of its own, so it gets its own flag
+# rather than riding on the Google one — otherwise a gateway/OpenAI cassette test (which needs neither
+# Google) would skip whenever `google-genai` is absent.
 with try_import() as imports_successful:
-    from pydantic_ai.providers.gateway import gateway_provider
     from pydantic_ai.providers.google import GoogleProvider
 
-# Separate from the combined flag above so OpenAI cassette tests still run in an environment
+with try_import() as gateway_imports_successful:
+    from pydantic_ai.providers.gateway import gateway_provider
+
+# Separate from the flags above so OpenAI cassette tests still run in an environment
 # without `google-genai` installed.
 with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -289,8 +295,8 @@ def gateway_openai_ws_cassette(
     `websockets` reference) is patched; only the provider's base URL and bearer key differ. Recording
     needs a real `PYDANTIC_AI_GATEWAY_API_KEY`; offline replay never dials, so a placeholder is enough.
     """
-    if not imports_successful():  # pragma: no cover
-        pytest.skip('openai / websockets not installed')
+    if not (gateway_imports_successful() and openai_imports_successful()):  # pragma: no cover
+        pytest.skip('gateway / openai / websockets not installed')
     provider = _gateway_realtime_provider('openai', gateway_api_key)
     with _ws_cassette(request, 'openai') as cassette:
         yield provider, cassette
@@ -307,8 +313,8 @@ def gateway_gemini_ws_cassette(
     the OpenAI-shaped `/proxy/<route>/realtime` upgrade the other gateway route uses, so this fixture
     covers the second protocol the gateway relays.
     """
-    if not imports_successful():  # pragma: no cover
-        pytest.skip('google-genai / websockets not installed')
+    if not (gateway_imports_successful() and imports_successful()):  # pragma: no cover
+        pytest.skip('gateway / google-genai / websockets not installed')
     provider = _gateway_realtime_provider('google', gateway_api_key)
     with _ws_cassette(request, 'gemini') as cassette:
         yield provider, cassette
