@@ -28,7 +28,17 @@ assert not any(requirement.name == 'httpx' for requirement in root)
 slim_httpx2 = [requirement for requirement in slim if requirement.name == 'httpx2']
 assert len(slim_httpx2) == 1 and slim_httpx2[0].marker is None
 
-openai_extras = {'openai', 'openrouter', 'bedrock-mantle', 'zai', 'snowflake'}
+openai_extras = {
+    'openai',
+    'openrouter',
+    'bedrock-mantle',
+    'zai',
+    'snowflake',
+    'crusoe',
+    'cerebras',
+    'openai-realtime',
+    'xai-realtime',
+}
 openai_requirements = [requirement for requirement in slim if requirement.name == 'openai']
 assert len(openai_requirements) == len(openai_extras)
 for requirement in openai_requirements:

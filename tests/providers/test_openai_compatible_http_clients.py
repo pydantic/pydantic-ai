@@ -17,6 +17,7 @@ from pydantic_ai.providers.alibaba import AlibabaProvider
 from pydantic_ai.providers.azure import AzureProvider
 from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
 from pydantic_ai.providers.cerebras import CerebrasProvider
+from pydantic_ai.providers.crusoe import CrusoeProvider
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 from pydantic_ai.providers.fireworks import FireworksProvider
 from pydantic_ai.providers.heroku import HerokuProvider
@@ -67,6 +68,13 @@ CASES = [
     Case(
         'cerebras',
         lambda http_client: CerebrasProvider(
+            api_key='test',
+            http_client=http_client,  # pyright: ignore[reportArgumentType]
+        ),
+    ),
+    Case(
+        'crusoe',
+        lambda http_client: CrusoeProvider(
             api_key='test',
             http_client=http_client,  # pyright: ignore[reportArgumentType]
         ),

@@ -4874,9 +4874,8 @@ def test_include_return_schema_warning_empty_schema():
 
 
 def test_prepare_return_schemas():
-    """_prepare_return_schemas resolves and injects return schemas in a single pass."""
-    from pydantic_ai.models import ModelRequestParameters, _prepare_return_schemas
-    from pydantic_ai.profiles import ModelProfile
+    """`prepare_return_schemas` resolves and injects return schemas in a single pass."""
+    from pydantic_ai.models import ModelRequestParameters, prepare_return_schemas
     from pydantic_ai.tools import ToolDefinition
 
     td_with_schema = ToolDefinition(
@@ -4898,8 +4897,7 @@ def test_prepare_return_schemas():
     )
 
     # Non-native model: opted-in tool gets schema injected into description, non-opted-in gets cleared
-    profile_no_native = ModelProfile(supports_tool_return_schema=False)
-    result = _prepare_return_schemas(params, profile_no_native)
+    result = prepare_return_schemas(params, supports_tool_return_schema=False)
     assert result.function_tools[0].return_schema is None
     assert 'Return schema:' in (result.function_tools[0].description or '')
     assert 'A tool' in (result.function_tools[0].description or '')
@@ -4907,8 +4905,7 @@ def test_prepare_return_schemas():
     assert 'Return schema:' not in (result.function_tools[1].description or '')
 
     # Native model: opted-in tool keeps schema, non-opted-in gets cleared
-    profile_native = ModelProfile(supports_tool_return_schema=True)
-    result = _prepare_return_schemas(params, profile_native)
+    result = prepare_return_schemas(params, supports_tool_return_schema=True)
     assert result.function_tools[0].return_schema == {'type': 'string'}
     assert result.function_tools[1].return_schema is None
 
@@ -4917,7 +4914,7 @@ def test_prepare_return_schemas():
     params_no_desc = ModelRequestParameters(
         function_tools=[td_no_desc], output_tools=[], output_mode='auto', output_object=None
     )
-    result = _prepare_return_schemas(params_no_desc, profile_no_native)
+    result = prepare_return_schemas(params_no_desc, supports_tool_return_schema=False)
     assert result.function_tools[0].description is not None
     assert result.function_tools[0].description.startswith('Return schema:')
 

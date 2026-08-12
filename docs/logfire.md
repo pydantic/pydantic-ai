@@ -99,6 +99,10 @@ To demonstrate how Logfire can let you visualise the flow of a Pydantic AI run, 
 
 {{ video('a764aff5840534dc77eba7d028707bfa', 25) }}
 
+[Realtime (speech-to-speech) sessions](realtime/observability.md) are instrumented by the same
+`logfire.instrument_pydantic_ai()` call: a session appears as an agent run whose child spans mark
+each model response, tool call, and turn boundary as the live conversation unfolds.
+
 ### Monitoring Performance
 
 We can also query data with SQL in Logfire to monitor the performance of an application. Here's a real world example of using Logfire to monitor Pydantic AI runs inside Logfire itself:

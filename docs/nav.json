@@ -71,6 +71,7 @@
       "models/bedrock",
       "models/cerebras",
       "models/cohere",
+    "models/crusoe",
       "models/groq",
       "models/huggingface",
       "models/mistral",

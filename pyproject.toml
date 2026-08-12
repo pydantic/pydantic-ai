@@ -79,6 +79,10 @@ web-fetch = ["pydantic-ai-slim[web-fetch]=={{ version }}"]
 retries = ["pydantic-ai-slim[retries]=={{ version }}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
 spec = ["pydantic-ai-slim[spec]=={{ version }}"]
+realtime = ["pydantic-ai-slim[realtime]=={{ version }}"]
+openai-realtime = ["pydantic-ai-slim[openai-realtime]=={{ version }}"]
+google-realtime = ["pydantic-ai-slim[google-realtime]=={{ version }}"]
+xai-realtime = ["pydantic-ai-slim[xai-realtime]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -142,6 +146,15 @@ constraint-dependencies = [
     "pyjwt>=2.13.0",
     "torch>=2.13.0",
     "transformers>=5.5.0",
+]
+build-constraint-dependencies = [
+    # hatchling 1.32.0 (2026-08-11) bumped its default core metadata version to 2.5,
+    # which the pinned gh-action-pypi-publish validator rejects as "not a valid
+    # metadata version". Ceiling until the publish action (or PyPI's own validator)
+    # catches up. Affects `uv build`'s PEP 517 build isolation, not runtime installs.
+    # Not covered by `exclude-newer` above: hatchling 1.32.0 rolls out of that
+    # 7-day window on 2026-08-18, so this needs its own explicit ceiling.
+    "hatchling<1.32",
 ]
 
 [tool.uv.exclude-newer-package]
@@ -322,7 +335,7 @@ venv = ".venv"
 # see https://github.com/microsoft/pyright/issues/7771 - we don't want to error on decorated functions in tests
 # which are not otherwise used
 executionEnvironments = [
-    { root = "tests", reportUnusedFunction = false, reportPrivateImportUsage = false },
+    { root = "tests", extraPaths = ["examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     # `extraPaths` lets pyright resolve the shim package (which sits next to
     # the test file, not under the project root) the same way the runtime
     # `sys.path.insert(...)` at the top of the test does.
@@ -331,6 +344,7 @@ executionEnvironments = [
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
+    "examples/pydantic_ai_examples/realtime_voice.py",       # optional, untyped `sounddevice` audio dep
     "pydantic_ai_slim/pydantic_ai/embeddings/voyageai.py",   # voyageai package has no type stubs
 ]
 
@@ -465,4 +479,4 @@ skip = '.git*,*.svg,*.lock,*.css,*.yaml'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
-ignore-words-list = 'asend,fpr,aci'
+ignore-words-list = 'asend,fpr,aci,gage'

@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 from collections.abc import Callable, Mapping
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
 import httpx
 import httpx2
@@ -10,8 +10,11 @@ import httpx2
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import create_httpx2_client, warn_if_legacy_httpx_client
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile, openai_realtime_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
+
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
     from openai import AsyncOpenAI
@@ -98,6 +101,10 @@ class OpenAIProvider(_OpenAICompatibleProvider):
             openai_model_profile(model_name),
             OpenAIModelProfile(tool_addition_mode='with_definitions', tool_deferral_mode='with_tool_search'),
         )
+
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+        return openai_realtime_model_profile(model_name)
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
