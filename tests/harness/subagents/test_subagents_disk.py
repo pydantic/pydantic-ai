@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models import Model
+from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
@@ -314,7 +314,9 @@ class TestModelInheritance:
         disk_agent = cap._by_name['worker'].agent
         assert isinstance(disk_agent, Agent)
 
-        captured: dict[str, Model] = {}
+        # `RunContext.model` is an `AbstractModel`; the inherited model captured here is the
+        # parent's request-response model, asserted by identity below.
+        captured: dict[str, AbstractModel] = {}
 
         @disk_agent.instructions
         def _capture(ctx: RunContext[object]) -> str:  # pyright: ignore[reportUnusedFunction]

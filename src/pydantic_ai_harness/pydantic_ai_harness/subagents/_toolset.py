@@ -6,7 +6,7 @@ import asyncio
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Generic
+from typing import Any, Generic, cast
 
 from pydantic_ai.agent import AbstractAgent, EventStreamHandler
 from pydantic_ai.capabilities import AgentCapability
@@ -328,7 +328,18 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             run_model = option.model
             settings = option.settings
         else:
-            run_model = None if sub_agent.agent.model is not None else ctx.model
+            # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a
+            # sub-agent run. When the parent run uses something else (a realtime model), fall
+            # back to `None` so the sub-agent uses its own default rather than being handed a
+            # model it cannot run with. Bind to a local, then `cast` to recover `Model[Any]`
+            # from the generic `Model` (which `isinstance` narrows to `Model[Unknown]`),
+            # mirroring core's own `reinject_system_prompt` idiom.
+            ctx_model = ctx.model
+            run_model = (
+                cast('Model[Any]', ctx_model)
+                if sub_agent.agent.model is None and isinstance(ctx_model, Model)
+                else None
+            )
             settings = None
         run = sub_agent.agent.run(
             task,

@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     ToolReturn,
     ToolReturnPart,
 )
+from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -556,6 +557,27 @@ class TestSummarize:
         out = await _run(cap, 'x' * 100, ctx=ctx)
         assert out == 'FROM EXPLICIT MODEL'
         assert ctx.usage.requests == 1
+
+    async def test_realtime_run_without_a_model_raises(self):
+        """A realtime run has no request-response model to summarize with; ask for one (#585)."""
+
+        class _RealtimeModel(AbstractModel):
+            @property
+            def model_name(self) -> str:
+                return 'gpt-4o-realtime-preview'
+
+            @property
+            def system(self) -> str:
+                return 'openai'
+
+        model = _RealtimeModel()
+        # A genuine `AbstractModel` identity, not a mock: it is rejected for being a non-`Model`.
+        assert model.model_id == 'openai:gpt-4o-realtime-preview'
+        ctx = _make_ctx(model=model)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=5, action=Summarize())])
+
+        with pytest.raises(UserError, match='needs a request-response model'):
+            await _run(cap, 'x' * 100, ctx=ctx)
 
     async def test_binary_summarize_falls_back(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=1, action=Summarize(then=Passthrough()))])

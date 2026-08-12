@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -792,3 +793,51 @@ class TestConfigValidation:
         await _seed_run(store, 'r1', [_user(f'needle entry {i} filler') for i in range(5)])
         with pytest.raises(ValueError, match='max_matches must be non-negative'):
             await _search(SnapshotHistorySource(store), 'needle', max_matches=-1)
+
+
+class TestSpeechIsSearchable:
+    """A realtime `SpeechPart` carries a transcript; the index renders it so speech is recallable."""
+
+    async def test_an_assistant_speech_turn_is_indexed_and_rendered(self) -> None:
+        history: list[ModelMessage] = [
+            _user('boot up'),
+            ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='the PANGOLIN protocol is ready')]),
+        ]
+        rendered = await _search(_StubSource({'r1': history}), 'PANGOLIN')
+        assert 'PANGOLIN' in rendered
+        assert 'Speech [assistant]:' in rendered
+
+    async def test_a_user_speech_turn_is_indexed_and_rendered(self) -> None:
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript='remember the MARMOT codeword')]),
+        ]
+        rendered = await _search(_StubSource({'r1': history}), 'MARMOT')
+        assert 'MARMOT' in rendered
+        assert 'Speech [user]:' in rendered
+
+    async def test_audio_only_speech_contributes_no_searchable_text(self) -> None:
+        """A `SpeechPart` with no transcript renders no line, so it cannot match a query."""
+        history: list[ModelMessage] = [ModelRequest(parts=[SpeechPart(speaker='user')])]
+        assert 'No matches' in await _search(_StubSource({'r1': history}), 'anything')
+
+    async def test_a_long_assistant_transcript_truncates_but_stays_searchable(self) -> None:
+        # A spoken turn is capped in the display excerpt like `TextPart`, while the full transcript
+        # stays in the index so a term past the 500-char cutoff still matches.
+        long_transcript = 'nightingale ' * 60 + 'SPEECHTAIL'
+        source = _StubSource(
+            {'r1': [_user('go'), ModelResponse(parts=[SpeechPart(speaker='assistant', transcript=long_transcript)])]}
+        )
+        rendered = await _search(source, 'SPEECHTAIL')
+        excerpts = rendered.split(':\n\n', 1)[1]
+        assert 'Found 1 match(es)' in rendered
+        assert 'SPEECHTAIL' not in excerpts
+        assert '...' in excerpts
+
+    async def test_a_long_user_transcript_truncates_but_stays_searchable(self) -> None:
+        long_transcript = 'petrichor ' * 60 + 'USERSPEECHTAIL'
+        source = _StubSource({'r1': [ModelRequest(parts=[SpeechPart(speaker='user', transcript=long_transcript)])]})
+        rendered = await _search(source, 'USERSPEECHTAIL')
+        excerpts = rendered.split(':\n\n', 1)[1]
+        assert 'Found 1 match(es)' in rendered
+        assert 'USERSPEECHTAIL' not in excerpts
+        assert '...' in excerpts

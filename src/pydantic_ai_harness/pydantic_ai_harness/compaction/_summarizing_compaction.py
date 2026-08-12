@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -19,6 +20,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.tools import RunContext
 
@@ -40,13 +42,14 @@ from pydantic_ai_harness.compaction._shared import (
     find_first_user_message,
     find_safe_cutoff,
     find_token_cutoff,
+    is_realtime_model,
     resolve_token_trigger,
     validate_token_trigger,
 )
 
 if TYPE_CHECKING:
     from pydantic_ai.messages import ModelRequestPart, UserContent
-    from pydantic_ai.models import Model, ModelRequestContext
+    from pydantic_ai.models import AbstractModel, ModelRequestContext
 
 _DEFAULT_SUMMARY_PROMPT = """\
 You are a context summarization assistant.  The conversation below will be replaced by \
@@ -101,8 +104,12 @@ _KEPT_USER_MESSAGE_METADATA = 'pydantic-ai-harness.compaction.kept-user-message.
 """Model-request metadata marking a user turn retained by `keep_user_messages`."""
 
 
-def _model_name(model: str | Model | None) -> str | None:
-    """Best-effort model-name string from a model spec or object."""
+def _model_name(model: str | AbstractModel | None) -> str | None:
+    """Best-effort model-name string from a model spec or object.
+
+    Accepts any `AbstractModel` (a realtime model included), not just a request-response
+    `Model`: the family heuristic only reads `model_name`, which every model carries.
+    """
     if model is None:  # pragma: no cover - Pydantic AI always supplies the running model
         return None
     if isinstance(model, str):
@@ -123,7 +130,7 @@ def _is_receipt_message(msg: ModelMessage) -> bool:
     return isinstance(msg, ModelRequest) and bool(msg.parts) and all(is_receipt_part(p) for p in msg.parts)
 
 
-def _model_family(model: str | Model | None) -> str | None:
+def _model_family(model: str | AbstractModel | None) -> str | None:
     """Reduce a model name to a coarse family token (e.g. ``openai:gpt-4o`` -> ``gpt``).
 
     A neutral structural heuristic: drop any ``provider:`` prefix, then take the leading token
@@ -590,8 +597,19 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             )
 
         model = self.model if self.model is not None else ctx.model
+        # `ctx.model` is an `AbstractModel`; summarization needs a request-response model. A
+        # realtime run reaches here only when no summarizer `model=` was configured, so ask for
+        # one explicitly rather than handing `Agent` a model it cannot run with.
+        if is_realtime_model(model):
+            raise UserError(
+                'SummarizingCompaction needs a request-response model to write the summary, but '
+                f'the run uses {type(model).__name__}, which is not one. Set `model=` on '
+                'SummarizingCompaction to the model to summarize with when the run uses a realtime model.'
+            )
+        # `isinstance` narrows the generic `Model` to `Model[Unknown]`; `cast` recovers
+        # `Model[Any]`, mirroring core's own `reinject_system_prompt` idiom.
         agent: Agent[None, str] = Agent(
-            model,
+            cast('Model[Any] | str', model),
             instructions='You are a context summarization assistant. Extract the most important information from conversations.',
         )
         result = await agent.run(prompt, usage=ctx.usage)

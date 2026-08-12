@@ -11,7 +11,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic_ai import Agent, CallToolsNode, ModelRequestNode, ModelRetry, RunContext
@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
@@ -1396,8 +1396,13 @@ class TestCapabilityHookBranches:
         store = InMemoryStepStore()
         cap: StepPersistence[object] = StepPersistence(store=store)
         ctx = build_run_context(deps=None, run_id='r1')
+        # `build_run_context` always sets a request-response `TestModel`; narrow the widened
+        # `RunContext.model` (an `AbstractModel`) back to `Model` for `ModelRequestContext`.
+        # `isinstance` narrows the generic `Model` to `Model[Unknown]`; `cast` recovers `Model[Any]`.
+        ctx_model = ctx.model
+        assert isinstance(ctx_model, Model)
         request_context = ModelRequestContext(
-            model=ctx.model,
+            model=cast('Model[Any]', ctx_model),
             messages=[],
             model_settings=None,
             model_request_parameters=ModelRequestParameters(),

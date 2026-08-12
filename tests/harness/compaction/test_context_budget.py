@@ -10,17 +10,19 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from opentelemetry.trace import NoOpTracer, Tracer
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    SpeechPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import AbstractModel, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -40,6 +42,7 @@ from pydantic_ai_harness.compaction import (
     estimate_token_count,
     resolve_context_window,
 )
+from pydantic_ai_harness.compaction._shared import resolve_token_trigger
 
 try:
     from logfire.testing import CaptureLogfire
@@ -58,6 +61,22 @@ class _FakeModel:
     """Stands in for a `Model`; only `model_id` is read by window resolution."""
 
     model_id: str = 'anthropic:claude-sonnet-4-6'
+
+
+class _FakeRealtimeModel(AbstractModel):
+    """A realtime model: an `AbstractModel` that is deliberately not a request-response `Model`.
+
+    A realtime model has no context-window/token semantics, so the token triggers must skip it
+    (see `resolve_token_trigger`). Only `system`/`model_name` are needed to satisfy the ABC.
+    """
+
+    @property
+    def model_name(self) -> str:
+        return 'gpt-4o-realtime-preview'
+
+    @property
+    def system(self) -> str:
+        return 'openai'
 
 
 def _ctx(model: Any = None) -> Any:
@@ -1212,3 +1231,82 @@ class TestManualCompactionSemantics:
         result = await compact_now(tiered, _history(6), model=TestModel())
 
         assert len(result) < 12
+
+
+# ---------------------------------------------------------------------------
+# Realtime models (#585)
+# ---------------------------------------------------------------------------
+
+
+class TestSpeechPartCounting:
+    """A `SpeechPart` transcript is text the provider bills, so the estimator counts it."""
+
+    def test_a_speech_transcript_counts_like_equivalent_text(self):
+        transcript = 'tell me about the weather today ' * 8
+        spoken: list[ModelMessage] = [
+            ModelRequest(parts=[SpeechPart(speaker='user', transcript=transcript)]),
+            ModelResponse(parts=[SpeechPart(speaker='assistant', transcript=transcript)]),
+        ]
+        as_text: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart(content=transcript)]),
+            ModelResponse(parts=[TextPart(content=transcript)]),
+        ]
+        assert estimate_token_count(spoken) == estimate_token_count(as_text) > 0
+
+    def test_audio_only_speech_contributes_no_text(self):
+        """`transcript` is optional; an audio-only turn has no characters to count."""
+        silent: list[ModelMessage] = [
+            ModelRequest(parts=[SpeechPart(speaker='user')]),
+            ModelResponse(parts=[SpeechPart(speaker='assistant')]),
+        ]
+        assert estimate_token_count(silent) == 0
+
+
+class TestRealtimeModelSkipsTokenTriggers:
+    """A realtime session never compacts (its history can't change mid-run), so this is a
+    type-level guard: `resolve_token_trigger` returns `None` for a realtime model however it is
+    configured."""
+
+    def test_a_realtime_model_resolves_to_no_trigger(self):
+        model = _FakeRealtimeModel()
+        # A genuine `AbstractModel` identity, not a mock: it is skipped for being a non-`Model`.
+        assert model.model_id == 'openai:gpt-4o-realtime-preview'
+        assert resolve_token_trigger(None, 0.5, model) is None  # fraction
+        assert resolve_token_trigger(1_000, None, model) is None  # absolute budget
+
+    def test_a_request_response_model_still_resolves(self):
+        assert resolve_token_trigger(1_000, None, TestModel()) == 1_000
+
+    async def test_sliding_window_leaves_a_realtime_request_untouched(self, monkeypatch: pytest.MonkeyPatch):
+        """A fraction that trims a normal run does not fire when the request model is realtime."""
+        _fixed_window(monkeypatch, 1_000)
+        capability: SlidingWindowCompaction[None] = SlidingWindowCompaction(max_fraction=0.1, keep_messages=2)
+        request_context = ModelRequestContext(
+            model=_FakeRealtimeModel(),  # type: ignore[arg-type]
+            messages=_history(6),
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+        await capability.before_model_request(_ctx(), request_context)
+
+        assert len(request_context.messages) == 12, 'no token trigger means nothing is trimmed'
+
+    async def test_tiered_compaction_does_not_compact_a_realtime_run(self):
+        tiered: TieredCompaction[None] = TieredCompaction(
+            tiers=[SlidingWindowCompaction(max_tokens=1, keep_messages=2)],
+            target_fraction=0.1,
+        )
+        history = _history(6)
+
+        result = await compact_now(tiered, history, model=_FakeRealtimeModel())  # type: ignore[arg-type]
+
+        assert result == history, 'no token target means the tiers never escalate'
+
+    async def test_summarizing_compaction_requires_a_model_for_a_realtime_run(self):
+        """With no summarizer `model=` configured, a realtime run cannot summarize -- say so."""
+        capability: SummarizingCompaction[None] = SummarizingCompaction(max_messages=1)
+        ctx = _ctx(model=_FakeRealtimeModel())
+
+        with pytest.raises(UserError, match='needs a request-response model'):
+            await capability._summarize(_history(2), ctx)  # pyright: ignore[reportPrivateUsage]

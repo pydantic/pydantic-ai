@@ -36,7 +36,7 @@ dependencies = [
     # on it rather than merely ignoring it (#577). Handling it needs the class to import,
     # so the floor is the version that introduced it, not merely the one we lock.
     # (`CodeMode` separately reads `ModelRequestParameters.revealed_tool_names`, from 2.22.0.)
-    "pydantic-ai-slim>=2.23.0",
+    "pydantic-ai-slim>=2.28.0",
 ]
 
 [project.optional-dependencies]

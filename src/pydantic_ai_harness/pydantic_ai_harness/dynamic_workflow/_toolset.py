@@ -14,7 +14,7 @@ import keyword
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Generic, Literal
+from typing import Annotated, Any, Generic, Literal, cast
 
 from pydantic import Field, TypeAdapter
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
@@ -22,6 +22,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature
+from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai.usage import UsageLimits
@@ -640,11 +641,18 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         if self._call_count >= self.max_agent_calls:
             raise _BudgetExhausted(self.max_agent_calls)
         self._call_count += 1
+        # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a sub-agent
+        # run. A realtime run's model isn't one, so fall back to the sub-agent's own default rather
+        # than forwarding a model it cannot run with. Bind to a local, then `cast` to recover
+        # `Model[Any]` from the generic `Model` (which `isinstance` narrows to `Model[Unknown]`),
+        # mirroring core's own `reinject_system_prompt` idiom.
+        ctx_model = ctx.model
+        inherited_model = cast('Model[Any]', ctx_model) if self.inherit_model and isinstance(ctx_model, Model) else None
         try:
             result = await self._by_name[agent_name].agent.run(
                 task,
                 deps=ctx.deps,
-                model=ctx.model if self.inherit_model else None,
+                model=inherited_model,
                 usage=ctx.usage if self.forward_usage else None,
                 usage_limits=self.sub_agent_usage_limits,
             )

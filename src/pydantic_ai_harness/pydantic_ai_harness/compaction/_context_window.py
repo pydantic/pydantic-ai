@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pydantic_ai.models import Model
+    from pydantic_ai.models import AbstractModel
 
 DEFAULT_CONTEXT_WINDOW = 200_000
 """Window assumed when the model's real one cannot be resolved.
@@ -42,7 +42,7 @@ def split_model_id(model_id: str) -> tuple[str | None, str]:
     return provider, model
 
 
-def resolve_context_window(model: Model | str) -> int | None:
+def resolve_context_window(model: AbstractModel | str) -> int | None:
     """Return the model's context window in tokens, or `None` when it is not known.
 
     `None` is returned both for models `genai-prices` has no entry for and for models

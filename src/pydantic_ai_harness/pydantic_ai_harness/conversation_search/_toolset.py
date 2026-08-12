@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -194,6 +195,15 @@ def _format_request_part(part: ModelRequestPart, *, truncate: bool) -> str | Non
     if isinstance(part, RetryPromptPart):
         # A retry or validation-error prompt is worth recalling, so index it in full.
         return f'Retry [{part.tool_name}]: {part.content}'
+    if isinstance(part, SpeechPart):
+        # A realtime user turn: index the spoken transcript so speech is searchable, not the
+        # raw audio. `transcript` is optional, so an audio-only part contributes no text.
+        if not part.transcript:
+            return None
+        transcript = part.transcript
+        if truncate and len(transcript) > 500:  # cap the display excerpt like `UserPromptPart`
+            transcript = transcript[:500] + '...'
+        return f'Speech [{part.speaker}]: {transcript}'
     # Tool-list bookkeeping rather than conversation, so there is no line to contribute.
     # Redundant against the union as it stands today, but kept explicit so the fallthrough
     # below stays a real branch at runtime rather than dead code.
@@ -234,6 +244,15 @@ def _format_message(message: ModelMessage, *, truncate: bool) -> str:
                 if truncate and len(args) > 200:
                     args = args[:200] + '...'
                 lines.append(f'Tool Call [{part.tool_name}]: {args}')
+            elif isinstance(part, SpeechPart) and part.transcript:
+                # `SpeechPart` is in the response union too: a realtime assistant turn. Index the
+                # transcript so spoken replies are searchable. Any other response part (thinking,
+                # file, native-tool bookkeeping) is deliberately skipped rather than misrendered,
+                # so a new upstream part degrades to "not indexed" instead of crashing the run.
+                transcript = part.transcript
+                if truncate and len(transcript) > 500:  # cap like the `TextPart` branch above
+                    transcript = transcript[:500] + '...'
+                lines.append(f'Speech [{part.speaker}]: {transcript}')
 
     return '\n'.join(lines)
 

@@ -5,12 +5,13 @@ from __future__ import annotations
 import warnings
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, TypeGuard
+from typing import Any, TypeGuard, cast
 
 from pydantic_ai import FunctionToolset
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import ToolCallPart, ToolReturn, ToolReturnContent, UserContent
+from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import AgentToolset
 
@@ -391,6 +392,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         assert unit.text is not None
         try:
             summary = await self._summarize(ctx, call, action, unit.text)
+        except UserError:
+            # A misconfiguration -- e.g. a realtime run with no summarizer `model=` (#585) -- is
+            # the user's to fix, not something to mask by silently truncating instead.
+            raise
         except Exception:
             return await self._fallback(ctx, call, action.then, unit)
         return summary, None
@@ -412,8 +417,22 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         from pydantic_ai import Agent
 
         model = action.model if action.model is not None else ctx.model
+        # `ctx.model` is an `AbstractModel`; summarizing needs a request-response model. A
+        # realtime run reaches here only when no summarizer `model=` was configured on the
+        # `Summarize` action, so ask for one explicitly rather than handing `Agent` a model it
+        # cannot run with. A realtime model is an `AbstractModel` that is not a `Model`.
+        if isinstance(model, AbstractModel) and not isinstance(model, Model):
+            raise UserError(
+                'Summarizing oversized tool output needs a request-response model, but the run '
+                f'uses {type(model).__name__}, which is not one. Set a `model=` on the '
+                '`Summarize` action to use for summarization.'
+            )
         prompt = self.summary_prompt.format(tool_name=call.tool_name, output=text)
-        agent: Agent[None, str] = Agent(model, instructions='You summarize oversized tool output.')
+        # `isinstance` narrows the generic `Model` to `Model[Unknown]`; `cast` recovers
+        # `Model[Any]`, mirroring core's own `reinject_system_prompt` idiom.
+        agent: Agent[None, str] = Agent(
+            cast('Model[Any] | str', model), instructions='You summarize oversized tool output.'
+        )
         run = await agent.run(prompt, usage=ctx.usage)
         return run.output.strip()
 

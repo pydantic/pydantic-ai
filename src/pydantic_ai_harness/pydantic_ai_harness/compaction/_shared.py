@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -30,6 +31,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import RunContext
 from typing_extensions import Self, assert_never
 
@@ -44,7 +46,7 @@ from pydantic_ai_harness.compaction._receipts import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai.models import Model, ModelRequestContext
+    from pydantic_ai.models import ModelRequestContext
 
 # ---------------------------------------------------------------------------
 # Token estimation
@@ -70,57 +72,76 @@ def _collect_text(messages: Sequence[ModelMessage]) -> list[str]:
     segments: list[str] = []
     for msg in messages:
         if isinstance(msg, ModelRequest):
-            for part in msg.parts:
-                if isinstance(part, UserPromptPart):
-                    segments.append(_user_prompt_text_for_counting(part))
-                elif isinstance(part, SystemPromptPart):
-                    segments.append(part.content)
-                elif isinstance(part, (ToolReturnPart, RetryPromptPart)):
-                    # Both are sent in full. The tool-search and capability-load returns
-                    # subclass `ToolReturnPart`, so they arrive here too.
-                    segments.append(str(part.content))
-                # Control bookkeeping rather than message text: it records which tools became
-                # available, and the schemas themselves travel in the request's tool
-                # definitions. Those schemas are not free -- this estimator counts no tool
-                # definitions at all, so revealing tools mid-run costs context it does not see
-                # (tracked separately); skipping the part is not a claim that the reveal was
-                # free. Redundant against the union as it stands today -- every other member is
-                # handled above -- but kept explicit so the `else` stays a real branch at
-                # runtime rather than dead code.
-                elif isinstance(part, ToolAvailabilityDeltaPart):  # pyright: ignore[reportUnnecessaryIsInstance]
-                    pass
-                else:
-                    # A part pydantic-ai added after this was written. Skip rather than guess at
-                    # its payload: this runs on every request to decide whether to compact, so an
-                    # unrecognised part must not take the run down -- which is exactly what the
-                    # old `str(part.content)` fallback did once a part without `content` existed
-                    # (#577).
-                    #
-                    # `assert_never` sits under `TYPE_CHECKING` rather than in the branch body on
-                    # purpose. It still makes the chain exhaustive at type-check time, so a new
-                    # upstream part fails `make typecheck` and becomes a decision we make; but
-                    # unlike the usual runtime form it cannot re-crash a user who upgrades
-                    # pydantic-ai ahead of us, which is the failure this change exists to remove.
-                    if TYPE_CHECKING:
-                        assert_never(part)
+            for request_part in msg.parts:
+                segments.extend(_request_part_text(request_part))
         else:
-            for part in msg.parts:
-                if isinstance(part, TextPart):
-                    segments.append(part.content)
-                elif isinstance(part, ToolCallPart):
-                    segments.append(part.tool_name)
-                    segments.append(str(part.args))
-                elif isinstance(part, (ThinkingPart, CompactionPart)):
-                    # A redacted thinking block carries a signature and no text.
-                    segments.append(part.content or '')
-                elif isinstance(part, NativeToolCallPart):
-                    segments.append(part.tool_name)
-                    segments.append(str(part.args))
-                elif isinstance(part, NativeToolReturnPart):
-                    segments.append(part.tool_name)
-                    segments.append(str(part.content))
+            for response_part in msg.parts:
+                segments.extend(_response_part_text(response_part))
     segments.extend(_instructions_text(messages))
     return segments
+
+
+def _request_part_text(part: ModelRequestPart) -> list[str]:
+    """Text segments a single request part contributes to the token estimate."""
+    if isinstance(part, UserPromptPart):
+        return [_user_prompt_text_for_counting(part)]
+    elif isinstance(part, SystemPromptPart):
+        return [part.content]
+    elif isinstance(part, (ToolReturnPart, RetryPromptPart)):
+        # Both are sent in full. The tool-search and capability-load returns subclass
+        # `ToolReturnPart`, so they arrive here too.
+        return [str(part.content)]
+    # Control bookkeeping rather than message text: it records which tools became available, and
+    # the schemas themselves travel in the request's tool definitions. Those schemas are not free
+    # -- this estimator counts no tool definitions at all, so revealing tools mid-run costs
+    # context it does not see (tracked separately); skipping the part is not a claim that the
+    # reveal was free.
+    elif isinstance(part, ToolAvailabilityDeltaPart):
+        return []
+    elif isinstance(part, SpeechPart):  # pyright: ignore[reportUnnecessaryIsInstance]
+        # A realtime turn arrives as spoken audio plus a transcript. Count the transcript -- the
+        # words the provider bills against the window -- not the binary audio, which has no
+        # character-count meaning (as with `FilePart`).
+        #
+        # `SpeechPart` is the last member of the union today, so pyright sees this `isinstance` as
+        # redundant, but it is kept explicit so the `else` stays a real branch at runtime rather
+        # than dead code -- see the `else` comment.
+        return [part.transcript or '']
+    else:
+        # A part pydantic-ai added after this was written. Skip rather than guess at its payload:
+        # this runs on every request to decide whether to compact, so an unrecognised part must
+        # not take the run down -- which is exactly what the old `str(part.content)` fallback did
+        # once a part without `content` existed (#577).
+        #
+        # `assert_never` sits under `TYPE_CHECKING` rather than in the branch body on purpose. It
+        # still makes the chain exhaustive at type-check time, so a new upstream part fails
+        # `make typecheck` and becomes a decision we make; but unlike the usual runtime form it
+        # cannot re-crash a user who upgrades pydantic-ai ahead of us, which is the failure this
+        # change exists to remove.
+        if TYPE_CHECKING:
+            assert_never(part)
+        return []  # pragma: no cover - reachable only on a pydantic-ai release newer than this one
+
+
+def _response_part_text(part: ModelResponsePart) -> list[str]:
+    """Text segments a single response part contributes to the token estimate."""
+    if isinstance(part, TextPart):
+        return [part.content]
+    elif isinstance(part, ToolCallPart):
+        return [part.tool_name, str(part.args)]
+    elif isinstance(part, (ThinkingPart, CompactionPart)):
+        # A redacted thinking block carries a signature and no text.
+        return [part.content or '']
+    elif isinstance(part, NativeToolCallPart):
+        return [part.tool_name, str(part.args)]
+    elif isinstance(part, NativeToolReturnPart):
+        return [part.tool_name, str(part.content)]
+    elif isinstance(part, SpeechPart):
+        # `SpeechPart` is in both unions; a realtime assistant turn lands here. Count its
+        # transcript for the same reason as on the request side.
+        return [part.transcript or '']
+    # Any other response part (e.g. `FilePart`) contributes no counted text, as before.
+    return []
 
 
 def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
@@ -242,10 +263,21 @@ def context_for_request(
     return replace(ctx, model=request_context.model)
 
 
+def is_realtime_model(model: AbstractModel | str) -> bool:
+    """Whether *model* is a realtime model: an `AbstractModel` that is not a request-response `Model`.
+
+    A realtime model has no request-response context-window/token semantics, so the token
+    triggers skip it. Written as a boolean check (rather than an inline `isinstance`) so callers
+    keep the `AbstractModel | str` type -- narrowing against the un-parameterized generic `Model`
+    would otherwise widen the value to `Model[Unknown]`. #585
+    """
+    return isinstance(model, AbstractModel) and not isinstance(model, Model)
+
+
 def resolve_token_trigger(
     max_tokens: int | None,
     max_fraction: float | None,
-    model: Model | str,
+    model: AbstractModel | str,
     fallback_context_window: int = DEFAULT_CONTEXT_WINDOW,
     context_window: int | None = None,
 ) -> int | None:
@@ -266,7 +298,16 @@ def resolve_token_trigger(
     Pass the model the request will actually be sent to. A capability may replace
     `ModelRequestContext.model` before the request leaves, so the run's model and the request's
     model are not always the same one.
+
+    `RunContext.model` is typed as the wider `AbstractModel`, but a realtime session never
+    compacts: its message history can't be modified mid-run, so the compaction hooks that call
+    this never fire, and `model` is a request-response `Model` at runtime. The realtime guard
+    below only keeps that wider type sound -- it returns `None`. #585
     """
+    if is_realtime_model(model):
+        # Unreachable at runtime (a realtime session doesn't compact, see above); the guard exists
+        # only because `RunContext.model` is now the wider `AbstractModel`. #585
+        return None
     if max_tokens is not None:
         return max_tokens
     if max_fraction is None:
