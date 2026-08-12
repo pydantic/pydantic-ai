@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.profiles import ModelProfile
 
 from .conftest import try_import
 
@@ -90,6 +91,19 @@ _NO_THINKING_HISTORY: list[ModelMessage] = [
 
 async def _anthropic_outbound(history: list[ModelMessage]) -> list[dict[str, object]]:
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='x'))
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        history, ModelRequestParameters(), AnthropicModelSettings()
+    )
+    return [dict(message) for message in messages]
+
+
+async def _anthropic_opted_out_outbound(history: list[ModelMessage]) -> list[dict[str, object]]:
+    """The documented opt-out: with the flag off, the reasoning goes back in the assistant turn."""
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(api_key='x'),
+        profile=ModelProfile(mimics_assistant_message_formatting=False),
+    )
     _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
         history, ModelRequestParameters(), AnthropicModelSettings()
     )
@@ -246,6 +260,70 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
             ]
         ),
         marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
+    ),
+    Case(
+        'anthropic-foreign-opted-out',
+        _anthropic_opted_out_outbound,
+        _FOREIGN_HISTORY,
+        carrying_roles={'assistant'},
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                            'type': 'text',
+                        }
+                    ],
+                },
+                {
+                    'role': 'assistant',
+                    'content': [
+                        {
+                            'text': """\
+<thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</thinking>\
+""",
+                            'type': 'text',
+                        },
+                        {'text': 'The 10-year Treasury has more interest-rate risk.', 'type': 'text'},
+                    ],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
+    ),
+    Case(
+        'bedrock-leading-response',
+        _bedrock_outbound,
+        _LEADING_RESPONSE_HISTORY,
+        carrying_roles={'user'},
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': """\
+<thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</thinking>\
+"""
+                        }
+                    ],
+                },
+                {'role': 'assistant', 'content': [{'text': 'The 10-year Treasury has more interest-rate risk.'}]},
+                {
+                    'role': 'user',
+                    'content': [
+                        {'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?'}
+                    ],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed'),),
     ),
     Case(
         'bedrock-foreign',
