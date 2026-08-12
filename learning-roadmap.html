@@ -4,106 +4,388 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pydantic AI 文档学习路线</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+SC:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Serif+SC:wght@600;700&display=swap" rel="stylesheet">
+<script defer src="https://cdn.jsdelivr.net/npm/lenis@1/dist/lenis.min.js"></script>
 <style>
   :root {
-    --pink: #e0245e;
-    --bg: #f7f7f9;
-    --card: #ffffff;
-    --text: #1f2329;
-    --muted: #6b7280;
-    --border: #e5e7eb;
+    --bg: #faf8f5;
+    --bg-soft: #f4efe3;
+    --card: #fffdf8;
+    --text: #1a1612;
+    --muted: #6f665b;
+    --faint: #a89e8f;
+    --border: #e9e1d2;
+    --border-strong: #d8cdb8;
+    --olive: #4a6030;
+    --olive-deep: #3a4a24;
+    --olive-soft: #ebf0e2;
+    --amber: #c4842e;
+    --amber-soft: #f9efdb;
+    --cream: #f0e6d8;
+    --hover: #f6f0e3;
+    --shadow: 0 1px 2px rgba(26,22,18,.05), 0 8px 28px -12px rgba(26,22,18,.14);
+    --ease-out: cubic-bezier(.16, 1, .3, 1);
   }
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-    line-height: 1.6;
+    font-family: "IBM Plex Sans SC", "IBM Plex Sans", -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
   }
-  header {
-    position: sticky; top: 0; z-index: 10;
-    background: var(--card); border-bottom: 1px solid var(--border);
-    padding: 12px 20px;
+  ::selection { background: var(--olive-soft); }
+
+  /* ---------- 悬浮胶囊导航 ---------- */
+  .float-nav {
+    position: fixed; top: 18px; left: 0; right: 0; z-index: 40;
+    display: flex; justify-content: space-between; align-items: center;
+    max-width: 1500px; margin: 0 auto; padding: 0 32px;
+    pointer-events: none;
   }
-  header h1 { margin: 0 0 6px; font-size: 20px; }
-  .progress-wrap { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .pill {
+    pointer-events: auto;
+    display: flex; align-items: center; gap: 2px;
+    background: #fcf9f26b;
+    backdrop-filter: blur(16px) saturate(1.15);
+    -webkit-backdrop-filter: blur(16px) saturate(1.15);
+    border-radius: 999px; padding: 5px;
+    box-shadow: inset 0 0 0 1px #3a32281a, inset 0 1px 0 #ffffff8c, 0 8px 24px #3a322814;
+  }
+  .pill a {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 7px 16px; border-radius: 999px;
+    color: var(--text); text-decoration: none;
+    font-size: 13.5px; font-weight: 600;
+    transition: background .15s, color .15s;
+    white-space: nowrap;
+  }
+  .pill a:hover { background: #efe8da8c; }
+  .pill a.logo {
+    font-family: "IBM Plex Mono", monospace; font-weight: 600; font-size: 15px;
+    background: var(--text); color: var(--cream);
+    width: 34px; height: 34px; padding: 0; justify-content: center;
+  }
+  .pill a.logo:hover { background: var(--olive-deep); }
+  .pill.gh a { font-family: "IBM Plex Mono", monospace; font-size: 13px; }
+  .pill.gh svg { width: 16px; height: 16px; }
+  @media (max-width: 640px) { .pill .navlink { display: none; } }
+
+  /* ---------- 水彩头图（absolute + 视差 + 融化，openchamber 式） ---------- */
+  .hero {
+    position: relative; height: max(100svh, 640px); overflow: hidden;
+    background: var(--bg);
+  }
+  .hero-art {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; object-position: 50% 72%;
+    transform: translateY(var(--parallax-y, 0px));
+    will-change: transform;
+  }
+  /* 顶部渐隐：仅滚动时淡入，遮住视差下移露出的缝隙 */
+  .hero-top-fade {
+    position: absolute; top: 0; left: 0; right: 0; height: 22vh; z-index: 1;
+    background: linear-gradient(to bottom, var(--bg), transparent);
+    opacity: var(--topfade, 0);
+  }
+  /* 底部"融化"层：多 stop 模拟 smoothstep，随滚动淡入，替代 backdrop-filter（全宽模糊会卡滚动） */
+  .hero-melt {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 16rem; z-index: 1;
+    opacity: var(--melt, 0);
+    background: linear-gradient(to bottom,
+      rgba(250,248,245,0) 0%,
+      rgba(250,248,245,.06) 10%,
+      rgba(250,248,245,.16) 22%,
+      rgba(250,248,245,.30) 35%,
+      rgba(250,248,245,.47) 48%,
+      rgba(250,248,245,.64) 61%,
+      rgba(250,248,245,.79) 73%,
+      rgba(250,248,245,.90) 84%,
+      rgba(250,248,245,.97) 93%,
+      var(--bg) 100%);
+  }
+  .hero-content {
+    position: relative; z-index: 2;
+    max-width: 920px; margin: 0 auto; padding: 15vh 24px 0;
+    text-align: center;
+    will-change: opacity, transform;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; font-weight: 500;
+    letter-spacing: .18em; text-transform: uppercase; color: var(--olive-deep);
+    margin: 0 0 16px;
+    animation: hero-fade .6s var(--ease-out) .05s both;
+  }
+  .hero h1 {
+    margin: 0 0 18px;
+    font-family: "Fraunces", "Noto Serif SC", "IBM Plex Sans SC", serif;
+    font-size: clamp(36px, 6.2vw, 64px); font-weight: 700;
+    letter-spacing: -.01em; line-height: 1.22;
+    color: #2e2318;
+  }
+  .hero h1 .cn-line { color: #9a5a1e; }
+  /* 逐词入场：模糊 + 上浮，45ms 逐词 stagger */
+  .hero-word {
+    display: inline-block;
+    opacity: 0; filter: blur(10px); transform: translateY(10px);
+    animation: hero-word .55s var(--ease-out) calc(.12s + var(--i, 0) * 45ms) both;
+  }
+  @keyframes hero-word { to { opacity: 1; filter: blur(0); transform: translateY(0); } }
+  .hero-sub {
+    margin: 0 auto 14px; max-width: 560px;
+    font-size: 15px; color: #4a4238;
+    animation: hero-fade .6s var(--ease-out) .38s both;
+  }
+  .hero-cta {
+    display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
+    animation: hero-fade .6s var(--ease-out) .5s both;
+  }
+  @keyframes hero-fade { from { opacity: 0; transform: translateY(8px); } }
+  @media (prefers-reduced-motion: reduce) {
+    .eyebrow, .hero-word, .hero-sub, .hero-cta { animation: none; opacity: 1; filter: none; transform: none; }
+  }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 12px 28px; border-radius: 999px;
+    font-size: 14px; font-weight: 600; text-decoration: none;
+    color: var(--text);
+    background: #fcf9f26b;
+    backdrop-filter: blur(16px) saturate(1.15);
+    -webkit-backdrop-filter: blur(16px) saturate(1.15);
+    box-shadow: inset 0 0 0 1px #3a32281a, inset 0 1px 0 #ffffff8c, 0 8px 24px #3a322814;
+    transition: transform .25s var(--ease-out), box-shadow .25s var(--ease-out), background .2s;
+  }
+  .btn:hover { background: #fcf9f29e; transform: translateY(-1px); }
+  .btn:active { transform: scale(.96); transition-duration: .08s; }
+  .btn-dark { background: #fcf9f29e; position: relative; overflow: hidden; }
+  .btn-dark:hover { background: #fcf9f2cc; }
+  /* luxe 流光：斜向高光周期性扫过 */
+  .btn-dark::after {
+    content: ""; position: absolute; top: -25%; bottom: -25%; left: -20%;
+    width: 45%; pointer-events: none;
+    background: linear-gradient(105deg, transparent, rgba(255,255,255,.85) 50%, transparent);
+    transform: skewX(-18deg) translateX(0);
+    animation: btn-shine 3.6s var(--ease-out) 1.2s infinite;
+  }
+  @keyframes btn-shine {
+    0% { transform: skewX(-18deg) translateX(0); opacity: 0; }
+    12% { opacity: 1; }
+    55% { opacity: 1; }
+    100% { transform: skewX(-18deg) translateX(380%); opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .btn-dark::after { animation: none; }
+  }
+  .art-credit {
+    position: absolute; right: 18px; bottom: 46px; z-index: 3;
+    font-family: "IBM Plex Mono", monospace; font-size: 11px;
+    color: rgba(26,22,18,.45); letter-spacing: .04em;
+    opacity: calc(1 - var(--melt, 0));
+  }
+
+  /* ---------- 主体（整幅页面滑过头图，无框感） ---------- */
+  main {
+    position: relative; z-index: 5;
+    background: var(--bg);
+  }
+  .sheet { max-width: 800px; margin: 0 auto; padding: 56px 24px 110px; }
+  .tip { font-size: 13px; color: var(--muted); margin: 0 0 20px; }
+  .tip code {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px;
+    color: var(--olive-deep);
+  }
+  .gh-tag { font-size: 11px; color: var(--amber); font-family: "IBM Plex Mono", monospace; }
+
+  /* ---------- 进度区（无卡片，纯排版） ---------- */
+  .panel { margin-bottom: 4px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+  .progress-wrap { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
   .bar {
-    flex: 1; min-width: 200px; height: 10px; background: #eee; border-radius: 5px; overflow: hidden;
+    flex: 1; min-width: 200px; height: 3px;
+    background: var(--border); border-radius: 999px; overflow: hidden;
   }
-  .bar > div { height: 100%; background: var(--pink); width: 0; transition: width .2s; }
-  .stats { font-size: 13px; color: var(--muted); white-space: nowrap; }
-  .toolbar { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .bar > div {
+    height: 100%; width: 0; border-radius: 999px;
+    background: var(--text);
+    transition: width .35s cubic-bezier(.4,0,.2,1);
+  }
+  .stats {
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px;
+    color: var(--muted); white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .toolbar {
+    margin-top: 14px;
+    display: flex; gap: 4px; flex-wrap: wrap; align-items: baseline;
+  }
   button {
-    border: 1px solid var(--border); background: #fff; border-radius: 6px;
-    padding: 4px 12px; font-size: 13px; cursor: pointer;
+    border: none; background: none; color: var(--muted);
+    border-radius: 6px; padding: 5px 10px; font-size: 13px; font-weight: 500;
+    font-family: inherit; cursor: pointer;
+    transition: color .15s, background .15s;
   }
-  button:hover { border-color: var(--pink); color: var(--pink); }
-  button.primary { background: var(--pink); color: #fff; border-color: var(--pink); }
-  button.primary:hover { opacity: .9; color: #fff; }
-  .legend { font-size: 12px; color: var(--muted); margin-left: auto; }
-  main { max-width: 960px; margin: 20px auto 80px; padding: 0 16px; }
+  button:hover { color: var(--text); background: rgba(26,22,18,.05); }
+  button.primary { color: var(--text); font-weight: 600; }
+  button.primary:hover { background: rgba(26,22,18,.05); }
+  .legend { font-size: 12px; color: var(--faint); margin-left: auto; }
+
+  /* ---------- 阶段（文档式分节） ---------- */
   details.phase {
-    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-    margin-bottom: 14px; overflow: hidden;
+    border-bottom: 1px solid var(--border);
   }
   details.phase > summary {
-    cursor: pointer; padding: 14px 18px; display: flex; align-items: center; gap: 12px;
+    cursor: pointer; padding: 26px 2px; display: flex; align-items: baseline; gap: 18px;
     list-style: none; user-select: none;
   }
   details.phase > summary::-webkit-details-marker { display: none; }
-  details.phase > summary::before { content: "▸"; color: var(--muted); }
-  details.phase[open] > summary::before { content: "▾"; }
-  .phase-title { font-weight: 700; font-size: 16px; }
-  .phase-desc { font-size: 12px; color: var(--muted); }
-  .phase-bar { margin-left: auto; width: 120px; height: 6px; background: #eee; border-radius: 3px; overflow: hidden; flex: none; }
-  .phase-bar > div { height: 100%; background: var(--pink); width: 0; }
-  .phase-count { font-size: 12px; color: var(--muted); flex: none; width: 52px; text-align: right; }
-  ul.items { list-style: none; margin: 0; padding: 4px 10px 12px; }
+  .ph-index {
+    font-family: "IBM Plex Mono", monospace; font-size: 13px;
+    color: var(--faint); width: 26px; flex: none;
+    font-variant-numeric: tabular-nums;
+  }
+  details.phase[open] .ph-index { color: var(--text); }
+  details.phase > summary::after {
+    content: "+"; color: var(--faint); font-size: 17px; font-weight: 400;
+    width: 18px; text-align: center; flex: none; line-height: 1;
+    font-family: "IBM Plex Mono", monospace;
+    transition: color .15s;
+  }
+  details.phase > summary:hover::after { color: var(--text); }
+  details.phase[open] > summary::after { content: "−"; }
+  .phase-title { font-weight: 700; font-size: 18px; letter-spacing: -.01em; }
+  details.phase > summary:hover .phase-title { text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--faint); }
+  .phase-desc { font-size: 13px; color: var(--muted); margin-top: 3px; }
+  .phase-meta { margin-left: auto; display: flex; align-items: center; gap: 12px; flex: none; }
+  .phase-bar {
+    width: 72px; height: 3px; background: var(--border);
+    border-radius: 999px; overflow: hidden;
+  }
+  .phase-bar > div { height: 100%; background: var(--text); width: 0; border-radius: 999px; }
+  .phase-count {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px;
+    color: var(--faint); width: 46px; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  @media (max-width: 640px) { .phase-bar { display: none; } .legend { display: none; } }
+
+  ul.items { list-style: none; margin: 0; padding: 0 2px 26px 46px; }
   li.item {
-    display: flex; align-items: flex-start; gap: 10px;
-    padding: 8px 10px; border-radius: 8px;
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 11px 0;
   }
-  li.item:hover { background: #faf0f4; }
-  li.item.done .name { text-decoration: line-through; color: var(--muted); }
-  li.item input[type=checkbox] { margin-top: 6px; accent-color: var(--pink); flex: none; }
+  li.item.done .name { text-decoration: line-through; text-decoration-color: var(--faint); color: var(--faint); }
+  li.item.done .note { color: var(--faint); }
+  li.item input[type=checkbox] {
+    appearance: none; -webkit-appearance: none;
+    margin-top: 4px; flex: none; width: 15px; height: 15px;
+    border: 1.5px solid var(--border-strong); border-radius: 4px;
+    background: transparent; cursor: pointer; position: relative;
+    transition: background .15s, border-color .15s;
+  }
+  li.item input[type=checkbox]:hover { border-color: var(--text); }
+  li.item input[type=checkbox]:checked { background: var(--text); border-color: var(--text); }
+  li.item input[type=checkbox]:checked::after {
+    content: ""; position: absolute; left: 4px; top: 1px;
+    width: 4px; height: 8px;
+    border: solid var(--bg); border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
   li.item .body { flex: 1; min-width: 0; }
-  li.item a.name { color: var(--text); text-decoration: none; font-weight: 600; }
-  li.item a.name:hover { color: var(--pink); text-decoration: underline; }
-  li.item .note { font-size: 13px; color: var(--muted); margin-top: 2px; }
-  .badge {
-    flex: none; font-size: 11px; border-radius: 4px; padding: 1px 7px; margin-top: 4px;
-    border: 1px solid;
+  li.item a.name { color: var(--text); text-decoration: none; font-weight: 600; font-size: 15px; }
+  li.item a.name:hover { text-decoration: underline; text-underline-offset: 3px; }
+  li.item .note { font-size: 13px; color: var(--muted); margin-top: 2px; max-width: 560px; }
+  /* 等级标记：手批注式排版——荧光笔、铅笔下划线、灰字、淡去，不用圆点 */
+  .lv { flex: none; font-size: 12.5px; font-weight: 600; margin-top: 4px; }
+  .lv-精读 {
+    color: #7c4d10;
+    background: linear-gradient(100deg, rgba(233,183,93,.34), rgba(233,183,93,.22));
+    border-radius: 4px 10px 5px 9px;
+    padding: 1px 8px;
+    transform: rotate(-.6deg);
   }
-  .lv-精读 { color: #d61f57; border-color: #f3b7ca; background: #fdeef3; }
-  .lv-选读 { color: #1d63d0; border-color: #b9d2f5; background: #eef4fd; }
-  .lv-查阅 { color: #5b6470; border-color: #d3d8df; background: #f4f5f7; }
-  .lv-可跳过 { color: #9aa1ab; border-color: #e3e6ea; background: #fafafa; }
-  .time { flex: none; font-size: 12px; color: var(--muted); margin-top: 5px; min-width: 64px; text-align: right; }
-  .gh-tag { font-size: 11px; color: #8250df; }
-  #next-btn {
-    position: fixed; right: 24px; bottom: 24px; z-index: 20;
-    padding: 10px 18px; font-size: 14px; border-radius: 24px;
-    box-shadow: 0 4px 14px rgba(224,36,94,.35);
+  .lv-选读 {
+    color: var(--olive-deep);
+    text-decoration: underline;
+    text-decoration-style: wavy;
+    text-decoration-color: rgba(74,96,48,.45);
+    text-underline-offset: 4px;
   }
-  .tip { font-size: 13px; color: var(--muted); max-width: 960px; margin: 0 auto 16px; padding: 0 16px; }
+  .lv-查阅 { color: var(--muted); font-weight: 500; }
+  .lv-可跳过 { color: var(--faint); font-weight: 400; font-style: italic; }
+  .time {
+    flex: none; font-family: "IBM Plex Mono", monospace; font-size: 12px;
+    color: var(--faint); margin-top: 5px; min-width: 64px; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- 页脚 ---------- */
+  footer {
+    border-top: 1px solid var(--border); margin-top: 12px;
+    padding: 26px 20px 40px; text-align: center;
+    font-size: 12.5px; color: var(--faint);
+  }
+  footer a { color: var(--muted); font-weight: 600; text-decoration: none; }
+  footer a:hover { color: var(--olive-deep); text-decoration: underline; text-underline-offset: 3px; }
 </style>
 </head>
 <body>
-<header>
-  <h1>📚 Pydantic AI 文档学习路线</h1>
-  <div class="progress-wrap">
-    <div class="bar"><div id="overall-bar"></div></div>
-    <span class="stats" id="overall-stats"></span>
+
+<nav class="float-nav">
+  <div class="pill">
+    <a class="logo" href="#top" title="回到顶部">λ</a>
+    <a class="navlink" href="#roadmap">进度</a>
+    <a class="navlink" href="#app">学习路线</a>
   </div>
-  <div class="toolbar">
-    <button class="primary" onclick="openNext()">打开下一篇 →</button>
-    <button onclick="toggleAll(true)">全部展开</button>
-    <button onclick="toggleAll(false)">全部收起</button>
-    <button onclick="resetProgress()">重置进度</button>
-    <span class="legend">精读 = 核心必读 · 选读 = 按场景需要 · 查阅 = 用到再查 · 可跳过 = 基本可略过</span>
+  <div class="pill gh">
+    <a href="https://github.com/Radiant303" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+      Radiant303
+    </a>
   </div>
+</nav>
+
+<header class="hero" id="top">
+  <img class="hero-art" src="hero.jpg" alt="水彩山峦">
+  <div class="hero-top-fade"></div>
+  <div class="hero-melt"></div>
+  <div class="hero-content">
+    <p class="eyebrow">Learning Roadmap · ~150 Pages</p>
+    <h1><span class="hero-word" style="--i:0">Pydantic</span> <span class="hero-word" style="--i:1">AI</span><br><span class="hero-word cn-line" style="--i:2">文档学习路线</span></h1>
+    <p class="hero-sub">14 个阶段 · 166 页官方文档的精读路线，逐页标注读法与时长，勾选打卡、进度自动保存。</p>
+    <div class="hero-cta">
+      <a class="btn btn-dark" href="#roadmap">开始学习</a>
+    </div>
+  </div>
+  <span class="art-credit">Artwork · AI watercolor</span>
 </header>
-<p class="tip">数据基于对仓库内全部文档页面的实际通读整理（约 150 页）。链接默认指向新版文档站 <code>pydantic.dev/docs/ai</code>；标 <span class="gh-tag">[GitHub]</span> 的页面未被线上文档站收录，链接指向仓库源码。勾选进度保存在浏览器 localStorage，关掉页面也不会丢。</p>
-<main id="app"></main>
+
+<main id="roadmap">
+  <div class="sheet">
+  <p class="tip">链接默认指向 <code>pydantic.dev/docs/ai</code>，标 <span class="gh-tag">[GitHub]</span> 的指向仓库源码；勾选进度保存在本地浏览器。</p>
+
+  <section class="panel">
+    <div class="progress-wrap">
+      <div class="bar"><div id="overall-bar"></div></div>
+      <span class="stats" id="overall-stats"></span>
+    </div>
+    <div class="toolbar">
+      <button class="primary" onclick="openNext()">打开下一篇 →</button>
+      <button onclick="toggleAll(true)">展开</button>
+      <button onclick="toggleAll(false)">收起</button>
+      <button onclick="resetProgress()">重置</button>
+      <span class="legend">精读 必读 · 选读 按需 · 查阅 备用 · 可跳过</span>
+    </div>
+  </section>
+
+  <div id="app"></div>
+
+  <footer>
+    Crafted by <a href="https://github.com/Radiant303" target="_blank" rel="noopener">Radiant303</a> · 进度数据仅保存在本地浏览器
+  </footer>
+  </div>
+</main>
+
 <script>
 const NEW = 'https://pydantic.dev/docs/ai/';
 const GH = 'https://github.com/pydantic/pydantic-ai/blob/main/docs/';
@@ -530,21 +812,30 @@ function save() { localStorage.setItem(KEY, JSON.stringify([...done])); }
 
 function render() {
   const app = document.getElementById('app');
+  const firstRender = app.children.length === 0;
+  const wasOpen = new Set(
+    [...app.querySelectorAll('details.phase')]
+      .map((d, i) => d.open ? i : -1)
+      .filter(i => i >= 0)
+  );
   app.innerHTML = '';
   PHASES.forEach((ph, pi) => {
     const det = document.createElement('details');
     det.className = 'phase';
-    if (pi === 0) det.open = true;
+    det.open = firstRender ? pi === 0 : wasOpen.has(pi);
     const total = ph.items.length;
     const ndone = ph.items.filter((_, ii) => done.has(pi + '-' + ii)).length;
     det.innerHTML = `
       <summary>
+        <span class="ph-index">${String(pi).padStart(2, '0')}</span>
         <div>
           <div class="phase-title">${ph.title}</div>
           <div class="phase-desc">${ph.desc}</div>
         </div>
-        <div class="phase-bar"><div style="width:${total ? (ndone / total * 100) : 0}%"></div></div>
-        <span class="phase-count">${ndone}/${total}</span>
+        <div class="phase-meta">
+          <div class="phase-bar"><div style="width:${total ? (ndone / total * 100) : 0}%"></div></div>
+          <span class="phase-count">${ndone}/${total}</span>
+        </div>
       </summary>
       <ul class="items">
         ${ph.items.map((it, ii) => {
@@ -555,7 +846,7 @@ function render() {
               <a class="name" href="${it.u}" target="_blank" rel="noopener">${it.n}${it.gh ? ' <span class="gh-tag">[GitHub]</span>' : ''}</a>
               <div class="note">${it.note}</div>
             </div>
-            <span class="badge lv-${it.lv}">${it.lv}</span>
+            <span class="lv lv-${it.lv}">${it.lv}</span>
             <span class="time">${it.t}</span>
           </li>`;
         }).join('')}
@@ -609,6 +900,49 @@ function openNext() {
 }
 
 render();
+
+/* ---------- 头图滚动过渡（openchamber 式：0.42 视差 + 融化 + 标题淡出） ---------- */
+const hero = document.querySelector('.hero');
+const heroContent = document.querySelector('.hero-content');
+const rootStyle = document.documentElement.style;
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const narrowScreen = window.matchMedia('(max-width: 768px)');
+let ticking = false;
+function onScroll() {
+  if (ticking) return;
+  ticking = true;
+  requestAnimationFrame(() => {
+    const y = window.scrollY;
+    if (y < hero.offsetHeight * 1.2) {
+      if (reduceMotion.matches || narrowScreen.matches) {
+        rootStyle.removeProperty('--parallax-y');
+        rootStyle.removeProperty('--melt');
+        rootStyle.removeProperty('--topfade');
+      } else {
+        rootStyle.setProperty('--parallax-y', Math.round(y * 0.42) + 'px');
+        const t = Math.min(1, Math.max(0, (y - 40) / 300));
+        rootStyle.setProperty('--melt', t.toFixed(3));
+        const t2 = Math.min(1, y / 160);
+        rootStyle.setProperty('--topfade', t2.toFixed(3));
+      }
+      const fade = Math.min(y / (window.innerHeight * 0.45), 1);
+      heroContent.style.opacity = String(1 - fade);
+      heroContent.style.transform = `translateY(${y * 0.2}px)`;
+    }
+    ticking = false;
+  });
+}
+window.addEventListener('scroll', onScroll, { passive: true });
+onScroll();
+
+/* ---------- Lenis 平滑滚动（Safari / 减弱动效时跳过；CDN 加载失败自动回退原生） ---------- */
+document.addEventListener('DOMContentLoaded', () => {
+  if (window.Lenis && !reduceMotion.matches && !/^((?!chrome|android).)*safari/i.test(navigator.userAgent)) {
+    const lenis = new Lenis({ lerp: 0.12 });
+    const raf = (t) => { lenis.raf(t); requestAnimationFrame(raf); };
+    requestAnimationFrame(raf);
+  }
+});
 </script>
 </body>
 </html>
