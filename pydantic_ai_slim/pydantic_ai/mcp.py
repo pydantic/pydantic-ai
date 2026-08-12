@@ -1206,14 +1206,23 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     # `logging/setLevel` is handshake-era only.
                     modern_session = init_result is None
                     if self._server_initiated_handlers and modern_session:
-                        names = ', '.join(f'`{name}`' for name in self._server_initiated_handlers)
-                        warnings.warn(
-                            f'{names} will never be called: {self.label} negotiated a modern MCP session, '
-                            'which holds no connection for the server to issue sampling or elicitation '
-                            'requests over.',
-                            UserWarning,
-                            stacklevel=2,
-                        )
+                        # With `fastmcp-tasks` loaded, a task parked on `input_required` is answered
+                        # through the elicitation handler (`tasks/get` polling + `tasks/update`), so
+                        # on a modern session that handler can still fire — for task input only.
+                        dead_handlers = [
+                            name
+                            for name in self._server_initiated_handlers
+                            if name != 'elicitation_handler' or self._call_tool_task is None
+                        ]
+                        if dead_handlers:
+                            names = ', '.join(f'`{name}`' for name in dead_handlers)
+                            warnings.warn(
+                                f'{names} will never be called: {self.label} negotiated a modern MCP session, '
+                                'which holds no connection for the server to issue sampling or elicitation '
+                                'requests over.',
+                                UserWarning,
+                                stacklevel=2,
+                            )
                     if self.log_level is not None:
                         if modern_session:
                             warnings.warn(

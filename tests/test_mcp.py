@@ -1313,21 +1313,66 @@ class TestMCPToolsetIntegration:
                 assert toolset.is_running
 
     async def test_sampling_and_elicitation_warn_on_modern_session(
-        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None, monkeypatch: pytest.MonkeyPatch
     ):
         """A modern session refuses server-initiated requests, so a handler configured against one
         can never fire. The names are reported together, so a user setting both learns about
-        both."""
+        both. Pinned to no task extension: with `fastmcp-tasks` loaded the elicitation handler
+        still fires for task input and is not reported."""
 
         async def elicitation_handler(message: str, response_type: Any, params: Any, ctx: Any) -> Any:
             raise AssertionError('elicitation handler should never be called')  # pragma: no cover
 
+        monkeypatch.setattr(mcp_module, '_load_call_tool_task', lambda: None)
         toolset = MCPToolset(
             fastmcp_server,
             sampling_model=TestModel(custom_output_text='sampled'),
             elicitation_handler=elicitation_handler,
         )
         with pytest.warns(UserWarning, match=r'`sampling_model`, `elicitation_handler` will never be called'):
+            async with toolset:
+                assert toolset.is_running
+
+    async def test_elicitation_handler_not_reported_dead_when_tasks_extension_is_loaded(
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None, monkeypatch: pytest.MonkeyPatch
+    ):
+        """With `fastmcp-tasks` loaded, a task parked on `input_required` is answered through the
+        elicitation handler, so on a modern session the handler can still fire and must not be
+        reported as dead — while sampling has no task path and is still warned about."""
+
+        async def elicitation_handler(message: str, response_type: Any, params: Any, ctx: Any) -> Any:
+            raise AssertionError('not exercised by this test')  # pragma: no cover
+
+        async def fake_call_tool_task(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError('not exercised by this test')  # pragma: no cover
+
+        monkeypatch.setattr(mcp_module, '_load_call_tool_task', lambda: fake_call_tool_task)
+        toolset = MCPToolset(
+            fastmcp_server,
+            sampling_model=TestModel(custom_output_text='sampled'),
+            elicitation_handler=elicitation_handler,
+        )
+        with pytest.warns(UserWarning, match=r'^`sampling_model` will never be called') as caught:
+            async with toolset:
+                assert toolset.is_running
+        assert 'elicitation_handler' not in str(caught[0].message)
+
+    async def test_no_dead_handler_warning_for_elicitation_alone_when_tasks_extension_is_loaded(
+        self, fastmcp_server: FastMCP[None], as_modern_mcp_session: None, monkeypatch: pytest.MonkeyPatch
+    ):
+        """When the elicitation handler is the only server-initiated option configured and the
+        task extension is loaded, there is nothing dead to warn about at all."""
+
+        async def elicitation_handler(message: str, response_type: Any, params: Any, ctx: Any) -> Any:
+            raise AssertionError('not exercised by this test')  # pragma: no cover
+
+        async def fake_call_tool_task(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError('not exercised by this test')  # pragma: no cover
+
+        monkeypatch.setattr(mcp_module, '_load_call_tool_task', lambda: fake_call_tool_task)
+        toolset = MCPToolset(fastmcp_server, elicitation_handler=elicitation_handler)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
             async with toolset:
                 assert toolset.is_running
 
