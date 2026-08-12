@@ -20,8 +20,8 @@ from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     WrapModelRequestHandler,
     WrapRunHandler,
-    create_run_sandbox,
     leaf_capabilities,
+    resolve_run_sandbox,
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
@@ -476,7 +476,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     run_context = deserialize_run_context(
                         run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
                     )
-                    supplied = await create_run_sandbox(root_capability, run_context)
+                    supplied = await resolve_run_sandbox(root_capability, run_context)
                     if supplied is None:
                         return None
                     supplier, ref = supplied

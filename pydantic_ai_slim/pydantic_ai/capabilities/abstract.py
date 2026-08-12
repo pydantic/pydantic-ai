@@ -427,8 +427,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         The run holds only the returned [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]; the
         live connection goes through
         [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox]. Durable
-        engines run this hook inside a durable unit, so it executes exactly once across
-        workflow replays.
+        engines run this hook inside a durable unit: replays reuse the recorded ref instead of
+        calling again, but the unit itself may retry after a crash, so provisioning should be
+        idempotent — create-or-reuse keyed by
+        [`ctx.run_id`][pydantic_ai.tools.RunContext.run_id] rather than create-always.
         """
         return None
 
@@ -1206,7 +1208,7 @@ def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[Abstra
     return leaves
 
 
-async def create_run_sandbox(
+async def resolve_run_sandbox(
     capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> tuple[AbstractCapability[AgentDepsT], SandboxRef] | None:
     """Consult the tree's `create_sandbox` hooks latest-first; return the winning supplier and its ref.
