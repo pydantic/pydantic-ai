@@ -1291,6 +1291,7 @@ class BedrockConverseModel(Model[BaseClient]):
             elif isinstance(message, ModelResponse):
                 flush_deferred_media()
                 content: list[ContentBlockOutputTypeDef] = []
+                carried_thinking: list[ContentBlockUnionTypeDef] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
@@ -1317,18 +1318,7 @@ class BedrockConverseModel(Model[BaseClient]):
                             start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             thinking_text = '\n'.join([start_tag, item.content, end_tag])
                             if profile.get('mimics_assistant_message_formatting', False):
-                                # Claude reads assistant turns as examples of how it should write, so
-                                # reasoning replayed there teaches it to emit `<thinking>` tags in the
-                                # answers the user reads (#5869). Carrying it in the preceding user
-                                # message instead keeps the content and stops the imitation.
-                                thinking_block: ContentBlockUnionTypeDef = {'text': thinking_text}
-                                if bedrock_messages and (previous := bedrock_messages[-1])['role'] == 'user':
-                                    bedrock_messages[-1] = {
-                                        'role': 'user',
-                                        'content': [*previous['content'], thinking_block],
-                                    }
-                                else:
-                                    bedrock_messages.append({'role': 'user', 'content': [thinking_block]})
+                                carried_thinking.append({'text': thinking_text})
                             else:
                                 content.append({'text': thinking_text})
                     elif isinstance(item, NativeToolCallPart):
@@ -1361,6 +1351,12 @@ class BedrockConverseModel(Model[BaseClient]):
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
+                if carried_thinking:
+                    # See `ModelProfile.mimics_assistant_message_formatting`: reasoning replayed in an
+                    # assistant turn teaches the model to write `<thinking>` tags into its visible
+                    # answers. Appended as a plain user turn so the merge pass below decides whether it
+                    # may share a turn with preceding tool results.
+                    bedrock_messages.append({'role': 'user', 'content': carried_thinking})
                 if content:
                     bedrock_messages.append({'role': 'assistant', 'content': content})
             else:

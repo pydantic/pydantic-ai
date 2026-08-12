@@ -118,9 +118,9 @@ Anthropic reports how many thinking tokens it used in [`RunUsage.details`][pydan
 A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] in message history can't always be sent back through Anthropic's native reasoning channel: it may have lost its signature on a round trip through storage, been rebuilt by a [history processor](../message-history.md#processing-message-history), or come from a different model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] chain. Pydantic AI still sends the reasoning, wrapped in `<thinking>` tags.
 
 !!! warning "Claude imitates formatting it sees in assistant turns"
-    Sending that text in the assistant turn teaches Claude that writing `<thinking>` tags is part of its own house style, and it starts emitting them in the answers your users read — which, once persisted to history, reinforces itself every turn. Claude Opus 4.5 and 4.8 and Sonnet 4.6 all do this.
+    Sending that text in the assistant turn teaches Claude that writing `<thinking>` tags is part of its own house style, and it starts emitting them in the answers your users read — which, once persisted to history, reinforces itself every turn.
 
-    Pydantic AI therefore carries such reasoning in the *preceding user message* for models whose profile sets [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting], which stops the imitation. The trade-off is that Claude then describes that reasoning inaccurately if you ask it who wrote it — it may credit it to you, or claim it as its own.
+    Pydantic AI therefore carries such reasoning in a *user message ahead of the assistant turn* for models whose profile sets [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting], which stops the imitation. That flag is set for the whole Anthropic family, and is honored by [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] and [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]. The trade-off is that Claude then describes that reasoning inaccurately if you ask it who wrote it — it may credit it to you, or claim it as its own.
 
     To send it in the assistant turn instead, turn the flag off for your model:
 
