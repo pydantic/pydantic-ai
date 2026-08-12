@@ -33,7 +33,7 @@ pre-agent-steps:
   - name: Restore full history and tags for dynamic versioning
     run: |
       if [ -f "$(git rev-parse --git-dir)/shallow" ]; then
-        git fetch --unshallow --tags origin || git fetch --tags origin
+        git fetch --unshallow --tags origin
       else
         git fetch --tags origin
       fi
