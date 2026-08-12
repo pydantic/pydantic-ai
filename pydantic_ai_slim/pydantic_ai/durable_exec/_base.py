@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from typing import Any, ClassVar
 
@@ -29,7 +29,7 @@ from ._runtime_toolsets import (
     cancellation_token_unsupported_error,
     reject_unsupported_runtime_toolsets,
 )
-from ._sandbox import run_owned_sandbox_unsupported_error, run_sandbox_supplier
+from ._sandbox import run_owned_sandbox_unsupported_error, run_sandbox_supplier, sandbox_suppliers
 from ._toolset import guard_run_context
 from ._utils import unwrap_model
 
@@ -325,6 +325,21 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # Reached only when this capability's `create_sandbox` supplied the run's ref.
         if self.in_durable_context:  # pragma: no branch
             await self._destroy_sandbox_durably(ctx, ref)
+
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        """Reject per-run sandbox suppliers instead of silently ignoring them.
+
+        `_sandbox_supplier` is bound to the agent's tree at `for_agent` time, so a supplier
+        added per-run cannot be routed into a durable unit.
+        """
+        if not self.in_durable_context:
+            return
+        if any(sandbox_suppliers(capability) for capability in capabilities):
+            raise UserError(
+                run_owned_sandbox_unsupported_error(engine=self.engine_name, container=self._durable_container_noun)
+            )
 
     async def _create_sandbox_durably(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
         """Run the supplier chain's `create_sandbox` walk inside this engine's durable unit.

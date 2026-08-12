@@ -1513,6 +1513,31 @@ async def test_dbos_durability_rejects_a_sandbox_supplying_capability(dbos: DBOS
     assert supplier.events == snapshot(['create:created-1', 'teardown:created-1'])
 
 
+async def test_dbos_durability_rejects_a_per_run_sandbox_supplier(dbos: DBOS):
+    """A supplier passed via `capabilities=` on the run raises instead of being silently
+    ignored: the durability capability binds suppliers to the agent's tree at `for_agent`
+    time, so it cannot route this one."""
+    supplier = LifecycleSandboxCapability()
+    agent = Agent(TestModel(), name='dbos_per_run_supplied_sandbox', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow(name='test_dbos_durability_rejects_per_run_supplied_sandbox')
+    async def run_agent() -> str:
+        return (await agent.run('Hello', capabilities=[supplier])).output
+
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'A capability that supplies a sandbox (overrides `create_sandbox`) is not supported inside a '
+            'DBOS workflow: creating and destroying the sandbox would be workflow code, which '
+            'DBOS replays. Temporal runs the sandbox lifecycle in durable units and does support it; '
+            'on other engines, create the sandbox outside the workflow and pass a `SandboxRef` to the '
+            'run instead.'
+        ),
+    ):
+        await run_agent()
+    assert supplier.events == []
+
+
 def test_dbos_durability_base_sandbox_routing_is_not_a_user_supplier(dbos: DBOS):
     """The base `create_sandbox` override only guards durable runs, so it must not read as a
     supplier itself; a subclass override is a genuine supplier."""

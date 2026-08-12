@@ -2356,6 +2356,28 @@ async def test_prefect_durability_rejects_a_sandbox_supplying_capability() -> No
     assert supplier.events == snapshot(['create:created-1', 'teardown:created-1'])
 
 
+async def test_prefect_durability_rejects_a_per_run_sandbox_supplier() -> None:
+    """A supplier passed via `capabilities=` on the run raises instead of being silently
+    ignored: the durability capability binds suppliers to the agent's tree at `for_agent`
+    time, so it cannot route this one."""
+    supplier = LifecycleSandboxCapability()
+    agent = Agent(TestModel(), name='prefect_per_run_supplied_sandbox', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello', capabilities=[supplier])).output
+
+    with pytest.raises(UserError) as exc_info:
+        await run_durable_agent()
+    assert str(exc_info.value) == snapshot(
+        'A capability that supplies a sandbox (overrides `create_sandbox`) is not supported inside a '
+        'Prefect flow: creating and destroying the sandbox would be flow code, which Prefect replays. '
+        'Temporal runs the sandbox lifecycle in durable units and does support it; on other engines, '
+        'create the sandbox outside the flow and pass a `SandboxRef` to the run instead.'
+    )
+    assert supplier.events == []
+
+
 async def test_prefect_durability_connects_a_sandbox_ref_inside_a_task() -> None:
     """The path the supplier rejection prescribes — pass a `SandboxRef` — must actually work.
 
