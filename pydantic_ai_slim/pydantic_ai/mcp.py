@@ -47,9 +47,7 @@ except ImportError as _fastmcp_import_error:  # pragma: no cover
         'or install the full `fastmcp` package directly.'
     ) from _fastmcp_import_error
 
-# `mcp.types` serves either SDK generation (v2 keeps it as an exact re-export of `mcp_types`), and
-# fastmcp — just guarded with a friendly error — depends on the `mcp` package, so this plain import
-# can only fail alongside it.
+# `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
 # SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has,
 # but doesn't mark the re-export as public, so pyright must be told to allow the import.
 from fastmcp.exceptions import McpError  # pyright: ignore[reportPrivateImportUsage]
@@ -1173,9 +1171,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     await exit_stack.enter_async_context(self.client)
                     # A modern (sessionless) session has no `initialize` handshake, so server
                     # metadata comes from era-neutral client properties; older clients only populate
-                    # `initialize_result`. That one value is the era signal for everything below —
-                    # deriving it a second time from the properties would let the two disagree on a
-                    # client that populates both.
+                    # `initialize_result`.
                     init_result = self.client.initialize_result
                     if init_result is None:
                         if not _MCP_SDK_V2:
@@ -1207,9 +1203,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     server_capabilities = ServerCapabilities.from_mcp_sdk(capabilities)
                     # SEP-2575 made MCP stateless, so a modern session holds no connection for the
                     # server to issue requests back over: it refuses sampling and elicitation, and
-                    # `logging/setLevel` is handshake-era only. Options configuring them can't be
-                    # honoured, so warn and carry on rather than failing a connection over a
-                    # feature the application doesn't depend on.
+                    # `logging/setLevel` is handshake-era only.
                     modern_session = init_result is None
                     if self._server_initiated_handlers and modern_session:
                         names = ', '.join(f'`{name}`' for name in self._server_initiated_handlers)
@@ -1290,11 +1284,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         mcp_tools = await self.list_tools()
         tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for mcp_tool in mcp_tools:
-            # `execution` is SEP-1686, which SEP-2663 superseded: under the newer extension the
-            # server decides, the client no longer routes, and an ordinary `call_tool` on a
-            # task-only tool is transparently driven to completion. `ToolExecution.task_support`
-            # survives in the v2 wire types, but FastMCP 4 leaves it unset, and a listing without
-            # `execution` reads as `task: False` — matching the transparent path it would take.
+            # `execution` is the SEP-1686 task-support field; FastMCP 4 (SDK v2) leaves it unset.
             task_support = mcp_optional_field(mcp_tool.execution, 'task_support', str) if mcp_tool.execution else None
             input_schema = mcp_validated_field(mcp_tool, 'input_schema', _JSON_SCHEMA_ADAPTER)
             assert input_schema is not None, 'MCP tools always carry an input schema'
@@ -1306,14 +1296,12 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     parameters_json_schema=input_schema,
                     metadata={
                         'meta': mcp_tool.meta,
-                        # `by_alias` pins the keys to the wire spelling: SDK v1 names the fields in
-                        # camelCase while v2 renamed them to snake_case, and this dict is a public
-                        # surface tool filters read by key.
+                        # `by_alias` pins the keys to the wire (camelCase) spelling on either SDK
+                        # generation; this dict is a public surface tool filters read by key.
                         'annotations': mcp_tool.annotations.model_dump(by_alias=True) if mcp_tool.annotations else None,
-                        # Client-side task routing is a SEP-1686 (SDK v1) concept, so it is off for
-                        # all of SDK v2: a legacy session has no client task path for a
-                        # server-declared `taskSupport` to route into, and a modern session drives
-                        # task tools to completion on an ordinary call anyway.
+                        # Client-side task routing is SEP-1686 (SDK v1) only: a v2 legacy session
+                        # has no client task path, and a v2 modern session drives task tools to
+                        # completion on an ordinary call anyway.
                         'task': not _MCP_SDK_V2
                         and (task_support == 'required' or (task_support == 'optional' and self.prefer_tasks)),
                     },
