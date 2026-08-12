@@ -86,6 +86,7 @@ async def test_blockbuster_exemption_contract() -> None:
 
 
 def test_blockbuster_deactivates_when_exemption_setup_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('BLOCKBUSTER_ENABLED', 'true')
     monkeypatch.setattr(conftest, 'BLOCKBUSTER_EXEMPTIONS', [('missing', 'test_conftest.py', 'test')])
     stat = os.stat
     buffered_read = io.BufferedReader.read
@@ -96,3 +97,25 @@ def test_blockbuster_deactivates_when_exemption_setup_fails(monkeypatch: pytest.
 
     assert os.stat is stat
     assert io.BufferedReader.read is buffered_read
+
+
+def test_blockbuster_disabled_when_explicitly_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('BLOCKBUSTER_ENABLED', 'false')
+    stat = os.stat
+    fixture = conftest.blockbuster._fixture_function()  # pyright: ignore[reportPrivateUsage]
+
+    assert next(fixture) is None
+    assert os.stat is stat
+    with pytest.raises(StopIteration):
+        next(fixture)
+
+
+def test_blockbuster_enabled_by_default_in_ci(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('CI', 'true')
+    monkeypatch.delenv('BLOCKBUSTER_ENABLED', raising=False)
+    fixture = conftest.blockbuster._fixture_function()  # pyright: ignore[reportPrivateUsage]
+
+    bb = next(fixture)
+    assert isinstance(bb, BlockBuster)
+    assert bb.functions['os.stat'].activated
+    fixture.close()

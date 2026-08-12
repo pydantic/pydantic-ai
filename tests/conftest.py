@@ -397,13 +397,18 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
 
 
 @pytest.fixture(autouse=True)
-def blockbuster() -> Iterator[BlockBuster]:
+def blockbuster() -> Iterator[BlockBuster | None]:
     """Raise `BlockingError` when library code makes a blocking call inside the event loop.
 
     Scanned modules are the shipped packages only, so test-only and third-party stacks (e.g. VCR
     reading cassettes) are ignored. Calls from user callbacks and tools remain covered when a
-    scanned library frame is below them.
+    scanned library frame is below them. CI enables the detector on one complete Python-version
+    lane to avoid multiplying its stack-inspection overhead across the version matrix.
     """
+    if os.getenv('BLOCKBUSTER_ENABLED') == 'false':
+        yield None
+        return
+
     bb = BlockBuster(['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai'])
     try:
         bb.activate()

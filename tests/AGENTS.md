@@ -162,7 +162,15 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 - `allow_model_requests` - bypasses the default `ALLOW_MODEL_REQUESTS = False`
 
 #### Blocking-call detection
-- `blockbuster` (autouse) - raises `BlockingError` when a scanned library frame (`pydantic_ai`, `pydantic_graph`, `pydantic_evals`, `clai`) makes a blocking call (file/socket I/O, `os.*`, etc.) inside the event loop. Test-only and third-party stacks are ignored, but calls from user callbacks and tools remain covered when a scanned library frame is below them. Fix the blocking call (offload with `anyio.to_thread.run_sync`) rather than exempting it; a call that is legitimately allowed to block (a documented sync API doing file I/O, setup-time SDK client construction) gets an entry in `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason. A module whose subject blocks in the loop by design (Prefect's flow engine, the prompt_toolkit CLI, docs examples) opts out by overriding the fixture with a no-op `blockbuster()` fixture whose docstring says why
+- `blockbuster` (autouse) raises `BlockingError` when a scanned library frame blocks inside the event loop.
+- Scanned packages are `pydantic_ai`, `pydantic_graph`, `pydantic_evals`, and `clai`.
+- Test-only and third-party stacks are ignored. User callbacks remain covered while a scanned library frame is below them.
+- Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
+- Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.
+- Override `blockbuster()` with a documented no-op fixture when the tested integration blocks by design.
+- CI enables BlockBuster in regular Python 3.13 variants and unique compatibility or live-provider jobs.
+- Redundant Python-version and lowest-version lanes disable BlockBuster to avoid repeated stack-inspection overhead.
+- Local targeted tests enable BlockBuster by default.
 
 #### The `model` fixture (use with `indirect=True`)
 
