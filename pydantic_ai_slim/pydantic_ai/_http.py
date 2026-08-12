@@ -16,7 +16,10 @@ def create_httpx2_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 
 
 
 def warn_if_legacy_httpx_client(http_client: object, *, consumer: str, stacklevel: int) -> None:
-    import httpx
+    try:
+        import httpx
+    except ImportError:
+        return
 
     if isinstance(http_client, httpx.AsyncClient):
         warnings.warn(

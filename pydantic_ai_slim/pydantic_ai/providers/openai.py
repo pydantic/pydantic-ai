@@ -4,7 +4,6 @@ import os
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, overload
 
-import httpx
 import httpx2
 
 from pydantic_ai import ModelProfile
@@ -14,7 +13,13 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
 if TYPE_CHECKING:
+    import httpx
+
     from pydantic_ai.realtime import RealtimeModelProfile
+
+    _OpenAIHTTPClient = httpx.AsyncClient | httpx2.AsyncClient
+else:
+    _OpenAIHTTPClient = httpx2.AsyncClient
 
 try:
     from openai import AsyncOpenAI
@@ -23,9 +28,6 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the OpenAI provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
-
-
-_OpenAIHTTPClient = httpx.AsyncClient | httpx2.AsyncClient
 
 
 class _OpenAICompatibleProvider(Provider[AsyncOpenAI]):

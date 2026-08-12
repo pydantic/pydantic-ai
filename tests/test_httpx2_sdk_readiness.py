@@ -63,10 +63,55 @@ asyncio.run(break_out_of_stream())
 assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'the SDK-less core imported httpx'
 """
 
+_HTTPX_FREE_OPENAI = """
+import sys
+
+
+class BlockHttpx:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'httpx' or fullname.startswith('httpx.'):
+            raise ImportError('httpx is not installed')
+
+
+sys.meta_path.insert(0, BlockHttpx())
+
+import asyncio
+
+import httpx2
+
+from pydantic_ai.providers.gateway import gateway_provider
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+async def construct_providers():
+    async with httpx2.AsyncClient() as client:
+        provider = OpenAIProvider(api_key='test', http_client=client)
+        assert provider.client._client is client
+
+        gateway = gateway_provider(
+            'openai', api_key='test', base_url='https://gateway.example.com', http_client=client
+        )
+        assert gateway.client._client is client
+
+
+asyncio.run(construct_providers())
+assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'OpenAI providers imported httpx'
+"""
+
 
 def test_core_runs_without_httpx() -> None:
     result = subprocess.run(
         [sys.executable, '-W', 'error', '-c', textwrap.dedent(_HTTPX_FREE_CORE)],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ''
+
+
+def test_openai_providers_run_without_httpx() -> None:
+    result = subprocess.run(
+        [sys.executable, '-W', 'error', '-c', textwrap.dedent(_HTTPX_FREE_OPENAI)],
         capture_output=True,
         text=True,
     )

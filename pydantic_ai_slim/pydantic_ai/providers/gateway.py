@@ -7,7 +7,6 @@ import re
 import weakref
 from typing import TYPE_CHECKING, Any, Literal, overload
 
-import httpx
 import httpx2
 
 from pydantic_ai._http import create_httpx2_client
@@ -15,6 +14,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 
 if TYPE_CHECKING:
+    import httpx
     from botocore.client import BaseClient
     from google.genai import Client as GoogleClient
     from groq import AsyncGroq
