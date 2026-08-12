@@ -172,6 +172,13 @@ Among capability suppliers, the latest in the resolved chain wins; a supplier th
 sandbox resolution happens before deferred capabilities can load. Setup and teardown happen
 inside the agent-run span, so startup failures and slow provisioning are visible in traces.
 
+"After the run ends" includes a run that ends early with
+[`DeferredToolRequests`](deferred-tools.md): the approval round-trip spans two runs, so a
+fresh-per-run supplier destroys the environment before the approved call executes, and the
+resumed run provisions a new, empty one. When state must survive an approval (or any other
+multi-run conversation), pick a lifecycle that spans the runs — the pooled-per-conversation row
+above, or create the sandbox outside the runs entirely and pass the same `sandbox=` to each.
+
 ### Disabling execution with a policy reason
 
 Pass [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] explicitly to replace the
@@ -284,8 +291,13 @@ tree already knows how to connect, so nothing needs a second registration.
 Attach a lifecycle-owning capability like `MySandboxCapability`
 [above](#from-a-capability) and the run owns the whole lifecycle. Under
 [Temporal](durable_execution/temporal.md), `create_sandbox` and `destroy_sandbox` each run as
-their own activity and only the ref returns to workflow code, so creation happens exactly once
-per run even across replays. Tool code calls `await ctx.sandbox.run(...)` exactly as it does
+their own activity and only the ref returns to workflow code, so a replay reuses the recorded
+ref instead of provisioning again. The activity itself is at-least-once — Temporal retries it
+if the worker crashes after provisioning but before the ref reaches history — so `create_sandbox`
+should be idempotent: create-or-reuse keyed by
+[`ctx.run_id`][pydantic_ai.tools.RunContext.run_id] (most platforms accept a caller-chosen name
+or tag), with a server-side TTL as the backstop for the copy that lost the race.
+Tool code calls `await ctx.sandbox.run(...)` exactly as it does
 outside a workflow: the ref rides along in the serialized run context, and the first operation
 inside each activity reconnects through the capability chain's `get_sandbox`.
 

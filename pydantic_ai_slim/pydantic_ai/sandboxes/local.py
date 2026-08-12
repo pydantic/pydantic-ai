@@ -97,10 +97,12 @@ class _LocalFilesystem:
 class LocalSandbox:
     """[`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] over host subprocesses and the host filesystem.
 
-    Isolates nothing: it exists so the sandbox concept works out of the box for trusted
-    workloads, tests, and development. A fresh instance is attached to every agent run by
-    default on POSIX platforms; construction raises `NotImplementedError` elsewhere, where
-    the timeout contract (kill the whole process group at the deadline) can't be honored.
+    Isolates nothing: commands run as host subprocesses with the host process's privileges.
+    It is never attached by default — runs without a sandbox get
+    [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] — so attaching it is an
+    explicit opt-in for trusted workloads, tests, and development. POSIX-only: construction
+    raises `NotImplementedError` elsewhere, where the timeout contract (kill the whole process
+    group at the deadline) can't be honored.
     `start()` is not implemented (use `run(timeout=...)` to bound commands) and neither is
     `output_limit=` (bound output in-command, e.g. `| tail -c 10000`).
 
