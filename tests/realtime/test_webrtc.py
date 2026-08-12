@@ -4,7 +4,7 @@ The browser <-> provider media path is exercised by the runnable example, not he
 server-side signaling that Pydantic AI owns: minting a client secret, relaying an SDP offer (the secure
 topology), parsing the `call_id`, Azure Microsoft Entra ID token minting, and the capability gating of a
 sideband session. Success paths that depend on provider behavior use recorded HTTP cassettes; focused
-unit tests use `httpx.MockTransport` only for our own guards, error formatting, and request shaping.
+unit tests use `httpx2.MockTransport` only for our own guards, error formatting, and request shaping.
 """
 
 from __future__ import annotations as _annotations
@@ -15,7 +15,7 @@ from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timezone
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 
 from pydantic_ai import Agent
@@ -198,10 +198,10 @@ async def test_wrapper_agent_realtime_signaling_delegates() -> None:
 
 def _mock_provider(handler: Any, *, api_key: str = 'sk-test') -> Any:
     """An `OpenAIProvider` whose HTTP calls are served by `handler` instead of the network."""
-    return OpenAIProvider(api_key=api_key, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    return OpenAIProvider(api_key=api_key, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
 
 
-def _unused_handler(request: httpx.Request) -> httpx.Response:
+def _unused_handler(request: httpx2.Request) -> httpx2.Response:
     """A transport handler for tests whose guard raises before any HTTP request is made."""
     raise AssertionError('no HTTP request expected')  # pragma: no cover
 
@@ -314,8 +314,8 @@ async def test_agent_create_client_secret(openai_api_key: str, request: pytest.F
 
 
 async def test_create_client_secret_missing_value() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={'expires_at': 1_700_000_060})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'expires_at': 1_700_000_060})
 
     model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
     with pytest.raises(UnexpectedModelBehavior, match='did not include a `value`'):
@@ -324,8 +324,8 @@ async def test_create_client_secret_missing_value() -> None:
 
 async def test_create_client_secret_non_numeric_expires_at() -> None:
     # A `value` with a non-integer `expires_at` can't be turned into an expiry timestamp, so it's rejected.
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={'value': 'ek_x', 'expires_at': 'soon'})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'value': 'ek_x', 'expires_at': 'soon'})
 
     model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
     with pytest.raises(UnexpectedModelBehavior, match='numeric'):
@@ -337,15 +337,15 @@ async def test_create_client_secret_through_gateway() -> None:
     # signaling path, so the client-secret URL is derived straight from that base without a `/v1` segment.
     captured: dict[str, Any] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured['url'] = str(request.url)
-        return httpx.Response(200, json={'value': 'ek_gw', 'expires_at': 1_700_000_060})
+        return httpx2.Response(200, json={'value': 'ek_gw', 'expires_at': 1_700_000_060})
 
     provider = gateway_provider(
         'openai',
         api_key='gw-key',
         base_url='https://gateway.pydantic.dev/proxy',
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
     secret = await model.create_client_secret()
@@ -355,8 +355,8 @@ async def test_create_client_secret_through_gateway() -> None:
 
 
 async def test_create_client_secret_http_error() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(401, text='invalid api key')
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(401, text='invalid api key')
 
     model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -370,8 +370,8 @@ async def test_create_client_secret_http_error() -> None:
 async def test_create_client_secret_out_of_range_expires_at() -> None:
     # A numeric-but-unrepresentable `expires_at` passes validation but overflows the platform's
     # timestamp range, so it's surfaced as unexpected output rather than a raw OverflowError/OSError.
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={'value': 'ek_x', 'expires_at': 10**100})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={'value': 'ek_x', 'expires_at': 10**100})
 
     model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
     with pytest.raises(UnexpectedModelBehavior, match='out of range'):
@@ -380,8 +380,8 @@ async def test_create_client_secret_out_of_range_expires_at() -> None:
 
 async def test_signaling_http_error_preserves_retry_after() -> None:
     # A 429 with a `Retry-After` header must carry the header through so callers can honor the delay.
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(429, text='slow down', headers={'Retry-After': '30'})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(429, text='slow down', headers={'Retry-After': '30'})
 
     model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -439,8 +439,8 @@ async def test_agent_answer_webrtc_offer(openai_api_key: str) -> None:
 
 
 async def test_answer_webrtc_offer_missing_location() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(201, text=SAMPLE_SDP_ANSWER)  # no Location header
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(201, text=SAMPLE_SDP_ANSWER)  # no Location header
 
     model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
     with pytest.raises(UnexpectedModelBehavior, match='did not return a parseable `call_id`'):
@@ -448,8 +448,8 @@ async def test_answer_webrtc_offer_missing_location() -> None:
 
 
 async def test_answer_webrtc_offer_http_error() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, text='bad sdp')
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(400, text='bad sdp')
 
     model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -462,8 +462,8 @@ async def test_answer_webrtc_offer_http_error() -> None:
 async def test_answer_webrtc_offer_rejects_redirect() -> None:
     # A 3xx redirect is not a created call. Rejecting all non-2xx (not just 4xx/5xx) stops the redirect's
     # `Location` from being mistaken for a `call_id` and returned as a bogus answer.
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(302, headers={'location': '/v1/realtime/calls/rtc_redirect'})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(302, headers={'location': '/v1/realtime/calls/rtc_redirect'})
 
     model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -478,7 +478,7 @@ def _azure_mock_provider(handler: Any) -> Any:
     return AzureProvider(
         azure_endpoint='https://resource.openai.azure.com/openai/v1/',
         api_key='azure-key',
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
 
 
@@ -502,11 +502,11 @@ class _FakeCredential:
 async def test_azure_entra_credential_mints_client_secret_with_bearer() -> None:
     captured: dict[str, Any] = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured['url'] = str(request.url)
         captured['api_key'] = request.headers.get('api-key')
         captured['auth'] = request.headers.get('authorization')
-        return httpx.Response(200, json={'value': 'ek_az', 'expires_at': 1_700_000_060})
+        return httpx2.Response(200, json={'value': 'ek_az', 'expires_at': 1_700_000_060})
 
     credential = _FakeCredential()
     model = AzureRealtimeModel('gpt-realtime', provider=_azure_mock_provider(handler), credential=credential)
@@ -557,7 +557,7 @@ def test_azure_entra_credential_survives_alongside_a_user_profile() -> None:
     that constructor from silently dropping either.
     """
 
-    def _unused(request: httpx.Request) -> httpx.Response:
+    def _unused(request: httpx2.Request) -> httpx2.Response:
         raise AssertionError('no request is made')  # pragma: no cover
 
     credential = _FakeCredential()
