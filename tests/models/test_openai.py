@@ -103,7 +103,11 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
-    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAISystemPromptRole
+    from pydantic_ai.profiles.openai import (
+        OpenAIJsonSchemaTransformer,
+        OpenAINativeJsonSchemaTransformer,
+        OpenAISystemPromptRole,
+    )
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.google import GoogleProvider
@@ -2942,6 +2946,10 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
     return f'{x} {y}'  # pragma: no cover
 
 
+def tool_with_length_constraints(x: Annotated[str, Field(min_length=2, max_length=10)]) -> str:
+    return x  # pragma: no cover
+
+
 @pytest.mark.parametrize(
     'tool,tool_strict,expected_params,expected_strict',
     [
@@ -3048,7 +3056,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {'x': {'type': 'string', 'description': 'minLength=1, format=uri'}},
+                    'properties': {'x': {'minLength': 1, 'type': 'string', 'description': 'format=uri'}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -3445,6 +3453,19 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         'y': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'string'}], 'type': 'array'},
                     },
                     'required': ['x', 'y'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_length_constraints,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'maxLength': 10, 'minLength': 2, 'type': 'string'}},
+                    'required': ['x'],
                     'type': 'object',
                 }
             ),
@@ -6131,6 +6152,41 @@ async def test_openai_chat_tool_choice_list_unsupported_raises_error(allow_model
             model_settings=settings,
             model_request_parameters=mrp,
         )
+
+
+def test_transformer_length_constraints_default_not_strict_compatible():
+    """By default `minLength`/`maxLength` downgrade to non-strict, since OpenAI-compatible APIs
+    sharing this transformer may not support them in strict mode (e.g. DeepSeek)."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'value': {'type': 'string', 'minLength': 2, 'maxLength': 10}},
+        'required': ['value'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    transformer.walk()
+    assert transformer.is_strict_compatible is False
+
+    schema = {
+        'type': 'object',
+        'properties': {'value': {'type': 'string', 'minLength': 2, 'maxLength': 10}},
+        'required': ['value'],
+    }
+    result = OpenAIJsonSchemaTransformer(schema, strict=True).walk()
+    assert result['properties']['value'] == {'type': 'string', 'description': 'minLength=2, maxLength=10'}
+
+
+def test_transformer_length_constraints_native_openai_strict_compatible():
+    """OpenAI itself accepts `minLength`/`maxLength` in strict mode, so its transformer keeps them."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'value': {'type': 'string', 'minLength': 2, 'maxLength': 10}},
+        'required': ['value'],
+    }
+    transformer = OpenAINativeJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+
+    assert result['properties']['value'] == {'type': 'string', 'minLength': 2, 'maxLength': 10}
+    assert transformer.is_strict_compatible is True
 
 
 def test_transformer_adds_properties_to_object_schemas():

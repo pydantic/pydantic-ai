@@ -62,6 +62,7 @@ constraints = [
     { name = "vcrpy", specifier = ">=8.2.1" },
     { name = "xgrammar", specifier = ">=0.1.32" },
 ]
+build-constraints = [{ name = "hatchling", specifier = "<1.32" }]
 
 [[package]]
 name = "ag-ui-protocol"
