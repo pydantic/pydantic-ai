@@ -294,14 +294,17 @@ class FunctionSignature:
 
         description_sections = [description] if description else []
 
-        param_description_lines: list[str] = []
+        args_lines: list[str] = []
         for param in self.params.values():
-            param_description = (param.description or '').strip()
-            if param_description:
-                param_description = '\n        '.join(param_description.splitlines())
-                param_description_lines.append(f'    {param.name}: {param_description}')
-        if param_description_lines:
-            description_sections.append('\n'.join(['Args:', *param_description_lines]))
+            description_lines = (param.description or '').strip().splitlines()
+            if not description_lines:
+                continue
+            first_line, *continuation = description_lines
+            args_lines.append(f'    {param.name}: {first_line}')
+            # Continuation lines nest one level past the parameter name (Google style)
+            args_lines.extend(f'        {line}' for line in continuation)
+        if args_lines:
+            description_sections.append('\n'.join(['Args:', *args_lines]))
         description = '\n\n'.join(description_sections)
 
         if description:
