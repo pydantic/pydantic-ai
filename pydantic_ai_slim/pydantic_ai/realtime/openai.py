@@ -1024,17 +1024,21 @@ class OpenAIRealtimeModel(RealtimeModel):
         return with_realtime_query(self._realtime_ws_base(), call_id=call_id)
 
     def _webrtc_http_base(self) -> str:
-        base_url, separator, query = self._provider.base_url.partition('?')
+        base_url, _, fragment = self._provider.base_url.partition('#')
+        base_url, separator, query = base_url.partition('?')
         base_url = base_url if base_url.endswith('/') else f'{base_url}/'
-        return f'{base_url}{separator}{query}'
+        base_url = f'{base_url}{separator}{query}'
+        return f'{base_url}#{fragment}' if fragment else base_url
 
     def _webrtc_url(self, path: str, **params: str) -> str:
-        base_url, _, query = self._webrtc_http_base().partition('?')
+        base_url, _, fragment = self._webrtc_http_base().partition('#')
+        base_url, _, query = base_url.partition('?')
         for name, value in params.items():
             param = f'{name}={quote(value, safe="")}'
             query = f'{query}&{param}' if query else param
         url = f'{base_url}{path}'
-        return f'{url}?{query}' if query else url
+        url = f'{url}?{query}' if query else url
+        return f'{url}#{fragment}' if fragment else url
 
     def _webrtc_calls_url(self) -> str:
         return self._webrtc_url('realtime/calls')

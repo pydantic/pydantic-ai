@@ -354,6 +354,26 @@ async def test_create_client_secret_through_gateway() -> None:
     assert secret.value == 'ek_gw'
 
 
+async def test_create_client_secret_with_base_url_fragment() -> None:
+    # Fragments are client-side URL state and cannot be covered by a recorded HTTP interaction.
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured['url'] = str(request.url)
+        return httpx.Response(200, json={'value': 'ek_fragment', 'expires_at': 1_700_000_060})
+
+    provider = OpenAIProvider(
+        base_url='https://example.com/v1#fragment',
+        api_key='sk-test',
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+
+    await model.create_client_secret()
+
+    assert captured['url'] == 'https://example.com/v1/realtime/client_secrets#fragment'
+
+
 async def test_create_client_secret_http_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, text='invalid api key')
