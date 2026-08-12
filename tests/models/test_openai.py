@@ -6281,6 +6281,14 @@ _UNCONVERTIBLE_PREFIX_ITEMS_SCHEMAS = [
         },
         id='mismatch-after-first-pair',
     ),
+]
+
+_CONVERTIBLE_PREFIX_ITEMS_SCHEMAS = [
+    pytest.param(
+        {'type': 'array', 'prefixItems': [{'type': 'integer'}, {'type': 'integer'}], 'minItems': 2, 'maxItems': 2},
+        {'type': 'array', 'items': {'type': 'integer'}, 'minItems': 2, 'maxItems': 2},
+        id='plain-homogeneous',
+    ),
     pytest.param(
         {
             'type': 'array',
@@ -6289,9 +6297,27 @@ _UNCONVERTIBLE_PREFIX_ITEMS_SCHEMAS = [
             'minItems': 1,
             'maxItems': 1,
         },
-        id='prefix-items-plus-items',
+        {'type': 'array', 'items': {'type': 'integer'}, 'minItems': 1, 'maxItems': 1},
+        id='prefix-items-plus-unreachable-items',
     ),
 ]
+
+
+@pytest.mark.parametrize('array_schema,expected', _CONVERTIBLE_PREFIX_ITEMS_SCHEMAS)
+def test_transformer_convertible_prefix_items_rewritten(array_schema: dict[str, Any], expected: dict[str, Any]):
+    """A homogeneous length-capped tuple rewrites to `items` + bounds. Any pre-existing `items`
+    only governs elements past the prefix, which `maxItems` makes unreachable, so it can't block
+    the rewrite."""
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'value': array_schema},
+        'required': ['value'],
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
+    result = transformer.walk()
+
+    assert result['properties']['value'] == expected
+    assert transformer.is_strict_compatible is True
 
 
 @pytest.mark.parametrize('array_schema', _UNCONVERTIBLE_PREFIX_ITEMS_SCHEMAS)
