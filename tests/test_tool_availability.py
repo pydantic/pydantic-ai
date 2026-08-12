@@ -52,14 +52,17 @@ from .conftest import iter_message_parts
 
 def secret_op() -> str:
     """A capability-owned tool an owner's `prepare_tools` filters out."""
-    return 'SECRET EXECUTED'  # pragma: no cover
+    return 'SECRET EXECUTED'
 
 
 def _report_secret_op_outcome(messages: list[ModelMessage]) -> ModelResponse | None:
     """Report the blocked call, once the retry prompt refusing it is in history.
 
-    `secret_op` never executes in these tests — that's the point — so a tool return for it would
-    itself be the failure, and is left to `secret_op`'s own unreachable body to catch.
+    `secret_op` must not execute in any test that routes through here — that's the point — so a
+    tool return for it would itself be the failure. The body is deliberately *not* marked
+    unreachable: `test_loaded_capability_tool_survives_a_stripped_reveal_marker` runs it on
+    purpose, since proving the tool is callable again is the whole assertion. These tests catch an
+    unwanted execution by asserting on the refusal instead.
     """
     for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
         return make_text_response(f'BLOCKED: {part.content}')

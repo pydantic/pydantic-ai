@@ -4598,6 +4598,33 @@ async def test_is_tool_available_answers_for_a_capability_owned_tool_inside_an_a
     unloaded = ToolDefinition(name='other_op', defer_loading=True, capability_id='not_loaded')
     assert reconstructed.is_tool_available(unloaded) is False
 
+
+async def test_loaded_capability_tool_without_a_reveal_marker_answers_inside_an_activity():
+    """The on-demand set travels too, so a stripped reveal marker doesn't flip the answer.
+
+    A deferred capability's load is itself the reveal for its own tools, and telling that apart
+    from a capability since reconfigured always-on needs the *configured* set, which lives in the
+    `capabilities` registry and cannot cross the boundary. Without the snapshot this degrades to
+    the discovery check and answers `False` inside an activity while the workflow says `True` --
+    for a tool no search can ever surface, so nothing could restore the marker.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+        capabilities={'guarded': Capability[Any](id='guarded', description='Guarded.', defer_loading=True)},
+        loaded_capability_ids={'guarded'},
+        # No `discovered_tool_names`: the reveal marker is gone, as a history processor can leave it.
+    )
+    tool_def = ToolDefinition(name='secret_op', defer_loading=True, capability_id='guarded')
+    assert ctx.is_tool_available(tool_def) is True
+
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+    assert reconstructed.is_tool_available(tool_def) is True
+
     # The registry itself still doesn't cross — only the ids it resolves to.
     with pytest.raises(UserError, match="'capabilities' is not available"):
         _ = reconstructed.capabilities
