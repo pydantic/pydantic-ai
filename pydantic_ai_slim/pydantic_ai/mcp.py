@@ -40,12 +40,12 @@ try:
     )
     from fastmcp.exceptions import ToolError
     from fastmcp.mcp_config import infer_transport_type_from_url
-except ImportError as _fastmcp_import_error:  # pragma: no cover
+except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the fastmcp client to use `MCPToolset` — '
         '`pip install "pydantic-ai-slim[mcp]"` pulls `fastmcp-slim[client]`, '
         'or install the full `fastmcp` package directly.'
-    ) from _fastmcp_import_error
+    ) from _import_error
 
 # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
 # SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has,

@@ -12,11 +12,11 @@ from ._mcp_compat import mcp_field, mcp_optional_field
 try:
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
-except ImportError as _mcp_import_error:  # pragma: no cover
+except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `mcp` package to use the MCP integrations, '
         'you can use the `mcp` optional group — `pip install "pydantic-ai-slim[mcp]"`'
-    ) from _mcp_import_error
+    ) from _import_error
 
 
 def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[messages.ModelMessage]:
