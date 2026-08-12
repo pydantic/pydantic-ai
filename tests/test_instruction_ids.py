@@ -38,7 +38,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 
 from .conftest import try_import
 
@@ -979,4 +979,28 @@ async def test_a_retained_override_survives_a_rebind_that_replaces_its_children(
     assert await run_and_capture(agent) == [
         InstructionPart(content='Override.', id='capability:group'),
         InstructionPart(content='Plain.', id='capability:plain'),
+    ]
+
+
+async def test_a_function_toolsets_instructions_can_declare_a_part():
+    """A toolset's constructor is one of the places a part is accepted, so it keeps what the part says.
+
+    Reducing it to text here would drop both the declared id and `dynamic`, which decides whether the
+    block falls inside the cacheable prefix — silently, since neither has anywhere to surface.
+    """
+    toolset = FunctionToolset[Any](
+        id='weather',
+        instructions=[
+            InstructionPart(content='Static and named.', id='limits'),
+            InstructionPart(content='Recomputed elsewhere.', dynamic=True),
+            'A plain string.',
+        ],
+    )
+
+    # The declared block keeps its id, and the part that declared itself dynamic sorts after the
+    # static ones -- which is the flag being honoured, since it decides the cache boundary.
+    assert await run_and_capture(Agent(toolsets=[toolset])) == [
+        InstructionPart(content='Static and named.', id='toolset:weather:limits'),
+        InstructionPart(content='A plain string.', id='toolset:weather'),
+        InstructionPart(content='Recomputed elsewhere.', dynamic=True, id='toolset:weather'),
     ]

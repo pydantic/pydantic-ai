@@ -7,7 +7,7 @@ from typing import Any, overload
 import anyio
 from pydantic.json_schema import GenerateJsonSchema
 
-from .._instructions import prepare_instructions
+from .._instructions import AgentInstructions, normalize_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._system_prompt import SystemPromptRunner
 from ..exceptions import ModelRetry, UserError
@@ -79,7 +79,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
         id: str | None = None,
-        instructions: str | SystemPromptFunc[AgentDepsT] | Sequence[str | SystemPromptFunc[AgentDepsT]] | None = None,
+        instructions: AgentInstructions[AgentDepsT] = None,
     ):
         """Build a new function toolset.
 
@@ -133,9 +133,16 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self._defer_loading = defer_loading
         self.include_return_schema = include_return_schema
 
-        self._instructions: list[str | SystemPromptRunner[AgentDepsT]] = []
-        if instructions is not None:
-            self._instructions.extend(prepare_instructions(instructions))
+        # A part is kept whole rather than reduced to its text, because it carries the block's
+        # declared `id` and its `dynamic` flag -- the flag that decides whether the block falls inside
+        # the cacheable prefix. (`prepare_instructions` flattens a part, which is what the paths that
+        # render instructions as plain text want and the opposite of what a toolset wants.)
+        self._instructions: list[str | InstructionPart | SystemPromptRunner[AgentDepsT]] = [
+            instruction
+            if isinstance(instruction, (str, InstructionPart))
+            else SystemPromptRunner[AgentDepsT](instruction)
+            for instruction in normalize_instructions(instructions)
+        ]
 
         self.tools = {}
         for tool in tools:
@@ -595,12 +602,15 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         if not self._instructions:
             return None
         parts: list[InstructionPart] = []
-        for func in self._instructions:
-            if isinstance(func, str):
-                if func.strip():
-                    parts.append(InstructionPart(content=func, dynamic=False))
+        for instruction in self._instructions:
+            if isinstance(instruction, InstructionPart):
+                if instruction.content.strip():
+                    parts.append(instruction)
+            elif isinstance(instruction, str):
+                if instruction.strip():
+                    parts.append(InstructionPart(content=instruction, dynamic=False))
             else:
-                result = await func.run(ctx)
+                result = await instruction.run(ctx)
                 if result and result.strip():
                     parts.append(InstructionPart(content=result, dynamic=True))
         return parts or None
