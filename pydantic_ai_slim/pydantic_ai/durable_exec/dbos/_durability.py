@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from dbos import DBOS
 
@@ -28,6 +28,9 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._agent import DBOSParallelExecutionMode
 from ._utils import StepConfig, guard_enqueue_in_workflow
+
+if TYPE_CHECKING:
+    pass
 
 
 @dataclass(init=False)
@@ -93,13 +96,14 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 `'default'`. A `Model` instance can't be serialized across the
                 step boundary, so a run-time model (via `agent.run(model=...)`
                 / `agent.override(model=...)`, or swapped in by an outer capability)
-                is sent as its `model_id` string and rebuilt inside the step by
-                registry lookup, then the agent's `resolve_model_id` capability
-                chain / `infer_model`. Register an instance here (and reference it
-                by key or pass the registered instance) whenever its `model_id`
-                alone wouldn't rebuild it faithfully — e.g. a custom provider,
-                client, or settings. Model-name strings never need registering;
-                to customize how they're built (e.g. a custom provider), use the
+                has to be registered here and referenced by key (or passed as the
+                registered instance); an unregistered instance is rejected, because
+                rebuilding it from its `model_id` would build a different model.
+                Model-name strings never need registering: they cross as the string
+                the caller wrote and are built inside the step by the agent's
+                `resolve_model_id` capability chain, then `infer_model`. To build a
+                specific instance inside the step from such a string — a custom
+                provider, or per-user credentials carried on `deps` — use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request steps, and each tool event is handled in its own
@@ -166,8 +170,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> ModelResponse:
-            model = await self._resolve_model_for_request(model_id, run_context)
-            with self._durable_run_context_scope(run_context):
+            async with self._durable_model_scope(model_id, run_context) as (model, _):
                 return await model.request(messages, model_settings, model_request_parameters)
 
         self._request_step = request_step
@@ -180,8 +183,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> StreamedActivityResult:
-            model = await self._resolve_model_for_request(model_id, run_context)
-            with self._durable_run_context_scope(run_context) as ctx:
+            async with self._durable_model_scope(model_id, run_context) as (model, ctx):
                 async with model.request_stream(
                     messages, model_settings, model_request_parameters, ctx
                 ) as streamed_response:
@@ -198,8 +200,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         async def cancel_suspended_response_step(
             model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
         ) -> None:
-            model = await self._resolve_model_for_request(model_id, run_context)
-            with self._durable_run_context_scope(run_context):
+            async with self._durable_model_scope(model_id, run_context) as (model, _):
                 await model.cancel_suspended_response(response)
 
         self._cancel_suspended_response_step = cancel_suspended_response_step

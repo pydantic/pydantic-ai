@@ -100,7 +100,11 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=88, cache_write_tokens=86, output_tokens=14, details={'reasoning_tokens': 0}
+                        input_tokens=88,
+                        cache_write_tokens=86,
+                        output_tokens=14,
+                        output_reasoning_tokens=0,
+                        details={'reasoning_tokens': 0},
                     ),
                     model_name='openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
@@ -137,7 +141,11 @@ async def test_reused_tool_call_ids(stream: bool, allow_model_requests: None) ->
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=115, cache_write_tokens=27, output_tokens=14, details={'reasoning_tokens': 0}
+                        input_tokens=115,
+                        cache_write_tokens=27,
+                        output_tokens=14,
+                        output_reasoning_tokens=0,
+                        details={'reasoning_tokens': 0},
                     ),
                     model_name='openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),
@@ -183,7 +191,11 @@ Second tool result: `second result`\
                         ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=142, cache_write_tokens=27, output_tokens=33, details={'reasoning_tokens': 11}
+                        input_tokens=142,
+                        cache_write_tokens=27,
+                        output_tokens=33,
+                        output_reasoning_tokens=11,
+                        details={'reasoning_tokens': 11},
                     ),
                     model_name='openai.gpt-5.6-luna',
                     timestamp=IsDatetime(),

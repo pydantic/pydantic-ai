@@ -4,6 +4,10 @@
     "items": [
       "index",
       "install",
+      {
+        "label": "V1 → V2 Migration Map",
+        "slug": "migration"
+      },
       "help",
       "troubleshooting",
       {
@@ -13,6 +17,71 @@
       {
         "label": "Pydantic AI Gateway",
         "slug": "gateway"
+      }
+    ]
+  },
+  {
+    "label": "Realtime (speech-to-speech)",
+    "items": [
+      {
+        "label": "Overview",
+        "slug": "realtime/overview"
+      },
+      {
+        "label": "Audio, images, and transcripts",
+        "slug": "realtime/audio"
+      },
+      {
+        "label": "Events",
+        "slug": "realtime/events"
+      },
+      {
+        "label": "Turns and interruptions",
+        "slug": "realtime/turns"
+      },
+      {
+        "label": "Tools",
+        "slug": "realtime/tools"
+      },
+      {
+        "label": "Capabilities and hooks",
+        "slug": "realtime/capabilities"
+      },
+      {
+        "label": "History and handoff",
+        "slug": "realtime/history"
+      },
+      {
+        "label": "Connecting a frontend",
+        "slug": "realtime/deployment"
+      },
+      {
+        "label": "Connection lifecycle",
+        "slug": "realtime/lifecycle"
+      },
+      {
+        "label": "Usage and observability",
+        "slug": "realtime/observability"
+      },
+      {
+        "label": "Troubleshooting",
+        "slug": "realtime/troubleshooting"
+      },
+      {
+        "label": "OpenAI",
+        "slug": "realtime/openai"
+      },
+      {
+        "label": "Azure",
+        "slug": "realtime/azure"
+      },
+      {
+        "label": "Google Gemini",
+        "slug": "realtime/gemini"
+      },
+      {
+        "label": "xAI",
+        "slug": "realtime/xai"
       }
     ]
   },
@@ -38,7 +107,15 @@
         "slug": "agent-spec"
       },
       "message-history",
-      "direct"
+      "direct",
+      {
+        "label": "Retries",
+        "slug": "retries"
+      },
+      {
+        "label": "Timeouts",
+        "slug": "timeouts"
+      }
     ]
   },
   {
@@ -59,11 +136,14 @@
       "models/bedrock",
       "models/cerebras",
       "models/cohere",
+      "models/crusoe",
       "models/groq",
       "models/huggingface",
       "models/mistral",
       "models/ollama",
-      "models/openrouter"
+      "models/openrouter",
+      "models/snowflake",
+      "models/zai"
     ]
   },
   {
@@ -178,41 +258,41 @@
         "slug": "capabilities/process-event-stream"
       },
       {
-        "label": "Durable Execution",
-        "items": [
-          {
-            "label": "Overview",
-            "slug": "durable_execution/overview"
-          },
-          {
-            "label": "Temporal",
-            "slug": "durable_execution/temporal"
-          },
-          {
-            "label": "DBOS",
-            "slug": "durable_execution/dbos"
-          },
-          {
-            "label": "Prefect",
-            "slug": "durable_execution/prefect"
-          },
-          {
-            "label": "Restate",
-            "slug": "durable_execution/restate"
-          },
-          {
-            "label": "Kitaru",
-            "slug": "durable_execution/kitaru"
-          },
-          {
-            "label": "Apache Airflow",
-            "slug": "durable_execution/airflow"
-          }
-        ]
-      },
-      {
         "label": "Third-Party Capabilities",
         "slug": "capabilities/third-party"
+      }
+    ]
+  },
+  {
+    "label": "Durable Execution",
+    "items": [
+      {
+        "label": "Overview",
+        "slug": "durable_execution/overview"
+      },
+      {
+        "label": "Temporal",
+        "slug": "durable_execution/temporal"
+      },
+      {
+        "label": "DBOS",
+        "slug": "durable_execution/dbos"
+      },
+      {
+        "label": "Prefect",
+        "slug": "durable_execution/prefect"
+      },
+      {
+        "label": "Restate",
+        "slug": "durable_execution/restate"
+      },
+      {
+        "label": "Kitaru",
+        "slug": "durable_execution/kitaru"
+      },
+      {
+        "label": "Apache Airflow",
+        "slug": "durable_execution/airflow"
       }
     ]
   },
@@ -288,6 +368,10 @@
             "slug": "evals/evaluators/llm-judge"
           },
           {
+            "label": "Standard Quality Metrics",
+            "slug": "evals/evaluators/standard-quality-metrics"
+          },
+          {
             "label": "Third-Party Integrations",
             "slug": "evals/evaluators/framework-integrations"
           },
@@ -302,6 +386,10 @@
           {
             "label": "Span-Based",
             "slug": "evals/evaluators/span-based"
+          },
+          {
+            "label": "Agentic",
+            "slug": "evals/evaluators/agentic"
           }
         ]
       },
@@ -447,7 +535,8 @@
         "items": [
           "examples/sql-gen",
           "examples/data-analyst",
-          "examples/rag"
+          "examples/rag",
+          "examples/twelvelabs-video-agent"
         ]
       },
       {
@@ -458,9 +547,20 @@
         ]
       },
       {
+        "label": "Realtime",
+        "items": [
+          "examples/realtime-voice",
+          "examples/realtime-text-to-audio",
+          "examples/realtime-handoff",
+          "examples/realtime-camera",
+          "examples/realtime-webrtc"
+        ]
+      },
+      {
         "label": "Complex Workflows",
         "items": [
-          "examples/flight-booking"
+          "examples/flight-booking",
+          "examples/medical-agent-delegation"
         ]
       },
       {
@@ -506,6 +606,7 @@
               "api/models/bedrock_mantle",
               "api/models/cerebras",
               "api/models/cohere",
+              "api/models/crusoe",
               "api/models/fallback",
               "api/models/function",
               "api/models/google",
@@ -518,13 +619,26 @@
               "api/models/ollama",
               "api/models/openai",
               "api/models/openrouter",
+              "api/models/snowflake",
               "api/models/test",
+              "api/models/zai",
               "api/models/wrapper"
             ]
           },
           "api/output",
           "api/profiles",
           "api/providers",
+          "api/realtime",
+          {
+            "label": "realtime",
+            "items": [
+              "api/realtime/codec",
+              "api/realtime/openai",
+              "api/realtime/google",
+              "api/realtime/xai",
+              "api/realtime/azure"
+            ]
+          },
           "api/result",
           "api/retries",
           "api/run",
@@ -575,7 +689,10 @@
     "label": "Project",
     "items": [
       "contributing",
-      "changelog",
+      {
+        "label": "Upgrade Guide",
+        "slug": "changelog"
+      },
       {
         "label": "Version Policy",
         "slug": "version-policy"

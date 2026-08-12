@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 
 import pytest
@@ -21,10 +22,32 @@ class ExecutionState:
     counter: int = 0
 
 
+def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.AbstractEventLoop):
+    """`Graph.run_sync` must replace a closed thread-current event loop."""
+    builder = GraphBuilder(state_type=ExecutionState, output_type=int)
+
+    @builder.step
+    async def produce_result(ctx: StepContext[ExecutionState, None, None]) -> int:
+        return 42
+
+    builder.add(
+        builder.edge_from(builder.start_node).to(produce_result),
+        builder.edge_from(produce_result).to(builder.end_node),
+    )
+    graph = builder.build()
+
+    assert graph.run_sync(state=ExecutionState()) == 42
+    replacement_loop = asyncio.get_event_loop()
+    assert replacement_loop is not closed_event_loop
+    assert not replacement_loop.is_closed()
+
+    assert graph.run_sync(state=ExecutionState()) == 42
+    assert asyncio.get_event_loop() is replacement_loop
+    assert not asyncio.all_tasks(replacement_loop)
+
+
 async def test_map_to_end_node_cancels_pending():
     """Test that mapping directly to end_node cancels pending tasks"""
-    import asyncio
-
     g = GraphBuilder(state_type=ExecutionState, output_type=int)
 
     @g.step

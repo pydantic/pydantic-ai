@@ -10,24 +10,24 @@
 
 .PHONY: install
 install: .uv .pre-commit ## Install the package, dependencies, and pre-commit for local development
-	uv sync --frozen --all-extras --all-packages --group lint --group docs
+	uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --group docs
 	# pyright typechecks the gh-aw shim, which imports pydantic-ai-harness. The
 	# harness is kept out of the lock (its pydantic-ai-slim dep collides with the
 	# workspace member under lowest-direct), so install it out-of-band; --no-deps
 	# because pydantic-ai-slim is already present. See .github/workflows/ci.yml.
-	uv pip install --no-deps "pydantic-ai-harness==0.7.0" "pydantic-monty==0.0.16"
+	uv pip install --no-deps "pydantic-ai-harness==0.7.0"
 	pre-commit install --install-hooks
 
 .PHONY: install-all-python
 install-all-python: ## Install and synchronize an interpreter for every python version
-	UV_PROJECT_ENVIRONMENT=.venv310 uv sync --python 3.10 --frozen --all-extras --all-packages --group lint --group docs
-	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --all-packages --group lint --group docs
-	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --all-packages --group lint --group docs
-	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --all-packages --group lint --group docs
+	UV_PROJECT_ENVIRONMENT=.venv310 uv sync --python 3.10 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --group docs
+	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --group docs
+	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --group docs
+	UV_PROJECT_ENVIRONMENT=.venv313 uv sync --python 3.13 --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint --group docs
 
 .PHONY: sync
 sync: .uv ## Update local packages and uv.lock
-	uv sync --all-extras --all-packages --group lint --group docs
+	uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint --group docs
 
 .PHONY: format
 format: ## Format the code
@@ -62,10 +62,10 @@ test: ## Run tests without coverage (fast, for local dev)
 
 .PHONY: test-all-python
 test-all-python: ## Run tests on Python 3.10 to 3.13
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest
-	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
+	COLUMNS=150 UV_PROJECT_ENVIRONMENT=.venv313 uv run --python 3.13 --all-extras --no-extra mcp-tasks --all-packages coverage run -p -m pytest
 	@uv run coverage combine
 	@uv run coverage report
 
@@ -86,10 +86,11 @@ update-examples: ## Update documentation examples
 update-vcr-tests: ## Update tests using VCR that hit LLM APIs; note you'll need to set API keys as appropriate
 	uv run -m pytest --record-mode=rewrite tests
 
-# `--no-strict` so you can build the docs without fixing all warnings
+# Strict (from mkdocs.yml) so warnings — e.g. broken cross-links — fail the build in CI instead of
+# slipping onto the live site. Use `make docs-serve` to iterate without fixing every warning first.
 .PHONY: docs
 docs: ## Build the documentation
-	uv run mkdocs build --no-strict
+	uv run mkdocs build
 
 # `--no-strict` so you can build the docs without fixing all warnings
 .PHONY: docs-serve

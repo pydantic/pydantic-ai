@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from prefect import task
 from prefect.context import FlowRunContext
@@ -19,6 +19,9 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from ._model import _stamp_response_provenance  # pyright: ignore[reportPrivateUsage]
 from ._toolset import with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
+
+if TYPE_CHECKING:
+    pass
 
 
 @dataclass(init=False)
@@ -61,6 +64,38 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         mcp_task_config: TaskConfig | None = None,
         tool_task_config: TaskConfig | None = None,
     ):
+        """Create a PrefectDurability capability.
+
+        The agent's model, name, and toolsets are discovered automatically.
+
+        Args:
+            models: Optional additional models keyed by ID for runtime model
+                switching. The agent's primary model is always registered as
+                `'default'`. A `Model` instance can't be serialized across the
+                task boundary, so a run-time model (via `agent.run(model=...)`
+                / `agent.override(model=...)`, or swapped in by an outer capability)
+                has to be registered here and referenced by key (or passed as the
+                registered instance); an unregistered instance is rejected, because
+                rebuilding it from its `model_id` would build a different model.
+                Model-name strings never need registering: they cross as the string
+                the caller wrote and are built inside the task by the agent's
+                `resolve_model_id` capability chain, then `infer_model`. To build a
+                specific instance inside the task from such a string — a custom
+                provider, or per-user credentials carried on `deps` — use the
+                [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
+            event_stream_handler: Optional event stream handler. Model events are handled
+                live inside model-request tasks, and tool events are handled in per-event tasks.
+            name: Unique agent name used in the Prefect task names. Defaults to the agent's
+                `name` when the capability is bound.
+            event_stream_handler_task_config: Prefect task config for event stream handler tasks.
+            model_task_config: Prefect task config for model request tasks.
+            mcp_task_config: Prefect task config for MCP server tasks.
+            tool_task_config: Default Prefect task config for tool call tasks. Per-tool
+                overrides are configured via tool metadata, e.g.
+                `@my_toolset.tool(metadata={'prefect': TaskConfig(...)})` (or `False` to skip
+                task wrapping), or via the
+                [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] capability.
+        """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         # Model and event-handler tasks compose the same non-retryable condition as tool tasks.
         self._model_task_config = with_non_retryable_errors(default_task_config | (model_task_config or {}))

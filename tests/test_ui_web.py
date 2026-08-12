@@ -542,13 +542,91 @@ async def test_post_chat_streams_tool_approval(allow_model_requests: None, sdk_v
 
 
 def test_chat_app_options_endpoint():
-    """Test the OPTIONS /api/chat endpoint (CORS preflight)."""
+    """Test the OPTIONS /api/chat endpoint (CORS preflight).
+
+    The absence of `Access-Control-Allow-*` is the load-bearing half of the CSRF defence: it is what
+    makes a browser reject the preflight that `Content-Type: application/json` forces. Pinned here
+    so mounting a permissive `CORSMiddleware` on this app can't silently re-open cross-origin
+    access to the chat endpoint.
+    """
     agent = Agent('test')
     app = create_web_app(agent)
 
     with TestClient(app) as client:
         response = client.options('/api/chat')
         assert response.status_code == 200
+        assert not any(name.lower().startswith('access-control-') for name in response.headers)
+
+
+@pytest.mark.parametrize(
+    'content_type',
+    [
+        # The three CORS-safelisted content types: a browser can send each of these cross-origin
+        # with no preflight, and each can carry a raw JSON body from a page the developer visits.
+        pytest.param('text/plain', id='text-plain'),
+        pytest.param('multipart/form-data; boundary=x', id='multipart-form-data'),
+        pytest.param('application/x-www-form-urlencoded', id='form-urlencoded'),
+        # `fetch()` with a `Blob` that has no type sends no content type at all.
+        pytest.param(None, id='no-content-type'),
+    ],
+)
+def test_chat_rejects_non_json_content_type(content_type: str | None, monkeypatch: pytest.MonkeyPatch):
+    """A cross-origin-forgeable request is rejected before the agent runs.
+
+    Asserting the status alone would be too weak: an attacker never needs to read the response, so
+    what matters is that nothing runs. This pins that the adapter is never built, which puts the
+    check ahead of both reading the body and starting a run.
+
+    This is a unit test rather than a VCR one because the check runs before any model request, so
+    there is no HTTP traffic to record.
+    """
+    agent = Agent(TestModel())
+    mock_from_request = AsyncMock(side_effect=AssertionError('adapter should not be built'))
+    monkeypatch.setattr(VercelAIAdapter, 'from_request', mock_from_request)
+
+    app = create_web_app(agent)
+    body = json.dumps(
+        {
+            'trigger': 'submit-message',
+            'id': 'test-id',
+            'messages': [{'id': 'msg-1', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Hello'}]}],
+        }
+    )
+    headers = {'content-type': content_type} if content_type is not None else {}
+
+    with TestClient(app) as client:
+        response = client.post('/api/chat', content=body, headers=headers)
+
+    assert response.status_code == 415
+    assert 'application/json' in response.json()['error']
+    assert mock_from_request.call_count == 0
+
+
+@pytest.mark.parametrize(
+    'content_type',
+    [
+        # What the bundled UI and the Vercel AI SDK's `DefaultChatTransport` send.
+        pytest.param('application/json', id='bare'),
+        pytest.param('application/json; charset=utf-8', id='with-charset'),
+        pytest.param('APPLICATION/JSON', id='uppercase'),
+    ],
+)
+def test_chat_accepts_json_content_type(content_type: str):
+    """The content-type check doesn't turn away the bundled UI or other JSON clients."""
+    agent = Agent(TestModel())
+    app = create_web_app(agent)
+    body = json.dumps(
+        {
+            'trigger': 'submit-message',
+            'id': 'test-id',
+            'messages': [{'id': 'msg-1', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Hello'}]}],
+        }
+    )
+
+    with TestClient(app) as client:
+        response = client.post('/api/chat', content=body, headers={'content-type': content_type})
+
+    assert response.status_code == 200
 
 
 def test_mcp_server_tool_label():
