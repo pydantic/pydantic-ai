@@ -1,13 +1,15 @@
 from __future__ import annotations as _annotations
 
 import os
+from collections.abc import Callable
 from typing import overload
 
 import httpx
+import httpx2
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._http import create_httpx2_client, warn_if_legacy_httpx_client
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.providers import Provider
@@ -46,9 +48,14 @@ _ADJUSTABLE_REASONING_MODELS = frozenset(
     }
 )
 
+_MistralHTTPClient = httpx.AsyncClient | httpx2.AsyncClient
+
 
 class MistralProvider(Provider[Mistral]):
     """Provider for Mistral API."""
+
+    _own_http_client: _MistralHTTPClient | None = None
+    _http_client_factory: Callable[[], _MistralHTTPClient] | None = None
 
     @property
     def name(self) -> str:
@@ -73,7 +80,7 @@ class MistralProvider(Provider[Mistral]):
     def __init__(self, *, mistral_client: Mistral | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str | None = None, http_client: httpx.AsyncClient | None = None) -> None: ...
+    def __init__(self, *, api_key: str | None = None, http_client: _MistralHTTPClient | None = None) -> None: ...
 
     def __init__(
         self,
@@ -81,7 +88,7 @@ class MistralProvider(Provider[Mistral]):
         api_key: str | None = None,
         mistral_client: Mistral | None = None,
         base_url: str | None = None,
-        http_client: httpx.AsyncClient | None = None,
+        http_client: _MistralHTTPClient | None = None,
     ) -> None:
         """Create a new Mistral provider.
 
@@ -90,7 +97,7 @@ class MistralProvider(Provider[Mistral]):
                 will be used if available.
             mistral_client: An existing `Mistral` client to use, if provided, `api_key` and `http_client` must be `None`.
             base_url: The base url for the Mistral requests.
-            http_client: An existing async client to use for making HTTP requests.
+            http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
         if mistral_client is not None:
             assert http_client is None, 'Cannot provide both `mistral_client` and `http_client`'
@@ -105,13 +112,20 @@ class MistralProvider(Provider[Mistral]):
                     'Set the `MISTRAL_API_KEY` environment variable or pass it via `MistralProvider(api_key=...)`'
                     ' to use the Mistral provider.'
                 )
-            elif http_client is not None:
-                self._client = Mistral(api_key=api_key, async_client=http_client, server_url=base_url)
+            if http_client is None:
+                http_client = create_httpx2_client()
+                self._own_http_client = http_client  # pyright: ignore[reportIncompatibleVariableOverride]
+                self._http_client_factory = create_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
             else:
-                http_client = create_async_http_client()
-                self._own_http_client = http_client
-                self._http_client_factory = create_async_http_client
-                self._client = Mistral(api_key=api_key, async_client=http_client, server_url=base_url)
+                warn_if_legacy_httpx_client(http_client, consumer='the Mistral provider', stacklevel=2)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client.sdk_configuration.async_client = http_client
+            # Mistral's runtime-checkable client protocol accepts HTTPX2, but its annotations name legacy HTTPX types.
+            self._client = Mistral(
+                api_key=api_key,
+                async_client=http_client,  # pyright: ignore[reportArgumentType]
+                server_url=base_url,
+            )
+
+    # The generic Provider currently only knows the legacy HTTPX client type.
+    def _set_http_client(self, http_client: _MistralHTTPClient) -> None:
+        self._client.sdk_configuration.async_client = http_client  # pyright: ignore[reportAttributeAccessIssue]

@@ -71,7 +71,7 @@ dependencies = [
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 # WARNING if you add optional groups, please update docs/install.md
-logfire = ["logfire[httpx]>=4.39.0"]
+logfire = ["logfire[httpx]>=4.39.0", "opentelemetry-instrumentation-httpx>=0.65b0"]
 # Models
 openai = ["openai[httpx2]>=2.47.0", "tiktoken>=0.12.0"]
 cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
@@ -80,10 +80,8 @@ anthropic = ["anthropic>=0.108.0"]
 xai = ["xai-sdk>=1.14.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai[httpx2]>=2.47.0"]
-# `mistralai>=2.4.2` is required for the `prompt_cache_key` parameter on `chat.complete_async`
-# and `chat.stream_async` (also covers the `reasoning_effort` parameter, which needed >=2.0.5).
-# `mistralai==2.4.6` was quarantined on PyPI due to a supply-chain attack (see #5382).
-mistral = ["mistralai>=2.4.2,!=2.4.6"]
+# `mistralai>=2.9.2` accepts `httpx2.AsyncClient` and no longer caps OpenTelemetry semantic conventions.
+mistral = ["mistralai>=2.9.2"]
 bedrock = ["boto3>=1.42.63"]
 # Amazon Bedrock Mantle serves OpenAI models through an OpenAI-compatible API via `AsyncBedrockOpenAI`,
 # which needs `openai` and (for AWS SigV4 auth) `botocore`; the bearer-token path needs `openai` alone.

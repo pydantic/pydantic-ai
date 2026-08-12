@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-import warnings
 from collections.abc import Callable, Mapping
 from typing import overload
 
@@ -9,8 +8,7 @@ import httpx
 import httpx2
 
 from pydantic_ai import ModelProfile
-from pydantic_ai._http import create_httpx2_client
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai._http import create_httpx2_client, warn_if_legacy_httpx_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
@@ -40,12 +38,9 @@ class _OpenAICompatibleProvider(Provider[AsyncOpenAI]):
             http_client = create_httpx2_client()
             self._own_http_client = http_client  # pyright: ignore[reportIncompatibleVariableOverride]
             self._http_client_factory = create_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
-        elif isinstance(http_client, httpx.AsyncClient):
-            warnings.warn(
-                '`httpx.AsyncClient` support for OpenAI-compatible providers is deprecated and will be removed in v3; '
-                'use `httpx2.AsyncClient` instead.',
-                PydanticAIDeprecationWarning,
-                stacklevel=warning_stacklevel,
+        else:
+            warn_if_legacy_httpx_client(
+                http_client, consumer='OpenAI-compatible providers', stacklevel=warning_stacklevel
             )
         return http_client
 
