@@ -1641,21 +1641,23 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     async def _call_resource_tool(self, name: str, tool_args: dict[str, Any]) -> Any:
         """Dispatch a synthesized resource tool to the client-side resource methods.
 
-        `read_mcp_resource` honors [`tool_error_behavior`][pydantic_ai.mcp.MCPToolset.tool_error_behavior]
-        on a bad URI (wrapping `MCPError` as `ModelRetry` under `'retry'`), consistent with server
-        tools. `tool_args['uri']` is guaranteed present and a `str` by the tool's args validator.
+        An `MCPError` (e.g. a bad URI, or a server error listing resources) is routed through
+        [`tool_error_behavior`][pydantic_ai.mcp.MCPToolset.tool_error_behavior] like server tools,
+        so it becomes a `ModelRetry` under `'retry'` or a `ToolFailed` under `'failed'` rather than
+        escaping the toolset. `tool_args['uri']` is guaranteed present and a `str` by the tool's
+        args validator.
         """
-        if name == LIST_MCP_RESOURCES_TOOL_NAME:
-            return [_resource_to_model_dict(resource) for resource in await self.list_resources()]
-        elif name == READ_MCP_RESOURCE_TOOL_NAME:
-            try:
+        try:
+            if name == LIST_MCP_RESOURCES_TOOL_NAME:
+                return [_resource_to_model_dict(resource) for resource in await self.list_resources()]
+            elif name == READ_MCP_RESOURCE_TOOL_NAME:
                 return await self.read_resource(tool_args['uri'])
-            except MCPError as e:
-                if self.tool_error_behavior == 'retry':
-                    raise exceptions.ModelRetry(message=str(e)) from e
+            else:  # pragma: no cover - only the two names above carry the `mcp_resource_tool` marker
+                raise ValueError(f'Unknown MCP resource tool: {name!r}')
+        except MCPError as e:
+            if self.tool_error_behavior == 'error':
                 raise
-        else:  # pragma: no cover - only the two names above carry the `mcp_resource_tool` marker
-            raise ValueError(f'Unknown MCP resource tool: {name!r}')
+            _raise_mcp_tool_error(str(e), self.tool_error_behavior, cause=e)
 
     async def list_prompts(self) -> list[Prompt]:
         """Retrieve the prompts currently exposed by the server.
