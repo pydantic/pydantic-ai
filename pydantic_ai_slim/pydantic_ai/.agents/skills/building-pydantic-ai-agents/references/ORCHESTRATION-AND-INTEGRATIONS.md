@@ -72,6 +72,19 @@ response = model_request_sync(
 
 Reach for this when there is no need for tools, retries, or agent loop state.
 
+## Expose Agents to OpenAI-Compatible Clients (Responses API)
+
+Use `Agent.to_openai_responses()` when an OpenAI-compatible client (the `openai` SDK with a custom `base_url`, OpenWebUI, an LLM gateway) should call the agent as if it were an OpenAI model. It returns a Starlette ASGI app serving `POST /v1/responses`, supporting both streaming and non-streaming requests. The agent runs its tool loop server-side and is projected as a single model: assistant text is returned, while internal tool calls and reasoning are not surfaced. Requires `starlette` and `openai` (`pip install 'pydantic-ai-slim[ui,openai]'`).
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+app = agent.to_openai_responses()  # run with `uvicorn module:app`; clients use base_url='.../v1'
+```
+
+`to_openai_responses()` uses the same `deps`/`model_settings`/`usage_limits` for every request. For per-request dependencies, call `handle_openai_responses_request(request, agent, deps=...)` (from `pydantic_ai.openai_responses`) in your own Starlette/FastAPI route instead. This contrasts with the AG-UI/Vercel AI adapters (interactive frontends that stream tool calls and reasoning).
+
 ## Use Durable Execution
 
 Use the durable execution integrations when the run must survive crashes, retries, or long-lived workflows.
