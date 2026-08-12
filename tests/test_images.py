@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import warnings
 from decimal import Decimal
 from pathlib import Path
@@ -1394,13 +1395,16 @@ def _body_capturing_http_client() -> tuple[httpx.AsyncClient, list[dict[str, Any
     Request event hooks run inside `AsyncClient.send`, above the transport VCR patches, so the hook fires
     on replay too and sees the request the live code actually built. A cassette body is frozen and keeps
     replaying after the code stops sending a field, so it cannot show that drift.
+
+    The Google SDK turns the client's timeout into a server-side deadline, and Gemini rejects anything
+    under 10 seconds, so recording against the live API needs more than httpx's 5-second default.
     """
     sent_bodies: list[dict[str, Any]] = []
 
     async def capture_request(request: httpx.Request) -> None:
         sent_bodies.append(json.loads(request.read()))
 
-    return httpx.AsyncClient(event_hooks={'request': [capture_request]}), sent_bodies
+    return httpx.AsyncClient(timeout=120, event_hooks={'request': [capture_request]}), sent_bodies
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -1500,6 +1504,43 @@ async def test_google_image_edit_binary_image_vcr(image_content: BinaryImage):
     assert result.usage.output_tokens > 0
     assert result.provider_details == {'finish_reason': 'STOP'}
     assert result.provider_response_id
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+@pytest.mark.vcr
+async def test_google_flash_lite_extended_aspect_ratio_vcr():
+    """Live proof that `1:8` on Flash Lite returns `352x2928`, the shape `_google_geometry` records.
+
+    Google publishes `384x3072` for this row and does not list `1:8` for Flash Lite at all, so the
+    table contradicts the documentation on purpose. The unit test over that table can only assert it
+    against itself; this recording is what makes the contradiction evidence instead of a typo.
+    """
+    http_client, sent_bodies = _body_capturing_http_client()
+    provider = GoogleProvider(
+        api_key=os.getenv('GOOGLE_API_KEY', os.getenv('GEMINI_API_KEY', 'mock-api-key')), http_client=http_client
+    )
+    generator = ImageGenerator(GoogleImageGenerationModel('gemini-3.1-flash-lite-image', provider=provider))
+
+    try:
+        result = await generator.generate(
+            'A single ripe kiwi fruit on a plain white background, product photo.',
+            settings={'aspect_ratio': '1:8'},
+        )
+    finally:
+        await http_client.aclose()
+
+    assert [body['generationConfig'] for body in sent_bodies] == snapshot(
+        [{'responseModalities': ['IMAGE'], 'imageConfig': {'aspectRatio': '1:8', 'imageSize': '1K'}}]
+    )
+
+    generated_image = result.images[0].content
+    assert generated_image.media_type == 'image/jpeg'
+    # A JPEG start-of-frame segment carries `length`, `precision`, `height`, `width` after its marker.
+    frame = re.search(rb'\xff[\xc0\xc2]', generated_image.data)
+    assert frame is not None
+    height = int.from_bytes(generated_image.data[frame.end() + 3 : frame.end() + 5], 'big')
+    width = int.from_bytes(generated_image.data[frame.end() + 5 : frame.end() + 7], 'big')
+    assert (width, height) == (352, 2928)
 
 
 def _xai_image_responses(*data: bytes, respect_moderation: bool = True) -> list[XaiImageResponse]:
@@ -1642,7 +1683,33 @@ async def test_xai_image_generation_wire_payload_and_response_mapping():
         resolution='1k',
     )
 
-    # `4:5` has no member in the SDK's `ImageAspectRatio` enum, so the request cannot carry it at all.
+    # `4:5` has no member in the SDK's `ImageAspectRatio` enum, but the provider-specific value is what
+    # travels, so the common one is a conflict to warn about rather than a request that cannot be built.
+    # The resolution tier still pins to `1k` because a common ratio was asked for.
+    mock_client.image.sample.reset_mock()
+    with pytest.warns(
+        UserWarning,
+        match=r'used provider-specific settings instead of: `aspect_ratio`',
+    ):
+        await model.generate(
+            'overridden inexpressible ratio',
+            settings=XaiImageGenerationSettings(aspect_ratio='4:5', xai_aspect_ratio='1:1'),
+        )
+
+    mock_client.image.sample.assert_awaited_once_with(
+        'overridden inexpressible ratio',
+        'grok-imagine-image',
+        image_url=None,
+        image_file_id=None,
+        image_urls=None,
+        image_file_ids=None,
+        user=None,
+        image_format='base64',
+        aspect_ratio='1:1',
+        resolution='1k',
+    )
+
+    # Without an override there is nothing to carry `4:5`, so the request cannot be built at all.
     with pytest.raises(
         UserError,
         match=r"xAI image generation does not support `aspect_ratio='4:5'`\. Supported aspect ratios are: `1:1`, ",
@@ -2534,7 +2601,7 @@ async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio():
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-@pytest.mark.parametrize('model_name', ['gpt-image-1', 'gpt-image-1.5'])
+@pytest.mark.parametrize('model_name', ['gpt-image-1', 'gpt-image-1-mini', 'gpt-image-1.5'])
 async def test_openai_legacy_resolves_dimensions_and_aspect_ratio(model_name: str):
     """Pins the GPT Image 1.x column of the matrix published in `docs/image-generation.md`.
 
@@ -2569,6 +2636,38 @@ async def test_openai_legacy_resolves_dimensions_and_aspect_ratio(model_name: st
     mock_client.images.generate.reset_mock()
     with pytest.raises(UserError, match='Supported exact dimensions'):
         await model.generate('unsupported', settings={'dimensions': (2048, 2048)})
+    mock_client.images.generate.assert_not_awaited()
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_unknown_model_forwards_dimensions_but_cannot_map_aspect_ratio():
+    """A GPT Image release newer than the installed Pydantic AI keeps `dimensions`, but not `aspect_ratio`.
+
+    `size` is a plain string on the wire, so an unrecognized model's exact shape is OpenAI's to accept
+    or reject; measuring it against the frozen GPT Image 1.x table would reject shapes the new model
+    supports. A ratio has no wire field at all, so Pydantic AI would have to name a canonical size it
+    has no table for, and the request cannot be built.
+    """
+    mock_client = AsyncMock()
+    mock_client.base_url = 'https://api.openai.com/v1/'
+    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
+    )
+    model = OpenAIImageGenerationModel(
+        'gpt-image-3',
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+    )
+
+    await model.generate('future model', settings={'dimensions': (1280, 720)})
+    assert mock_client.images.generate.await_args.kwargs['size'] == '1280x720'
+
+    mock_client.images.generate.reset_mock()
+    with pytest.raises(
+        UserError,
+        match=r"Pydantic AI has no `aspect_ratio` mapping for OpenAI model 'gpt-image-3'\. "
+        r'Use `openai_size` or `dimensions` to set the output geometry\.',
+    ):
+        await model.generate('future model', settings={'aspect_ratio': '16:9'})
     mock_client.images.generate.assert_not_awaited()
 
 

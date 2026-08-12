@@ -39,6 +39,21 @@ _GPT_IMAGE_2_ASPECT_RATIO_TO_SIZE = {
 }
 
 
+_GPT_IMAGE_1_MODELS = ('gpt-image-1', 'gpt-image-1.5')
+"""GPT Image 1.x models whose geometry is the three-size legacy set.
+
+`gpt-image-1-mini` and dated snapshots are matched through the dash suffix. `chatgpt-image-latest` is
+deliberately absent: it tracks whichever model ChatGPT currently serves, so its geometry can change
+without a name change and Pydantic AI cannot pin a size table to it.
+"""
+
+
+def is_gpt_image_1(model_name: str | None) -> bool:
+    return model_name is not None and any(
+        model_name == name or model_name.startswith(f'{name}-') for name in _GPT_IMAGE_1_MODELS
+    )
+
+
 def is_gpt_image_2(model_name: str | None) -> bool:
     return model_name == 'gpt-image-2' or (model_name is not None and model_name.startswith('gpt-image-2-'))
 
@@ -78,7 +93,12 @@ def resolve_openai_geometry(
 
 
 def resolve_openai_dimensions(model_name: str | None, dimensions: ImageDimensions) -> str:
-    """Validate exact dimensions for an OpenAI image model and return its native size."""
+    """Validate exact dimensions for an OpenAI image model and return its native size.
+
+    A model outside the known families is forwarded after structural validation only: `size` is a
+    plain string on the wire, so OpenAI can judge a shape a newly released model supports, where a
+    frozen table would reject it until Pydantic AI catches up.
+    """
     validate_image_dimensions(dimensions)
     width, height = dimensions
     size = f'{width}x{height}'
@@ -100,7 +120,7 @@ def resolve_openai_dimensions(model_name: str | None, dimensions: ImageDimension
             )
         return size
 
-    if size not in _LEGACY_SIZES:
+    if is_gpt_image_1(model_name) and size not in _LEGACY_SIZES:
         supported = ', '.join(value for value in _LEGACY_SIZES if value != 'auto')
         raise UserError(
             f'OpenAI model {model_name!r} does not support `dimensions={dimensions!r}`. '
@@ -114,9 +134,20 @@ def resolve_openai_aspect_ratio(model_name: str | None, aspect_ratio: ImageGener
 
     OpenAI has no aspect-ratio field, so Pydantic AI performs the mapping itself and the request can
     only carry a ratio the model family enumerates. A ratio outside that set is rejected rather than
-    dropped, because dropping it bills the caller for the model's default square instead.
+    dropped, because dropping it bills the caller for the model's default square instead. A model
+    outside the known families has no canonical shapes to map onto, so it is rejected too — unlike
+    `dimensions`, which needs no mapping and is forwarded for OpenAI to judge.
     """
-    mapping = _GPT_IMAGE_2_ASPECT_RATIO_TO_SIZE if is_gpt_image_2(model_name) else _LEGACY_ASPECT_RATIO_TO_SIZE
+    if is_gpt_image_2(model_name):
+        mapping = _GPT_IMAGE_2_ASPECT_RATIO_TO_SIZE
+    elif is_gpt_image_1(model_name):
+        mapping = _LEGACY_ASPECT_RATIO_TO_SIZE
+    else:
+        raise UserError(
+            f'Pydantic AI has no `aspect_ratio` mapping for OpenAI model {model_name!r}. '
+            'Use `openai_size` or `dimensions` to set the output geometry.'
+        )
+
     size = mapping.get(aspect_ratio)
     if size is None:
         supported = ', '.join(f'`{ratio}`' for ratio in mapping)

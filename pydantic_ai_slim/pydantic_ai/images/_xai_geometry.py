@@ -76,17 +76,19 @@ def resolve_xai_geometry(
         return _XaiGeometry(aspect_ratio=aspect_ratio, resolution=resolution, conflicts=conflicts)
 
     common_aspect_ratio = settings.get('aspect_ratio')
-    mapped_aspect_ratio = resolve_xai_aspect_ratio(common_aspect_ratio) if common_aspect_ratio else None
     if provider_aspect_ratio is not None:
-        if mapped_aspect_ratio is not None and mapped_aspect_ratio != provider_aspect_ratio:
+        # The provider-specific value wins, so the common one never reaches the wire and is not
+        # mapped: a portable ratio xAI's enum cannot express is a conflict to warn about here, not an
+        # error. `_XAI_ASPECT_RATIOS` is an identity map, so the raw strings compare exactly.
+        if common_aspect_ratio is not None and common_aspect_ratio != provider_aspect_ratio:
             conflicts.append('aspect_ratio')
         aspect_ratio = provider_aspect_ratio
     else:
-        aspect_ratio = mapped_aspect_ratio
+        aspect_ratio = resolve_xai_aspect_ratio(common_aspect_ratio) if common_aspect_ratio else None
 
     if provider_resolution is not None:
         resolution = provider_resolution
-    elif mapped_aspect_ratio is not None:
+    elif common_aspect_ratio is not None:
         # A common ratio promises one canonical model geometry. Pin xAI's documented default tier
         # instead of relying on a provider default that could change independently.
         resolution = '1k'

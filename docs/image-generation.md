@@ -143,6 +143,11 @@ family's enumerated sizes, and xAI takes an enumeration with no member for some 
 [`UserError`][pydantic_ai.exceptions.UserError] for a ratio they cannot express, rather than dropping it and billing you
 for the model's default shape.
 
+An OpenAI model Pydantic AI does not recognize — a GPT Image release newer than your Pydantic AI version — accepts any
+structurally valid `dimensions`, which travel to OpenAI as the plain `size` string for it to validate. `aspect_ratio`
+still raises [`UserError`][pydantic_ai.exceptions.UserError] for such a model, because Pydantic AI has no canonical
+shapes to map the ratio onto; use `dimensions` or `openai_size` instead.
+
 ### Canonical Dimensions for `aspect_ratio`
 
 When only `aspect_ratio` is provided, Pydantic AI selects the following canonical exact dimensions. A dash means the
@@ -179,8 +184,9 @@ them exactly:
 
 | Model family | Exact dimensions accepted |
 | --- | --- |
-| GPT Image 1.x | `1024×1024`, `1024×1536`, or `1536×1024`. |
+| GPT Image 1.x (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`) | `1024×1024`, `1024×1536`, or `1536×1024`. |
 | GPT Image 2 | Any positive dimensions where both sides are multiples of 16, the longest edge is at most 3840, the aspect ratio does not exceed 3:1, and the total area is between 655,360 and 8,294,400 pixels. |
+| Any other OpenAI model | Any positive dimensions, forwarded as `size` for OpenAI to accept or reject. |
 | Gemini 2.5 Flash Image | The ten dimensions shown in its canonical column above. This model has no separate resolution tier. |
 | Gemini 3.1 Flash Lite Image | The fourteen `1K` dimensions shown in its column above. This model serves no other tier. |
 | Gemini 3 Pro Image | The ten `1K` dimensions shown above, plus `2K` and `4K` variants obtained by multiplying both sides by 2 or 4. |
