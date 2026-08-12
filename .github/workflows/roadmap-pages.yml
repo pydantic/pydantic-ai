@@ -6,6 +6,7 @@ on:
     paths:
       - learning-roadmap.html
       - hero.jpg
+      - logo.svg
       - .github/workflows/roadmap-pages.yml
   workflow_dispatch:
 
@@ -30,6 +31,7 @@ jobs:
           mkdir _site
           cp learning-roadmap.html _site/index.html
           cp hero.jpg _site/hero.jpg
+          cp logo.svg _site/logo.svg
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

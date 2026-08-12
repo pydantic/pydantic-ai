@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pydantic AI 文档学习路线</title>
+<link rel="icon" type="image/svg+xml" href="logo.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+SC:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Serif+SC:wght@600;700&display=swap" rel="stylesheet">
@@ -64,11 +65,11 @@
   }
   .pill a:hover { background: #efe8da8c; }
   .pill a.logo {
-    font-family: "IBM Plex Mono", monospace; font-weight: 600; font-size: 15px;
-    background: var(--text); color: var(--cream);
-    width: 34px; height: 34px; padding: 0; justify-content: center;
+    width: 34px; height: 34px; padding: 6px; justify-content: center;
+    background: rgba(255,253,248,.85);
   }
-  .pill a.logo:hover { background: var(--olive-deep); }
+  .pill a.logo img { width: 100%; height: 100%; display: block; }
+  .pill a.logo:hover { background: #fffdf8; }
   .pill.gh a { font-family: "IBM Plex Mono", monospace; font-size: 13px; }
   .pill.gh svg { width: 16px; height: 16px; }
   @media (max-width: 640px) { .pill .navlink { display: none; } }
@@ -333,7 +334,7 @@
 
 <nav class="float-nav">
   <div class="pill">
-    <a class="logo" href="#top" title="回到顶部">λ</a>
+    <a class="logo" href="#top" title="回到顶部"><img src="logo.svg" alt="Pydantic AI"></a>
     <a class="navlink" href="#roadmap">进度</a>
     <a class="navlink" href="#app">学习路线</a>
   </div>
