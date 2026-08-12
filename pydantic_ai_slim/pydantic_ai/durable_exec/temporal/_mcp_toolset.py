@@ -89,7 +89,7 @@ def temporalize_mcp_toolset(
         config = resolve_tool_temporal_wrapping(tool, name, tool_activity_config)
         # The constructor-dict path raises above, so tool metadata is the only route that reaches here.
         match config:
-            case False:  # pragma: no cover
+            case False:
                 raise UserError(
                     f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled), '
                     'but MCP tools require the use of IO and so cannot be run outside of an activity.'

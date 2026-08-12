@@ -2229,6 +2229,31 @@ async def test_temporal_dynamic_toolset_rejects_child_workflow():
         await durable.call_tool('boom', {}, ctx, tool)
 
 
+def test_temporal_mcp_toolset_rejects_activity_disabled():
+    """`metadata={'temporal': False}` is rejected for MCP tools, like the constructor-dict form is.
+
+    `temporalize_mcp_toolset` rejects the constructor-dict form up front (covered by
+    `test_temporal_agent_mcp_server_activity_disabled`), so tool metadata is the only route that
+    reaches the check inside the wrapper — hence resolving the config directly here, as the
+    `child_workflow` test below does.
+    """
+    durable = temporalize_mcp_toolset(
+        MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp_activity_opt_out'),
+        activity_name_prefix='agent__mcp_activity_opt_out',
+        activity_config={},
+        tool_activity_config={},
+        deps_type=type(None),
+    )
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='boom', metadata={'temporal': False}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    with pytest.raises(UserError, match='cannot be run outside of an activity'):
+        durable._resolve_tool_config(tool, 'boom')  # pyright: ignore[reportPrivateUsage]
+
+
 def test_temporal_mcp_toolset_rejects_child_workflow():
     """`metadata={'temporal': {'child_workflow': ...}}` is rejected for MCP tools too.
 
@@ -7001,7 +7026,8 @@ async def test_durability_child_workflow_tool_runs_nested_agent(client: Client):
 
 
 async def buggy_delegate() -> str:
-    raise ValueError('boom')  # pragma: no cover -- executed inside the child workflow
+    # Runs as workflow code in this same process, unlike an activity, so it is measured.
+    raise ValueError('boom')
 
 
 buggy_child_workflow_toolset = FunctionToolset[object](id='buggy_child_workflow_toolset')
