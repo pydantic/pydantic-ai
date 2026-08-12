@@ -5,6 +5,7 @@ import json
 import re
 import warnings
 from collections.abc import Callable
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -6267,10 +6268,11 @@ def test_transformer_prefix_items_not_strict_compatible(array_schema: dict[str, 
         'properties': {'value': array_schema},
         'required': ['value'],
     }
+    expected_prefix_items = deepcopy(array_schema['prefixItems'])
     transformer = OpenAIJsonSchemaTransformer(schema, strict=None)
     result = transformer.walk()
 
-    assert result['properties']['value']['prefixItems'] == array_schema['prefixItems']
+    assert result['properties']['value']['prefixItems'] == expected_prefix_items
     assert transformer.is_strict_compatible is False
 
 
