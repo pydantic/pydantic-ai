@@ -212,6 +212,84 @@ from pydantic_ai import Agent
 agent = Agent.from_file('agent.yaml')
 ```
 
+### Realtime (speech-to-speech) sessions
+
+For voice models that stream audio over a persistent connection (OpenAI Realtime, Azure OpenAI,
+Gemini Live, or xAI Grok Voice), use
+`agent.realtime().session()` instead of `run()`. It reuses the agent's tools and instructions and runs
+the tool loop for you. Stream input with `send_audio`/`send`, and iterate the
+session to consume the **same part/event vocabulary as a streamed run** — `PartStartEvent` /
+`PartDeltaEvent` / `PartEndEvent` carrying `SpeechPart`s and `ToolCallPart`s, plus
+`FunctionToolCallEvent` / `FunctionToolResultEvent`, plus realtime control events (`RealtimeInputSpeechStartEvent`,
+`RealtimeInputSpeechEndEvent`, `RealtimeResponseInterruptedEvent`, ...). Stop on `RealtimeTurnCompleteEvent`: the exchange is
+over, the model has said everything it is going to say, and it is the user's turn again.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import (
+    PartDeltaEvent,
+    PartEndEvent,
+    SpeechPart,
+    SpeechPartDelta,
+)
+from pydantic_ai.realtime.openai import OpenAIRealtimeModelSettings
+
+agent = Agent(instructions='You are a helpful voice assistant.')
+
+
+async def main(microphone_chunk: bytes):
+    settings = OpenAIRealtimeModelSettings(
+        openai_voice='alloy', turn_detection={'sensitivity': 'high'}
+    )
+    async with agent.realtime(
+        'openai:gpt-realtime', model_settings=settings
+    ).session() as session:
+        await session.send_audio(microphone_chunk)  # PCM16 bytes
+        async for event in session:
+            match event:
+                case PartDeltaEvent(delta=SpeechPartDelta(audio_chunk=chunk)) if chunk:
+                    ...  # play audio out
+                case PartEndEvent(part=SpeechPart(speaker='user', transcript=t)):
+                    print('user said:', t)
+
+    # A session builds ordinary ModelMessage history: hand it off to a text agent.
+    notes = Agent('openai:gpt-5.2', instructions='Summarize.')
+    await notes.run(message_history=session.all_messages())
+```
+
+Key facts for building realtime agents:
+
+- **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
+  return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
+  are what carry over; OpenAI and Azure can also replay retained transcript-less *user* audio, Gemini
+  and xAI cannot, and assistant audio is never replayed. Streamed images all reach the provider, but
+  history keeps a sampled (`retain_images_every_n`) and bounded (`retain_images_max`, default `100`,
+  oldest evicted first) record.
+- **No `output_type`**: realtime models don't do structured output. Delegate hard work to a text
+  agent behind a tool, or hand off history afterwards.
+- **Check the model profile before calling profile-gated methods**: `model.profile` (a
+  `RealtimeModelProfile`, the realtime counterpart to `ModelProfile`) reports
+  `supports_manual_turn_control`, `supports_interruption`, `supports_image_input`,
+  `supports_output_truncation`, and `supports_session_seeding`. OpenAI and Azure OpenAI support all of these; Gemini
+  Live lacks `supports_manual_turn_control`, `supports_interruption`, and `supports_output_truncation`
+  (automatic VAD only). Calling an unsupported method raises `UserError` up front.
+- **Turn detection**: use the shared `TurnDetection` setting for sensitivity, prefix padding, and
+  silence duration across providers. Use `openai_turn_detection`, `xai_turn_detection`, or
+  `google_vad` only for finer provider-specific control; when present, they fully override the shared
+  setting. Automatic detection is on by default (`True`); set `turn_detection=False` for push-to-talk
+  (OpenAI/Azure/xAI only — Gemini has no manual turn controls and raises).
+- **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
+  the model keeps speaking meanwhile is provider-specific (OpenAI/Azure do; Gemini needs
+  `google_async_tool_calls=True` on a native-audio model).
+- **Browser WebRTC (OpenAI and Azure OpenAI)**: for browser voice agents, relay the browser's SDP
+  offer server-side with `agent.realtime(model).answer_webrtc_offer(sdp_offer)` — the agent's
+  resolved instructions and tools are baked in and the API key stays on the server — then attach a
+  control-plane **sideband** with `.session(provider_session=answer.session)`. The browser owns the
+  audio; the sideband session runs tools and builds history (its audio methods raise, and
+  `audio_retention` must stay `'transcript_only'`).
+
+See the [Realtime guide](https://ai.pydantic.dev/realtime/) for the full walkthrough.
+
 ## Task Routing Table
 
 Load only the most relevant reference first. Read additional references only if the task spans multiple areas.

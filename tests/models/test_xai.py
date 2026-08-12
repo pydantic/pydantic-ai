@@ -17,9 +17,9 @@ Across these tests, we verify:
 from __future__ import annotations as _annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import timezone
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from pydantic import BaseModel
@@ -60,11 +60,11 @@ from pydantic_ai import (
     VideoUrl,
     WebSearchTool,
 )
-from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     CachePoint,
+    FinishReason,
     UploadedFile,
 )
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
@@ -99,13 +99,12 @@ from .mock_xai import (
 with try_import() as imports_successful:
     import xai_sdk.chat as chat_types
     from xai_sdk.chat import required_tool
-    from xai_sdk.proto import chat_pb2, usage_pb2
+    from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
 
     from pydantic_ai.models import xai as xai_module
     from pydantic_ai.models.xai import (
         XaiModel,
         XaiModelSettings,
-        XaiStreamedResponse,
         _extract_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.providers.xai import XaiProvider
@@ -6116,72 +6115,6 @@ role: ROLE_USER
 """)
 
 
-async def test_stream_cancel(allow_model_requests: None):
-    stream = [get_grok_text_chunk('hello '), get_grok_text_chunk('world')]
-    mock_client = MockXai.create_mock_stream([stream])
-    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-    agent = Agent(m)
-
-    async with agent.run_stream('') as result:
-        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
-            break
-        await result.cancel()
-        await result.cancel()  # double cancel is a no-op
-        assert result.cancelled
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='hello ')],
-                usage=RequestUsage(input_tokens=2, output_tokens=1, cost=Decimal('9E-7')),
-                model_name='grok-4-fast-non-reasoning',
-                timestamp=IsDatetime(),
-                provider_name='xai',
-                provider_url='https://api.x.ai/v1',
-                provider_response_id='grok-123',
-                finish_reason='stop',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-                state='interrupted',
-            ),
-        ]
-    )
-
-
-@pytest.mark.parametrize(
-    ('error_message', 'raises'),
-    [
-        ('asynchronous generator is already running', False),
-        ('boom', True),
-    ],
-)
-async def test_xai_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
-    class FailingStream:
-        async def aclose(self) -> None:
-            raise RuntimeError(error_message)
-
-    stream = FailingStream()
-    response = XaiStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='grok-4-fast-non-reasoning',
-        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
-        _timestamp=datetime.now(timezone.utc),
-        _provider=cast(Any, type('ProviderStub', (), {'name': 'xai', 'base_url': 'https://api.x.ai/v1'})()),
-    )
-
-    if raises:
-        with pytest.raises(RuntimeError, match='boom'):
-            await response.close_stream()
-    else:
-        await response.close_stream()
-
-
 async def test_xai_legacy_grok_provider_name_in_history(allow_model_requests: None):
     """`provider_name='grok'` from 1.x histories (when `GrokProvider` existed) must still route through the native xAI paths on replay."""
     response = create_response(content='second response', usage=create_usage(prompt_tokens=20, completion_tokens=5))
@@ -6236,6 +6169,49 @@ async def test_xai_legacy_grok_provider_name_in_history(allow_model_requests: No
     for m in assistant_msgs:
         for part in m.get('content', []):
             assert '<think>' not in part.get('text', '')
+
+
+@pytest.mark.parametrize('finish_reason', ['stop', 'length', 'tool_call', 'error'])
+async def test_xai_stream_finish_reason_matches_non_stream(allow_model_requests: None, finish_reason: FinishReason):
+    """Streamed and non-streamed responses must map the same xAI finish reason to the same value."""
+    mock_client = MockXai.create_mock([create_response(content='hello world', finish_reason=finish_reason)])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    non_stream_result = await Agent(m).run('')
+
+    stream = [get_grok_text_chunk('hello ', ''), get_grok_text_chunk('world', finish_reason)]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    async with Agent(m).run_stream('') as result:
+        await result.get_output()
+
+    assert result.response.finish_reason == non_stream_result.response.finish_reason == finish_reason
+
+
+async def test_xai_stream_intermediate_chunks_keep_finish_reason_unset(allow_model_requests: None):
+    """Intermediate streaming chunks (REASON_INVALID) must not report a premature 'stop'."""
+    stream = [
+        get_grok_text_chunk('hello ', ''),
+        get_grok_text_chunk('world', ''),
+        get_grok_text_chunk('.', 'stop'),
+    ]
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m)
+
+    finish_reasons: list[FinishReason | None] = []
+    async with agent.run_stream('') as result:
+        async for response in result.stream_response(debounce_by=None):
+            finish_reasons.append(response.finish_reason)
+
+    # Unset while the two intermediate chunks arrive, 'stop' from the finishing chunk onwards.
+    assert finish_reasons[:2] == [None, None]
+    assert all(reason == 'stop' for reason in finish_reasons[2:])
+
+
+def test_xai_finish_reason_proto_map_covers_all_enum_members():
+    """Every proto finish reason except REASON_INVALID ("not finished yet") must be mapped."""
+    unmapped = set(sample_pb2.FinishReason.values()) - set(xai_module._FINISH_REASON_PROTO_MAP)  # pyright: ignore[reportPrivateUsage]
+    assert unmapped == {sample_pb2.FinishReason.REASON_INVALID}
 
 
 # End of tests

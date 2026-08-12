@@ -21,6 +21,71 @@
     ]
   },
   {
+    "label": "Realtime (speech-to-speech)",
+    "items": [
+      {
+        "label": "Overview",
+        "slug": "realtime/overview"
+      },
+      {
+        "label": "Audio, images, and transcripts",
+        "slug": "realtime/audio"
+      },
+      {
+        "label": "Events",
+        "slug": "realtime/events"
+      },
+      {
+        "label": "Turns and interruptions",
+        "slug": "realtime/turns"
+      },
+      {
+        "label": "Tools",
+        "slug": "realtime/tools"
+      },
+      {
+        "label": "Capabilities and hooks",
+        "slug": "realtime/capabilities"
+      },
+      {
+        "label": "History and handoff",
+        "slug": "realtime/history"
+      },
+      {
+        "label": "Connecting a frontend",
+        "slug": "realtime/deployment"
+      },
+      {
+        "label": "Connection lifecycle",
+        "slug": "realtime/lifecycle"
+      },
+      {
+        "label": "Usage and observability",
+        "slug": "realtime/observability"
+      },
+      {
+        "label": "Troubleshooting",
+        "slug": "realtime/troubleshooting"
+      },
+      {
+        "label": "OpenAI",
+        "slug": "realtime/openai"
+      },
+      {
+        "label": "Azure",
+        "slug": "realtime/azure"
+      },
+      {
+        "label": "Google Gemini",
+        "slug": "realtime/gemini"
+      },
+      {
+        "label": "xAI",
+        "slug": "realtime/xai"
+      }
+    ]
+  },
+  {
     "label": "Core Concepts",
     "items": [
       {
@@ -71,11 +136,14 @@
       "models/bedrock",
       "models/cerebras",
       "models/cohere",
+      "models/crusoe",
       "models/groq",
       "models/huggingface",
       "models/mistral",
       "models/ollama",
-      "models/openrouter"
+      "models/openrouter",
+      "models/snowflake",
+      "models/zai"
     ]
   },
   {
@@ -300,6 +368,10 @@
             "slug": "evals/evaluators/llm-judge"
           },
           {
+            "label": "Standard Quality Metrics",
+            "slug": "evals/evaluators/standard-quality-metrics"
+          },
+          {
             "label": "Third-Party Integrations",
             "slug": "evals/evaluators/framework-integrations"
           },
@@ -314,6 +386,10 @@
           {
             "label": "Span-Based",
             "slug": "evals/evaluators/span-based"
+          },
+          {
+            "label": "Agentic",
+            "slug": "evals/evaluators/agentic"
           }
         ]
       },
@@ -459,7 +535,8 @@
         "items": [
           "examples/sql-gen",
           "examples/data-analyst",
-          "examples/rag"
+          "examples/rag",
+          "examples/twelvelabs-video-agent"
         ]
       },
       {
@@ -467,6 +544,16 @@
         "items": [
           "examples/stream-markdown",
           "examples/stream-whales"
+        ]
+      },
+      {
+        "label": "Realtime",
+        "items": [
+          "examples/realtime-voice",
+          "examples/realtime-text-to-audio",
+          "examples/realtime-handoff",
+          "examples/realtime-camera",
+          "examples/realtime-webrtc"
         ]
       },
       {
@@ -519,6 +606,7 @@
               "api/models/bedrock_mantle",
               "api/models/cerebras",
               "api/models/cohere",
+              "api/models/crusoe",
               "api/models/fallback",
               "api/models/function",
               "api/models/google",
@@ -531,13 +619,26 @@
               "api/models/ollama",
               "api/models/openai",
               "api/models/openrouter",
+              "api/models/snowflake",
               "api/models/test",
+              "api/models/zai",
               "api/models/wrapper"
             ]
           },
           "api/output",
           "api/profiles",
           "api/providers",
+          "api/realtime",
+          {
+            "label": "realtime",
+            "items": [
+              "api/realtime/codec",
+              "api/realtime/openai",
+              "api/realtime/google",
+              "api/realtime/xai",
+              "api/realtime/azure"
+            ]
+          },
           "api/result",
           "api/retries",
           "api/run",

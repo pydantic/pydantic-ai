@@ -137,6 +137,28 @@ def test_sanitize_messages_strips_compaction_provenance_stamp():
     }
 
 
+def test_sanitize_messages_strips_compaction_parts_for_mixed_custody():
+    """`strip_compaction_parts=True` drops compaction parts so a client-supplied boundary can't
+    hide trusted server-side history the sanitized messages are combined with; a response left
+    with no parts is dropped entirely. Off by default: pure client custody honors the client's
+    boundaries."""
+    compaction_only = ModelResponse(
+        parts=[CompactionPart(content='Client summary.', provider_name='openai')],
+    )
+    mixed = ModelResponse(
+        parts=[CompactionPart(content='Another summary.', provider_name='openai'), TextPart(content='kept')],
+    )
+    messages: list[ModelMessage] = [compaction_only, ModelRequest.user_text_prompt('hi'), mixed]
+
+    stripped = sanitize_messages(messages, strip_compaction_parts=True)
+    assert not any(isinstance(part, CompactionPart) for message in stripped for part in message.parts)
+    assert message_part(stripped, TextPart, message_index=1).content == 'kept'
+    assert len(stripped) == 2  # the compaction-only response is dropped entirely
+
+    kept = sanitize_messages(messages)
+    assert sum(isinstance(part, CompactionPart) for message in kept for part in message.parts) == 2
+
+
 def test_sanitize_messages_strips_dangling_call_exposed_by_dropped_tail():
     """A dangling tool call re-exposed as the tail by a dropped trailing message is still stripped.
 

@@ -53,6 +53,10 @@ class AnthropicModelProfile(ModelProfile, total=False):
 
     When True, unified `thinking` translates to `{'type': 'adaptive'}`.
     When False, it translates to `{'type': 'enabled', 'budget_tokens': N}`.
+
+    Because adaptive thinking — unlike extended thinking — is compatible with a forced `tool_choice`,
+    this also decides whether unified `thinking` blocks tool forcing and switches Tool Output to
+    Native or Prompted Output.
     """
 
     anthropic_supports_effort: bool
@@ -110,7 +114,7 @@ class AnthropicModelProfile(ModelProfile, total=False):
     anthropic_supports_forced_tool_choice: bool
     """Whether the model accepts a forced `tool_choice` (`{'type': 'any'}` or `{'type': 'tool'}`).
 
-    Most Anthropic models only reject forcing alongside thinking mode; Claude Fable 5 and Claude
+    Most Anthropic models only reject forcing alongside extended thinking; Claude Fable 5 and Claude
     Mythos Preview reject it unconditionally with a 400. When False, a resolved `required` tool choice
     falls back to `auto` (filtering tools to the requested set), and an explicit `tool_choice='required'`
     (or an explicit list of tools) raises a `UserError`.
@@ -233,8 +237,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
 
     # Claude Fable 5, Claude Mythos 5, and Claude Mythos Preview reject a forced `tool_choice`
-    # (`any`/`tool`) outright, unlike other Anthropic models which only reject forcing while thinking
-    # is enabled. The forcing-tool-use docs name Mythos Preview explicitly; Mythos 5 is its successor
+    # (`any`/`tool`) outright, unlike other Anthropic models which only reject forcing with extended
+    # thinking. The forcing-tool-use docs name Mythos Preview explicitly; Mythos 5 is its successor
     # and the safety-classifier-free twin of Fable 5, both of which reject forcing.
     supports_forced_tool_choice = not model_name.startswith(
         ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview')
