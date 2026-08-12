@@ -8,6 +8,21 @@ import httpx2
 import pytest
 from pydantic import ValidationError
 
+from .conftest import try_import
+
+with try_import() as anthropic_imports_successful:
+    from anthropic import AsyncAnthropic
+
+with try_import() as groq_imports_successful:
+    from groq import AsyncGroq
+
+with try_import() as google_imports_successful:
+    from google.genai import Client as GoogleClient
+    from google.genai.types import HttpOptions
+
+with try_import() as mistral_imports_successful:
+    from mistralai.client import Mistral
+
 _HTTPX_FREE_CORE = """
 import sys
 
@@ -59,29 +74,22 @@ def test_core_runs_without_httpx() -> None:
     assert result.stderr == ''
 
 
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_anthropic_still_rejects_httpx2_client() -> None:
-    pytest.importorskip('anthropic')
-    from anthropic import AsyncAnthropic
-
     async with httpx2.AsyncClient() as client:
         with pytest.raises(TypeError, match=r'Expected an instance of `httpx\.AsyncClient`'):
             AsyncAnthropic(api_key='test', http_client=client)  # pyright: ignore[reportArgumentType]
 
 
+@pytest.mark.skipif(not groq_imports_successful(), reason='groq not installed')
 async def test_groq_still_rejects_httpx2_client() -> None:
-    pytest.importorskip('groq')
-    from groq import AsyncGroq
-
     async with httpx2.AsyncClient() as client:
         with pytest.raises(TypeError, match=r'Expected an instance of `httpx\.AsyncClient`'):
             AsyncGroq(api_key='test', http_client=client)  # pyright: ignore[reportArgumentType]
 
 
+@pytest.mark.skipif(not google_imports_successful(), reason='google-genai not installed')
 async def test_google_still_rejects_httpx2_client() -> None:
-    pytest.importorskip('google.genai')
-    from google.genai import Client as GoogleClient
-    from google.genai.types import HttpOptions
-
     async with httpx2.AsyncClient() as client:
         with pytest.raises(ValidationError, match='httpx_async_client'):
             GoogleClient(
@@ -92,10 +100,8 @@ async def test_google_still_rejects_httpx2_client() -> None:
             )
 
 
+@pytest.mark.skipif(not mistral_imports_successful(), reason='mistral not installed')
 async def test_mistral_accepts_httpx2_client() -> None:
-    pytest.importorskip('mistralai')
-    from mistralai.client import Mistral
-
     async with httpx2.AsyncClient() as client:
         mistral_client = Mistral(api_key='test', async_client=client)  # pyright: ignore[reportArgumentType]
 

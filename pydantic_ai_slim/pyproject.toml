@@ -81,7 +81,6 @@ xai = ["xai-sdk>=1.14.0"]
 groq = ["groq>=0.25.0"]
 openrouter = ["openai[httpx2]>=2.47.0"]
 # `mistralai>=2.9.2` accepts `httpx2.AsyncClient` and no longer caps OpenTelemetry semantic conventions.
-# This floor also excludes `mistralai==2.4.6`, which was quarantined on PyPI due to a supply-chain attack (see #5382).
 mistral = ["mistralai>=2.9.2"]
 bedrock = ["boto3>=1.42.63"]
 # Amazon Bedrock Mantle serves OpenAI models through an OpenAI-compatible API via `AsyncBedrockOpenAI`,

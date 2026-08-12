@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import os
-import warnings
 from collections.abc import Callable
 from typing import overload
 
@@ -9,8 +8,7 @@ import httpx
 import httpx2
 
 from pydantic_ai import ModelProfile
-from pydantic_ai._http import create_httpx2_client
-from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai._http import create_httpx2_client, warn_if_legacy_httpx_client
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -118,13 +116,8 @@ class MistralProvider(Provider[Mistral]):
                 http_client = create_httpx2_client()
                 self._own_http_client = http_client  # pyright: ignore[reportIncompatibleVariableOverride]
                 self._http_client_factory = create_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
-            elif isinstance(http_client, httpx.AsyncClient):
-                warnings.warn(
-                    '`httpx.AsyncClient` support for the Mistral provider is deprecated and will be removed in v3; '
-                    'use `httpx2.AsyncClient` instead.',
-                    PydanticAIDeprecationWarning,
-                    stacklevel=2,
-                )
+            else:
+                warn_if_legacy_httpx_client(http_client, consumer='the Mistral provider', stacklevel=2)
 
             # Mistral's runtime-checkable client protocol accepts HTTPX2, but its annotations name legacy HTTPX types.
             self._client = Mistral(
