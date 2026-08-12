@@ -70,13 +70,13 @@ def test_check_vcr_cassette_usage_allows_fully_used_cassette() -> None:
 async def test_blockbuster_exemption_contract() -> None:
     """The detector catches unapproved calls while coverage's source reads stay exempt."""
     bb = BlockBuster(['tests.test_conftest'])
+    for func, filename, functions in BLOCKBUSTER_EXEMPTIONS:
+        bb.functions[func].can_block_in(filename, functions)
+
     try:
         bb.activate()
         with pytest.raises(BlockingError):
             _blocking_stat()
-
-        for func, filename, functions in BLOCKBUSTER_EXEMPTIONS:
-            bb.functions[func].can_block_in(filename, functions)
 
         assert ('os.stat', 'coverage/python.py', 'get_python_source') in BLOCKBUSTER_EXEMPTIONS
         assert ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source') in BLOCKBUSTER_EXEMPTIONS
