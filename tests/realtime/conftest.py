@@ -175,6 +175,11 @@ def _realtime_api_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('XAI_API_KEY', 'mock-api-key')
     monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://mock.openai.azure.com/openai/v1')
     monkeypatch.setenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
+    # Voice Live is a distinct resource with its own credential set. Tests build their provider from the
+    # Azure OpenAI values above (Voice Live falls back to them), so clear any real `AZURE_VOICELIVE_*` a
+    # developer has exported — otherwise it takes precedence and breaks the fallback-URL assertions.
+    for _var in ('AZURE_VOICELIVE_ENDPOINT', 'AZURE_VOICELIVE_API_KEY', 'AZURE_VOICELIVE_API_VERSION'):
+        monkeypatch.delenv(_var, raising=False)
 
 
 def _record_mode(request: pytest.FixtureRequest) -> str | None:
@@ -345,6 +350,19 @@ def azure_ws_cassette(
         endpoint = f'{endpoint.rstrip("/")}/openai/v1'
     with _ws_cassette(request, 'openai') as cassette:
         yield AzureProvider(azure_endpoint=endpoint, api_key=api_key), cassette
+
+
+@pytest.fixture
+def azure_voice_live_ws_cassette(
+    request: pytest.FixtureRequest, azure_config: tuple[str, str]
+) -> Iterator[tuple[AzureProvider, RealtimeCassette]]:
+    """An `AzureProvider` whose Azure AI Voice Live WebSocket is cassette-backed."""
+    if not azure_imports_successful():  # pragma: no cover
+        pytest.skip('openai / websockets not installed')
+    endpoint, api_key = azure_config
+    endpoint = endpoint.partition('/openai/')[0].rstrip('/')
+    with _ws_cassette(request, 'openai') as cassette:
+        yield AzureProvider(azure_endpoint=endpoint, api_version='2026-04-10', api_key=api_key), cassette
 
 
 @pytest.fixture
