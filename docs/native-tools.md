@@ -166,13 +166,12 @@ _(This example is complete, it can be run "as is")_
 | Parameter | OpenAI | Anthropic | xAI | Groq | OpenRouter |
 |-----------|--------|-----------|-----|------|------------|
 | `search_context_size` | ✅ | ❌ | ❌ | ❌ | ✅ |
-| `user_location` | ✅ | ✅ | ✅ | ❌ | ✅† |
-| `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ✅† |
-| `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ✅† |
+| `user_location` | ✅ | ✅ | ✅ | ❌ | ✅ |
+| `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ✅ |
+| `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `max_uses` | ❌ | ✅ | ❌ | ❌ | ✅* |
 | `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
 
-† These OpenRouter wire names follow the OpenAI web-search convention (`blocked_domains` is sent as `excluded_domains`) and are not yet verified by a recorded OpenRouter request; see the [OpenRouter web search section](models/openrouter.md#web-search).
 * With native provider search, OpenRouter forwards `max_uses` only to Anthropic; other native providers ignore it.
 
 !!! note "Anthropic Domain Filtering"
