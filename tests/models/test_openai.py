@@ -59,7 +59,7 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.openai import OpenAIChatModel, _normalize_openai_timeout
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import merge_profile
@@ -2040,9 +2040,13 @@ async def test_text_content_input(allow_model_requests: None):
     )
 
 
-def test_normalize_openai_timeout() -> None:
-    timeout = _normalize_openai_timeout(httpx.Timeout(connect=1, read=2, write=3, pool=4))
+def test_legacy_timeout_normalized(allow_model_requests: None) -> None:
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='hello', role='assistant')))
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
 
+    agent.run_sync('hello', model_settings=ModelSettings(timeout=httpx.Timeout(connect=1, read=2, write=3, pool=4)))
+
+    timeout = get_mock_chat_completion_kwargs(mock_client)[0]['timeout']
     assert isinstance(timeout, httpx2.Timeout)
     assert (timeout.connect, timeout.read, timeout.write, timeout.pool) == (1, 2, 3, 4)
 
