@@ -221,15 +221,17 @@ model = AzureRealtimeModel(
     The [browser WebRTC](#browser-webrtc-and-microsoft-entra-id) flow above is for the GA Azure OpenAI
     realtime path. Voice Live negotiates WebRTC over its own WebSocket control channel instead, which
     isn't implemented yet, so `answer_webrtc_offer` / `create_client_secret` raise `UserError` whenever
-    `azure_voice_live=True` is in effect. Use a WebSocket session with Voice Live for now
+    the session resolves to Voice Live — set with `azure_voice_live=True`, or auto-routed because the
+    model is only served by Voice Live (e.g. `gpt-5`). Use a WebSocket session with Voice Live for now
     ([issue #6702](https://github.com/pydantic/pydantic-ai/issues/6702)).
 
-    [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] reports `False` only
-    when Voice Live is set on the **model**, as above.
+    [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] reports `False`
+    whenever the **model** resolves to Voice Live — forced by `azure_voice_live=True` at construction, or
+    auto-routed for a Voice-Live-only model.
     [`profile`][pydantic_ai.realtime.RealtimeModel.profile] is a property of the model and cannot see
-    `model_settings` passed per session, so branching on the flag requires enabling Voice Live at model
-    construction; otherwise check `azure_voice_live` on your own settings. Either way the signaling
-    methods still refuse at the point of use, so the flag is an early check rather than the safety net.
+    `model_settings` passed per session, so a per-session `azure_voice_live=True` on an otherwise-GA
+    model isn't reflected in the flag. The signaling methods still refuse at the point of use in that
+    case, so the flag is an early check and the point-of-use guard is the safety net.
 
 ## Feature support and limitations
 

@@ -416,7 +416,7 @@ async def test_voice_live_rejects_webrtc_signaling() -> None:
     with pytest.raises(UserError, match='not yet supported for Azure AI Voice Live'):
         await model.answer_webrtc_offer('v=0\r\n')
     # `connect_webrtc` (attaching a server sideband to an already-negotiated call) is the third signaling
-    # entry point; it is guarded on the same setting so a Voice Live session can't be sidebanded onto the
+    # entry point; it is guarded the same way so a Voice Live session can't be sidebanded onto the
     # inherited GA endpoint. The guard fires eagerly, before the call handle or messages are touched.
     webrtc_session = WebRTCSession('azure', session_id='call_mock')
     params = ModelRequestParameters()
@@ -437,5 +437,19 @@ async def test_voice_live_rejects_webrtc_signaling() -> None:
     with pytest.raises(UserError, match='not yet supported for Azure AI Voice Live'):
         async with ga_model.connect_webrtc(
             webrtc_session, messages=[], model_settings=per_call, model_request_parameters=params
+        ):
+            pass  # pragma: no cover — the guard raises on enter, before the body runs
+
+    # A Voice-Live-only model (e.g. `gpt-5`) auto-routes to Voice Live with no `azure_voice_live` setting
+    # at all, so the guard must consult routing, not just the raw setting — otherwise these mint a GA
+    # secret / attach a GA sideband for a Voice Live session.
+    auto_model = AzureRealtimeModel('gpt-5', provider=provider)
+    with pytest.raises(UserError, match='not yet supported for Azure AI Voice Live'):
+        await auto_model.create_client_secret()
+    with pytest.raises(UserError, match='not yet supported for Azure AI Voice Live'):
+        await auto_model.answer_webrtc_offer('v=0\r\n')
+    with pytest.raises(UserError, match='not yet supported for Azure AI Voice Live'):
+        async with auto_model.connect_webrtc(
+            webrtc_session, messages=[], model_settings=None, model_request_parameters=params
         ):
             pass  # pragma: no cover — the guard raises on enter, before the body runs

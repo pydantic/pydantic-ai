@@ -332,7 +332,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             profile = merge_realtime_profile(profile, RealtimeModelProfile(supports_webrtc=False))
         return profile
 
-    def _resolve_voice_live(self, model_settings: OpenAIRealtimeModelSettings | None) -> bool:
+    def _resolve_voice_live(self, model_settings: RealtimeModelSettings | None) -> bool:
         """Whether this session uses Azure AI Voice Live rather than the GA realtime API — the sole authority.
 
         `azure_voice_live` chooses the path for a model served by both; the model's recognized
@@ -346,6 +346,24 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         )
         apis = cast('AzureRealtimeModelProfile', self.profile).get('azure_realtime_apis')
         return _route_voice_live(use_voice_live, apis, self.model)
+
+    def _reject_webrtc_if_voice_live(self, settings: RealtimeModelSettings | None) -> None:
+        """Reject browser WebRTC signaling for a Voice Live session, explicit or auto-routed.
+
+        Voice Live negotiates WebRTC over its own WebSocket control channel, not the GA
+        `/realtime/client_secrets` + `/realtime/calls` path this class inherits, so GA signaling would
+        hit the wrong endpoint. Gate on `_resolve_voice_live` (the routing authority), not the raw
+        `azure_voice_live` setting, so a Voice-Live-only model that auto-routes there without the setting
+        (e.g. `gpt-5`) is rejected too rather than minting a GA secret for a Voice Live session. Shared by
+        `create_client_secret` (which also covers `answer_webrtc_offer`) and `connect_webrtc`.
+        """
+        if self._resolve_voice_live(settings):
+            raise UserError(
+                'Browser WebRTC is not yet supported for Azure AI Voice Live: Voice Live negotiates WebRTC '
+                'over its WebSocket control channel, which this model does not implement yet. Use a WebSocket '
+                'session, or the GA Azure OpenAI realtime model for browser WebRTC. '
+                'See https://github.com/pydantic/pydantic-ai/issues/6702.'
+            )
 
     @property
     def _azure_provider(self) -> AzureProvider:
@@ -405,19 +423,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         model_settings: RealtimeModelSettings | None = None,
         expires_after_seconds: int | None = None,
     ) -> RealtimeClientSecret:
-        settings = self._merge_model_settings(model_settings)
-        if settings and cast('AzureRealtimeModelSettings', settings).get('azure_voice_live'):
-            # Voice Live negotiates WebRTC over its WebSocket control channel, not the GA
-            # `/realtime/client_secrets` + `/realtime/calls` path this inherits, so the GA signaling would
-            # hit the wrong endpoint. Reject it (browser WebRTC support tracked in the linked issue) rather
-            # than silently minting a GA secret for a Voice Live session. Guarding `create_client_secret`
-            # also covers `answer_webrtc_offer`, which mints through it.
-            raise UserError(
-                'Browser WebRTC is not yet supported for Azure AI Voice Live (`azure_voice_live=True`): '
-                'Voice Live negotiates WebRTC over its WebSocket control channel, which this model does not '
-                'implement yet. Use a WebSocket session, or the GA Azure OpenAI realtime model for browser '
-                'WebRTC. See https://github.com/pydantic/pydantic-ai/issues/6702.'
-            )
+        self._reject_webrtc_if_voice_live(self._merge_model_settings(model_settings))
         return await super().create_client_secret(
             instructions=instructions,
             tools=tools,
@@ -434,18 +440,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         model_settings: RealtimeModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncGenerator[OpenAIRealtimeConnection]:
-        settings = self._merge_model_settings(model_settings)
-        if settings and cast('AzureRealtimeModelSettings', settings).get('azure_voice_live'):
-            # Voice Live has no WebRTC sideband: it negotiates WebRTC over its own WebSocket control
-            # channel, so attaching a sideband to the inherited GA `/realtime/calls` endpoint would send a
-            # Voice Live session config to the wrong place and fail remotely. Reject locally, completing the
-            # signaling guard family alongside `create_client_secret` (which also covers `answer_webrtc_offer`).
-            raise UserError(
-                'Browser WebRTC is not yet supported for Azure AI Voice Live (`azure_voice_live=True`): '
-                'Voice Live negotiates WebRTC over its WebSocket control channel, which this model does not '
-                'implement yet. Use a WebSocket session, or the GA Azure OpenAI realtime model for browser '
-                'WebRTC. See https://github.com/pydantic/pydantic-ai/issues/6702.'
-            )
+        self._reject_webrtc_if_voice_live(self._merge_model_settings(model_settings))
         async with super().connect_webrtc(
             session,
             messages=messages,
