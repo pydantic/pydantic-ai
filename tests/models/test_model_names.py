@@ -5,12 +5,13 @@ from typing import Any, Literal, get_args
 
 import httpx
 import pytest
+from cassetter import RawResponse
 from typing_extensions import TypedDict
 
 from pydantic_ai.models import KnownModelName, known_model_names
 from pydantic_ai.providers.gateway import ModelProvider as GatewayModelProvider
 
-from ..conftest import try_import
+from ..conftest import FILTER_HEADERS, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import DEPRECATED_ANTHROPIC_MODELS, AnthropicModelName
@@ -44,11 +45,10 @@ pytestmark = [
 ]
 
 
-def modify_response(response: dict[str, Any], filter_headers: list[str]) -> dict[str, Any]:  # pragma: lax no cover
-    for header in response['headers'].copy():
-        assert isinstance(header, str)
+def modify_response(response: RawResponse, filter_headers: list[str]) -> RawResponse:  # pragma: lax no cover
+    for header in list(response.headers):
         if header.lower() in filter_headers:
-            del response['headers'][header]
+            del response.headers[header]
     return response
 
 
@@ -59,7 +59,7 @@ def vcr_config():  # pragma: lax no cover
 
     return {
         'record_mode': 'rewrite',
-        'filter_headers': ['accept-encoding'],
+        'filter_headers': [*FILTER_HEADERS, 'accept-encoding'],
         'before_record_response': partial(modify_response, filter_headers=['cache-control', 'connection']),
     }
 

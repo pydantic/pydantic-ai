@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from cassetter import Cassette
 from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     BinaryContent,
@@ -41,6 +41,7 @@ from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import request_json_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
@@ -449,7 +450,7 @@ async def test_mistral_history_uses_prompt_cache(allow_model_requests: None, mis
         model_settings=settings,
     )
 
-    second_request = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    second_request = request_json_body(vcr.requests[1])
     assert second_request['messages'][2]['content'] == [{'text': first.output, 'type': 'text'}]
     assert second.usage.cache_read_tokens >= 64
 
@@ -3035,7 +3036,7 @@ async def test_mistral_forwards_penalties(allow_model_requests: None, mistral_ap
     result = await agent.run('hello')
 
     assert result.output
-    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    sent = request_json_body(vcr.requests[0])
     assert sent['presence_penalty'] == 0.5
     assert sent['frequency_penalty'] == 0.25
 

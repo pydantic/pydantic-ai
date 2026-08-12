@@ -11,7 +11,7 @@ import pytest
 from pydantic_ai import Agent, UserError
 
 from .._inline_snapshot import raises, snapshot
-from ..conftest import TestEnv, try_import
+from ..conftest import FILTER_HEADERS, TestEnv, try_import
 
 with try_import() as imports_successful:
     from google.genai import Client
@@ -192,7 +192,7 @@ def vcr_config():
     return {
         'ignore_localhost': False,
         # Note: additional header filtering is done inside the serializer
-        'filter_headers': ['authorization', 'x-api-key'],
+        'filter_headers': FILTER_HEADERS,
         'decode_compressed_response': True,
     }
 

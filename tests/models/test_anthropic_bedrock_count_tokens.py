@@ -34,7 +34,7 @@ from ..cassette_utils import single_request_body
 from ..conftest import TestEnv, try_import
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
 with try_import() as imports_successful:
     from anthropic import NOT_GIVEN, AsyncAnthropicBedrock, BadRequestError, omit as OMIT
@@ -127,7 +127,7 @@ async def test_anthropic_bedrock_count_tokens_real_api(
 
     assert result.input_tokens == snapshot(18)
 
-    assert vcr.requests[0].path == snapshot('/model/anthropic.claude-sonnet-4-20250514-v1:0/count-tokens')  # pyright: ignore[reportUnknownMemberType]
+    assert vcr.requests[0].path == snapshot('/model/anthropic.claude-sonnet-4-20250514-v1:0/count-tokens')
     envelope = single_request_body(vcr)
     body = json.loads(base64.b64decode(envelope['input']['invokeModel']['body']))
     assert body == snapshot(

@@ -70,16 +70,16 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
-from ..cassette_utils import single_request_body
+from ..cassette_utils import request_json_body, single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
     from botocore.client import BaseClient
     from botocore.exceptions import ClientError
     from botocore.hooks import HierarchicalEmitter
+    from cassetter import Cassette
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
-    from vcr.cassette import Cassette
 
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelName, BedrockModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -1742,8 +1742,8 @@ def _bedrock_tool_result_media_kinds(cassette: Cassette) -> set[str]:
     sibling-splitting it (a placeholder `text` in the `toolResult` plus a separate file block).
     """
     kinds: set[str] = set()
-    for request in cassette.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        data: dict[str, Any] = json.loads(request.body)  # pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]
+    for request in cassette.requests:
+        data: dict[str, Any] = request_json_body(request)
         messages: list[dict[str, Any]] = data.get('messages', [])
         for message in messages:
             content: list[dict[str, Any]] = message.get('content', [])
@@ -1796,8 +1796,8 @@ async def test_bedrock_media_kind_delivered_in_tool_result(
 
     # The file rode inside the `toolResult`, and no sibling-split placeholder was emitted.
     assert file_kind in _bedrock_tool_result_media_kinds(vcr)
-    for request in vcr.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        assert 'See file' not in json.dumps(json.loads(request.body))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    for request in vcr.requests:
+        assert 'See file' not in json.dumps(request_json_body(request))
 
 
 async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, bedrock_provider: BedrockProvider):
@@ -3544,7 +3544,7 @@ async def test_bedrock_thinking_high_qwen_variant(
     # `<think>` tags, leaving empty visible text and triggering pydantic-ai's
     # output-validation retry — the cassette captures two recorded interactions. We
     # only need to assert on the wire shape of the first one.
-    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    sent = request_json_body(vcr.requests[0])
     assert sent['additionalModelRequestFields'] == {'reasoning_config': 'high'}
     # Loose response-shape pin: at least one ThinkingPart survives the
     # validation-retry roundtrip and reaches the final response.

@@ -1,11 +1,10 @@
 from __future__ import annotations as _annotations
 
-import json
 from typing import Any
 
 import pytest
+from cassetter import Cassette
 from inline_snapshot import snapshot
-from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, BinaryImage, ModelRequest, ModelResponse, TextPart, ThinkingPart, UserPromptPart
 from pydantic_ai.direct import model_request
@@ -14,6 +13,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.usage import RequestUsage
 
+from ..cassette_utils import request_json_body
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
@@ -91,8 +91,8 @@ async def test_zai_thinking_mode(allow_model_requests: None, zai_api_key: str, v
     # The unified `thinking` setting must reach the wire as Z.AI's `extra_body.thinking` payload (merged to
     # the top level by the OpenAI SDK), and the base OpenAI `reasoning_effort` parameter must be suppressed.
     # VCR cassette matchers aren't sensitive to the request body, so assert it explicitly.
-    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert len(vcr.requests) == 1
+    request_body = request_json_body(vcr.requests[0])
     assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
     assert 'reasoning_effort' not in request_body
 
@@ -118,8 +118,8 @@ async def test_zai_clear_thinking_without_thinking(allow_model_requests: None, z
     )
 
     # No `type` key: the bare `clear_thinking` payload is what we're confirming the API accepts.
-    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert len(vcr.requests) == 1
+    request_body = request_json_body(vcr.requests[0])
     assert request_body['thinking'] == {'clear_thinking': False}
 
 
@@ -159,8 +159,8 @@ async def test_zai_preserved_thinking_round_trip(allow_model_requests: None, zai
 
     # The prior-turn `ThinkingPart` must be replayed to Z.AI as `reasoning_content` on the second request,
     # alongside the `clear_thinking=False` payload. VCR matchers aren't sensitive to the body, so assert it.
-    assert len(vcr.requests) == 2  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    second_body = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert len(vcr.requests) == 2
+    second_body = request_json_body(vcr.requests[1])
     assert second_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
     assistant_messages = [m for m in second_body['messages'] if m['role'] == 'assistant']
     assert assistant_messages == snapshot([{'role': 'assistant', 'reasoning_content': IsStr(), 'content': IsStr()}])
@@ -189,8 +189,8 @@ async def test_zai_vision_thinking(
     # (verified at record time) is what confirms `thinking` reaches the request for this vision model. The
     # live transform — including the vision profile's `supports_thinking` gating — is unit-tested in
     # `test_zai_settings_transformation` and `test_zai_provider_model_profile`.
-    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert len(vcr.requests) == 1
+    request_body = request_json_body(vcr.requests[0])
     assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
 
 
@@ -213,8 +213,8 @@ async def test_zai_reasoning_effort(allow_model_requests: None, zai_api_key: str
         ]
     )
 
-    assert len(vcr.requests) == 1  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-    request_body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    assert len(vcr.requests) == 1
+    request_body = request_json_body(vcr.requests[0])
     assert request_body['thinking'] == {'type': 'enabled', 'clear_thinking': False}
     assert request_body['reasoning_effort'] == 'high'
 

@@ -10,7 +10,7 @@ import pytest
 from pydantic import TypeAdapter
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from tests.cassette_utils import CassetteContext

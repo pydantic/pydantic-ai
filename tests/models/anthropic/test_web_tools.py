@@ -30,7 +30,7 @@ from ..test_anthropic import (
 )
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
 with try_import() as imports_successful:
     from anthropic import (

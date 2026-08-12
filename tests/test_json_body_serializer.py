@@ -142,6 +142,29 @@ def test_deserialization_restores_body_removes_parsed_body(cassette_dict_base: d
     )
 
 
+def test_deserialization_leaves_interactions_without_a_parsed_body_alone():
+    """A non-JSON interaction has no `parsed_body` to restore, and must survive untouched.
+
+    Real cassettes covered this branch while the serializer was wired into playback.
+    """
+    yaml_text = """
+interactions:
+- request:
+    body: raw=payload
+    headers:
+      content-type:
+      - application/x-www-form-urlencoded
+  response:
+    body:
+      string: plain text
+    headers: {}
+"""
+    interaction = deserialize(yaml_text)['interactions'][0]
+
+    assert interaction['request']['body'] == 'raw=payload'
+    assert interaction['response']['body'] == {'string': 'plain text'}
+
+
 def test_round_trip_data_integrity(cassette_dict_base: dict[str, Any]):
     """
     Checks that going from an original cassette_dict -> serialize -> deserialize

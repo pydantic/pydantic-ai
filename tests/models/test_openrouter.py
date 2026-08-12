@@ -6,8 +6,8 @@ from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from cassetter import Cassette
 from pydantic import BaseModel, ValidationError
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     Agent,
