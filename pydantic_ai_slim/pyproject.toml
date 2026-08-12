@@ -125,9 +125,17 @@ google-realtime = ["pydantic-ai-slim[google,realtime]"]
 xai-realtime = ["pydantic-ai-slim[xai,openai,realtime]"]
 # MCP — `fastmcp-slim[client]` is the lightweight client-only distribution (no Starlette /
 # Uvicorn server stack). Pulls the `mcp` SDK transitively. For an in-process FastMCP server,
-# install the full `fastmcp` package directly alongside `[mcp]`. FastMCP 4 uses MCP SDK v2,
-# which is not yet supported (#6661).
-mcp = ["fastmcp-slim[client]>=3.3.0,<4"]
+# install the full `fastmcp` package directly alongside `[mcp]`. FastMCP 4 (MCP SDK v2) is
+# supported concurrently with FastMCP 3; resolvers only select FastMCP 4 with a pre-release opt-in
+# until 4.0.0 ships (#6661).
+mcp = ["fastmcp-slim[client]>=3.3.0,<5"]
+# Explicit task execution (`use_task=True`) on FastMCP 4, where tasks live in the separate
+# `fastmcp-tasks` extension. Kept out of `[mcp]` mirroring fastmcp's own opt-in `tasks` extra:
+# it pulls the full FastMCP server stack, and ordinary calls drive task-only tools to
+# completion without it. `<5` matches the `[mcp]` cap. The direct `fastmcp-slim` floor spells
+# out that this extra implies FastMCP 4 and opts resolvers into the pre-release, which
+# `fastmcp-tasks`'s transitive pin alone does not.
+mcp-tasks = ["fastmcp-tasks>=4.0.0b1,<5", "fastmcp-slim[client]>=4.0.0b1,<5"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # UI

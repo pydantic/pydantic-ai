@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
-from blockbuster import BlockBuster, blockbuster_ctx
+from blockbuster import BlockBuster
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 from vcr.record_mode import RecordMode
@@ -353,6 +353,9 @@ for _lazy_module in ('pandas', 'ddgs.ddgs'):
 # Each entry should say why the blocking call is acceptable; anything not listed here should be
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
 BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
+    # coverage reads Python source files while collecting coverage data.
+    ('os.stat', 'coverage/python.py', 'get_python_source'),
+    ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source'),
     # `load_mcp_toolsets` is a sync config-file loader; reading the file is its documented job.
     ('os.stat', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
     ('io.BufferedReader.read', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
@@ -367,8 +370,9 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.stat', 'pydantic_ai/providers/google_cloud.py', '__init__'),
     ('io.TextIOWrapper.read', 'pydantic_ai/providers/google_cloud.py', '__init__'),
     ('io.BufferedReader.read', 'pydantic_ai/providers/google_cloud.py', '__init__'),
-    # the anthropic SDK's Bedrock client resolves AWS credentials (botocore config reads) lazily
-    # on the first request.
+    # Anthropic's async Bedrock clients synchronously resolve/sign AWS credentials
+    # (https://github.com/anthropics/anthropic-sdk-python/issues/1770); remove after upstream
+    # covers both paths.
     ('os.stat', 'pydantic_ai/models/_anthropic_bedrock_count_tokens.py', 'count_tokens_via_bedrock'),
     ('io.TextIOWrapper.read', 'pydantic_ai/models/_anthropic_bedrock_count_tokens.py', 'count_tokens_via_bedrock'),
     ('io.BufferedReader.read', 'pydantic_ai/models/_anthropic_bedrock_count_tokens.py', 'count_tokens_via_bedrock'),
@@ -396,13 +400,18 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
 def blockbuster() -> Iterator[BlockBuster]:
     """Raise `BlockingError` when library code makes a blocking call inside the event loop.
 
-    Scanned modules are the shipped packages only, so blocking calls originating in tests,
-    fixtures, and third-party code (e.g. VCR reading cassettes) are not flagged.
+    Scanned modules are the shipped packages only, so test-only and third-party stacks (e.g. VCR
+    reading cassettes) are ignored. Calls from user callbacks and tools remain covered when a
+    scanned library frame is below them.
     """
-    with blockbuster_ctx(['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai']) as bb:
+    bb = BlockBuster(['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai'])
+    try:
+        bb.activate()
         for func, filename, functions in BLOCKBUSTER_EXEMPTIONS:
             bb.functions[func].can_block_in(filename, functions)
         yield bb
+    finally:
+        bb.deactivate()
 
 
 @pytest.fixture

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, TypeVar
@@ -39,6 +40,9 @@ AgentDepsT = TypeVar('AgentDepsT')
 OutputDataT = TypeVar('OutputDataT')
 
 
+_CACHE_FILE_LOCK = threading.Lock()
+
+
 async def _get_cache_dir() -> Path:
     """Get the cache directory for storing UI HTML files.
 
@@ -54,17 +58,18 @@ async def _get_cache_dir() -> Path:
     return cache_dir
 
 
-async def _read_cached_file(cache_file: Path) -> bytes | None:
+def _read_cached_file(cache_file: Path) -> bytes | None:
     """Return cached file contents, or `None` if it is missing or empty.
 
     An empty file is treated as a miss (a truncated/partial write left by a prior crash)
     so the caller refetches instead of serving an incomplete payload.
     """
-    try:
-        content = await anyio.Path(cache_file).read_bytes()
-    except FileNotFoundError:
-        return None
-    return content or None
+    with _CACHE_FILE_LOCK:
+        try:
+            content = cache_file.read_bytes()
+        except FileNotFoundError:
+            return None
+        return content or None
 
 
 def _write_cached_file(cache_file: Path, content: bytes) -> None:
@@ -77,18 +82,19 @@ def _write_cached_file(cache_file: Path, content: bytes) -> None:
     Kept sync and offloaded via `to_thread` as a whole: `anyio.NamedTemporaryFile` needs anyio 4.9,
     above our floor.
     """
-    tmp_file = tempfile.NamedTemporaryFile(dir=cache_file.parent, prefix=f'.{cache_file.name}.', delete=False)
-    tmp_path = Path(tmp_file.name)
-    try:
-        # Close the handle before the rename: Windows refuses to replace a file that still has an
-        # open handle, which would break the atomic write there.
-        with tmp_file:
-            tmp_file.write(content)
-            tmp_file.flush()
-        os.replace(tmp_path, cache_file)
-    except BaseException:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    with _CACHE_FILE_LOCK:
+        tmp_file = tempfile.NamedTemporaryFile(dir=cache_file.parent, prefix=f'.{cache_file.name}.', delete=False)
+        tmp_path = Path(tmp_file.name)
+        try:
+            # Close the handle before the rename: Windows refuses to replace a file that still has an
+            # open handle, which would break the atomic write there.
+            with tmp_file:
+                tmp_file.write(content)
+                tmp_file.flush()
+            os.replace(tmp_path, cache_file)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
 
 async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
@@ -122,21 +128,25 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
 
 
 async def _read_local_file(path: Path) -> bytes:
-    expanded = await anyio.Path(path).expanduser()
-    if await expanded.is_file():
-        return await expanded.read_bytes()
-    raise FileNotFoundError(f'Local UI file not found: {expanded}')
+    return await anyio.to_thread.run_sync(_read_local_file_sync, path)
+
+
+def _read_local_file_sync(path: Path) -> bytes:
+    expanded = path.expanduser()
+    if expanded.is_file():
+        return expanded.read_bytes()
+    raise FileNotFoundError(f'Local UI file not found: {path}')
 
 
 async def _get_cached_or_fetch(cache_name: str, url: str) -> bytes:
     """Return `cache_name` from the filesystem cache, fetching it from `url` on a miss.
 
-    All filesystem access is async (`anyio.Path` / a thread for the atomic write) so serving
-    the UI never blocks the event loop.
+    Filesystem reads and writes run in worker threads, so serving the UI never blocks the event
+    loop.
     """
     cache_file = await _get_cache_dir() / cache_name
 
-    if content := await _read_cached_file(cache_file):
+    if content := await anyio.to_thread.run_sync(_read_cached_file, cache_file):
         return content
 
     async with httpx.AsyncClient() as client:

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import io
+import os
 from collections.abc import Callable
 
 import pytest
+from blockbuster import BlockBuster, BlockingError
+from coverage.python import get_python_source
 from vcr.cassette import Cassette
 from vcr.record_mode import RecordMode
 from vcr.request import Request
 
-from .conftest import check_vcr_cassette_usage, pytest_recording_configure
+from . import conftest
+from .conftest import BLOCKBUSTER_EXEMPTIONS, check_vcr_cassette_usage, pytest_recording_configure
 
 
 class RecordingVCR:
@@ -18,6 +23,10 @@ class RecordingVCR:
 
     def register_matcher(self, name: str, matcher: Callable[[Request, Request], None]) -> None:
         pass
+
+
+def _blocking_stat() -> None:
+    os.stat(__file__)
 
 
 def test_pytest_recording_configure_drops_google_oauth_token_requests() -> None:
@@ -55,3 +64,35 @@ def test_check_vcr_cassette_usage_allows_fully_used_cassette() -> None:
     cassette.play_counts[1] = 1  # pyright: ignore[reportUnknownMemberType]
 
     check_vcr_cassette_usage(cassette, strict_usage=False)
+
+
+@pytest.mark.anyio
+async def test_blockbuster_exemption_contract() -> None:
+    """The detector catches unapproved calls while coverage's source reads stay exempt."""
+    bb = BlockBuster(['tests.test_conftest'])
+    try:
+        bb.activate()
+        with pytest.raises(BlockingError):
+            _blocking_stat()
+
+        for func, filename, functions in BLOCKBUSTER_EXEMPTIONS:
+            bb.functions[func].can_block_in(filename, functions)
+
+        assert ('os.stat', 'coverage/python.py', 'get_python_source') in BLOCKBUSTER_EXEMPTIONS
+        assert ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source') in BLOCKBUSTER_EXEMPTIONS
+        assert get_python_source(__file__) is not None
+    finally:
+        bb.deactivate()
+
+
+def test_blockbuster_deactivates_when_exemption_setup_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(conftest, 'BLOCKBUSTER_EXEMPTIONS', [('missing', 'test_conftest.py', 'test')])
+    stat = os.stat
+    buffered_read = io.BufferedReader.read
+    fixture = conftest.blockbuster._fixture_function()  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(KeyError):
+        next(fixture)
+
+    assert os.stat is stat
+    assert io.BufferedReader.read is buffered_read

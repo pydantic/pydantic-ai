@@ -276,6 +276,15 @@ pytestmark = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def blockbuster() -> None:
+    """Disable detection for Temporal's synchronous worker and integration setup.
+
+    It performs module/config introspection above Pydantic AI plugin frames; BlockBuster changes
+    its error handling and makes these tests unusably slow.
+    """
+
+
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
 http_client = create_async_http_client()
