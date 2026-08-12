@@ -60,6 +60,9 @@ class TogetherProvider(Provider[AsyncOpenAI]):
             if provider in provider_to_profile:
                 profile = provider_to_profile[provider](model_name)
 
+            if provider == 'deepseek-ai' and model_name.startswith('deepseek-v4-'):
+                profile = merge_profile(profile, OpenAIModelProfile(openai_supports_tool_choice_required=False))
+
         # As the Together API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly
         return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
