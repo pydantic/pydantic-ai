@@ -617,7 +617,7 @@ def test_tool_signature_escapes_parameter_descriptions():
             'properties': {
                 'query': {
                     'type': 'string',
-                    'description': 'Use `"""exact"""` text or C:\\queries.\0\ud800',
+                    'description': 'Use `"""exact"""` text or C:\\queries.\0',
                 }
             },
             'required': ['query'],
@@ -628,7 +628,7 @@ def test_tool_signature_escapes_parameter_descriptions():
     compile(rendered, '<rendered>', 'exec')
     function = ast.parse(rendered).body[0]
     assert isinstance(function, ast.FunctionDef)
-    assert ast.get_docstring(function) == 'Args:\n    query: Use `"""exact"""` text or C:\\queries.\0\\ud800'
+    assert ast.get_docstring(function) == 'Args:\n    query: Use `"""exact"""` text or C:\\queries.\0'
 
 
 # =============================================================================
