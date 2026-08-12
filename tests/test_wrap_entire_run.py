@@ -77,15 +77,15 @@ async def test_wrap_entire_run_brackets_sandbox_and_complete_run_lifecycle(  # n
 
     @dataclass
     class SandboxCapability(AbstractCapability[Any]):
-        async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
-            events.append('setup_sandbox')
+        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            events.append('create_sandbox')
             return SandboxRef(provider='local', sandbox_id=str(tmp_path))
 
         async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return LocalSandbox(Path(ref.sandbox_id)) if ref.provider == 'local' else None
 
-        async def teardown_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
-            events.append('teardown_sandbox')
+        async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            events.append('destroy_sandbox')
 
         async def for_run(self, ctx: RunContext[Any]) -> SandboxCapability:
             events.append('for_run')
@@ -137,7 +137,7 @@ async def test_wrap_entire_run_brackets_sandbox_and_complete_run_lifecycle(  # n
     assert events == [
         'iter1_enter',
         'iter2_enter',
-        'setup_sandbox',
+        'create_sandbox',
         'for_run',
         'toolset_enter',
         'wrap_run',
@@ -145,7 +145,7 @@ async def test_wrap_entire_run_brackets_sandbox_and_complete_run_lifecycle(  # n
         'model',
         'after_run',
         'toolset_exit',
-        'teardown_sandbox',
+        'destroy_sandbox',
         'iter2_exit',
         'iter1_exit',
     ]
@@ -170,7 +170,7 @@ async def test_wrap_entire_run_receives_preparation_context(tmp_path: Path) -> N
 
     @dataclass
     class ServeSandbox(AbstractCapability[Any]):
-        async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(provider='local', sandbox_id=str(tmp_path))
 
         async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:

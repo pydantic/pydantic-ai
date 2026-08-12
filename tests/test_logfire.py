@@ -3334,14 +3334,14 @@ async def test_run_stream(
 async def test_agent_span_brackets_sandbox_lifecycle(capfire: CaptureLogfire, tmp_path: Path) -> None:
     @dataclass
     class TracedSandbox(AbstractCapability[Any]):
-        async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             with logfire.span('sandbox_setup'):  # pyright: ignore[reportPossiblyUnboundVariable]
                 return SandboxRef(provider='local', sandbox_id=str(tmp_path))
 
         async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
             return LocalSandbox(tmp_path) if ref.provider == 'local' else None
 
-        async def teardown_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+        async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
             with logfire.span('sandbox_teardown'):  # pyright: ignore[reportPossiblyUnboundVariable]
                 pass
 

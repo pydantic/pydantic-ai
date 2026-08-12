@@ -41,7 +41,7 @@ approval, command restrictions, output limits, and path policy in the tool layer
 Sandbox resolution happens before capability and toolset `for_run`:
 
 1. The `sandbox=` run argument: a caller-owned live backend or a serializable `SandboxRef`.
-2. A capability's `setup_sandbox` contribution. The latest supplier in the resolved chain
+2. A capability's `create_sandbox` contribution. The latest supplier in the resolved chain
    wins; deferred capabilities are not consulted; returning `None` falls through.
 3. The framework default: `UnavailableSandbox` with attachment instructions.
 
@@ -61,7 +61,7 @@ from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 class MySandboxCapability(AbstractCapability[Any]):
     client: Any  # your provider's SDK client; credentials stay here, never in the ref
 
-    async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         """Once per run, before any hook sees ctx.sandbox. Return identity, or None to decline."""
         sandbox = await self.client.create()
         return SandboxRef(provider='docker', sandbox_id=sandbox.sandbox_id)
@@ -72,7 +72,7 @@ class MySandboxCapability(AbstractCapability[Any]):
             return None
         return await self.client.connect(ref.sandbox_id)
 
-    async def teardown_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+    async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
         """Once, after the run (also on failure). Inherited no-op suits warm/reaped sandboxes."""
         await self.client.destroy(ref.sandbox_id)
 ```
@@ -80,7 +80,7 @@ class MySandboxCapability(AbstractCapability[Any]):
 The same hooks cover every lifecycle: per-run (as above), warm (setup returns the held
 backend's ref, no teardown override), pooled per conversation (setup keys a store by
 `ctx.conversation_id`), and connect-only (only `get_sandbox` overridden, which serves
-`SandboxRef` run arguments). With a ref run argument, `setup_sandbox` is skipped (the caller
+`SandboxRef` run arguments). With a ref run argument, `create_sandbox` is skipped (the caller
 owns the lifecycle) but `get_sandbox` still connects.
 
 The handle is present on every `RunContext`, including capability and toolset `for_run` hooks
@@ -113,8 +113,8 @@ boundaries, and the worker's capability tree already knows how to connect. The s
 instance exists on the agent the worker constructed, with its credentials, so nothing needs a
 separate registration.
 
-- Under `TemporalDurability`, a sandbox-supplying capability's `setup_sandbox` and
-  `teardown_sandbox` each run as their own activity; only the ref returns to workflow code, so
+- Under `TemporalDurability`, a sandbox-supplying capability's `create_sandbox` and
+  `destroy_sandbox` each run as their own activity; only the ref returns to workflow code, so
   creation happens exactly once per run even across replays. Inside every activity,
   `ctx.sandbox` is rebuilt from the ref and reconnects through the chain's `get_sandbox` on
   first use. DBOS and Prefect reject sandbox-supplying capabilities inside their containers;
@@ -133,7 +133,7 @@ Capability author rules:
 
 - `get_sandbox` re-opens only; raise when the environment expired. Never silently
   open-or-create: a replacement environment would contradict the model's message history.
-- `teardown_sandbox` must tolerate an already-gone sandbox.
+- `destroy_sandbox` must tolerate an already-gone sandbox.
 - Keep credentials on the capability, not in `SandboxRef` or workflow history.
 - Always configure a server-side TTL or reaper: a terminated or cancelled workflow runs no cleanup.
 

@@ -64,7 +64,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities.abstract import leaf_capabilities, setup_run_sandbox
+from ..capabilities.abstract import leaf_capabilities, create_run_sandbox
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1551,15 +1551,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
 
                 # Resolve the sandbox before anything else can observe `initial_ctx`. Run
-                # arguments win over `setup_sandbox` contributions, which win over the
+                # arguments win over `create_sandbox` contributions, which win over the
                 # unavailable default. A capability-supplied sandbox is held as its ref (the
                 # facade connects on first use); teardown is routed back to the supplier when
                 # the run ends, including on failure.
                 if sandbox_facade is None:
-                    supplied = await setup_run_sandbox(preparation_capability, initial_ctx)
+                    supplied = await create_run_sandbox(preparation_capability, initial_ctx)
                     if supplied is not None:
                         sandbox_supplier, sandbox_ref = supplied
-                        stack.push_async_callback(sandbox_supplier.teardown_sandbox, initial_ctx, sandbox_ref)
+                        stack.push_async_callback(sandbox_supplier.destroy_sandbox, initial_ctx, sandbox_ref)
                         sandbox_facade = Sandbox.from_ref(sandbox_ref, _resolve_sandbox_ref)
                     else:
                         sandbox_facade = Sandbox.wrap(default_sandbox_backend())

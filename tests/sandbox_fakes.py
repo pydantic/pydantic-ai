@@ -93,7 +93,7 @@ class ConnectOnlySandboxCapability(AbstractCapability[Any]):
 
 
 class CreateOnlySandboxCapability(AbstractCapability[Any]):
-    """Provisions per run and reconnects, inheriting the no-op `teardown_sandbox`.
+    """Provisions per run and reconnects, inheriting the no-op `destroy_sandbox`.
 
     Every lifecycle call is appended to `events`, so tests can pin both the counts and the
     order in which creation, connection, and destruction happened.
@@ -110,7 +110,7 @@ class CreateOnlySandboxCapability(AbstractCapability[Any]):
         self.backends.clear()
         self._created = 0
 
-    async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         self._created += 1
         sandbox_id = f'created-{self._created}'
         self.events.append(f'create:{sandbox_id}')
@@ -128,14 +128,34 @@ class CreateOnlySandboxCapability(AbstractCapability[Any]):
 class LifecycleSandboxCapability(CreateOnlySandboxCapability):
     """A `CreateOnlySandboxCapability` that also destroys the sandboxes it made."""
 
-    async def teardown_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+    async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
         self.events.append(f'teardown:{ref.sandbox_id}')
 
 
-class FailingTeardownSandboxCapability(CreateOnlySandboxCapability):
-    """A capability whose `teardown_sandbox` always fails, e.g. because the sandbox is already gone."""
+class DecliningSandboxCapability(AbstractCapability[Any]):
+    """A supplier that overrides `create_sandbox` but declines every run.
 
-    async def teardown_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+    Declining is a first-class supplier shape (contribute only for some runs), so tests use
+    the call count to pin that the fall-through to the next supplier happened exactly once,
+    in the right place.
+    """
+
+    def __init__(self) -> None:
+        self.create_calls = 0
+
+    def reset(self) -> None:
+        """Restore pristine state, so module-level capabilities can be shared across tests."""
+        self.create_calls = 0
+
+    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
+        self.create_calls += 1
+        return None
+
+
+class FailingTeardownSandboxCapability(CreateOnlySandboxCapability):
+    """A capability whose `destroy_sandbox` always fails, e.g. because the sandbox is already gone."""
+
+    async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
         self.events.append(f'teardown-failed:{ref.sandbox_id}')
         raise RuntimeError(f'sandbox {ref.sandbox_id!r} is already gone')
 
@@ -143,5 +163,5 @@ class FailingTeardownSandboxCapability(CreateOnlySandboxCapability):
 class SandboxContributingCapability(AbstractCapability[Any]):
     """Capability whose sandbox contribution is rejected before anything is provisioned."""
 
-    async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         return SandboxRef(provider='fake', sandbox_id='fake-sandbox')  # pragma: no cover

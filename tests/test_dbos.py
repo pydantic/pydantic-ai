@@ -1312,7 +1312,7 @@ async def test_dbos_agent_run_in_workflow_rejects_runtime_dynamic_toolset(dbos: 
 
 
 class SandboxSupplyingDBOSDurability(DBOSDurability[Any]):
-    async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         return SandboxRef(provider='fake', sandbox_id='fake-sandbox')  # pragma: no cover
 
 
@@ -1328,7 +1328,7 @@ _DBOS_WRAPPER_UNAVAILABLE_SANDBOX_MESSAGE = (
 _DEFAULT_UNAVAILABLE_SANDBOX_MESSAGE = (
     'No sandbox is attached to this run. Pass `sandbox=LocalSandbox()` to the run method to use the '
     'local machine (unsafe: commands and file operations run with the full permissions of this process), '
-    'attach a capability that supplies a sandbox through its `setup_sandbox` hook, or pass a `SandboxRef` '
+    'attach a capability that supplies a sandbox through its `create_sandbox` hook, or pass a `SandboxRef` '
     'to connect to an existing environment. See https://ai.pydantic.dev/sandbox/ for details.'
 )
 
@@ -1465,7 +1465,7 @@ async def test_dbos_agent_capability_resolves_sandbox_ref(dbos: DBOS):
 
 
 async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):
-    # A supplier's `setup_sandbox`/`teardown_sandbox` would run in workflow code, which is replayed
+    # A supplier's `create_sandbox`/`destroy_sandbox` would run in workflow code, which is replayed
     # during recovery. Checked statically over both the bound chain and per-run capabilities.
     static_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
         Agent(TestModel(), name='dbos_static_sandbox', capabilities=[SandboxContributingCapability()])
@@ -1482,7 +1482,7 @@ async def test_dbos_agent_rejects_sandbox_capabilities(dbos: DBOS):
 
 async def test_dbos_durability_rejects_a_sandbox_supplying_capability(dbos: DBOS):
     """DBOS has no durable unit to run the lifecycle in, so a sandbox-supplying capability is
-    rejected from `setup_sandbox` inside a workflow, not silently skipped."""
+    rejected from `create_sandbox` inside a workflow, not silently skipped."""
     supplier = LifecycleSandboxCapability()
     agent = Agent(
         TestModel(),
@@ -1497,7 +1497,7 @@ async def test_dbos_durability_rejects_a_sandbox_supplying_capability(dbos: DBOS
     with workflow_raises(
         UserError,
         snapshot(
-            'A capability that supplies a sandbox (overrides `setup_sandbox`) is not supported inside a '
+            'A capability that supplies a sandbox (overrides `create_sandbox`) is not supported inside a '
             'DBOS workflow: creating and destroying the sandbox would be workflow code, which '
             'DBOS replays. Temporal runs the sandbox lifecycle in durable units and does support it; '
             'on other engines, create the sandbox outside the workflow and pass a `SandboxRef` to the '
@@ -1514,7 +1514,7 @@ async def test_dbos_durability_rejects_a_sandbox_supplying_capability(dbos: DBOS
 
 
 def test_dbos_durability_base_sandbox_routing_is_not_a_user_supplier(dbos: DBOS):
-    """The base `setup_sandbox` override only guards durable runs, so it must not read as a
+    """The base `create_sandbox` override only guards durable runs, so it must not read as a
     supplier itself; a subclass override is a genuine supplier."""
     assert contributes_sandbox(DBOSDurability()) is False
     durability = SandboxSupplyingDBOSDurability()

@@ -6,7 +6,7 @@ from .unavailable import UnavailableSandbox
 DEFAULT_SANDBOX_UNAVAILABLE_REASON = (
     'No sandbox is attached to this run. Pass `sandbox=LocalSandbox()` to the run method to use the '
     'local machine (unsafe: commands and file operations run with the full permissions of this process), '
-    "attach a capability that supplies a sandbox through its `setup_sandbox` hook, or pass a `SandboxRef` "
+    "attach a capability that supplies a sandbox through its `create_sandbox` hook, or pass a `SandboxRef` "
     'to connect to an existing environment. See https://ai.pydantic.dev/sandbox/ for details.'
 )
 

@@ -14,7 +14,7 @@ Pydantic AI resolves the sandbox once, before capability and toolset `for_run` h
    [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] or serializable
    [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef].
 2. A capability's
-   [`setup_sandbox`][pydantic_ai.capabilities.AbstractCapability.setup_sandbox] contribution.
+   [`create_sandbox`][pydantic_ai.capabilities.AbstractCapability.create_sandbox] contribution.
    The latest supplier in the resolved capability chain wins.
 3. The framework default: an `UnavailableSandbox` explaining how to attach one.
 
@@ -107,12 +107,12 @@ serializable [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]; the live connecti
 (re)established wherever it is needed, which is what makes the same capability work unchanged
 under [durable execution](#durable-execution).
 
-- [`setup_sandbox`][pydantic_ai.capabilities.AbstractCapability.setup_sandbox], once per run:
+- [`create_sandbox`][pydantic_ai.capabilities.AbstractCapability.create_sandbox], once per run:
   provision (or select) an environment and return its identity, or `None` to not contribute.
 - [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox]: connect, never
   create. Called lazily on the first sandbox operation, and again in each durable unit that
   touches the sandbox.
-- [`teardown_sandbox`][pydantic_ai.capabilities.AbstractCapability.teardown_sandbox], once
+- [`destroy_sandbox`][pydantic_ai.capabilities.AbstractCapability.destroy_sandbox], once
   after the run ends, including on failure. The inherited no-op suits warm sandboxes and
   platforms that clean up on their own.
 
@@ -131,7 +131,7 @@ from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 class MySandboxCapability(AbstractCapability[Any]):
     client: SandboxClient  # credentials stay here, never in the ref
 
-    async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         sandbox = await self.client.create()
         return SandboxRef(provider='docker', sandbox_id=sandbox.sandbox_id)
 
@@ -141,7 +141,7 @@ class MySandboxCapability(AbstractCapability[Any]):
         # Re-open only: raise if the environment expired. Never create a replacement here.
         return await self.client.connect(ref.sandbox_id)
 
-    async def teardown_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+    async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
         await self.client.destroy(ref.sandbox_id)
 ```
 
@@ -160,7 +160,7 @@ agent = Agent(
 
 The same three hooks cover every lifecycle without further concepts:
 
-| Lifecycle | `setup_sandbox` | `get_sandbox` | `teardown_sandbox` |
+| Lifecycle | `create_sandbox` | `get_sandbox` | `destroy_sandbox` |
 |---|---|---|---|
 | Fresh sandbox per run | provision, return its ref | connect by id | destroy |
 | Warm, shared across runs | return the held backend's ref | return the held backend | inherited no-op |
@@ -283,7 +283,7 @@ tree already knows how to connect, so nothing needs a second registration.
 
 Attach a lifecycle-owning capability like `MySandboxCapability`
 [above](#from-a-capability) and the run owns the whole lifecycle. Under
-[Temporal](durable_execution/temporal.md), `setup_sandbox` and `teardown_sandbox` each run as
+[Temporal](durable_execution/temporal.md), `create_sandbox` and `destroy_sandbox` each run as
 their own activity and only the ref returns to workflow code, so creation happens exactly once
 per run even across replays. Tool code calls `await ctx.sandbox.run(...)` exactly as it does
 outside a workflow: the ref rides along in the serialized run context, and the first operation
@@ -333,8 +333,8 @@ inside their containers; use a reference there.
 When the environment is provisioned elsewhere (by an operator, another service, or an earlier
 workflow), pass its [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] through `sandbox=`. The
 same capability that can supply sandboxes also connects references: with a ref run argument its
-`setup_sandbox` is skipped (the caller owns the lifecycle), but its `get_sandbox` still does
-the connecting. A capability that only ever connects simply doesn't override `setup_sandbox`.
+`create_sandbox` is skipped (the caller owns the lifecycle), but its `get_sandbox` still does
+the connecting. A capability that only ever connects simply doesn't override `create_sandbox`.
 
 ```python {title="durable_sandbox_ref_pattern.py" test="skip" lint="skip"}
 from my_sandboxes import SandboxClient
@@ -392,7 +392,7 @@ Rules of thumb for capability authors:
 - **`get_sandbox` re-opens, never creates.** If the platform deleted the sandbox while the
   workflow slept, an open-or-create fallback silently swaps in an empty environment that the
   model's message history contradicts. Recreate only as an explicit, logged decision.
-- **`teardown_sandbox` tolerates an already-gone sandbox.** It also runs after a failure that
+- **`destroy_sandbox` tolerates an already-gone sandbox.** It also runs after a failure that
   may have destroyed the environment already.
 - **Still set a server-side TTL.** A terminated workflow runs no cleanup; without a TTL or
   reaper, the sandbox leaks.

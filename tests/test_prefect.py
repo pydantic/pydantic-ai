@@ -121,7 +121,7 @@ except ImportError:  # pragma: lax no cover
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
-from .sandbox_fakes import FakeSandboxHandle, LifecycleSandboxCapability
+from .sandbox_fakes import ConnectOnlySandboxCapability, FakeSandboxHandle, LifecycleSandboxCapability
 
 # `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warnings here
@@ -2328,7 +2328,7 @@ async def test_prefect_durability_keeps_the_default_unavailable_sandbox() -> Non
 
 async def test_prefect_durability_rejects_a_sandbox_supplying_capability() -> None:
     """Prefect has no durable unit to run the lifecycle in, so a sandbox-supplying capability is
-    rejected from `setup_sandbox` inside a flow."""
+    rejected from `create_sandbox` inside a flow."""
     supplier = LifecycleSandboxCapability()
     agent = Agent(
         TestModel(),
@@ -2343,7 +2343,7 @@ async def test_prefect_durability_rejects_a_sandbox_supplying_capability() -> No
     with pytest.raises(UserError) as exc_info:
         await run_durable_agent()
     assert str(exc_info.value) == snapshot(
-        'A capability that supplies a sandbox (overrides `setup_sandbox`) is not supported inside a '
+        'A capability that supplies a sandbox (overrides `create_sandbox`) is not supported inside a '
         'Prefect flow: creating and destroying the sandbox would be flow code, which Prefect replays. '
         'Temporal runs the sandbox lifecycle in durable units and does support it; on other engines, '
         'create the sandbox outside the flow and pass a `SandboxRef` to the run instead.'
@@ -2354,6 +2354,41 @@ async def test_prefect_durability_rejects_a_sandbox_supplying_capability() -> No
     # the sandbox, so the lazily connecting facade never connects.
     assert (await agent.run('Hello')).output == snapshot('success (no tool calls)')
     assert supplier.events == snapshot(['create:created-1', 'teardown:created-1'])
+
+
+async def test_prefect_durability_connects_a_sandbox_ref_inside_a_task() -> None:
+    """The path the supplier rejection prescribes — pass a `SandboxRef` — must actually work.
+
+    Prefect propagates the flow-run context into task runs, so a durable-context check based on
+    flow context alone would also be true inside the tool's task and block the connection there,
+    the one place it is legal. The connect-only capability recognizing the ref inside the task
+    is what this pins.
+    """
+    connector = ConnectOnlySandboxCapability()
+
+    def call_tool_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('run_in_sandbox', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(call_tool_then_finish),
+        name='prefect_sandbox_ref_agent',
+        capabilities=[PrefectDurability(), connector],
+    )
+
+    @agent.tool
+    async def run_in_sandbox(ctx: RunContext[object]) -> str:
+        return (await ctx.sandbox.run(['echo', ctx.sandbox.sandbox_id])).stdout
+
+    @flow
+    async def run_durable_agent() -> str:
+        result = await agent.run('Use the sandbox.', sandbox=SandboxRef(provider='fake', sandbox_id='ops-sandbox'))
+        return result.output
+
+    assert await run_durable_agent() == 'done'
+    assert connector.sandbox_ids == ['ops-sandbox']
+    assert connector.backends[0].commands == [['echo', 'ops-sandbox']]
 
 
 def test_resolve_tool_task_config_reads_metadata() -> None:

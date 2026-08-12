@@ -592,7 +592,7 @@ class SandboxCapability(AbstractCapability[Any]):
     events: list[str] = field(default_factory=lambda: [])
     backend: FakeSandbox | None = field(default=None, init=False)
 
-    async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         self.events.append(f'{self.name}:setup')
         self.backend = FakeSandbox(self.name)
         return SandboxRef(provider='fake', sandbox_id=self.backend.sandbox_id)
@@ -603,7 +603,7 @@ class SandboxCapability(AbstractCapability[Any]):
         self.events.append(f'{self.name}:connect')
         return self.backend
 
-    async def teardown_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+    async def destroy_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
         self.events.append(f'{self.name}:teardown')
 
 
@@ -757,7 +757,7 @@ async def test_lifecycle_capability_tears_down_when_a_tool_raises():
 
 
 async def test_create_only_capability_leans_on_platform_reaping():
-    """The inherited no-op `teardown_sandbox` is what lets a capability lean on its
+    """The inherited no-op `destroy_sandbox` is what lets a capability lean on its
     platform's idle timeout instead of destroying anything itself.
     """
     creator = CreateOnlySandboxCapability()
@@ -770,7 +770,7 @@ async def test_create_only_capability_leans_on_platform_reaping():
 
 
 async def test_lifecycle_capability_also_connects_ref_run_arguments():
-    """The same capability serves both jobs: with a ref run argument its `setup_sandbox` is
+    """The same capability serves both jobs: with a ref run argument its `create_sandbox` is
     skipped (the caller owns the lifecycle), but its `get_sandbox` still connects.
     """
     lifecycle = LifecycleSandboxCapability()
@@ -854,14 +854,14 @@ async def test_capability_without_sandbox_does_not_mask_supplier():
 
 async def test_warm_sandbox_shared_across_runs():
     """A warm capability returns the identity of the backend it already holds from
-    `setup_sandbox` and leaves `teardown_sandbox` alone, so the same environment serves
+    `create_sandbox` and leaves `destroy_sandbox` alone, so the same environment serves
     every run.
     """
     warm = FakeSandbox('warm')
 
     @dataclass
     class WarmSandboxCapability(AbstractCapability[Any]):
-        async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
             return SandboxRef(provider='fake', sandbox_id=warm.sandbox_id)
 
         async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
@@ -950,7 +950,7 @@ async def test_setup_declined_falls_through_to_default():
 
     @dataclass
     class DecliningSupplier(AbstractCapability[Any]):
-        async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
+        async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
             return None
 
     seen: list[str] = []

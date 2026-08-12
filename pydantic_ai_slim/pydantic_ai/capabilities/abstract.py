@@ -416,7 +416,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return native tools to register with the agent."""
         return []
 
-    async def setup_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
+    async def create_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
         """Provision or select this run's sandbox and return its serializable identity.
 
         Called at most once per run, before any hook sees
@@ -432,6 +432,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
+    def _create_sandbox_answer_is_final(self, ctx: RunContext[AgentDepsT]) -> bool:
+        """Whether a `None` from this capability's `create_sandbox` ends sandbox resolution.
+
+        Durability capabilities return True inside workflow code: they run the real suppliers
+        inside a durable unit, so their answer — including "no sandbox" — must be final.
+        """
+        return False
+
     async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
         """Return a live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] for `ref`: connect, never create.
 
@@ -445,11 +453,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
-    async def teardown_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
+    async def destroy_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
         """Destroy the sandbox identified by `ref`.
 
         Called at most once, after the run ends (also on failure), only on the capability whose
-        [`setup_sandbox`][pydantic_ai.capabilities.AbstractCapability.setup_sandbox] produced
+        [`create_sandbox`][pydantic_ai.capabilities.AbstractCapability.create_sandbox] produced
         `ref`, and never for a `sandbox=` run argument. Must tolerate an already-gone sandbox; the
         platform's idle timeout is the backstop for paths that can never run this hook. The
         inherited no-op suits warm or externally managed sandboxes.
@@ -548,7 +556,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Deferred capabilities are always excluded from this chain, including capabilities
         already loaded in resumed message history. This matches
-        [`setup_sandbox`][pydantic_ai.capabilities.AbstractCapability.setup_sandbox] because
+        [`create_sandbox`][pydantic_ai.capabilities.AbstractCapability.create_sandbox] because
         the chain is entered once at run start.
 
         """
@@ -1198,18 +1206,22 @@ def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[Abstra
     return leaves
 
 
-async def setup_run_sandbox(
+async def create_run_sandbox(
     capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> tuple[AbstractCapability[AgentDepsT], SandboxRef] | None:
-    """Consult the tree's `setup_sandbox` hooks latest-first; return the winning supplier and its ref.
+    """Consult the tree's `create_sandbox` hooks latest-first; return the winning supplier and its ref.
 
     Lives outside the combined-capability dispatch because the run must route
-    `teardown_sandbox` back to the same capability, and that dispatch loses supplier identity.
+    `destroy_sandbox` back to the same capability, and that dispatch loses supplier identity.
     """
     for leaf in reversed(leaf_capabilities(capability)):
         if leaf.defer_loading is True:
             continue
-        ref = await leaf.setup_sandbox(ctx)
+        ref = await leaf.create_sandbox(ctx)
         if ref is not None:
             return leaf, ref
+        if leaf._create_sandbox_answer_is_final(ctx):  # pyright: ignore[reportPrivateUsage]
+            # A durability capability already ran the real suppliers inside a durable unit;
+            # continuing the walk would re-run their hooks in workflow code.
+            return None
     return None

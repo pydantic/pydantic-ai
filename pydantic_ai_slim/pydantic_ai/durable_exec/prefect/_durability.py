@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from prefect import task
-from prefect.context import FlowRunContext
+from prefect.context import FlowRunContext, TaskRunContext
 
 from pydantic_ai import messages as _messages
 from pydantic_ai.agent import EventStreamHandler
@@ -182,7 +182,10 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
 
     @property
     def in_durable_context(self) -> bool:
-        return FlowRunContext.get() is not None
+        # Prefect propagates the flow-run context into task runs, so flow context alone would
+        # also be true inside tasks — where sandbox connections are legal and must not be
+        # blocked. Only bare flow code (outside any task) is the durable container.
+        return FlowRunContext.get() is not None and TaskRunContext.get() is None
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         assert self._event_stream_handler is not None

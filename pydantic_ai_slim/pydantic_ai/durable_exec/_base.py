@@ -66,7 +66,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     _supports_run_owned_sandbox: ClassVar[bool] = False
     """Whether this engine can run a sandbox-supplying capability's lifecycle inside its durable units.
 
-    When `False`, a capability that overrides `setup_sandbox` is rejected inside the durable
+    When `False`, a capability that overrides `create_sandbox` is rejected inside the durable
     container rather than having its lifecycle hooks run as workflow/flow code.
     """
 
@@ -289,21 +289,25 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         return toolset.visit_and_replace(swap)
 
-    async def setup_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
+    async def create_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
         # Conditional supplier: outside the durable context, fall through to the real supplier.
-        # Inside it, this capability is last in the chain so it is consulted first and routes
-        # the statically resolved winner into a durable unit; the winner must never run in
-        # workflow/flow code.
+        # Inside it, this capability is last in the chain so it is consulted first, routes the
+        # whole supplier walk into a durable unit, and its answer is final (see
+        # `_create_sandbox_answer_is_final`): supplier hooks must never run in workflow/flow code.
         if not self.in_durable_context:
             return None
-        supplier = self._sandbox_supplier
-        if supplier is None:
+        if self._sandbox_supplier is None:
             return None
         if not self._supports_run_owned_sandbox:
             raise UserError(
                 run_owned_sandbox_unsupported_error(engine=self.engine_name, container=self._durable_container_noun)
             )
-        return await self._setup_sandbox_durably(supplier, ctx)
+        return await self._create_sandbox_durably(ctx)
+
+    def _create_sandbox_answer_is_final(self, ctx: RunContext[AgentDepsT]) -> bool:
+        # In workflow/flow code this capability answers for the whole supplier chain; letting
+        # the walk continue past its `None` would run supplier hooks as replayed container code.
+        return self.in_durable_context
 
     async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
         # In workflow/flow code connecting would be I/O, so fail with directions; inside a
@@ -317,23 +321,21 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             )
         return None
 
-    async def teardown_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
-        # Reached only when this capability's `setup_sandbox` supplied the run's ref.
+    async def destroy_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
+        # Reached only when this capability's `create_sandbox` supplied the run's ref.
         if self.in_durable_context:  # pragma: no branch
-            await self._teardown_sandbox_durably(ctx, ref)
+            await self._destroy_sandbox_durably(ctx, ref)
 
-    async def _setup_sandbox_durably(
-        self, supplier: AbstractCapability[Any], ctx: RunContext[AgentDepsT]
-    ) -> SandboxRef | None:
-        """Run the supplier's `setup_sandbox` inside this engine's durable unit.
+    async def _create_sandbox_durably(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
+        """Run the supplier chain's `create_sandbox` walk inside this engine's durable unit.
 
         Only reached on engines that set `_supports_run_owned_sandbox`; the base class has no
         durable unit to run it in, so it never gets here.
         """
         raise NotImplementedError  # pragma: no cover
 
-    async def _teardown_sandbox_durably(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
-        """Run the supplier's `teardown_sandbox` inside this engine's durable unit."""
+    async def _destroy_sandbox_durably(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
+        """Run the supplier's `destroy_sandbox` inside this engine's durable unit."""
         raise NotImplementedError  # pragma: no cover
 
     def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:

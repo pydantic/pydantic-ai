@@ -20,6 +20,8 @@ from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     WrapModelRequestHandler,
     WrapRunHandler,
+    create_run_sandbox,
+    leaf_capabilities,
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
@@ -93,6 +95,20 @@ class _SandboxTeardownParams:
 
     serialized_run_context: Any
     ref: SandboxRef
+    supplier_index: int
+
+
+@dataclass
+class _SandboxSetupResult:
+    """Result of the sandbox-setup activity: the ref plus which leaf capability supplied it.
+
+    The index (into `leaf_capabilities(agent.root_capability)`) is what lets the teardown
+    activity route `destroy_sandbox` back to the same supplier on any worker; object identity
+    does not survive the workflow boundary.
+    """
+
+    ref: SandboxRef
+    supplier_index: int
 
 
 @dataclass
@@ -180,8 +196,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     _durable_unit_noun = 'activity'
     _durable_container_noun = 'workflow'
     _tool_config_key = 'temporal'
-    # Temporal is the one engine that can run a sandbox supplier's lifecycle: `setup_sandbox`
-    # and `teardown_sandbox` go into activities, and only the ref crosses back into the workflow.
+    # Temporal is the one engine that can run a sandbox supplier's lifecycle: `create_sandbox`
+    # and `destroy_sandbox` go into activities, and only the ref crosses back into the workflow.
     _supports_run_owned_sandbox = True
     _live_sandbox_error = live_sandbox_error(
         run_location='to an agent run inside a Temporal workflow',
@@ -330,6 +346,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if self._deps_type is None:
             self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
 
+        # Which leaf supplied each run's sandbox, keyed by run id: written by the create unit,
+        # read by the destroy unit. Deterministic under replay because the create activity's
+        # recorded result repopulates it before the destroy path reads it.
+        self._sandbox_supplier_index_by_run: dict[str, int] = {}
+
         # Register activities on the bound copy
         self._temporal_activities = []
         self._register_activities(agent)
@@ -445,27 +466,36 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # --- Sandbox lifecycle activities ---
 
-        if (supplier := self._sandbox_supplier) is not None:
+        if self._sandbox_supplier is not None:
+            root_capability = agent.root_capability
 
-            async def setup_sandbox_activity(params: _SandboxSetupParams, deps: Any) -> SandboxRef | None:
+            async def create_sandbox_activity(params: _SandboxSetupParams, deps: Any) -> _SandboxSetupResult | None:
+                # The whole supplier walk runs here, worker-side, so a declining supplier falls
+                # through to the next one exactly as in a non-durable run — never in workflow code.
                 async with heartbeating():
                     run_context = deserialize_run_context(
                         run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
                     )
-                    return await supplier.setup_sandbox(run_context)
+                    supplied = await create_run_sandbox(root_capability, run_context)
+                    if supplied is None:
+                        return None
+                    supplier, ref = supplied
+                    index = next(i for i, leaf in enumerate(leaf_capabilities(root_capability)) if leaf is supplier)
+                    return _SandboxSetupResult(ref=ref, supplier_index=index)
 
-            self.setup_sandbox_activity = register_activity(
-                setup_sandbox_activity, name=f'{activity_name_prefix}__setup_sandbox'
+            self.create_sandbox_activity = register_activity(
+                create_sandbox_activity, name=f'{activity_name_prefix}__create_sandbox'
             )
-            activities.append(self.setup_sandbox_activity)
+            activities.append(self.create_sandbox_activity)
 
-            async def teardown_sandbox_activity(params: _SandboxTeardownParams, deps: Any) -> None:
+            async def destroy_sandbox_activity(params: _SandboxTeardownParams, deps: Any) -> None:
                 async with heartbeating():
                     run_context = deserialize_run_context(
                         run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
                     )
                     try:
-                        await supplier.teardown_sandbox(run_context, params.ref)
+                        supplier = leaf_capabilities(root_capability)[params.supplier_index]
+                        await supplier.destroy_sandbox(run_context, params.ref)
                     except Exception:
                         # A supplier's failure modes are its own SDK's, and teardown also runs
                         # after a failure that may already have destroyed the sandbox, so anything
@@ -480,10 +510,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                             exc_info=True,
                         )
 
-            self.teardown_sandbox_activity = register_activity(
-                teardown_sandbox_activity, name=f'{activity_name_prefix}__teardown_sandbox'
+            self.destroy_sandbox_activity = register_activity(
+                destroy_sandbox_activity, name=f'{activity_name_prefix}__destroy_sandbox'
             )
-            activities.append(self.teardown_sandbox_activity)
+            activities.append(self.destroy_sandbox_activity)
 
         # --- Toolset wrapping ---
         self._register_toolsets(agent)
@@ -525,26 +555,35 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return workflow.in_workflow()
 
-    async def _setup_sandbox_durably(
-        self, supplier: AbstractCapability[Any], ctx: RunContext[AgentDepsT]
-    ) -> SandboxRef | None:
+    async def _create_sandbox_durably(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
         # The activity's result is recorded in workflow history, so a replay reuses the ref the
         # first attempt created instead of provisioning another sandbox.
-        config: ActivityConfig = {'summary': 'set up sandbox', **self.activity_config}
-        return await execute_activity(
-            activity=self.setup_sandbox_activity,
+        config: ActivityConfig = {'summary': 'create sandbox', **self.activity_config}
+        result: _SandboxSetupResult | None = await execute_activity(
+            activity=self.create_sandbox_activity,
             args=[_SandboxSetupParams(serialized_run_context=self.run_context_type.serialize_run_context(ctx)), ctx.deps],
             **config,
         )
+        if result is None:
+            return None
+        assert ctx.run_id is not None  # always set once the run context is built
+        self._sandbox_supplier_index_by_run[ctx.run_id] = result.supplier_index
+        return result.ref
 
-    async def _teardown_sandbox_durably(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
+    async def _destroy_sandbox_durably(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
         # Workflow cancellation can skip the run's unwind outright; the platform idle timeout
-        # is the backstop `teardown_sandbox` documents.
-        config: ActivityConfig = {'summary': 'tear down sandbox', **self.activity_config}
+        # is the backstop `destroy_sandbox` documents.
+        config: ActivityConfig = {'summary': 'destroy sandbox', **self.activity_config}
+        assert ctx.run_id is not None  # always set once the run context is built
+        supplier_index = self._sandbox_supplier_index_by_run.pop(ctx.run_id)
         await execute_activity(
-            activity=self.teardown_sandbox_activity,
+            activity=self.destroy_sandbox_activity,
             args=[
-                _SandboxTeardownParams(serialized_run_context=self.run_context_type.serialize_run_context(ctx), ref=ref),
+                _SandboxTeardownParams(
+                    serialized_run_context=self.run_context_type.serialize_run_context(ctx),
+                    ref=ref,
+                    supplier_index=supplier_index,
+                ),
                 ctx.deps,
             ],
             **config,

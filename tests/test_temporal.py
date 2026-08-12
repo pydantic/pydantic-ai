@@ -136,6 +136,7 @@ from .continuation_utils import ScriptedContinuationModel, StreamSegment, script
 from .sandbox_fakes import (
     ConnectOnlySandboxCapability,
     CreateOnlySandboxCapability,
+    DecliningSandboxCapability,
     FailingTeardownSandboxCapability,
     FakeSandboxHandle,
     LifecycleSandboxCapability,
@@ -3009,7 +3010,7 @@ unavailable_sandbox_temporal_agent = TemporalAgent(  # pyright: ignore[reportDep
 )
 _TEMPORAL_UNAVAILABLE_SANDBOX_MESSAGE = (
     'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
-    'the activity boundary. Attach a capability that supplies a sandbox through its `setup_sandbox` hook, '
+    'the activity boundary. Attach a capability that supplies a sandbox through its `create_sandbox` hook, '
     'or pass a `SandboxRef` to the agent run; either way the sandbox is re-opened inside each activity '
     "through the capability chain's `get_sandbox`."
 )
@@ -3066,7 +3067,7 @@ async def test_temporal_agent_run_in_workflow_with_sandbox_capability(allow_mode
         with workflow_raises(
             UserError,
             snapshot(
-                'A capability that supplies a sandbox (overrides `setup_sandbox`) cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox outside the workflow and pass a `SandboxRef` to the run instead.'
+                'A capability that supplies a sandbox (overrides `create_sandbox`) cannot run inside a Temporal workflow: the sandbox would be entered as workflow code where I/O is forbidden. Create the sandbox outside the workflow and pass a `SandboxRef` to the run instead.'
             ),
         ):
             await client.execute_workflow(
@@ -7196,12 +7197,12 @@ async def test_temporal_durability_reconnects_sandbox_ref_inside_activity(client
 
 
 class SandboxSupplyingTemporalDurability(TemporalDurability[Any]):
-    async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+    async def create_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         return SandboxRef(provider='fake', sandbox_id='fake-sandbox')  # pragma: no cover
 
 
 def test_temporal_durability_base_sandbox_routing_is_not_a_user_supplier():
-    """The base `setup_sandbox` override only routes the real winner's lifecycle into activities,
+    """The base `create_sandbox` override only routes the real winner's lifecycle into activities,
     so it must not read as a supplier itself; a subclass override is a genuine supplier."""
     assert sandbox_suppliers(TemporalDurability()) == []
     assert contributes_sandbox(TemporalDurability()) is False
@@ -7326,6 +7327,59 @@ async def test_temporal_durability_runs_the_sandbox_lifecycle_in_activities(clie
     assert [backend.commands for backend in _lifecycle_sandbox_capability.backends] == [[['echo', 'created-1']]]
 
 
+_declining_sandbox_capability = DecliningSandboxCapability()
+_fallthrough_lifecycle_capability = LifecycleSandboxCapability()
+_fallthrough_durable_agent: Agent[None, str] = Agent(
+    FunctionModel(_supplied_sandbox_model),
+    name='fallthrough_sandbox_durability_agent',
+    deps_type=type(None),
+    tools=[use_supplied_sandbox],
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        _fallthrough_lifecycle_capability,
+        _declining_sandbox_capability,
+    ],
+)
+
+
+@workflow.defn
+class FallthroughSandboxWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _fallthrough_durable_agent.run(prompt)).output
+
+
+async def test_temporal_durability_falls_through_a_declining_supplier_inside_the_activity(client: Client):
+    """A supplier that declines falls through to the next supplier *inside* the create activity.
+
+    The whole supplier walk runs worker-side and the durability capability's workflow-side
+    answer is final, so the declining supplier is consulted exactly once: a second call would
+    mean the workflow-side walk resumed past the durability capability and re-ran supplier
+    hooks as workflow code. Destroy routing back to the supplier that actually created the
+    sandbox proves the winning leaf survives the workflow boundary by index, not identity.
+    """
+    _declining_sandbox_capability.reset()
+    _fallthrough_lifecycle_capability.reset()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FallthroughSandboxWorkflow],
+        plugins=[AgentPlugin(_fallthrough_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            FallthroughSandboxWorkflow.run,
+            args=['Use the sandbox.'],
+            id=FallthroughSandboxWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'done'
+    assert _declining_sandbox_capability.create_calls == 1
+    assert _fallthrough_lifecycle_capability.events == snapshot(
+        ['create:created-1', 'connect:created-1', 'teardown:created-1']
+    )
+
+
 async def test_temporal_durability_tears_down_the_sandbox_when_a_tool_fails(client: Client):
     _failing_lifecycle_sandbox_capability.reset()
     async with Worker(
@@ -7346,7 +7400,7 @@ async def test_temporal_durability_tears_down_the_sandbox_when_a_tool_fails(clie
 
 
 async def test_temporal_durability_sandbox_without_teardown_succeeds(client: Client):
-    """The inherited no-op `teardown_sandbox` runs as an activity like any other and leaves the run alone."""
+    """The inherited no-op `destroy_sandbox` runs as an activity like any other and leaves the run alone."""
     _teardownless_sandbox_capability.reset()
     async with Worker(
         client,
