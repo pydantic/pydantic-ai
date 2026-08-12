@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol, T
 
 import anyio
 import pydantic_core
-from pydantic import AnyUrl, Field, TypeAdapter
+from pydantic import AnyUrl, Field, TypeAdapter, ValidationError
 from typing_extensions import Self, assert_never
 
 from pydantic_ai.tools import AgentDepsT, ObjectJsonSchema, RunContext, ToolDefinition
@@ -1780,9 +1780,16 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             MCPError: If the server returns an error.
         """
         resource_uri = uri if isinstance(uri, str) else uri.uri
+        try:
+            parsed_uri = AnyUrl(resource_uri)
+        except ValidationError as e:
+            # A caller-supplied string that isn't a valid URL (e.g. a model calling `read_mcp_resource`
+            # with `"not a url"`) would otherwise escape as a raw `ValidationError`. Surface it as an
+            # `MCPError` so it honors the method's documented contract and `tool_error_behavior`.
+            raise MCPError(f'Invalid resource URI {resource_uri!r}', code=mcp_types.INVALID_PARAMS) from e
         async with self:
             try:
-                contents = await self.client.read_resource(AnyUrl(resource_uri))
+                contents = await self.client.read_resource(parsed_uri)
             except McpError as e:
                 raise MCPError.from_mcp_sdk(e) from e
 

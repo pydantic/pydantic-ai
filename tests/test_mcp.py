@@ -1104,6 +1104,22 @@ class TestMCPToolsetIntegration:
                     LIST_MCP_RESOURCES_TOOL_NAME, {}, run_context, tools[LIST_MCP_RESOURCES_TOOL_NAME]
                 )
 
+    async def test_read_mcp_resource_tool_invalid_uri_retries(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """A `uri` that passes the `str` schema but isn't a valid URL (e.g. `'not a url'`) is a
+        retryable tool error, not an unhandled `ValidationError` from `AnyUrl` that aborts the run."""
+        toolset = MCPToolset(fastmcp_server, expose_resources=True)
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            with pytest.raises(ModelRetry, match="Invalid resource URI 'not a url'"):
+                await toolset.call_tool(
+                    READ_MCP_RESOURCE_TOOL_NAME,
+                    {'uri': 'not a url'},
+                    run_context,
+                    tools[READ_MCP_RESOURCE_TOOL_NAME],
+                )
+
     async def test_expose_resources_no_capability(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         """`expose_resources=True` is a no-op when the server doesn't advertise the `resources`
         capability — no resource tools are synthesized."""
@@ -1952,6 +1968,15 @@ class TestResourceMethodErrorPaths:
             toolset.client.read_resource = AsyncMock(side_effect=make_mcp_error(-32002, 'not found'))
             with pytest.raises(MCPError, match='not found'):
                 await toolset.read_resource('resource://missing')
+
+    async def test_read_resource_wraps_invalid_uri(self, fastmcp_server: FastMCP[None]):
+        """A `uri` that isn't a valid URL is surfaced as `MCPError` (from the `AnyUrl` parse),
+        honoring the method's documented `Raises: MCPError` contract rather than escaping as a raw
+        `ValidationError`."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            with pytest.raises(MCPError, match="Invalid resource URI 'not a url'"):
+                await toolset.read_resource('not a url')
 
 
 class TestLoadMCPToolsets:
