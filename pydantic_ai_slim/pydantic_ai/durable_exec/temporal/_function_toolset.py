@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from temporalio import activity, workflow
@@ -14,7 +14,6 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.sandboxes import SandboxProvider
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
@@ -41,7 +40,6 @@ def temporalize_function_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
-    sandbox_providers: Sequence[SandboxProvider] | None = None,
 ) -> DurableFunctionToolset[AgentDepsT]:
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         async with heartbeating():
@@ -50,7 +48,6 @@ def temporalize_function_toolset(
                 params.serialized_run_context,
                 deps=deps,
                 agent=agent,
-                sandbox_providers=sandbox_providers,
             )
             try:
                 if params.tool_def is not None:

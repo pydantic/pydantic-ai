@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from temporalio import activity, workflow
@@ -18,7 +18,6 @@ from pydantic_ai.durable_exec._toolset import (
     wrap_tool_call_result,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.sandboxes import SandboxProvider
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -45,7 +44,6 @@ def temporalize_dynamic_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
-    sandbox_providers: Sequence[SandboxProvider] | None = None,
 ) -> DurableDynamicToolset[AgentDepsT]:
     """Temporalize a dynamic toolset.
 
@@ -60,7 +58,6 @@ def temporalize_dynamic_toolset(
                 params.serialized_run_context,
                 deps=deps,
                 agent=agent,
-                sandbox_providers=sandbox_providers,
             )
             return await get_dynamic_tools(toolset, ctx)
 
@@ -76,7 +73,6 @@ def temporalize_dynamic_toolset(
                 params.serialized_run_context,
                 deps=deps,
                 agent=agent,
-                sandbox_providers=sandbox_providers,
             )
             return await wrap_tool_call_result(call_dynamic_tool(toolset, params.name, params.tool_args, ctx))
 

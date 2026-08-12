@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
-    from pydantic_ai.sandboxes import SandboxBackend, SandboxProvider
+    from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 
 
 @dataclass
@@ -164,16 +164,17 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
         return self.wrapped.get_native_tools()
 
-    def get_sandbox_providers(self) -> Sequence[SandboxProvider]:
-        return self.wrapped.get_sandbox_providers()
-
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
 
-    def get_sandbox(
-        self, ctx: RunPreparationContext[AgentDepsT]
-    ) -> AbstractAsyncContextManager[SandboxBackend] | SandboxBackend | None:
-        return self.wrapped.get_sandbox(ctx)
+    async def setup_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
+        return await self.wrapped.setup_sandbox(ctx)
+
+    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+        return await self.wrapped.get_sandbox(ctx, ref)
+
+    async def teardown_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
+        await self.wrapped.teardown_sandbox(ctx, ref)
 
     async def prepare_tools(
         self,

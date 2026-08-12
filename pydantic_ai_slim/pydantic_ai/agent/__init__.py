@@ -64,7 +64,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
-from ..capabilities.abstract import leaf_capabilities
+from ..capabilities.abstract import leaf_capabilities, setup_run_sandbox
 from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -72,7 +72,7 @@ from ..native_tools import AbstractNativeTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
 from ..run import AgentRun, AgentRunResult
 from ..sandboxes import Sandbox, SandboxBackend, SandboxRef
-from ..sandboxes._policy import DefaultLocalSandbox, default_sandbox_backend
+from ..sandboxes._policy import default_sandbox_backend
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -1262,8 +1262,32 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             preparation_capability = run_layers[0]
 
+        # Connecting a ref goes through the capability chain's `get_sandbox` hook, which takes
+        # the run's context. The facade connects lazily on its first operation, which happens
+        # inside the run — after `initial_ctx` exists — so the resolver late-binds to it.
+        initial_ctx: RunContext[AgentDepsT] | None = None
+
+        async def _resolve_sandbox_ref(ref: SandboxRef) -> SandboxBackend:
+            assert initial_ctx is not None, 'sandbox connection attempted before the run context was built'
+            try:
+                backend = await preparation_capability.get_sandbox(initial_ctx, ref)
+            except exceptions.UserError:
+                raise
+            except Exception as error:
+                # Connection failures surface far from where the ref was supplied (inside a tool,
+                # possibly on another worker), so name the identity being connected to.
+                raise exceptions.UserError(
+                    f'Failed to connect to sandbox {ref.sandbox_id!r} for provider {ref.provider!r}.'
+                ) from error
+            if backend is None:
+                raise exceptions.UserError(
+                    f'No capability recognizes the sandbox reference for provider {ref.provider!r} '
+                    f'(sandbox {ref.sandbox_id!r}). Attach a capability whose `get_sandbox` can connect to it.'
+                )
+            return backend
+
         if isinstance(sandbox, SandboxRef):
-            sandbox_facade: Sandbox | None = Sandbox.from_ref(sandbox, preparation_capability.get_sandbox_providers)
+            sandbox_facade: Sandbox | None = Sandbox.from_ref(sandbox, _resolve_sandbox_ref)
         else:
             sandbox_facade = Sandbox.wrap(sandbox) if sandbox is not None else None
 
@@ -1500,31 +1524,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         late_instrumentation = True
                     model_used = model_used.wrapped
 
-                # Resolve the sandbox before constructing any `RunContext`, so every downstream
-                # hook sees the final facade. Explicit run arguments win over capability
-                # contributions, which win over the framework-owned per-run default.
-                if sandbox_facade is None:
-                    provided_sandbox = preparation_capability.get_sandbox(preparation_ctx)
-                    if provided_sandbox is not None:
-                        # Backend-first: a bare backend is warm/caller-owned even when it also
-                        # implements `__aenter__`/`__aexit__` (e.g. `LocalSandbox`), so entering
-                        # it here would tear down a sandbox the run doesn't own. Run-managed
-                        # lifecycle is requested only by returning an actual context manager.
-                        provided_backend = (
-                            provided_sandbox
-                            if isinstance(provided_sandbox, SandboxBackend)
-                            else await stack.enter_async_context(provided_sandbox)
-                        )
-                        sandbox_facade = Sandbox.wrap(provided_backend)
-                    else:
-                        default_backend = default_sandbox_backend()
-                        if isinstance(default_backend, DefaultLocalSandbox):
-                            await stack.enter_async_context(default_backend)
-                        sandbox_facade = Sandbox.wrap(default_backend)
-
-                # Build initial RunContext for for_run lifecycle hooks. Includes every
-                # field that's already known here — `tool_manager` and `validation_context`
-                # are populated later by `build_run_context` once the run is iterating.
+                # Build initial RunContext for sandbox resolution and the for_run lifecycle
+                # hooks. Includes every field that's already known here — `tool_manager` and
+                # `validation_context` are populated later by `build_run_context` once the run
+                # is iterating, and `sandbox` is assigned right below, before anything else can
+                # observe this context.
                 initial_ctx = RunContext[AgentDepsT](
                     deps=deps,
                     agent=self,
@@ -1543,9 +1547,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     pending_messages=state.pending_messages,
                     run_id=state.run_id,
                     conversation_id=state.conversation_id,
-                    sandbox=sandbox_facade,
                     _run_state_key=run_state_key,
                 )
+
+                # Resolve the sandbox before anything else can observe `initial_ctx`. Run
+                # arguments win over `setup_sandbox` contributions, which win over the
+                # unavailable default. A capability-supplied sandbox is held as its ref (the
+                # facade connects on first use); teardown is routed back to the supplier when
+                # the run ends, including on failure.
+                if sandbox_facade is None:
+                    supplied = await setup_run_sandbox(preparation_capability, initial_ctx)
+                    if supplied is not None:
+                        sandbox_supplier, sandbox_ref = supplied
+                        stack.push_async_callback(sandbox_supplier.teardown_sandbox, initial_ctx, sandbox_ref)
+                        sandbox_facade = Sandbox.from_ref(sandbox_ref, _resolve_sandbox_ref)
+                    else:
+                        sandbox_facade = Sandbox.wrap(default_sandbox_backend())
+                initial_ctx.sandbox = sandbox_facade
 
                 # Resolve run metadata up front so capability and toolset `for_run` hooks
                 # can see it on `RunContext.metadata`. Metadata factories receive the

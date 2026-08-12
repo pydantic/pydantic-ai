@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, ClassVar, cast
@@ -22,7 +22,6 @@ from pydantic_ai.durable_exec._utils import (
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import SandboxProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
@@ -30,7 +29,6 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._agent import DBOSParallelExecutionMode
 from ._utils import (
-    DBOS_SANDBOX_UNAVAILABLE_REASON,
     StepConfig,
     guard_enqueue_in_workflow,
 )
@@ -64,21 +62,18 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
 
     _durable_unit_noun = 'step'
     _durable_container_noun = 'workflow'
-    _sandbox_unavailable_reason = DBOS_SANDBOX_UNAVAILABLE_REASON
     _live_sandbox_error = live_sandbox_error(
         run_location='to a DBOS durable agent run',
         sandbox_constraint=(
             'run arguments are pickled as workflow inputs for recovery, and a live handle does not survive '
             'pickling or recovery'
         ),
-        provider_hint='register a matching provider on `DBOSDurability`',
     )
 
     def __init__(
         self,
         *,
         models: Mapping[str, Model] | None = None,
-        sandbox_providers: Sequence[SandboxProvider] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         name: str | None = None,
         model_step_config: StepConfig | None = None,
@@ -106,8 +101,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 specific instance inside the step from such a string — a custom
                 provider, or per-user credentials carried on `deps` — use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
-            sandbox_providers: Worker-side providers for re-opening
-                [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] run arguments after recovery.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request steps, and each tool event is handled in its own
                 event-handler step.
@@ -124,7 +117,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         super().__init__(
             models=models,
-            sandbox_providers=sandbox_providers,
             event_stream_handler=event_stream_handler,
             name=name,
         )

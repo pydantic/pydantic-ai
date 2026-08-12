@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import functools
-from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -27,7 +27,6 @@ from pydantic_ai.models import (
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider
-from pydantic_ai.sandboxes import SandboxProvider
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
@@ -71,7 +70,6 @@ class TemporalModel(WrapperModel):
         models: Mapping[str, Model] | None = None,
         provider_factory: TemporalProviderFactory[AgentDepsT] | None = None,
         agent: AbstractAgent[Any, Any] | None = None,
-        sandbox_providers: Sequence[SandboxProvider] | None = None,
     ):
         # Build models_by_id registry from wrapped model and models parameter
         self._models_by_id: dict[str, Model] = {}
@@ -97,7 +95,6 @@ class TemporalModel(WrapperModel):
         self._model_id_var: ContextVar[str | None] = ContextVar('_temporal_model_id', default=None)
         self._provider_factory = provider_factory
         self._agent = agent
-        self._sandbox_providers = tuple(sandbox_providers or ())
 
         async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
             run_context = deserialize_run_context(
@@ -105,7 +102,6 @@ class TemporalModel(WrapperModel):
                 params.serialized_run_context,
                 deps=deps,
                 agent=self._agent,
-                sandbox_providers=self._sandbox_providers,
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
             messages = self._reprepare_messages(params, model_for_request)
@@ -129,7 +125,6 @@ class TemporalModel(WrapperModel):
                 params.serialized_run_context,
                 deps=deps,
                 agent=self._agent,
-                sandbox_providers=self._sandbox_providers,
             )
             model_for_request = self._resolve_model_id(params.model_id, run_context)
             messages = self._reprepare_messages(params, model_for_request)

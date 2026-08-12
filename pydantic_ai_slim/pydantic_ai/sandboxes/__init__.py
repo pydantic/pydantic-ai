@@ -1,7 +1,6 @@
 """Sandbox facade, backend protocols, and implementations."""
 
 from .local import LocalSandbox
-from .managed import ManagedSandbox
 from .protocol import (
     SandboxBackend,
     SandboxCommand,
@@ -14,24 +13,23 @@ from .protocol import (
     SupportsStart,
     SupportsStream,
 )
-from .references import SandboxProvider, SandboxRef
-from .sandbox import FileWindow, Sandbox
+from .references import SandboxRef
+from .sandbox import FileWindow, Sandbox, SandboxResolver
 from .unavailable import UnavailableSandbox
 
 __all__ = (
     'FileWindow',
     'LocalSandbox',
-    'ManagedSandbox',
     'Sandbox',
     'SandboxBackend',
-    'SandboxProvider',
     'SandboxCommand',
     'SandboxFileEntry',
     'SandboxFilesystem',
     'SandboxOutputChunk',
     'SandboxProcess',
-    'SandboxResult',
     'SandboxRef',
+    'SandboxResolver',
+    'SandboxResult',
     'SupportsFilesystem',
     'SupportsStart',
     'SupportsStream',

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
@@ -9,7 +8,7 @@ from typing_extensions import TypeVar
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.sandboxes import Sandbox, SandboxProvider, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 
@@ -21,9 +20,9 @@ AgentDepsT = TypeVar('AgentDepsT', default=object, covariant=True)
 
 TEMPORAL_SANDBOX_UNAVAILABLE_REASON = (
     'RunContext.sandbox is not available inside a Temporal activity: a live sandbox handle cannot cross '
-    'the activity boundary. Attach a `ManagedSandbox` capability to let the run provision and destroy one, '
-    'or pass a `SandboxRef` to the agent run and register a matching `sandbox_providers=` entry on '
-    '`TemporalDurability`.'
+    'the activity boundary. Attach a capability that supplies a sandbox through its `setup_sandbox` hook, '
+    'or pass a `SandboxRef` to the agent run; either way the sandbox is re-opened inside each activity '
+    "through the capability chain's `get_sandbox`."
 )
 
 # The serialized run context crosses the activity boundary as untyped JSON (`Any`, so
@@ -167,7 +166,6 @@ def deserialize_run_context(
     *,
     deps: Any,
     agent: AbstractAgent[Any, Any] | None,
-    sandbox_providers: Sequence[SandboxProvider] | None = None,
 ) -> RunContext[Any]:
     """Deserialize a run context and attach the agent instance.
 
@@ -189,15 +187,33 @@ def deserialize_run_context(
         sandbox_id = sandbox_state.get('sandbox_id')
         unavailable_reason = sandbox_state.get('unavailable_reason')
         if isinstance(provider, str) and isinstance(sandbox_id, str):
-            providers = (
-                sandbox_providers
-                if sandbox_providers is not None
-                else agent.root_capability.get_sandbox_providers()
-                if agent is not None
-                else ()
-            )
+            # The worker's capability tree is the connection registry: the capability that can
+            # recognize the ref exists on the agent this worker constructed, credentials included.
+            async def resolve_sandbox(ref: SandboxRef) -> SandboxBackend:
+                if agent is None:
+                    raise UserError(
+                        f'Cannot connect to sandbox {ref.sandbox_id!r} for provider {ref.provider!r}: '
+                        'no agent is attached to this Temporal activity, so there is no capability '
+                        'chain to resolve the reference through.'
+                    )
+                try:
+                    backend = await agent.root_capability.get_sandbox(ctx, ref)
+                except UserError:
+                    raise
+                except Exception as error:
+                    raise UserError(
+                        f'Failed to connect to sandbox {ref.sandbox_id!r} for provider {ref.provider!r}.'
+                    ) from error
+                if backend is None:
+                    raise UserError(
+                        f'No capability recognizes the sandbox reference for provider {ref.provider!r} '
+                        f'(sandbox {ref.sandbox_id!r}). Attach a capability whose `get_sandbox` can connect to it.'
+                    )
+                return backend
 
-            ctx.__dict__['_sandbox'] = Sandbox.from_ref(SandboxRef(provider=provider, sandbox_id=sandbox_id), providers)
+            ctx.__dict__['_sandbox'] = Sandbox.from_ref(
+                SandboxRef(provider=provider, sandbox_id=sandbox_id), resolve_sandbox
+            )
         elif isinstance(unavailable_reason, str):
             ctx.__dict__['_sandbox_unavailable_reason'] = unavailable_reason
     # `pending_messages` isn't serialized across the activity boundary, and any code running inside

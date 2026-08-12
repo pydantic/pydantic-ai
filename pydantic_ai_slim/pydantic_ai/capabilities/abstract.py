@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
-    from pydantic_ai.sandboxes import SandboxBackend, SandboxProvider
+    from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
     from pydantic_graph import End
 
 # --- Handler type aliases for use in hook method signatures ---
@@ -416,15 +416,44 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Return native tools to register with the agent."""
         return []
 
-    def get_sandbox_providers(self) -> Sequence[SandboxProvider]:
-        """Return providers for creating and re-opening sandboxes.
+    async def setup_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
+        """Provision or select this run's sandbox and return its serializable identity.
 
-        [`SandboxProvider`][pydantic_ai.sandboxes.SandboxProvider]s keep worker-side
-        configuration and credentials out of
-        [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]. When several providers claim the same
-        `provider` name, the latest one in the resolved capability chain wins.
+        Called at most once per run, before any hook sees
+        [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox], and only when no `sandbox=` run
+        argument was passed. The latest overriding capability in the resolved chain wins.
+        Return `None`, without side effects, to not contribute.
+
+        The run holds only the returned [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]; the
+        live connection goes through
+        [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox]. Durable
+        engines run this hook inside a durable unit, so it executes exactly once across
+        workflow replays.
         """
-        return ()
+        return None
+
+    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+        """Return a live [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] for `ref`: connect, never create.
+
+        Return `None` for refs this capability doesn't recognize (check `ref.provider`);
+        resolution then continues along the chain, like
+        [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id].
+        May be called any number of times, in any process that holds this capability, so
+        credentials and clients belong here rather than on the ref. Must fail when the sandbox
+        no longer exists instead of silently provisioning a replacement. Inside a durable unit,
+        `ctx` is the engine's restricted run context: `ctx.deps` is always available.
+        """
+        return None
+
+    async def teardown_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
+        """Destroy the sandbox identified by `ref`.
+
+        Called at most once, after the run ends (also on failure), only on the capability whose
+        [`setup_sandbox`][pydantic_ai.capabilities.AbstractCapability.setup_sandbox] produced
+        `ref`, and never for a `sandbox=` run argument. Must tolerate an already-gone sandbox; the
+        platform's idle timeout is the backstop for paths that can never run this hook. The
+        inherited no-op suits warm or externally managed sandboxes.
+        """
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.
@@ -444,47 +473,6 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset],
         [`FilteredToolset`][pydantic_ai.toolsets.FilteredToolset],
         or custom [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] subclasses.
-        """
-        return None
-
-    def get_sandbox(
-        self, ctx: RunPreparationContext[AgentDepsT]
-    ) -> AbstractAsyncContextManager[SandboxBackend] | SandboxBackend | None:
-        """Return a [`SandboxBackend`][pydantic_ai.sandboxes.SandboxBackend] for this run.
-
-        Consulted once per run, only when no `sandbox=` was passed to the run method (the run
-        argument wins and this hook is then never called). Among capabilities, the supplier latest
-        in the resolved chain wins; capabilities that do not override this method do not contribute, and
-        [deferred][pydantic_ai.capabilities.AbstractCapability.defer_loading] capabilities are
-        never consulted. When no capability contributes, the run falls back to a fresh local
-        sandbox on supported platforms.
-
-        This is called on the agent-level capability instance before
-        [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]. The context contains
-        the agent, dependencies, message history, usage, run and conversation IDs, and only the
-        model or sandbox explicitly supplied to the run. The resolved sandbox is attached to the
-        [`RunContext`][pydantic_ai.tools.RunContext] passed to `for_run` and every later hook.
-        A capability materialized only by a capability function or `for_run` replacement is too
-        late to supply a sandbox; the supplier must exist on the pre-`for_run` capability tree.
-
-        The return value selects the lifecycle:
-
-        - **Return a context manager** (e.g. the result of an `@asynccontextmanager` factory) for
-          a run-managed sandbox. The run enters it when the run starts and exits it when the run
-          ends — exactly like a capability
-          [toolset][pydantic_ai.capabilities.AbstractCapability.get_toolset] — so
-          [`ctx.sandbox`][pydantic_ai.tools.RunContext.sandbox] is live from `before_run` through
-          `after_run`/`on_run_error`, and teardown is guaranteed even when the run fails to start.
-        - **Return the backend itself** for a warm sandbox shared across runs: it is never entered
-          or exited — even when the backend also implements the async context manager protocol —
-          so it keeps running and its lifecycle stays with the capability.
-
-        Bare backends and values yielded by context managers are wrapped once in the rich
-        [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade before being exposed as `ctx.sandbox`;
-        serving an existing facade passes it through unchanged.
-
-        Override this method only in a capability that supplies a sandbox; the inherited
-        implementation returns `None`.
         """
         return None
 
@@ -560,7 +548,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Deferred capabilities are always excluded from this chain, including capabilities
         already loaded in resumed message history. This matches
-        [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] because
+        [`setup_sandbox`][pydantic_ai.capabilities.AbstractCapability.setup_sandbox] because
         the chain is entered once at run start.
 
         """
@@ -1208,3 +1196,20 @@ def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[Abstra
     leaves: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(leaves.append)
     return leaves
+
+
+async def setup_run_sandbox(
+    capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]
+) -> tuple[AbstractCapability[AgentDepsT], SandboxRef] | None:
+    """Consult the tree's `setup_sandbox` hooks latest-first; return the winning supplier and its ref.
+
+    Lives outside the combined-capability dispatch because the run must route
+    `teardown_sandbox` back to the same capability, and that dispatch loses supplier identity.
+    """
+    for leaf in reversed(leaf_capabilities(capability)):
+        if leaf.defer_loading is True:
+            continue
+        ref = await leaf.setup_sandbox(ctx)
+        if ref is not None:
+            return leaf, ref
+    return None

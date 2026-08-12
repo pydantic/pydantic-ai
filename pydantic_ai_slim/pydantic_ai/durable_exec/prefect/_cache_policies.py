@@ -121,10 +121,10 @@ def _replace_run_context(
             }
             # Explicit sandbox identity forks the key because tools can produce
             # environment-specific results. Inspecting deferred state must never connect it.
-            # The framework default is fresh per run, and `UnavailableSandbox` is policy state,
-            # so both remain equivalent to the previous "no sandbox" input for caching.
+            # `UnavailableSandbox` (including the framework default) is policy state, so it
+            # remains equivalent to the previous "no sandbox" input for caching.
             sandbox_identity = value.sandbox.durable_identity()
-            if sandbox_identity is not None and not isinstance(sandbox_identity, UnavailableSandbox):
+            if not isinstance(sandbox_identity, UnavailableSandbox):
                 projected['sandbox'] = (value.sandbox.provider, value.sandbox.sandbox_id)
             inputs[key] = projected
 

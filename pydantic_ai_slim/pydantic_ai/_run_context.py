@@ -44,8 +44,8 @@ def _default_sandbox() -> Sandbox:
     return Sandbox.wrap(
         UnavailableSandbox(
             reason='No sandbox is attached: this `RunContext` was created outside an agent run. '
-            'Sandboxes are attached when a run starts — pass `sandbox=` to the run method or serve one '
-            "from a capability's `get_sandbox`."
+            'Sandboxes are attached when a run starts — pass `sandbox=` to the run method or supply one '
+            "from a capability's `setup_sandbox`."
         )
     )
 
@@ -182,14 +182,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
     [`sandbox.backend`][pydantic_ai.sandboxes.Sandbox.backend] to access provider-specific
     functionality. Set once per run, in order of precedence: the `sandbox=` run argument
     (caller-owned), a capability's
-    [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] contribution, or a
-    fresh framework-owned [`LocalSandbox`][pydantic_ai.sandboxes.LocalSandbox] on POSIX platforms.
-    On platforms where the local sandbox cannot honor its kill guarantee, the fallback is an
-    [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] whose operations explain how
-    to attach a supported backend. Resolution happens before `for_run`, so anything that receives
-    a `RunContext` sees the final sandbox. Treat it as read-only. On a bare/synthetic `RunContext`
-    that isn't backed by a run, this is an `UnavailableSandbox` whose operations explain that
-    sandboxes are attached at run time. See the [sandbox docs](../sandbox.md).
+    [`setup_sandbox`][pydantic_ai.capabilities.AbstractCapability.setup_sandbox] contribution, or
+    an [`UnavailableSandbox`][pydantic_ai.sandboxes.UnavailableSandbox] whose operations explain
+    how to attach one — no run ever gets implicit access to the host machine. Resolution happens
+    before `for_run`, so anything that receives a `RunContext` sees the final sandbox. Treat it
+    as read-only. On a bare/synthetic `RunContext` that isn't backed by a run, this is an
+    `UnavailableSandbox` whose operations explain that sandboxes are attached at run time. See
+    the [sandbox docs](../sandbox.md).
     """
     pending_messages: list[PendingMessage] | None = field(default=None, repr=False)
     """Queue read and mutated by the internal `PendingMessageDrainCapability`.

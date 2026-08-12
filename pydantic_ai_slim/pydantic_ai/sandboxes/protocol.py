@@ -285,9 +285,11 @@ class SandboxBackend(Protocol):
     def provider(self) -> str:
         """Short identifier of the backing implementation (e.g. `'docker'`, `'local'`).
 
-        Together with `sandbox_id`, this is the identity consumed by a
-        [`SandboxProvider`][pydantic_ai.sandboxes.SandboxProvider]. Credentials and other
-        worker-side configuration stay on the provider rather than in the identity.
+        Together with `sandbox_id`, this is the identity carried by
+        [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef]; capabilities use it to recognize
+        their own refs in [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox].
+        Credentials and other worker-side configuration stay on the capability rather than in
+        the identity.
         """
         ...
 

@@ -32,7 +32,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
-from pydantic_ai.sandboxes import SandboxBackend, SandboxProvider, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import SandboxBackend, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -44,12 +44,10 @@ from pydantic_ai.tools import (
 
 from .._runtime_toolsets import reject_cancellation_token, reject_unsupported_runtime_toolsets
 from .._sandbox import (
-    SandboxProvidersCapability,
     contributes_sandbox,
     guard_workflow_sandbox,
     live_sandbox_error,
     sandbox_contribution_error,
-    with_sandbox_providers,
 )
 from ._model import DBOSModel
 from ._utils import DBOS_SANDBOX_UNAVAILABLE_REASON, StepConfig
@@ -71,7 +69,6 @@ _LIVE_SANDBOX_ERROR = live_sandbox_error(
         'run arguments are pickled as workflow inputs for recovery, and a live handle does not survive '
         'pickling or recovery'
     ),
-    provider_hint='register a matching `sandbox_providers=` entry',
 )
 
 
@@ -81,7 +78,6 @@ _LIVE_SANDBOX_ERROR = live_sandbox_error(
 - With the capability, call `agent.run()` inside a `@DBOS.workflow`; the wrapper did this automatically.
 - `wrapped=` → use the wrapped agent's configuration on a regular `Agent(..., capabilities=[DBOSDurability(...)])`.
 - `name=` → set `name=` on `Agent`, or `name=` on `DBOSDurability`.
-- `sandbox_providers=` → set `sandbox_providers=` on `DBOSDurability`.
 - `event_stream_handler=` → pass `event_stream_handler=` to `DBOSDurability`; model events are still handled live inside model-request steps, and each tool event now runs in its own checkpointed step (the wrapper called it in workflow code).
 - `mcp_step_config=` → set `mcp_step_config=` on `DBOSDurability`.
 - `model_step_config=` → set `model_step_config=` on `DBOSDurability`.
@@ -98,7 +94,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         wrapped: AbstractAgent[AgentDepsT, OutputDataT],
         *,
         name: str | None = None,
-        sandbox_providers: Sequence[SandboxProvider] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         mcp_step_config: StepConfig | None = None,
         model_step_config: StepConfig | None = None,
@@ -111,8 +106,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         Args:
             wrapped: The agent to wrap.
             name: Optional unique agent name to use as the DBOS configured instance name. If not provided, the agent's `name` will be used.
-            sandbox_providers: Worker-side providers for re-opening
-                [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] run arguments after recovery.
             event_stream_handler: Optional event stream handler to use instead of the one set on the wrapped agent.
             mcp_step_config: The base DBOS step config to use for MCP server steps. If no config is provided, use the default settings of DBOS.
             model_step_config: The DBOS step config to use for model request steps. If no config is provided, use the default settings of DBOS.
@@ -124,8 +117,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
         self._name = name or wrapped.name
         self._event_stream_handler = event_stream_handler
-        self._sandbox_providers = tuple(sandbox_providers or ())
-        self._sandbox_provider_capability = SandboxProvidersCapability(self._sandbox_providers)
         self._wrapped_contributes_sandbox = contributes_sandbox(wrapped.root_capability)
         self._run_event_stream_handler: ContextVar[EventStreamHandler[AgentDepsT] | None] = ContextVar(
             '_run_event_stream_handler', default=None
@@ -242,7 +233,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     # a `ContextVar`, and the base run resolves it via the `event_stream_handler` property.
                     # Forwarding it too would also invoke it at the graph level (against the empty,
                     # already-consumed stream) on top of the in-step invocation.
-                    capabilities=with_sandbox_providers(capabilities, self._sandbox_provider_capability),
+                    capabilities=capabilities,
                     sandbox=sandbox or UnavailableSandbox(reason=DBOS_SANDBOX_UNAVAILABLE_REASON),
                     spec=spec,
                 )
@@ -863,7 +854,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name=infer_name,
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
-            capabilities=with_sandbox_providers(capabilities, self._sandbox_provider_capability),
+            capabilities=capabilities,
             sandbox=sandbox,
             spec=spec,
         ) as result:
@@ -1222,7 +1213,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 retries=retries,
                 infer_name=infer_name,
                 toolsets=None,
-                capabilities=with_sandbox_providers(capabilities, self._sandbox_provider_capability),
+                capabilities=capabilities,
                 sandbox=sandbox,
                 spec=spec,
             ) as run:

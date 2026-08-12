@@ -4,30 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import pytest
-from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, RunContext, RunPreparationContext, UnavailableSandbox, UserError
+from pydantic_ai import Agent, RunContext, UnavailableSandbox, UserError
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
-from pydantic_ai.durable_exec._sandbox import contributes_sandbox, managed_sandbox_supplier
+from pydantic_ai.durable_exec._sandbox import contributes_sandbox, run_sandbox_supplier
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.sandboxes import (
-    ManagedSandbox,
     Sandbox,
     SandboxBackend,
     SandboxOutputChunk,
     SandboxProcess,
-    SandboxProvider,
     SandboxRef,
     SandboxResult,
     SupportsFilesystem,
@@ -38,10 +33,10 @@ from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage
 
 from .sandbox_fakes import (
-    CreateOnlySandboxProvider,
+    ConnectOnlySandboxCapability,
+    CreateOnlySandboxCapability,
     FakeSandboxResult,
-    LifecycleSandboxProvider,
-    RecordingSandboxProvider,
+    LifecycleSandboxCapability,
 )
 
 pytestmark = pytest.mark.anyio
@@ -182,7 +177,8 @@ class FakeSandbox:
 
 
 def _describe(sandbox: Sandbox) -> str:
-    return getattr(sandbox.backend, 'name', sandbox.sandbox_id)
+    # `sandbox_id` is readable both before and after a deferred facade connects.
+    return sandbox.sandbox_id.removeprefix('fake-')
 
 
 def _tool_call_then_text(tool_name: str = 'probe') -> FunctionModel:
@@ -433,9 +429,9 @@ async def test_read_file_shell_and_full_paths_have_window_parity():
 
 
 async def test_bare_run_context_sandbox_is_unavailable():
-    """A `RunContext` not backed by a run grants no execution: only run assembly attaches a
-    live default sandbox, so synthetic contexts (e.g. in user test suites) can't silently
-    execute on the host.
+    """A `RunContext` not backed by a run grants no execution: sandboxes are attached by run
+    assembly only, so synthetic contexts (e.g. in user test suites) can't silently execute
+    on the host.
     """
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     assert ctx.sandbox.provider == 'unavailable'
@@ -488,72 +484,31 @@ async def test_existing_facade_passes_through_run_unchanged():
     assert observed == [sandbox]
 
 
-async def test_run_without_sandbox_gets_fresh_local_sandbox():
-    roots: list[Path] = []
-    providers: list[str] = []
+async def test_run_without_sandbox_is_unavailable_with_attachment_instructions():
+    """No run ever gets implicit access to the host: without an explicit sandbox, every
+    operation raises with the ways to attach one.
+    """
     agent: Agent = Agent(_tool_call_then_text('use_default'))
+    providers: list[str] = []
 
     @agent.tool
     async def use_default(ctx: RunContext[Any]) -> str:
         providers.append(ctx.sandbox.provider)
-        await ctx.sandbox.write_text('notes.txt', 'hello')
-        assert await ctx.sandbox.read_text('notes.txt') == 'hello'
-        roots.append(Path(await ctx.sandbox.working_dir()))
-        return 'ok'
+        await ctx.sandbox.run(['echo', 'hello'])
+        return 'ok'  # pragma: no cover
 
-    await agent.run('go')
-    assert providers == ['local']
-    assert len(roots) == 1
-    assert not roots[0].exists()
-
-
-async def test_default_sandbox_is_torn_down_when_tool_raises():
-    roots: list[Path] = []
-
-    def model_func(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart('explode', {})])
-
-    agent: Agent = Agent(FunctionModel(model_func))
-
-    @agent.tool
-    async def explode(ctx: RunContext[Any]) -> str:
-        await ctx.sandbox.write_text('created.txt', 'content')
-        roots.append(Path(await ctx.sandbox.working_dir()))
-        raise RuntimeError('boom')
-
-    with pytest.raises(RuntimeError, match='boom'):
+    with pytest.raises(UserError, match=r'No sandbox is attached to this run.+`sandbox=LocalSandbox\(\)`'):
         await agent.run('go')
-    assert len(roots) == 1
-    assert not roots[0].exists()
+    assert providers == ['unavailable']
 
 
-async def test_non_posix_default_is_present_and_reports_platform_reason(monkeypatch: pytest.MonkeyPatch):
-    from pydantic_ai import agent as agent_module
-
-    reason = 'default local sandbox requires POSIX; attach a container sandbox'
-    monkeypatch.setattr(
-        agent_module,
-        'default_sandbox_backend',
-        lambda: UnavailableSandbox(reason),
-    )
-    agent: Agent = Agent(_tool_call_then_text())
-
-    @agent.tool
-    async def probe(ctx: RunContext[Any]) -> str:
-        assert ctx.sandbox.provider == 'unavailable'
-        return (await ctx.sandbox.run(['echo', 'hello'])).stdout
-
-    with pytest.raises(UserError, match=reason):
-        await agent.run('go')
-
-
-async def test_unavailable_sandbox_run_argument_opts_out_of_default():
+async def test_unavailable_sandbox_run_argument_overrides_default_reason():
     reason = 'local execution disabled'
     agent: Agent = Agent(_tool_call_then_text())
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
-        return (await ctx.sandbox.run(['echo', 'hello'])).stdout
+        return (await ctx.sandbox.run(['echo', 'hello'])).stdout  # pragma: no cover
 
     with pytest.raises(UserError, match=reason):
         await agent.run('go', sandbox=UnavailableSandbox(reason))
@@ -631,62 +586,31 @@ async def test_sandbox_available_during_streamed_run():
 
 @dataclass
 class SandboxCapability(AbstractCapability[Any]):
-    """Canonical supplier: a fresh sandbox per run, entered and exited by the run itself."""
+    """Canonical supplier: a fresh sandbox per run through the three lifecycle hooks."""
 
     name: str = 'cap'
     events: list[str] = field(default_factory=lambda: [])
     backend: FakeSandbox | None = field(default=None, init=False)
 
-    def get_sandbox(self, ctx: RunPreparationContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
-        self.events.append(f'{self.name}:offered')
+    async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        self.events.append(f'{self.name}:setup')
+        self.backend = FakeSandbox(self.name)
+        return SandboxRef(provider='fake', sandbox_id=self.backend.sandbox_id)
 
-        @asynccontextmanager
-        async def per_run_sandbox() -> AsyncGenerator[SandboxBackend]:
-            self.events.append(f'{self.name}:enter')
-            self.backend = FakeSandbox(self.name)
-            try:
-                yield self.backend
-            finally:
-                self.events.append(f'{self.name}:exit')
-
-        return per_run_sandbox()
-
-
-@dataclass
-class FakeSandboxProvider(SandboxProvider):
-    backend: SandboxBackend
-    provider_name: str = 'fake'
-    calls: list[str] = field(default_factory=lambda: list[str]())
-    error: Exception | None = None
-
-    @property
-    def provider(self) -> str:
-        return self.provider_name
-
-    async def connect(self, sandbox_id: str) -> SandboxBackend:
-        self.calls.append(sandbox_id)
-        await asyncio.sleep(0)
-        if self.error is not None:
-            raise self.error
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        if ref.provider != 'fake' or self.backend is None or ref.sandbox_id != self.backend.sandbox_id:
+            return None
+        self.events.append(f'{self.name}:connect')
         return self.backend
 
-
-@dataclass
-class SandboxProviderCapability(AbstractCapability[Any]):
-    providers: Sequence[SandboxProvider]
-
-    def get_sandbox_providers(self) -> Sequence[SandboxProvider]:
-        return self.providers
+    async def teardown_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+        self.events.append(f'{self.name}:teardown')
 
 
 async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection():
-    backend = FakeSandbox('deferred')
-    provider = FakeSandboxProvider(backend)
+    connector = ConnectOnlySandboxCapability()
     observed: list[Sandbox] = []
-    agent: Agent = Agent(
-        _tool_call_then_text(),
-        capabilities=[SandboxProviderCapability([provider])],
-    )
+    agent: Agent = Agent(_tool_call_then_text(), capabilities=[connector])
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
@@ -702,70 +626,47 @@ async def test_sandbox_ref_connects_once_and_exposes_identity_before_connection(
             sandbox.run(['one']),
             sandbox.run(['two']),
             sandbox.working_dir(),
-            sandbox.fs.exists('/workspace/missing'),
         )
-        assert [result.stdout for result in run_results[:2]] == ["ran:['one']", "ran:['two']"]
-        assert run_results[2:] == ['/workspace', False]
-        assert sandbox.backend is backend
+        assert [result.stdout for result in run_results[:2]] == ['connected', 'connected']
+        assert run_results[2] == '/workspace'
+        assert sandbox.backend is connector.backends[0]
         return 'ok'
 
     result = await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-deferred'))
     assert result.output == 'done'
     assert len(observed) == 1
-    assert provider.calls == ['fake-deferred']
+    assert connector.sandbox_ids == ['fake-deferred']  # concurrent first ops connect exactly once
 
 
-async def test_deferred_filesystem_adapter_delegates_after_connection():
-    """The `fs` adapter handed out before the ref connects keeps working afterwards."""
-    provider = FakeSandboxProvider(FakeSandbox('deferred'))
-    agent: Agent = Agent(_tool_call_then_text(), capabilities=[SandboxProviderCapability([provider])])
+@pytest.mark.parametrize('with_other_capability', [False, True], ids=['no-capabilities', 'unrelated-capability'])
+async def test_sandbox_ref_requires_recognizing_capability(with_other_capability: bool):
+    @dataclass
+    class OtherProviderCapability(AbstractCapability[Any]):
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+            return FakeSandbox('other') if ref.provider == 'other' else None
 
-    @agent.tool
-    async def probe(ctx: RunContext[Any]) -> str:
-        deferred_fs = ctx.sandbox.fs  # handed out before anything has connected
-        await deferred_fs.make_dir('/workspace/dir')
-        await deferred_fs.write_bytes('/workspace/notes.txt', b'data')
-        assert await deferred_fs.read_bytes('/workspace/notes.txt') == b'data'
-        assert (await deferred_fs.stat('/workspace/notes.txt')).size == 4
-        assert [entry.name for entry in await deferred_fs.list_dir('/workspace')] == ['notes.txt']
-        await deferred_fs.remove('/workspace/notes.txt')
-        assert await deferred_fs.exists('/workspace/notes.txt') is False
-        return 'ok'
-
-    result = await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-deferred'))
-    assert result.output == 'done'
-    assert provider.calls == ['fake-deferred']
-
-
-@pytest.mark.parametrize(
-    ('ref', 'providers', 'registered'),
-    [
-        (SandboxRef(provider='missing', sandbox_id='sandbox-1'), [], '(none)'),
-        (
-            SandboxRef(provider='missing', sandbox_id='sandbox-1'),
-            [FakeSandboxProvider(FakeSandbox('other'), provider_name='other')],
-            "'other'",
-        ),
-    ],
-)
-async def test_sandbox_ref_requires_matching_provider(
-    ref: SandboxRef, providers: Sequence[SandboxProvider], registered: str
-):
-    agent = make_connecting_probe_agent([], capabilities=[SandboxProviderCapability(providers)])
+    capabilities = [OtherProviderCapability()] if with_other_capability else []
+    agent = make_connecting_probe_agent([], capabilities=capabilities)
     with pytest.raises(
         UserError,
-        match=rf"No sandbox provider is registered for provider 'missing'.+{re.escape(registered)}",
+        match=r"No capability recognizes the sandbox reference for provider 'missing'",
     ):
-        await agent.run('go', sandbox=ref)
+        await agent.run('go', sandbox=SandboxRef(provider='missing', sandbox_id='sandbox-1'))
 
 
-async def test_sandbox_ref_provider_failure_is_chained():
+async def test_sandbox_ref_connection_failure_is_chained():
     error = RuntimeError('expired')
-    provider = FakeSandboxProvider(FakeSandbox('unused'), error=error)
-    agent = make_connecting_probe_agent([], capabilities=[SandboxProviderCapability([provider])])
+
+    @dataclass
+    class FailingConnectCapability(AbstractCapability[Any]):
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+            await asyncio.sleep(0)
+            raise error
+
+    agent = make_connecting_probe_agent([], capabilities=[FailingConnectCapability()])
     with pytest.raises(
         UserError,
-        match=re.escape("Failed to connect to sandbox provider 'fake' for sandbox 'expired'.") + '$',
+        match=re.escape("Failed to connect to sandbox 'expired' for provider 'fake'.") + '$',
     ) as exc_info:
         await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='expired'))
     assert exc_info.value.__cause__ is error
@@ -773,79 +674,78 @@ async def test_sandbox_ref_provider_failure_is_chained():
 
 async def test_sandbox_ref_wins_over_sandbox_supplier():
     supplier = SandboxCapability(name='loser')
-    provider = FakeSandboxProvider(FakeSandbox('winner'))
+    connector = ConnectOnlySandboxCapability()
     seen: list[str] = []
-    agent = make_connecting_probe_agent(seen, capabilities=[supplier, SandboxProviderCapability([provider])])
+    agent = make_connecting_probe_agent(seen, capabilities=[supplier, connector])
     await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-winner'))
     assert seen == ['winner']
     assert supplier.events == []
+    assert connector.sandbox_ids == ['fake-winner']
 
 
-async def test_sandbox_providers_compose_and_latest_duplicate_wins():
-    first = FakeSandboxProvider(FakeSandbox('first'))
-    other = FakeSandboxProvider(FakeSandbox('other'), provider_name='other')
-    last = FakeSandboxProvider(FakeSandbox('last'))
-    capabilities = [
-        SandboxProviderCapability([first]),
-        WrapperCapability(wrapped=SandboxProviderCapability([other, last])),
-    ]
-    assert CombinedCapability(capabilities).get_sandbox_providers() == [first, other, last]
-
-    # `first` and `last` share the 'fake' provider name; resolving a ref must use `last`.
+async def test_ref_resolution_prefers_the_latest_recognizing_capability():
+    """Two capabilities recognize the same provider name; the latest in the chain connects,
+    matching supplier precedence everywhere else.
+    """
+    first = ConnectOnlySandboxCapability()
+    last = ConnectOnlySandboxCapability()
     seen: list[str] = []
-    agent = make_connecting_probe_agent(seen, capabilities=capabilities)
+    agent = make_connecting_probe_agent(seen, capabilities=[first, WrapperCapability(wrapped=last)])
     await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='fake-1'))
-    assert seen == ['last']
-    assert first.calls == []
-    assert last.calls == ['fake-1']
+    assert seen == ['1']
+    assert first.sandbox_ids == []
+    assert last.sandbox_ids == ['fake-1']
 
 
 def test_contributes_sandbox_detection():
-    assert contributes_sandbox(SandboxProviderCapability([])) is False  # providers alone supply nothing
+    assert contributes_sandbox(ConnectOnlySandboxCapability()) is False  # connecting alone supplies nothing
     assert contributes_sandbox(WrapperCapability(wrapped=SandboxCapability())) is True
     assert contributes_sandbox(SandboxCapability(id='deferred-sandbox', defer_loading=True)) is False
-    assert contributes_sandbox(CombinedCapability([SandboxCapability(), SandboxProviderCapability([])])) is True
+    assert contributes_sandbox(CombinedCapability([SandboxCapability(), ConnectOnlySandboxCapability()])) is True
 
 
-def test_managed_sandbox_supplier_only_reports_the_winner():
+def test_run_sandbox_supplier_only_reports_the_winner():
     """Durable engines may only route the sandbox a non-durable run would actually have used."""
-    managed = ManagedSandbox(LifecycleSandboxProvider())
+    lifecycle = LifecycleSandboxCapability()
     other = SandboxCapability(name='other')
-    assert managed_sandbox_supplier(CombinedCapability([other, managed])) is managed
-    assert managed_sandbox_supplier(WrapperCapability(wrapped=managed)) is managed
-    # A later non-managed supplier wins resolution, so there is no managed lifecycle to route.
-    assert managed_sandbox_supplier(CombinedCapability([managed, other])) is None
-    assert managed_sandbox_supplier(other) is None
+    assert run_sandbox_supplier(CombinedCapability([other, lifecycle])) is lifecycle
+    assert run_sandbox_supplier(WrapperCapability(wrapped=lifecycle)) is lifecycle
+    assert run_sandbox_supplier(CombinedCapability([lifecycle, other])) is other
+    assert run_sandbox_supplier(ConnectOnlySandboxCapability()) is None
 
 
-async def test_managed_sandbox_creates_at_run_start_and_tears_down_at_run_end():
-    """`ManagedSandbox` gives the run the whole lifecycle: no ref, no manual teardown."""
-    provider = LifecycleSandboxProvider()
-    agent: Agent = Agent(_tool_call_then_text(), capabilities=[ManagedSandbox(provider)])
+async def test_lifecycle_capability_creates_at_run_start_and_tears_down_at_run_end():
+    """A capability owning the lifecycle gives the run the whole bracket: setup before the
+    first hook, teardown after the run. The tool reaches the sandbox by reconnecting
+    through `get_sandbox`, exactly as it would inside a durable engine's activity.
+    """
+    lifecycle = LifecycleSandboxCapability()
+    agent: Agent = Agent(_tool_call_then_text(), capabilities=[lifecycle])
     seen: list[str] = []
 
     @agent.tool
     async def probe(ctx: RunContext[Any]) -> str:
         seen.append(ctx.sandbox.sandbox_id)
-        # Not yet torn down while the run is still going.
-        assert provider.events == ['create:created-1']
-        return (await ctx.sandbox.run(['echo', 'hello'])).stdout
+        # Created but not yet torn down while the run is still going.
+        assert lifecycle.events == ['create:created-1']
+        await ctx.sandbox.run(['echo', 'hello'])
+        assert lifecycle.events == ['create:created-1', 'connect:created-1']
+        return 'ok'
 
     result = await agent.run('go')
     assert result.output == 'done'
     assert seen == ['created-1']
-    assert provider.events == ['create:created-1', 'teardown:created-1']
-    # The tool's command ran against the very backend `create()` returned; no reconnection here.
-    assert [backend.commands for backend in provider.backends] == [[['echo', 'hello']]]
+    assert lifecycle.events == ['create:created-1', 'connect:created-1', 'teardown:created-1']
+    assert [backend.commands for backend in lifecycle.backends] == [[['echo', 'hello']]]
 
 
-async def test_managed_sandbox_tears_down_when_a_tool_raises():
-    provider = LifecycleSandboxProvider()
+async def test_lifecycle_capability_tears_down_when_a_tool_raises():
+    lifecycle = LifecycleSandboxCapability()
 
     def model_func(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('explode', {})])
 
-    agent: Agent = Agent(FunctionModel(model_func), capabilities=[ManagedSandbox(provider)])
+    agent: Agent = Agent(FunctionModel(model_func), capabilities=[lifecycle])
 
     @agent.tool
     async def explode(ctx: RunContext[Any]) -> str:
@@ -853,63 +753,64 @@ async def test_managed_sandbox_tears_down_when_a_tool_raises():
 
     with pytest.raises(RuntimeError, match='boom'):
         await agent.run('go')
-    assert provider.events == ['create:created-1', 'teardown:created-1']
+    assert lifecycle.events == ['create:created-1', 'teardown:created-1']
 
 
-async def test_managed_sandbox_tolerates_a_provider_without_teardown():
-    """The inherited no-op `teardown` is what lets a provider lean on its platform's idle timeout."""
-    provider = CreateOnlySandboxProvider()
+async def test_create_only_capability_leans_on_platform_reaping():
+    """The inherited no-op `teardown_sandbox` is what lets a capability lean on its
+    platform's idle timeout instead of destroying anything itself.
+    """
+    creator = CreateOnlySandboxCapability()
     seen: list[str] = []
-    agent = make_probe_agent(seen, capabilities=[ManagedSandbox(provider)])
+    agent = make_probe_agent(seen, capabilities=[creator])
     result = await agent.run('go')
     assert result.output == 'done'
     assert seen == ['created-1']
-    assert provider.events == ['create:created-1']
+    assert creator.events == ['create:created-1']
 
 
-async def test_managed_sandbox_rejects_a_provider_that_cannot_create():
-    provider = RecordingSandboxProvider()
-    agent = make_probe_agent([], capabilities=[ManagedSandbox(provider)])
-    with pytest.raises(UserError) as exc_info:
-        await agent.run('go')
-    assert str(exc_info.value) == snapshot(
-        "The sandbox provider 'fake' passed to `ManagedSandbox` does not implement `create()`, so it cannot "
-        'provision a sandbox for this run. Implement `create()` on the provider, or pass an existing sandbox '
-        'backend or a `SandboxRef` to the run instead.'
-    )
-    assert isinstance(exc_info.value.__cause__, NotImplementedError)
-
-
-def test_managed_sandbox_is_not_spec_loadable():
-    """A provider holds live clients and worker-side credentials, so it can't come from a spec."""
-    assert ManagedSandbox.get_serialization_name() is None
-
-
-async def test_managed_sandbox_publishes_its_provider_for_ref_resolution():
-    """One registration covers both jobs, so a `SandboxRef` run argument resolves without a second one."""
-    provider = LifecycleSandboxProvider()
+async def test_lifecycle_capability_also_connects_ref_run_arguments():
+    """The same capability serves both jobs: with a ref run argument its `setup_sandbox` is
+    skipped (the caller owns the lifecycle), but its `get_sandbox` still connects.
+    """
+    lifecycle = LifecycleSandboxCapability()
     seen: list[str] = []
-    agent = make_connecting_probe_agent(seen, capabilities=[ManagedSandbox(provider)])
+    agent = make_connecting_probe_agent(seen, capabilities=[lifecycle])
     await agent.run('go', sandbox=SandboxRef(provider='fake', sandbox_id='pre-existing'))
     assert seen == ['pre-existing']
-    # The run argument wins outright: nothing was created, and the run does not destroy a sandbox it
-    # was merely lent.
-    assert provider.events == ['connect:pre-existing']
+    # The run argument wins outright: nothing was created, and the run does not destroy a
+    # sandbox it was merely lent.
+    assert lifecycle.events == ['connect:pre-existing']
 
 
-async def test_context_manager_served_backend_is_exposed_through_facade():
+async def test_capability_supplied_sandbox_is_exposed_through_facade():
     cap = SandboxCapability()
     observed: list[Sandbox] = []
-    result = await make_identity_probe_agent(observed, capabilities=[cap]).run('go')
+    agent: Agent = Agent(_tool_call_then_text(), capabilities=[cap])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        observed.append(ctx.sandbox)
+        await ctx.sandbox.run(['true'])  # first operation connects the deferred facade
+        return 'ok'
+
+    result = await agent.run('go')
     assert result.output == 'done'
     assert len(observed) == 1
     assert isinstance(observed[0], Sandbox)
     assert observed[0].backend is cap.backend
-    assert cap.events == ['cap:offered', 'cap:enter', 'cap:exit']
+    assert cap.events == ['cap:setup', 'cap:connect', 'cap:teardown']
+
+
+async def test_capability_supplied_sandbox_connects_lazily():
+    """A run that never touches `ctx.sandbox` pays setup and teardown, but no connection."""
+    cap = SandboxCapability()
+    await make_probe_agent([], capabilities=[cap]).run('go')
+    assert cap.events == ['cap:setup', 'cap:teardown']
 
 
 async def test_capability_sandbox_live_through_after_run():
-    """The run exits the sandbox after `after_run`, so hooks never see a dead handle."""
+    """Teardown runs after `after_run`, so hooks never see a torn-down sandbox."""
 
     @dataclass
     class ContributingWatcher(SandboxCapability):
@@ -919,7 +820,7 @@ async def test_capability_sandbox_live_through_after_run():
 
     cap = ContributingWatcher()
     await make_probe_agent([], capabilities=[cap]).run('go')
-    assert cap.events == ['cap:offered', 'cap:enter', 'after_run:cap', 'cap:exit']
+    assert cap.events == ['cap:setup', 'after_run:cap', 'cap:teardown']
 
 
 async def test_run_argument_wins_over_capability():
@@ -931,7 +832,7 @@ async def test_run_argument_wins_over_capability():
     assert cap.events == []
 
 
-async def test_last_capability_in_chain_wins_and_losers_are_never_consulted():
+async def test_last_capability_in_chain_wins_and_losers_are_never_set_up():
     first = SandboxCapability(name='first')
     last = SandboxCapability(name='last')
     seen: list[str] = []
@@ -951,19 +852,29 @@ async def test_capability_without_sandbox_does_not_mask_supplier():
     assert seen == ['contributor']
 
 
-@pytest.mark.parametrize('context_managed', [True, False], ids=['nullcontext', 'bare'])
-async def test_warm_sandbox_shared_across_runs(context_managed: bool):
+async def test_warm_sandbox_shared_across_runs():
+    """A warm capability returns the identity of the backend it already holds from
+    `setup_sandbox` and leaves `teardown_sandbox` alone, so the same environment serves
+    every run.
+    """
     warm = FakeSandbox('warm')
 
     @dataclass
     class WarmSandboxCapability(AbstractCapability[Any]):
-        def get_sandbox(
-            self, ctx: RunPreparationContext[Any]
-        ) -> AbstractAsyncContextManager[SandboxBackend] | SandboxBackend:
-            return nullcontext(warm) if context_managed else warm
+        async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            return SandboxRef(provider='fake', sandbox_id=warm.sandbox_id)
+
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+            return warm if ref.sandbox_id == warm.sandbox_id else None
 
     observed: list[Sandbox] = []
-    agent = make_identity_probe_agent(observed, capabilities=[WarmSandboxCapability()])
+    agent: Agent = Agent(_tool_call_then_text(), capabilities=[WarmSandboxCapability()])
+
+    @agent.tool
+    async def probe(ctx: RunContext[Any]) -> str:
+        await ctx.sandbox.run(['true'])
+        observed.append(ctx.sandbox)
+        return 'ok'
 
     await agent.run('one')
     await agent.run('two')
@@ -971,82 +882,23 @@ async def test_warm_sandbox_shared_across_runs(context_managed: bool):
     assert all(isinstance(sandbox, Sandbox) and sandbox.backend is warm for sandbox in observed)
 
 
-async def test_context_manager_shaped_backend_returned_bare_stays_warm():
-    """Classification is backend-first: a bare backend that also implements the async context
-    manager protocol (like `LocalSandbox`) stays warm — the run never enters or exits it.
-    Run-managed lifecycle is requested only by returning an actual context manager.
-    """
-
-    class ContextManagerShapedSandbox(FakeSandbox):
-        def __init__(self, name: str) -> None:
-            super().__init__(name)
-            self.enters = 0
-            self.exits = 0
-
-        async def __aenter__(self) -> ContextManagerShapedSandbox:
-            self.enters += 1
-            return self
-
-        async def __aexit__(self, *exc_info: Any) -> None:
-            self.exits += 1
-
-    warm = ContextManagerShapedSandbox('warm')
-    assert isinstance(warm, AbstractAsyncContextManager)
-
-    @dataclass
-    class CMShapedWarmCapability(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: RunPreparationContext[Any]) -> SandboxBackend:
-            return warm
-
-    observed: list[Sandbox] = []
-    agent = make_identity_probe_agent(observed, capabilities=[CMShapedWarmCapability()])
-    await agent.run('one')
-    await agent.run('two')
-    assert len(observed) == 2
-    assert all(sandbox.backend is warm for sandbox in observed)
-    assert (warm.enters, warm.exits) == (0, 0)
-    # Prove the backend really is a working context manager — the run's restraint above is
-    # what this test pins, not an inert `__aenter__`.
-    async with warm:
-        pass
-    assert (warm.enters, warm.exits) == (1, 1)
-
-
-async def test_capability_serving_existing_facade_is_passed_through_unchanged():
-    """A capability's `get_sandbox` may serve an existing `Sandbox` facade; the run passes it
-    through unchanged, so `ctx.sandbox` is the very object the capability served."""
-    facade = Sandbox.wrap(FakeSandbox('warm'))
-
-    @dataclass
-    class ServeFacade(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: RunPreparationContext[Any]) -> SandboxBackend:
-            return facade
-
-    seen: list[Sandbox] = []
-    agent = make_identity_probe_agent(seen, capabilities=[ServeFacade()])
-    await agent.run('go')
-
-    assert seen == [facade]
-
-
 async def test_deferred_capability_never_contributes():
     cap = SandboxCapability(name='deferred', id='deferred-sandbox', defer_loading=True)
     seen: list[str] = []
     await make_probe_agent(seen, capabilities=[cap]).run('go')
-    assert len(seen) == 1
-    assert seen[0].startswith('local-')
+    assert seen == ['unavailable']
     assert cap.events == []
 
 
-async def test_wrapper_capability_forwards_get_sandbox():
+async def test_wrapper_capability_forwards_sandbox_lifecycle():
     inner = SandboxCapability(name='inner')
     seen: list[str] = []
-    await make_probe_agent(seen, capabilities=[WrapperCapability(wrapped=inner)]).run('go')
+    await make_connecting_probe_agent(seen, capabilities=[WrapperCapability(wrapped=inner)]).run('go')
     assert seen == ['inner']
-    assert inner.events == ['inner:offered', 'inner:enter', 'inner:exit']
+    assert inner.events == ['inner:setup', 'inner:connect', 'inner:teardown']
 
 
-async def test_capability_sandbox_exits_when_a_tool_raises():
+async def test_capability_sandbox_tears_down_when_a_tool_raises():
     cap = SandboxCapability()
 
     def model_func(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1060,10 +912,10 @@ async def test_capability_sandbox_exits_when_a_tool_raises():
 
     with pytest.raises(RuntimeError, match='boom'):
         await agent.run('go')
-    assert cap.events == ['cap:offered', 'cap:enter', 'cap:exit']
+    assert cap.events == ['cap:setup', 'cap:teardown']
 
 
-async def test_capability_sandbox_exits_when_toolset_entry_fails():
+async def test_capability_sandbox_tears_down_when_toolset_entry_fails():
     """The exit stack owns the bracket, so teardown runs even when the run never starts."""
 
     class ExplodingToolset(WrapperToolset[Any]):
@@ -1074,4 +926,42 @@ async def test_capability_sandbox_exits_when_toolset_entry_fails():
     agent: Agent = Agent(TestModel(), toolsets=[ExplodingToolset(wrapped=FunctionToolset())], capabilities=[cap])
     with pytest.raises(RuntimeError, match='toolset entry failed'):
         await agent.run('go')
-    assert cap.events == ['cap:offered', 'cap:enter', 'cap:exit']
+    assert cap.events == ['cap:setup', 'cap:teardown']
+
+
+async def test_failing_teardown_propagates():
+    """An in-process teardown failure surfaces to the caller, exactly like a toolset exit
+    error; durable engines make their own call (Temporal logs instead, because the platform
+    idle timeout is the backstop and the run's work is already done).
+    """
+    from .sandbox_fakes import FailingTeardownSandboxCapability
+
+    failing = FailingTeardownSandboxCapability()
+    agent = make_probe_agent([], capabilities=[failing])
+    with pytest.raises(RuntimeError, match="sandbox 'created-1' is already gone"):
+        await agent.run('go')
+    assert failing.events == ['create:created-1', 'teardown-failed:created-1']
+
+
+async def test_setup_declined_falls_through_to_default():
+    """A supplier that returns `None` contributes nothing, and the run falls back to the
+    unavailable default rather than treating the decline as an error.
+    """
+
+    @dataclass
+    class DecliningSupplier(AbstractCapability[Any]):
+        async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef | None:
+            return None
+
+    seen: list[str] = []
+    await make_probe_agent(seen, capabilities=[DecliningSupplier()]).run('go')
+    assert seen == ['unavailable']
+
+
+def test_managed_and_provider_concepts_are_gone():
+    """The lifecycle lives on capability hooks; the adapter types must not resurface."""
+    import pydantic_ai.sandboxes as sandboxes
+
+    assert not hasattr(sandboxes, 'ManagedSandbox')
+    assert not hasattr(sandboxes, 'SandboxProvider')
+    assert 'SandboxRef' in sandboxes.__all__

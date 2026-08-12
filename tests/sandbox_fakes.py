@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import RunPreparationContext
+from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.sandboxes import SandboxBackend, SandboxProvider
+from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
 
 
 @dataclass(frozen=True)
@@ -67,29 +66,34 @@ class RecordingSandboxBackend:
         return '/workspace'
 
 
-class RecordingSandboxProvider(SandboxProvider):
+class ConnectOnlySandboxCapability(AbstractCapability[Any]):
+    """Recognizes `'fake'` refs and connects to them; never provisions anything.
+
+    The connect-only shape of the lifecycle hooks: only `get_sandbox` is overridden, so this
+    capability serves `SandboxRef` run arguments (and refs provisioned elsewhere) without ever
+    owning a lifecycle.
+    """
+
     def __init__(self) -> None:
         self.sandbox_ids: list[str] = []
         self.backends: list[RecordingSandboxBackend] = []
 
     def reset(self) -> None:
-        """Restore pristine state, so module-level providers can be shared across tests."""
+        """Restore pristine state, so module-level capabilities can be shared across tests."""
         self.sandbox_ids.clear()
         self.backends.clear()
 
-    @property
-    def provider(self) -> str:
-        return 'fake'
-
-    async def connect(self, sandbox_id: str) -> SandboxBackend:
-        self.sandbox_ids.append(sandbox_id)
-        backend = RecordingSandboxBackend(sandbox_id)
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        if ref.provider != 'fake':
+            return None
+        self.sandbox_ids.append(ref.sandbox_id)
+        backend = RecordingSandboxBackend(ref.sandbox_id)
         self.backends.append(backend)
         return backend
 
 
-class CreateOnlySandboxProvider(SandboxProvider):
-    """Provisions and reconnects, inheriting `SandboxProvider`'s no-op `teardown`.
+class CreateOnlySandboxCapability(AbstractCapability[Any]):
+    """Provisions per run and reconnects, inheriting the no-op `teardown_sandbox`.
 
     Every lifecycle call is appended to `events`, so tests can pin both the counts and the
     order in which creation, connection, and destruction happened.
@@ -101,46 +105,43 @@ class CreateOnlySandboxProvider(SandboxProvider):
         self._created = 0
 
     def reset(self) -> None:
-        """Restore pristine state, so module-level providers can be shared across tests."""
+        """Restore pristine state, so module-level capabilities can be shared across tests."""
         self.events.clear()
         self.backends.clear()
         self._created = 0
 
-    @property
-    def provider(self) -> str:
-        return 'fake'
-
-    async def create(self) -> SandboxBackend:
+    async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
         self._created += 1
-        return self._backend('create', f'created-{self._created}')
+        sandbox_id = f'created-{self._created}'
+        self.events.append(f'create:{sandbox_id}')
+        return SandboxRef(provider='fake', sandbox_id=sandbox_id)
 
-    async def connect(self, sandbox_id: str) -> SandboxBackend:
-        return self._backend('connect', sandbox_id)
-
-    def _backend(self, event: str, sandbox_id: str) -> RecordingSandboxBackend:
-        self.events.append(f'{event}:{sandbox_id}')
-        backend = RecordingSandboxBackend(sandbox_id)
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        if ref.provider != 'fake':
+            return None
+        self.events.append(f'connect:{ref.sandbox_id}')
+        backend = RecordingSandboxBackend(ref.sandbox_id)
         self.backends.append(backend)
         return backend
 
 
-class LifecycleSandboxProvider(CreateOnlySandboxProvider):
-    """A `CreateOnlySandboxProvider` that also destroys the sandboxes it made."""
+class LifecycleSandboxCapability(CreateOnlySandboxCapability):
+    """A `CreateOnlySandboxCapability` that also destroys the sandboxes it made."""
 
-    async def teardown(self, sandbox_id: str) -> None:
-        self.events.append(f'teardown:{sandbox_id}')
+    async def teardown_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+        self.events.append(f'teardown:{ref.sandbox_id}')
 
 
-class FailingTeardownSandboxProvider(CreateOnlySandboxProvider):
-    """A provider whose `teardown` always fails, e.g. because the sandbox is already gone."""
+class FailingTeardownSandboxCapability(CreateOnlySandboxCapability):
+    """A capability whose `teardown_sandbox` always fails, e.g. because the sandbox is already gone."""
 
-    async def teardown(self, sandbox_id: str) -> None:
-        self.events.append(f'teardown-failed:{sandbox_id}')
-        raise RuntimeError(f'sandbox {sandbox_id!r} is already gone')
+    async def teardown_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+        self.events.append(f'teardown-failed:{ref.sandbox_id}')
+        raise RuntimeError(f'sandbox {ref.sandbox_id!r} is already gone')
 
 
 class SandboxContributingCapability(AbstractCapability[Any]):
-    """Capability whose sandbox contribution is rejected before the handle is used."""
+    """Capability whose sandbox contribution is rejected before anything is provisioned."""
 
-    def get_sandbox(self, ctx: RunPreparationContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
-        return nullcontext(FakeSandboxHandle())  # pragma: no cover
+    async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        return SandboxRef(provider='fake', sandbox_id='fake-sandbox')  # pragma: no cover

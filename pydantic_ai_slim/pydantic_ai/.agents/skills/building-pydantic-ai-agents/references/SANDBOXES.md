@@ -1,14 +1,12 @@
 # Sandboxes
 
-Every run exposes a concrete `Sandbox` facade at
-`ctx.sandbox`. On POSIX, the default is a fresh per-run
-`LocalSandbox` whose lazy temporary directory is removed
-when the run ends. Elsewhere, the default is
-`UnavailableSandbox`, whose operations raise
-`UserError` with platform guidance.
+Every run exposes a concrete `Sandbox` facade at `ctx.sandbox`. By default it is an
+`UnavailableSandbox`: every operation raises `UserError` with instructions for attaching a real
+environment. Execution is always an explicit opt-in; no run silently touches the host.
 
-`LocalSandbox` executes host subprocesses and isolates nothing. Use it only for trusted
-development and tests. Attach a container, VM, or remote backend for untrusted execution.
+`LocalSandbox` executes host subprocesses and isolates nothing. Pass it explicitly
+(`agent.run(..., sandbox=LocalSandbox())`) only for trusted development and tests. Attach a
+container, VM, or remote backend for untrusted execution.
 
 ## Use the attached facade
 
@@ -35,7 +33,7 @@ async def read_file(ctx: RunContext[None], path: str, offset: int = 1, limit: in
 ```
 
 `Sandbox.fs` requires the backend to implement `SupportsFilesystem` and `Sandbox.start`
-requires `SupportsStart` — both raise `NotImplementedError` when the backend omits them. Keep
+requires `SupportsStart`; both raise `NotImplementedError` when the backend omits them. Keep
 approval, command restrictions, output limits, and path policy in the tool layer.
 
 ## Resolution and lifecycle
@@ -43,21 +41,52 @@ approval, command restrictions, output limits, and path policy in the tool layer
 Sandbox resolution happens before capability and toolset `for_run`:
 
 1. The `sandbox=` run argument: a caller-owned live backend or a serializable `SandboxRef`.
-2. A capability's `get_sandbox(ctx)` contribution. The latest supplier in the resolved chain
-   wins; deferred capabilities are not consulted.
-3. The framework default.
+2. A capability's `setup_sandbox` contribution. The latest supplier in the resolved chain
+   wins; deferred capabilities are not consulted; returning `None` falls through.
+3. The framework default: `UnavailableSandbox` with attachment instructions.
 
-A capability may return an async context manager yielding a fresh backend; the run enters it at
-run start and exits it at run end. A bare backend is treated as warm and shared: the capability
-retains lifecycle ownership. Returning an existing `Sandbox` passes the facade through unchanged.
-Provisioning and teardown happen inside the agent-run span through `wrap_entire_run`, so startup
-failures and slow setup are visible in traces.
+A capability supplies a sandbox through three lifecycle hooks; only the serializable
+`SandboxRef` is held by the run, and the live connection is (re)established on first use:
 
-The handle is present on every `RunContext`, including capability and toolset `for_run` hooks and
-initial metadata factories. `wrap_entire_run` and `get_sandbox` receive the earlier
-`RunPreparationContext`, whose `sandbox` contains only an explicitly supplied run argument.
+```python
+from dataclasses import dataclass
+from typing import Any
 
-To prohibit local execution, explicitly pass:
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
+
+
+@dataclass
+class MySandboxCapability(AbstractCapability[Any]):
+    client: Any  # your provider's SDK client; credentials stay here, never in the ref
+
+    async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+        """Once per run, before any hook sees ctx.sandbox. Return identity, or None to decline."""
+        sandbox = await self.client.create()
+        return SandboxRef(provider='docker', sandbox_id=sandbox.sandbox_id)
+
+    async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+        """Connect, never create. None = not my ref; the capability chain continues."""
+        if ref.provider != 'docker':
+            return None
+        return await self.client.connect(ref.sandbox_id)
+
+    async def teardown_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+        """Once, after the run (also on failure). Inherited no-op suits warm/reaped sandboxes."""
+        await self.client.destroy(ref.sandbox_id)
+```
+
+The same hooks cover every lifecycle: per-run (as above), warm (setup returns the held
+backend's ref, no teardown override), pooled per conversation (setup keys a store by
+`ctx.conversation_id`), and connect-only (only `get_sandbox` overridden, which serves
+`SandboxRef` run arguments). With a ref run argument, `setup_sandbox` is skipped (the caller
+owns the lifecycle) but `get_sandbox` still connects.
+
+The handle is present on every `RunContext`, including capability and toolset `for_run` hooks
+and initial metadata factories.
+
+To replace the default reason with an application policy, explicitly pass:
 
 ```python
 from pydantic_ai import UnavailableSandbox
@@ -67,37 +96,33 @@ sandbox = UnavailableSandbox(reason='Local execution is disabled by application 
 
 ## Durable execution
 
-A `SandboxProvider` subclass is the glue for one provider, holding worker-side credentials:
-`create()` provisions, `connect()` re-opens an existing environment, `teardown()` destroys.
-Only `connect()` is required; `create()` raises `NotImplementedError` by default and
-`teardown()` is a no-op.
+The lifecycle hooks already fit durable execution: only the ref crosses serialization
+boundaries, and the worker's capability tree already knows how to connect. The same capability
+instance exists on the agent the worker constructed, with its credentials, so nothing needs a
+separate registration.
 
-Two ways to use it:
+- Under `TemporalDurability`, a sandbox-supplying capability's `setup_sandbox` and
+  `teardown_sandbox` each run as their own activity; only the ref returns to workflow code, so
+  creation happens exactly once per run even across replays. Inside every activity,
+  `ctx.sandbox` is rebuilt from the ref and reconnects through the chain's `get_sandbox` on
+  first use. DBOS and Prefect reject sandbox-supplying capabilities inside their containers;
+  pass a `SandboxRef` there instead.
+- `SandboxRef(provider=..., sandbox_id=...)` passed as `sandbox=` works on every engine for a
+  sandbox that outlives the run, as long as a capability whose `get_sandbox` recognizes it is
+  attached to the agent.
 
-- `ManagedSandbox(provider)` as a capability: the run creates a sandbox at start and destroys
-  it at end, including on failure. No reference is ever handled by hand. Supported under
-  `TemporalDurability` (both halves run as activities); DBOS and Prefect reject it.
-- `SandboxRef(provider=..., sandbox_id=...)` passed as `sandbox=` for a sandbox that outlives the run,
-  with the provider registered via `TemporalDurability(sandbox_providers=[...])`,
-  `DBOSDurability(sandbox_providers=[...])`, or `PrefectDurability(sandbox_providers=[...])`.
+Either way tools keep calling `await ctx.sandbox.run(...)`; the deferred facade connects once
+on its first operation inside the engine's I/O boundary. Do not call sandbox operations in
+Temporal workflow code (connecting is I/O), and wrap effectful DBOS sandbox tools as steps.
+Live backends are rejected inside durable containers, and `LocalSandbox` is intentionally not
+reconnectable because its temporary directory is worker-local.
 
-Either way tools keep calling `await ctx.sandbox.run(...)`; the deferred facade connects once on
-its first operation inside the engine's I/O boundary.
+Capability author rules:
 
-Temporal serializes the identity into activities. DBOS pickles it as a workflow input and
-reconnects to the same environment when recovery re-executes the workflow. Sandbox I/O must still
-run in the engine's I/O boundary: do not connect in Temporal workflow code, and wrap effectful
-DBOS sandbox tools as steps. Prefect includes deferred `(provider, sandbox_id)` identity in cache
-keys without connecting.
-
-Without either, Temporal and DBOS retain `UnavailableSandbox`. They reject live backends.
-`LocalSandbox` is intentionally not reconnectable because its temporary directory is worker-local.
-
-Provider rules:
-
-- `connect()` re-opens only; raise when the environment expired. Never silently open-or-create.
-- `teardown()` must tolerate an already-gone sandbox.
-- Keep credentials on the provider, not in `SandboxRef` or workflow history.
+- `get_sandbox` re-opens only; raise when the environment expired. Never silently
+  open-or-create: a replacement environment would contradict the model's message history.
+- `teardown_sandbox` must tolerate an already-gone sandbox.
+- Keep credentials on the capability, not in `SandboxRef` or workflow history.
 - Always configure a server-side TTL or reaper: a terminated or cancelled workflow runs no cleanup.
 
 See the full [sandbox guide](https://ai.pydantic.dev/sandbox/) for protocol contracts,

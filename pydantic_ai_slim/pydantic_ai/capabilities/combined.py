@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
-    from pydantic_ai.sandboxes import SandboxBackend, SandboxProvider
+    from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
     from pydantic_graph import End
 
 
@@ -252,12 +252,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 native_tools.append(deferred_native_tool)
         return native_tools
 
-    def get_sandbox_providers(self) -> Sequence[SandboxProvider]:
-        providers: list[SandboxProvider] = []
-        for capability in self.capabilities:
-            providers.extend(capability.get_sandbox_providers())
-        return providers
-
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset
         any_wrapped = False
@@ -268,19 +262,18 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 any_wrapped = True
         return wrapped if any_wrapped else None
 
-    def get_sandbox(
-        self, ctx: RunPreparationContext[AgentDepsT]
-    ) -> AbstractAsyncContextManager[SandboxBackend] | SandboxBackend | None:
-        # The capability latest in the resolved chain wins, matching the reversed dispatch of
-        # `after_run`/`get_wrapper_toolset` and the later-wins model-settings merge.
-        # Deferred capabilities are skipped: their contributions are inert until loaded, and
-        # the run's sandbox is resolved once, before the first model request.
+    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+        # Reversed to match supplier precedence, so the capability that produced a ref is also
+        # the first one asked to re-open it; capabilities decline refs they don't recognize.
+        # Deferred capabilities are skipped: their contributions are inert until loaded.
+        # `setup_sandbox`/`teardown_sandbox` deliberately have no combined dispatch — the run
+        # resolves them through `setup_run_sandbox`, which keeps the supplier's identity.
         for capability in reversed(self.capabilities):
             if capability.defer_loading is True:
                 continue
-            served_sandbox = capability.get_sandbox(ctx)
-            if served_sandbox is not None:
-                return served_sandbox
+            backend = await capability.get_sandbox(ctx, ref)
+            if backend is not None:
+                return backend
         return None
 
     # --- Tool preparation hooks ---

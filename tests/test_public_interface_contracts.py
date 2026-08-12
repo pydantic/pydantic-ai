@@ -240,31 +240,28 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     ('AbstractAgent', 'run'): frozenset({'infer_name', 'event_stream_handler'}),
     ('AbstractAgent', 'run_stream'): frozenset({'infer_name', 'event_stream_handler'}),
     # Transformed before forwarding: `model` is resolved to the engine's own model wrapper (or to
-    # `None` inside a workflow) and that result is what `super().iter()` receives. `capabilities` is
-    # transformed by `with_sandbox_providers(...)` so the worker-side sandbox providers reach the
-    # activity boundary; the merged list is what `super()` receives. `cancellation_token` is consumed
-    # locally: it is a same-process handle that cannot cross the durable boundary, so every
-    # durable-wrapper entry point rejects it up front with a `UserError` instead of forwarding.
-    ('TemporalAgent', 'iter'): frozenset({'model', 'capabilities', 'cancellation_token'}),
+    # `None` inside a workflow) and that result is what `super().iter()` receives.
+    # `cancellation_token` is consumed locally: it is a same-process handle that cannot cross the
+    # durable boundary, so every durable-wrapper entry point rejects it up front with a `UserError`
+    # instead of forwarding.
+    ('TemporalAgent', 'iter'): frozenset({'model', 'cancellation_token'}),
     # Defaulted before forwarding: `event_stream_handler or self.event_stream_handler`.
-    # `capabilities` is wrapped through `with_sandbox_providers(...)` for the same reason as `iter`;
     # `cancellation_token` rejected locally (see the `TemporalAgent.iter` note).
-    ('TemporalAgent', 'run'): frozenset({'event_stream_handler', 'capabilities', 'cancellation_token'}),
-    ('TemporalAgent', 'run_sync'): frozenset({'capabilities', 'cancellation_token'}),
-    ('TemporalAgent', 'run_stream'): frozenset({'capabilities', 'cancellation_token'}),
-    ('TemporalAgent', 'run_stream_events'): frozenset({'capabilities', 'cancellation_token'}),
+    ('TemporalAgent', 'run'): frozenset({'event_stream_handler', 'cancellation_token'}),
+    ('TemporalAgent', 'run_sync'): frozenset({'cancellation_token'}),
+    ('TemporalAgent', 'run_stream'): frozenset({'cancellation_token'}),
+    ('TemporalAgent', 'run_stream_events'): frozenset({'cancellation_token'}),
     ('DBOSAgent', 'run'): frozenset({'cancellation_token'}),
     ('DBOSAgent', 'run_sync'): frozenset({'cancellation_token'}),
-    ('DBOSAgent', 'run_stream'): frozenset({'capabilities', 'cancellation_token'}),
+    ('DBOSAgent', 'run_stream'): frozenset({'cancellation_token'}),
     ('PrefectAgent', 'run'): frozenset({'cancellation_token'}),
     ('PrefectAgent', 'run_sync'): frozenset({'cancellation_token'}),
     ('PrefectAgent', 'run_stream'): frozenset({'cancellation_token'}),
     ('PrefectAgent', 'run_stream_events'): frozenset({'cancellation_token'}),
     # `toolsets` is applied through the engine's override context instead of the run argument, which
     # is explicitly passed as `toolsets=None` so the runtime toolsets are not added twice.
-    # `capabilities` is wrapped through `with_sandbox_providers(...)` for the same reason as
-    # `TemporalAgent.iter`; `cancellation_token` rejected locally (see the `TemporalAgent.iter` note).
-    ('DBOSAgent', 'iter'): frozenset({'toolsets', 'capabilities', 'cancellation_token'}),
+    # `cancellation_token` rejected locally (see the `TemporalAgent.iter` note).
+    ('DBOSAgent', 'iter'): frozenset({'toolsets', 'cancellation_token'}),
     ('PrefectAgent', 'iter'): frozenset({'toolsets', 'cancellation_token'}),
     # Forwarded only when set, through a `**` splat this walk deliberately does not read. The
     # conditional is residue of the removed `output_retries` deprecation shim (`24c8cdca7`) rather

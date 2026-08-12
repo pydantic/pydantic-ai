@@ -11,7 +11,7 @@ that no recorded provider exchange can exercise.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -36,7 +36,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import KnownModelName, Model, ModelResolutionContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import LocalSandbox, Sandbox, SandboxBackend
+from pydantic_ai.sandboxes import LocalSandbox, Sandbox, SandboxBackend, SandboxRef
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_graph import End
 
@@ -77,18 +77,15 @@ async def test_wrap_entire_run_brackets_sandbox_and_complete_run_lifecycle(  # n
 
     @dataclass
     class SandboxCapability(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: RunPreparationContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
-            events.append('get_sandbox')
+        async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            events.append('setup_sandbox')
+            return SandboxRef(provider='local', sandbox_id=str(tmp_path))
 
-            @asynccontextmanager
-            async def serve() -> AsyncGenerator[SandboxBackend]:
-                events.append('sandbox_enter')
-                try:
-                    yield LocalSandbox(tmp_path)
-                finally:
-                    events.append('sandbox_exit')
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+            return LocalSandbox(Path(ref.sandbox_id)) if ref.provider == 'local' else None
 
-            return serve()
+        async def teardown_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            events.append('teardown_sandbox')
 
         async def for_run(self, ctx: RunContext[Any]) -> SandboxCapability:
             events.append('for_run')
@@ -140,8 +137,7 @@ async def test_wrap_entire_run_brackets_sandbox_and_complete_run_lifecycle(  # n
     assert events == [
         'iter1_enter',
         'iter2_enter',
-        'get_sandbox',
-        'sandbox_enter',
+        'setup_sandbox',
         'for_run',
         'toolset_enter',
         'wrap_run',
@@ -149,7 +145,7 @@ async def test_wrap_entire_run_brackets_sandbox_and_complete_run_lifecycle(  # n
         'model',
         'after_run',
         'toolset_exit',
-        'sandbox_exit',
+        'teardown_sandbox',
         'iter2_exit',
         'iter1_exit',
     ]
@@ -174,8 +170,11 @@ async def test_wrap_entire_run_receives_preparation_context(tmp_path: Path) -> N
 
     @dataclass
     class ServeSandbox(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: RunPreparationContext[Any]) -> SandboxBackend:
-            return LocalSandbox(tmp_path)
+        async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            return SandboxRef(provider='local', sandbox_id=str(tmp_path))
+
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+            return LocalSandbox(Path(ref.sandbox_id)) if ref.provider == 'local' else None
 
     model = FunctionModel(simple_model_function)
     await Agent(model, capabilities=[CaptureContext(), ServeSandbox()]).run('capability served')

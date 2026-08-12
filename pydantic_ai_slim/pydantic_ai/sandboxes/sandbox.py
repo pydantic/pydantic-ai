@@ -13,13 +13,12 @@ import functools
 import posixpath
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 import anyio
 
 from pydantic_ai.exceptions import UserError
 
-from ._policy import DefaultLocalSandbox
 from .protocol import (
     SandboxBackend,
     SandboxCommand,
@@ -30,9 +29,16 @@ from .protocol import (
     SupportsFilesystem,
     SupportsStart,
 )
-from .references import SandboxProvider, SandboxRef, connect_sandbox_ref
+from .references import SandboxRef
 
-__all__ = ('FileWindow', 'Sandbox')
+SandboxResolver: TypeAlias = 'Callable[[SandboxRef], Awaitable[SandboxBackend]]'
+"""Turns a serializable sandbox identity into a live backend — connect, never create.
+
+Must raise (typically [`UserError`][pydantic_ai.exceptions.UserError]) when nothing recognizes
+the reference.
+"""
+
+__all__ = ('FileWindow', 'Sandbox', 'SandboxResolver')
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -118,27 +124,17 @@ class Sandbox:
         return value if isinstance(value, Sandbox) else cls(value)
 
     @classmethod
-    def from_ref(
-        cls,
-        ref: SandboxRef,
-        providers: Sequence[SandboxProvider] | Callable[[], Sequence[SandboxProvider]],
-    ) -> Sandbox:
-        """Create a facade that connects to `ref` on its first operation, using a matching provider."""
-
-        async def resolve(ref: SandboxRef) -> SandboxBackend:
-            resolved = providers() if callable(providers) else providers
-            return await connect_sandbox_ref(ref, resolved)
-
+    def from_ref(cls, ref: SandboxRef, resolver: SandboxResolver) -> Sandbox:
+        """Create a facade that connects to `ref` through `resolver` on its first operation."""
         sandbox = cls.__new__(cls)
-        sandbox._initialize(backend=None, ref=ref, resolver=resolve)
+        sandbox._initialize(backend=None, ref=ref, resolver=resolver)
         return sandbox
 
-    def durable_identity(self) -> SandboxRef | SandboxBackend | None:
-        """The sandbox's identity for durable frameworks: its deferred [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef], the explicitly attached backend, or `None` for the framework default."""
+    def durable_identity(self) -> SandboxRef | SandboxBackend:
+        """The sandbox's identity for durable frameworks: its deferred [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef], or the attached backend."""
         if self._ref is not None:
             return self._ref
-        if isinstance(self._backend, DefaultLocalSandbox):
-            return None
+        assert self._backend is not None
         return self._backend
 
     @property

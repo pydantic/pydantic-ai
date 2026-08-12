@@ -113,6 +113,23 @@ def make_docker_sandbox(image: str = 'python:3.13') -> DockerSandbox:
     return DockerSandbox(image=image)
 
 
+class SandboxClient:
+    """A fictional provider SDK client used by the sandbox capability examples."""
+
+    @classmethod
+    def from_environment(cls) -> SandboxClient:
+        return cls()
+
+    async def create(self) -> DockerSandbox:
+        return DockerSandbox()
+
+    async def connect(self, sandbox_id: str) -> DockerSandbox:
+        return DockerSandbox(sandbox_id=sandbox_id)
+
+    async def destroy(self, sandbox_id: str) -> None:
+        pass
+
+
 async def open_sandbox(provider: str, sandbox_id: str) -> DockerSandbox:
     assert provider == DockerSandbox.provider
     return DockerSandbox(sandbox_id=sandbox_id)

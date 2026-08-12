@@ -17,7 +17,6 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import InstructionPart
-from pydantic_ai.sandboxes import SandboxProvider
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 from ._activity_execution import execute_activity
@@ -43,7 +42,6 @@ def temporalize_mcp_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
-    sandbox_providers: Sequence[SandboxProvider] | None = None,
 ) -> DurableMCPToolset[AgentDepsT]:
     for tool_name, config in tool_activity_config.items():
         if config is False:
@@ -59,7 +57,6 @@ def temporalize_mcp_toolset(
                 params.serialized_run_context,
                 deps=deps,
                 agent=agent,
-                sandbox_providers=sandbox_providers,
             )
             return {name: tool.tool_def for name, tool in (await toolset.get_tools(ctx)).items()}
 
@@ -72,7 +69,6 @@ def temporalize_mcp_toolset(
                 params.serialized_run_context,
                 deps=deps,
                 agent=agent,
-                sandbox_providers=sandbox_providers,
             )
             async with toolset:
                 return await toolset.get_instructions(ctx)
@@ -84,7 +80,6 @@ def temporalize_mcp_toolset(
                 params.serialized_run_context,
                 deps=deps,
                 agent=agent,
-                sandbox_providers=sandbox_providers,
             )
             assert isinstance(params.tool_def, ToolDefinition)
             return await wrap_tool_call_result(

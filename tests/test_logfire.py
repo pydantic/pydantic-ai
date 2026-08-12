@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -19,7 +18,6 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
-    RunPreparationContext,
     TextPart,
     ToolCallPart,
     UserPromptPart,
@@ -34,7 +32,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.sandboxes import LocalSandbox, SandboxBackend
+from pydantic_ai.sandboxes import LocalSandbox, SandboxBackend, SandboxRef
 from pydantic_ai.tools import DeferredToolRequests, RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -3336,19 +3334,16 @@ async def test_run_stream(
 async def test_agent_span_brackets_sandbox_lifecycle(capfire: CaptureLogfire, tmp_path: Path) -> None:
     @dataclass
     class TracedSandbox(AbstractCapability[Any]):
-        def get_sandbox(self, ctx: RunPreparationContext[Any]) -> AbstractAsyncContextManager[SandboxBackend]:
-            @asynccontextmanager
-            async def serve() -> AsyncGenerator[SandboxBackend]:
-                backend = LocalSandbox(tmp_path)
-                with logfire.span('sandbox_setup'):  # pyright: ignore[reportPossiblyUnboundVariable]
-                    await backend.__aenter__()
-                try:
-                    yield backend
-                finally:
-                    with logfire.span('sandbox_teardown'):  # pyright: ignore[reportPossiblyUnboundVariable]
-                        await backend.__aexit__(None, None, None)
+        async def setup_sandbox(self, ctx: RunContext[Any]) -> SandboxRef:
+            with logfire.span('sandbox_setup'):  # pyright: ignore[reportPossiblyUnboundVariable]
+                return SandboxRef(provider='local', sandbox_id=str(tmp_path))
 
-            return serve()
+        async def get_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> SandboxBackend | None:
+            return LocalSandbox(tmp_path) if ref.provider == 'local' else None
+
+        async def teardown_sandbox(self, ctx: RunContext[Any], ref: SandboxRef) -> None:
+            with logfire.span('sandbox_teardown'):  # pyright: ignore[reportPossiblyUnboundVariable]
+                pass
 
     agent = Agent(
         TestModel(),

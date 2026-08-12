@@ -68,7 +68,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.sandboxes import ManagedSandbox, Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
+from pydantic_ai.sandboxes import Sandbox, SandboxBackend, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -121,7 +121,7 @@ except ImportError:  # pragma: lax no cover
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsSameStr, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
-from .sandbox_fakes import FakeSandboxHandle, LifecycleSandboxProvider, RecordingSandboxProvider
+from .sandbox_fakes import FakeSandboxHandle, LifecycleSandboxCapability
 
 # `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warnings here
@@ -1914,16 +1914,17 @@ def test_cache_policy_sandbox_key_permutations():
 
 
 async def test_cache_policy_includes_deferred_sandbox_identity_without_connecting():
-    provider = RecordingSandboxProvider()
+    async def refuse_to_connect(ref: SandboxRef) -> SandboxBackend:
+        raise AssertionError('computing a cache key must not connect the sandbox')  # pragma: no cover
+
     ctx = RunContext(
         deps=None,
         model=TestModel(),
         usage=RunUsage(),
-        sandbox=Sandbox.from_ref(SandboxRef(provider='fake', sandbox_id='deferred-sandbox'), [provider]),
+        sandbox=Sandbox.from_ref(SandboxRef(provider='fake', sandbox_id='deferred-sandbox'), refuse_to_connect),
     )
     projected = _replace_run_context({'ctx': ctx})['ctx']
     assert projected['sandbox'] == ('fake', 'deferred-sandbox')
-    assert provider.sandbox_ids == []
 
 
 async def test_prefect_flow_forwards_sandbox_to_tools():
@@ -2301,10 +2302,14 @@ async def test_prefect_durability_simple_agent() -> None:
     assert output == 'Echo: Hello Prefect'
 
 
-async def test_prefect_durability_keeps_default_local_sandbox() -> None:
+async def test_prefect_durability_keeps_the_default_unavailable_sandbox() -> None:
+    """`PrefectDurability` leaves default sandbox resolution alone: with nothing attached, a tool
+    in a durable flow gets the same default-unavailable sandbox a plain run would.
+    """
+
     async def observe_sandbox(ctx: RunContext[object]) -> str:
-        await ctx.sandbox.write_text('prefect.txt', 'available')
-        assert await ctx.sandbox.read_text('prefect.txt') == 'available'
+        with pytest.raises(UserError, match=r'^No sandbox is attached to this run'):
+            await ctx.sandbox.run(['echo', 'hello'])
         return ctx.sandbox.provider
 
     agent = Agent(
@@ -2318,16 +2323,17 @@ async def test_prefect_durability_keeps_default_local_sandbox() -> None:
     async def run_durable_agent() -> str:
         return (await agent.run('Use the sandbox tool.')).output
 
-    assert await run_durable_agent() == '{"observe_sandbox":"local"}'
+    assert await run_durable_agent() == '{"observe_sandbox":"unavailable"}'
 
 
-async def test_prefect_durability_rejects_managed_sandbox() -> None:
-    """Prefect has no unit to run the lifecycle in, so a `ManagedSandbox` is rejected in a flow."""
-    provider = LifecycleSandboxProvider()
+async def test_prefect_durability_rejects_a_sandbox_supplying_capability() -> None:
+    """Prefect has no durable unit to run the lifecycle in, so a sandbox-supplying capability is
+    rejected from `setup_sandbox` inside a flow."""
+    supplier = LifecycleSandboxCapability()
     agent = Agent(
         TestModel(),
-        name='prefect_managed_sandbox',
-        capabilities=[PrefectDurability(), ManagedSandbox(provider)],
+        name='prefect_supplied_sandbox',
+        capabilities=[PrefectDurability(), supplier],
     )
 
     @flow
@@ -2337,16 +2343,17 @@ async def test_prefect_durability_rejects_managed_sandbox() -> None:
     with pytest.raises(UserError) as exc_info:
         await run_durable_agent()
     assert str(exc_info.value) == snapshot(
-        '`ManagedSandbox` is not supported inside a Prefect flow: creating and destroying the sandbox '
-        'would be flow code, which Prefect replays. Temporal runs the sandbox lifecycle in activities '
-        'and does support it; on other engines, create the sandbox outside the flow and pass a '
-        '`SandboxRef` to the run instead.'
+        'A capability that supplies a sandbox (overrides `setup_sandbox`) is not supported inside a '
+        'Prefect flow: creating and destroying the sandbox would be flow code, which Prefect replays. '
+        'Temporal runs the sandbox lifecycle in durable units and does support it; on other engines, '
+        'create the sandbox outside the flow and pass a `SandboxRef` to the run instead.'
     )
-    assert provider.events == []
+    assert supplier.events == []
 
-    # Outside a flow the very same agent uses the capability normally.
+    # Outside a flow the very same agent runs the supplier's lifecycle normally; no tool touches
+    # the sandbox, so the lazily connecting facade never connects.
     assert (await agent.run('Hello')).output == snapshot('success (no tool calls)')
-    assert provider.events == snapshot(['create:created-1', 'teardown:created-1'])
+    assert supplier.events == snapshot(['create:created-1', 'teardown:created-1'])
 
 
 def test_resolve_tool_task_config_reads_metadata() -> None:

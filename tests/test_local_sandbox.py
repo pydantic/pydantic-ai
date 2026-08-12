@@ -100,11 +100,10 @@ def test_non_posix_platforms_are_rejected_at_construction(monkeypatch: pytest.Mo
         LocalSandbox()
 
 
-async def test_non_posix_default_backend_is_unavailable(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(os, 'name', 'nt')
+async def test_default_backend_is_unavailable_with_attachment_instructions():
     sandbox = Sandbox(default_sandbox_backend())
     assert isinstance(sandbox.backend, UnavailableSandbox)
-    with pytest.raises(UserError, match='default local sandbox requires a POSIX platform'):
+    with pytest.raises(UserError, match=r'No sandbox is attached to this run.+`sandbox=LocalSandbox\(\)`'):
         await sandbox.run(['echo', 'hello'])
 
 
