@@ -197,6 +197,84 @@ async def test_pre_cancelled_token_does_not_start_run():
     assert not called
 
 
+async def test_pre_cancelled_token_interrupts_setup_hooks() -> None:
+    """A pre-cancelled token must prevent the setup-phase `for_run` hooks from running (#7386).
+
+    The token used to be attached only after `_resolve_run_capabilities` and
+    `toolset.for_run(initial_ctx)` had completed, so a token cancelled before the run
+    couldn't interrupt setup: capability and toolset `for_run` hooks ran to completion
+    before the run was cancelled.
+    """
+    for_run_called = False
+
+    class HookTracking(AbstractCapability):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            nonlocal for_run_called
+            for_run_called = True
+            raise AssertionError('setup hook ran despite pre-cancelled token')  # pragma: no cover
+
+    token = CancellationToken()
+    token.cancel()
+
+    with pytest.raises(RunCancelled) as exc_info:
+        await Agent(TestModel(), capabilities=[HookTracking()]).run('hello', cancellation_token=token)
+    assert exc_info.value.all_messages() == []
+    assert not for_run_called
+
+
+async def test_capability_for_run_hook_can_cancel_run() -> None:
+    """`ctx.cancel()` from a setup-phase capability hook must cancel the run (#7386).
+
+    The run's cancellation controller used to be unbound while the setup-phase hooks ran,
+    so `RunContext.cancel()` raised `UserError` there. Cancellation is a *request*: it
+    returns normally, the hook keeps running until its next await, and the run then ends
+    with `RunCancelled`.
+    """
+    cancel_returned = False
+
+    class CancelInForRun(AbstractCapability):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            ctx.cancel()
+            nonlocal cancel_returned
+            cancel_returned = True  # reached: `cancel()` returned normally, no `UserError`
+            return self
+
+    with pytest.raises(RunCancelled):
+        await Agent(TestModel(), capabilities=[CancelInForRun()]).run('hello')
+
+    assert cancel_returned
+
+
+async def test_token_cancelled_during_setup_hook_interrupts_setup() -> None:
+    """Cancelling the token while a setup-phase hook is in flight interrupts setup (#7386).
+
+    The token used to be attached only after the setup-phase hooks had completed, so a
+    `token.cancel()` from another task while a `for_run` hook was blocked couldn't reach
+    the run until setup was already done.
+    """
+    in_hook = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingForRun(AbstractCapability):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            in_hook.set()
+            await release.wait()
+            raise AssertionError('setup hook survived the cancellation')  # pragma: no cover
+
+    token = CancellationToken()
+    task = asyncio.create_task(
+        Agent(TestModel(), capabilities=[BlockingForRun()]).run('hello', cancellation_token=token)
+    )
+    await asyncio.wait_for(in_hook.wait(), timeout=READINESS_WAIT_TIMEOUT)
+
+    token.cancel()
+
+    # The run task owns the cancellation controller. It must interrupt the blocked setup hook
+    # without needing the hook's event to be released by the test.
+    with pytest.raises(RunCancelled):
+        await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
+
+
 async def test_one_token_cancels_two_runs():
     started = 0
     both_started = asyncio.Event()
