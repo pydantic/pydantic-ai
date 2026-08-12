@@ -270,7 +270,12 @@ def test_zero_sdp_addresses_blanks_offer_addresses() -> None:
         b'a=candidate:2 1 udp 2130706431 :: 57945 typ host\r\n'
         b'c=IN IP6 ::\r\na=ice-ufrag:creB\r\n'
     )
-    # Bodies without ICE candidates — every other recorded request — are passed through untouched.
+    # An SDP whose only address is the `c=` connection line (no `a=candidate:` lines) is still zeroed:
+    # the substitution is gated on the body being bytes, not on an ICE candidate being present.
+    assert _zero_sdp_addresses(_Request(b'v=0\r\nc=IN IP4 192.168.1.5\r\na=ice-ufrag:creB\r\n')).body == (
+        b'v=0\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:creB\r\n'
+    )
+    # Bodies with no address fields at all — every other recorded request — are unchanged.
     assert _zero_sdp_addresses(_Request(b'{"model": "gpt-realtime"}')).body == b'{"model": "gpt-realtime"}'
     assert _zero_sdp_addresses(_Request(None)).body is None
 
@@ -352,6 +357,28 @@ async def test_create_client_secret_through_gateway() -> None:
 
     assert captured['url'] == 'https://gateway.pydantic.dev/proxy/openai/realtime/client_secrets'
     assert secret.value == 'ek_gw'
+
+
+async def test_create_client_secret_preserves_base_url_fragment() -> None:
+    # A `#fragment` in the base URL is client-side URL state: the signaling path must land before it,
+    # not inside it (which would leave the request going to the fragment-truncated base). Matches the
+    # fragment handling in `realtime_websocket_url` / `with_realtime_query`.
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured['url'] = str(request.url)
+        return httpx.Response(200, json={'value': 'ek_frag', 'expires_at': 1_700_000_060})
+
+    provider = OpenAIProvider(
+        base_url='https://example.com/v1#frag',
+        api_key='sk-test',
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    secret = await model.create_client_secret()
+
+    assert captured['url'] == 'https://example.com/v1/realtime/client_secrets#frag'
+    assert secret.value == 'ek_frag'
 
 
 async def test_create_client_secret_http_error() -> None:
@@ -547,6 +574,23 @@ def test_azure_entra_credential_needs_no_resource_key(monkeypatch: pytest.Monkey
     # The SDK's Entra placeholder is never handed out as a credential: asking still reports its absence.
     with pytest.raises(UserError, match='has no API key'):
         _ = explicit._azure_provider.api_key  # pyright: ignore[reportPrivateUsage]
+
+
+def test_azure_entra_for_realtime_ignores_empty_resource_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An *empty* `AZURE_OPENAI_API_KEY` is treated as "no key", not as a key of value `''`.
+
+    Regression: the guard was a membership test (`'AZURE_OPENAI_API_KEY' not in os.environ`), so an
+    exported-but-empty variable skipped the Entra placeholder, resolved an empty key, and raised the
+    key-required error on the very path that needs no key.
+    """
+    monkeypatch.setenv('AZURE_OPENAI_API_KEY', '')
+    monkeypatch.setenv('AZURE_OPENAI_ENDPOINT', 'https://my-resource.openai.azure.com')
+    monkeypatch.delenv('OPENAI_API_VERSION', raising=False)
+
+    provider = AzureProvider.for_realtime(entra_authenticated=True)
+    # No key resolved, and asking reports its absence rather than surfacing an empty string.
+    with pytest.raises(UserError, match='has no API key'):
+        _ = provider.api_key
 
 
 def test_azure_entra_credential_survives_alongside_a_user_profile() -> None:
