@@ -4679,6 +4679,11 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     # reporting no capabilities are active.
     with pytest.raises(UserError, match="'capabilities' is not available"):
         _ = reconstructed.available_capability_ids
+    # Same for the on-demand set that `is_tool_available` consults: an older subclass doesn't carry
+    # it either, so the base property reads the guarded registry and raises rather than reporting an
+    # empty set, which would silently answer "no capability is deferred" for every tool.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed._deferred_capability_ids
     assert reconstructed.__dict__['custom'] == 'from-subclass'
     for name in ('prompt', 'conversation_id', 'instrumentation_version'):
         with pytest.raises(UserError, match=f'{name!r} is not available on {LegacyFieldsRunContext.__name__!r}'):
