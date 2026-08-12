@@ -1337,13 +1337,7 @@ class GeminiStreamedResponse(StreamedResponse):
     )
 
     async def close_stream(self) -> None:
-        try:
-            # google.genai types this as AsyncIterator, but at runtime it's an
-            # async generator that exposes aclose().
-            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-        except RuntimeError as exc:
-            if not _utils.is_async_generator_already_running(exc):
-                raise
+        await self._response.aclose()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
