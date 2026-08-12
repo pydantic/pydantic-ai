@@ -7,7 +7,7 @@
   </a>
 </div>
 <div align="center">
-  <h3>Build production-grade AI agents in Python</h3>
+  <h3>How Python does AI</h3>
 </div>
 <div align="center">
   <a href="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push" alt="CI"></a>
@@ -25,6 +25,8 @@
 ---
 
 **Pydantic AI** is the Python agent framework: a typed agent loop, [every model](https://ai.pydantic.dev/models/overview) behind one API, and [every interface](https://ai.pydantic.dev/ui/overview) — terminal, web, your own frontend, even [voice](https://ai.pydantic.dev/realtime). **[Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness)** is its official capability library and harness: 50+ capabilities across core and Harness that you snap onto an agent — from [web search](https://ai.pydantic.dev/capabilities/web-search/) to a complete coding agent.
+
+Whatever you came to build — a one-off LLM call in a script, an AI feature inside your product, a [realtime voice agent](https://ai.pydantic.dev/realtime), [embeddings](https://ai.pydantic.dev/embeddings), [image generation](https://ai.pydantic.dev/capabilities/image-generation/), or your own Claude-Code-style coding agent — this is the right place, and it's the same library at every step.
 
 The simplest agent is three lines:
 
@@ -46,7 +48,7 @@ agent = Agent('anthropic:claude-fable-5', capabilities=[Coder()])
 agent.to_cli_sync()
 ```
 
-Everything between those two is composition, not rewriting: add [tools](https://ai.pydantic.dev/tools), typed [structured outputs](https://ai.pydantic.dev/output), and [capabilities](https://ai.pydantic.dev/capabilities/overview/) one at a time, and run the result anywhere — headless, [as a web app](https://ai.pydantic.dev/web), [inside your UI](https://ai.pydantic.dev/ui/overview), or as a [realtime voice agent](https://ai.pydantic.dev/realtime). And agents are just the start: the same library does [embeddings](https://ai.pydantic.dev/embeddings), [image generation](https://ai.pydantic.dev/capabilities/image-generation/), and [speech-to-speech](https://ai.pydantic.dev/realtime), without dragging a framework into your codebase — it drops into a single function as easily as it powers a product.
+Everything between those two is composition, not rewriting: add [tools](https://ai.pydantic.dev/tools), typed [structured outputs](https://ai.pydantic.dev/output), and [capabilities](https://ai.pydantic.dev/capabilities/overview/) one at a time, and run the result anywhere — headless, [as a web app](https://ai.pydantic.dev/web), [inside your UI](https://ai.pydantic.dev/ui/overview), or as a [realtime voice agent](https://ai.pydantic.dev/realtime). No framework bloat: it drops into a single function as easily as it powers a product.
 
 ## Why Pydantic AI
 
@@ -62,7 +64,7 @@ Everything between those two is composition, not rewriting: add [tools](https://
 
 - **Durable by choice.** First-party, co-maintained [durable execution](https://ai.pydantic.dev/durable_execution/overview/) on Temporal, DBOS, or Prefect — your agents survive restarts and run for days, on the engine you already operate, with [human-in-the-loop approval](https://ai.pydantic.dev/deferred-tools#human-in-the-loop-tool-approval) built in.
 
-Built by the [Pydantic](https://docs.pydantic.dev) team — the validation layer under the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem. We built FastAPI's foundations; Pydantic AI is us bringing that same feeling to agents.
+Built by the [Pydantic](https://docs.pydantic.dev) team: Pydantic Validation is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem — and the foundation FastAPI was built on. Pydantic AI brings that same feeling to agents.
 
 ## Show me real code
 
