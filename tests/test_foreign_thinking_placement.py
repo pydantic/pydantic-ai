@@ -149,7 +149,12 @@ CASES = [
                         {
                             'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
                             'type': 'text',
-                        },
+                        }
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'content': [
                         {
                             'text': """\
 <thinking>
@@ -157,7 +162,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
 </thinking>\
 """,
                             'type': 'text',
-                        },
+                        }
                     ],
                 },
                 {
@@ -181,7 +186,12 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                         {
                             'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
                             'type': 'text',
-                        },
+                        }
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'content': [
                         {
                             'text': """\
 <thinking>
@@ -189,7 +199,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
 </thinking>\
 """,
                             'type': 'text',
-                        },
+                        }
                     ],
                 },
                 {

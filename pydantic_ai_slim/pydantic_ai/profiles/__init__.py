@@ -150,8 +150,12 @@ class ModelProfile(TypedDict, total=False):
     answers the user reads — and once that answer is persisted, the next turn reinforces it.
 
     When `True`, a `ThinkingPart` that can't be sent through the model's native reasoning channel is
-    rendered into the preceding *user* message instead of the assistant turn, which stops the imitation.
-    The cost is that the model then reports the reasoning's authorship inaccurately when asked about it.
+    rendered into a *user* message ahead of the assistant turn instead of into the turn itself, which
+    stops the imitation. The cost is that the model then reports the reasoning's authorship inaccurately
+    when asked about it.
+
+    This is currently only used by `AnthropicModel` and `BedrockConverseModel`. Claude served through an
+    OpenAI-compatible provider goes through `OpenAIChatModel`, which does not read this key.
     """
 
     ignore_streamed_leading_whitespace: bool

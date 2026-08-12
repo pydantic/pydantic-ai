@@ -1883,6 +1883,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     | BetaMCPToolResultBlock
                     | BetaCompactionBlockParam
                 ] = []
+                carried_thinking_params: list[BetaTextBlockParam] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
                         if response_part.content:
@@ -1917,14 +1918,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         elif response_part.content:  # pragma: no branch
                             start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             thinking_text = '\n'.join([start_tag, response_part.content, end_tag])
+                            thinking_param = BetaTextBlockParam(text=thinking_text, type='text')
                             if self.profile.get('mimics_assistant_message_formatting', False):
-                                # Claude reads assistant turns as examples of how it should write, so
-                                # reasoning replayed there teaches it to emit `<thinking>` tags in the
-                                # answers the user reads (#5869). Carrying it in the preceding user
-                                # message instead keeps the content and stops the imitation.
-                                _hoist_to_user_message(anthropic_messages, thinking_text)
+                                carried_thinking_params.append(thinking_param)
                             else:
-                                assistant_content_params.append(BetaTextBlockParam(text=thinking_text, type='text'))
+                                assistant_content_params.append(thinking_param)
                     elif isinstance(response_part, NativeToolCallPart):
                         if response_part.provider_name == self.system:
                             tool_use_id = _guard_tool_call_id(t=response_part)
@@ -2163,6 +2161,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(response_part)
+                if carried_thinking_params:
+                    # A model that imitates assistant formatting reads reasoning replayed in an
+                    # assistant turn as house style and starts writing `<thinking>` tags into the
+                    # answers the user reads (https://github.com/pydantic/pydantic-ai/issues/5869).
+                    # Its own turn, rather than merged into the user message ahead of it: appending
+                    # to that message puts text after any `tool_result` blocks it carries, which the
+                    # API rejects when the response also called a server tool it never resolved.
+                    anthropic_messages.append(BetaMessageParam(role='user', content=carried_thinking_params))
                 if len(assistant_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
@@ -3560,23 +3566,6 @@ def _map_tool_search_tool_result_block(
 web_search_tool_result_content_ta: TypeAdapter[BetaWebSearchToolResultBlockContent] = TypeAdapter(
     BetaWebSearchToolResultBlockContent
 )
-
-
-def _hoist_to_user_message(messages: list[BetaMessageParam], text: str) -> None:
-    """Carry `text` in the user message preceding the assistant turn currently being built.
-
-    The assistant turn hasn't been appended yet, so the last message is the user turn it answers; a
-    history opening with a `ModelResponse` has none, and gets one.
-    """
-    text_block = BetaTextBlockParam(text=text, type='text')
-    if messages and messages[-1]['role'] == 'user':
-        content = messages[-1]['content']
-        if isinstance(content, str):  # pragma: no cover
-            messages[-1]['content'] = [BetaTextBlockParam(text=content, type='text'), text_block]
-        else:
-            messages[-1]['content'] = [*content, text_block]
-    else:
-        messages.append(BetaMessageParam(role='user', content=[text_block]))
 
 
 def _map_web_search_tool_result_block(item: BetaWebSearchToolResultBlock, provider_name: str) -> NativeToolReturnPart:
