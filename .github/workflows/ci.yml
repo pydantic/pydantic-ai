@@ -138,6 +138,7 @@ jobs:
 
       - run: uv build --all-packages
       - run: ls -lh dist/
+      - run: uvx twine check --strict dist/*
 
   # mypy and lint are a bit slower than other jobs, so we run them separately
   mypy:

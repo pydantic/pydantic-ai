@@ -940,18 +940,7 @@ class XaiStreamedResponse(StreamedResponse):
         return (grpc.RpcError,)
 
     async def close_stream(self) -> None:
-        # In xai-sdk 1.5.0, `chat.stream()` returns a Python async generator that
-        # wraps the underlying gRPC `GetCompletionChunk(...)` call.
-        #
-        # Calling `aclose()` shuts down that local async-generator wrapper and
-        # stops consumption on our side, but the SDK does not expose the inner
-        # `grpc.aio.UnaryStreamCall`, so this is not a documented transport-level
-        # RPC cancellation hook.
-        try:
-            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-        except RuntimeError as exc:
-            if not _utils.is_async_generator_already_running(exc):
-                raise
+        await self._response.aclose()
 
     @property
     def system(self) -> str:

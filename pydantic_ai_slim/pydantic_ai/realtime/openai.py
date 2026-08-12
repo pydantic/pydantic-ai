@@ -1017,24 +1017,31 @@ class OpenAIRealtimeModel(RealtimeModel):
     def _realtime_ws_base(self) -> str:
         return realtime_websocket_url(self._provider.base_url)
 
-    def _realtime_url(self) -> str:
+    def _realtime_url(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> str:
+        del model_settings  # only the Azure Voice Live override varies the URL on settings
         return with_realtime_query(self._realtime_ws_base(), model=self.model)
 
     def _sideband_url(self, call_id: str) -> str:
         return with_realtime_query(self._realtime_ws_base(), call_id=call_id)
 
     def _webrtc_http_base(self) -> str:
-        base_url, separator, query = self._provider.base_url.partition('?')
+        # Split off the fragment first (like `realtime_websocket_url` / `with_realtime_query`), so the
+        # trailing slash and the appended path land before it rather than inside the client-side part.
+        base_url, _, fragment = self._provider.base_url.partition('#')
+        base_url, separator, query = base_url.partition('?')
         base_url = base_url if base_url.endswith('/') else f'{base_url}/'
-        return f'{base_url}{separator}{query}'
+        base_url = f'{base_url}{separator}{query}'
+        return f'{base_url}#{fragment}' if fragment else base_url
 
     def _webrtc_url(self, path: str, **params: str) -> str:
-        base_url, _, query = self._webrtc_http_base().partition('?')
+        base_url, _, fragment = self._webrtc_http_base().partition('#')
+        base_url, _, query = base_url.partition('?')
         for name, value in params.items():
             param = f'{name}={quote(value, safe="")}'
             query = f'{query}&{param}' if query else param
         url = f'{base_url}{path}'
-        return f'{url}?{query}' if query else url
+        url = f'{url}?{query}' if query else url
+        return f'{url}#{fragment}' if fragment else url
 
     def _webrtc_calls_url(self) -> str:
         return self._webrtc_url('realtime/calls')
@@ -1164,7 +1171,10 @@ class OpenAIRealtimeModel(RealtimeModel):
             if cm is not None:  # pragma: no branch
                 await cm.__aexit__(None, None, None)
 
-    async def _auth_headers(self) -> dict[str, str]:
+    async def _auth_headers(self, model_settings: OpenAIRealtimeModelSettings | None = None) -> dict[str, str]:
+        # `model_settings` lets a provider vary auth by session (e.g. Azure Voice Live uses a different
+        # resource key); OpenAI's auth doesn't depend on it.
+        del model_settings
         # The raw WebSocket handshake bypasses the SDK's request path, which is where `AsyncOpenAI`
         # resolves anything but a static key, so both dynamic forms are resolved the same way here.
         client = self._provider.client
@@ -1178,6 +1188,27 @@ class OpenAIRealtimeModel(RealtimeModel):
         # stays byte-identical in that case.
         api_key = await client._refresh_api_key()  # pyright: ignore[reportPrivateUsage]
         return {'Authorization': f'Bearer {api_key}'}
+
+    def _connection_class(self, model_settings: OpenAIRealtimeModelSettings) -> type[OpenAIRealtimeConnection]:
+        """The connection class for a session, given its settings.
+
+        Defers to [`_connection_type`][] — the declarative seam a protocol clone sets to correct the
+        vendor its errors name — and exists on top of it for a provider whose connection varies by
+        *session* rather than by model, as Azure's does for Voice Live.
+        """
+        del model_settings
+        return self._connection_type
+
+    def _session_model_name(self, created: dict[str, Any], model_settings: OpenAIRealtimeModelSettings) -> str | None:
+        """The server-reported model name from the `session.created` handshake frame.
+
+        Settings-aware because a provider's handshake shape can vary by *session*: Azure Voice Live's
+        beta `session.created` doesn't carry the GA `type` discriminator this SDK model requires.
+        """
+        del model_settings
+        session = SessionCreatedEvent.model_validate(created).session
+        model = session.model if isinstance(session, RealtimeSessionCreateRequest) else None
+        return model if isinstance(model, str) else None
 
     @asynccontextmanager
     async def connect(
@@ -1196,16 +1227,14 @@ class OpenAIRealtimeModel(RealtimeModel):
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
 
         async def dial_headers() -> dict[str, str]:
-            headers = await self._auth_headers()
+            headers = await self._auth_headers(settings)
             # The raw WebSocket bypasses the provider's `httpx` client, so every fresh handshake must
             # carry the current trace context as well as freshly resolved authentication.
             inject_trace_context(headers)
             return headers
 
         def session_model(created: dict[str, Any]) -> str | None:
-            session = SessionCreatedEvent.model_validate(created).session
-            model = session.model if isinstance(session, RealtimeSessionCreateRequest) else None
-            return model if isinstance(model, str) else None
+            return self._session_model_name(created, settings)
 
         def build_connection(
             ws: ClientConnection,
@@ -1213,7 +1242,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             server_model: str | None,
             model_name_getter: Callable[[], str | None],
         ) -> OpenAIRealtimeConnection:
-            return self._connection_type(
+            return self._connection_class(settings)(
                 ws,
                 dial=dial,
                 reconnect=settings.get('reconnect'),
@@ -1230,7 +1259,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             session_config=session_config,
             handshake_timeout=handshake_timeout,
             dial_headers=dial_headers,
-            dial_url=self._realtime_url,
+            dial_url=lambda: self._realtime_url(settings),
             session_model=session_model,
             build_connection=build_connection,
             replay_on_redial=True,

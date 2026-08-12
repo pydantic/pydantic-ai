@@ -19,6 +19,7 @@ from types import TracebackType
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
+import anyio
 import pytest
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
@@ -1431,6 +1432,108 @@ async def test_run_stream_early_break_during_debounce_closes_cleanly():
     async with agent.run_stream('hello') as result:
         stream = result.stream_text(delta=True)
         assert await anext(stream)
+
+
+async def test_run_stream_cancel_during_debounce_from_another_task():
+    """`cancel()` interrupts a debounced background pull without cancelling its caller.
+
+    A synthetic `PeekableAsyncStream` makes the second chunk wait deterministically; a recorded provider response cannot
+    guarantee that the debounced prefetch is still active when cancellation starts.
+    """
+    pull_started = anyio.Event()
+    finalization_started = anyio.Event()
+
+    async def source() -> AsyncIterator[str]:
+        try:
+            yield 'chunk '
+            pull_started.set()
+            await anyio.sleep_forever()
+        finally:
+            finalization_started.set()
+
+    @dataclass
+    class CancellableStreamedResponse(models.StreamedResponse):
+        stream: _utils.PeekableAsyncStream[str, AsyncIterator[str]]
+
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            async for text in self.stream:
+                for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content=text):
+                    yield event
+
+        async def close_stream(self) -> None:
+            await self.stream.aclose()
+
+        @property
+        def model_name(self) -> str:
+            return 'cancellable'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> _datetime:
+            return _datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    class CancellableModel(models.Model):
+        @property
+        def system(self) -> str:
+            return 'test'
+
+        @property
+        def model_name(self) -> str:
+            return 'cancellable'
+
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+        ) -> ModelResponse:
+            raise AssertionError('Only streaming requests are expected')  # pragma: no cover
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+            run_context: RunContext[object] | None = None,
+        ) -> AsyncGenerator[models.StreamedResponse]:
+            yield CancellableStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                stream=_utils.PeekableAsyncStream(source()),
+            )
+
+    model = CancellableModel()
+    assert model.model_id == 'test:cancellable'
+    agent = Agent(model)
+
+    async with agent.run_stream('hello') as result:
+        stream = result.stream_text(delta=True)
+        with anyio.fail_after(1):
+            assert await anext(stream) == 'chunk '
+            await pull_started.wait()
+
+        cancel_finished = anyio.Event()
+
+        async def cancel() -> None:
+            await result.cancel()
+            cancel_finished.set()
+
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(cancel)
+            with anyio.fail_after(1):
+                await cancel_finished.wait()
+
+        assert result.cancelled
+        assert finalization_started.is_set()
+
+    assert result.response.state == 'interrupted'
 
 
 def test_run_stream_sync_rejects_already_entered_result():

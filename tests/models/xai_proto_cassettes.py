@@ -775,12 +775,17 @@ class XaiProtoCassetteSession:
     cassette_path: Path
     cassette: XaiProtoCassette | None = None
     dirty_check: Any | None = None
+    real_client: AsyncClient | None = None
 
     def dump_if_recording(self) -> None:
         if self.cassette is None:
             return
         if self.dirty_check is None or bool(self.dirty_check()):
             self.cassette.dump(self.cassette_path)
+
+    async def aclose(self) -> None:
+        if self.real_client is not None:
+            await self.real_client.close()
 
 
 def xai_proto_cassette_session(
@@ -841,6 +846,7 @@ def xai_proto_cassette_session(
             cassette_path=cassette_path,
             cassette=cassette,
             dirty_check=lambda: hybrid.dirty,
+            real_client=real_client,
         )
     else:
         # plan == 'record'
@@ -849,6 +855,7 @@ def xai_proto_cassette_session(
             client=cast(XaiAsyncClientLike, recorder.client),
             cassette_path=cassette_path,
             cassette=recorder.cassette,
+            real_client=real_client,
         )
 
 
