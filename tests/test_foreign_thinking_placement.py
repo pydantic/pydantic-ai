@@ -21,19 +21,22 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 import pytest
-from inline_snapshot import snapshot
 
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
     TextPart,
     ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.profiles import ModelProfile
 
+from ._inline_snapshot import snapshot
 from .conftest import try_import
 
 with try_import() as anthropic_imports:
@@ -58,6 +61,7 @@ _REASONING = (
     'more per unit change in rates.'
 )
 _ANSWER = 'The 10-year Treasury has more interest-rate risk.'
+_FOLLOW_UP = 'And a 30-year?'
 
 # An unsigned `ThinkingPart` (no signature, no provider_name) is the exact #5869 trigger — the same shape
 # whether it came from storage, a history processor, or another model in a `FallbackModel` chain.
@@ -87,6 +91,37 @@ _NO_THINKING_HISTORY: list[ModelMessage] = [
     ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
     ModelResponse(parts=[TextPart(content=_ANSWER)]),
 ]
+# The turn ahead of the reasoning carries tool results, which is what a tool-using agent hits on every
+# step after the first. Merging the reasoning into that turn puts text after the `tool_result` blocks,
+# which Anthropic rejects with a 400 when the same response also called a server tool it never resolved,
+# so the reasoning has to keep a turn of its own. On Bedrock the equivalent merge is governed by
+# `bedrock_tool_result_colocatable_content` (#6081), which only the trailing merge pass consults.
+_TOOL_RESULT_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+    ModelResponse(parts=[ToolCallPart(tool_name='lookup', args={'tenor': 10}, tool_call_id='call-1')]),
+    ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='8.1', tool_call_id='call-1')]),
+    ModelResponse(parts=[ThinkingPart(content=_REASONING), TextPart(content=_ANSWER)]),
+]
+# A mid-conversation `SystemPromptPart` renders a `system` entry behind the user turn, so a placement
+# that searched backwards for the user turn missed it. The entry still has to end up in front of the
+# generation it governs.
+_MID_CONVERSATION_SYSTEM_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+    ModelResponse(parts=[TextPart(content=_ANSWER)]),
+    ModelRequest(parts=[SystemPromptPart(content='Be terse.'), UserPromptPart(content=_FOLLOW_UP)]),
+    ModelResponse(parts=[ThinkingPart(content=_REASONING), TextPart(content=_ANSWER)]),
+]
+# A response whose only part is the `ThinkingPart` renders no assistant turn at all.
+_THINKING_ONLY_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+    ModelResponse(parts=[ThinkingPart(content=_REASONING)]),
+]
+# Back-to-back `ModelResponse`s: the second one's reasoning has no request of its own to sit behind.
+_BACK_TO_BACK_RESPONSE_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+    ModelResponse(parts=[TextPart(content=_ANSWER)]),
+    ModelResponse(parts=[ThinkingPart(content=_REASONING), TextPart(content=_ANSWER)]),
+]
 
 
 async def _anthropic_outbound(history: list[ModelMessage]) -> list[dict[str, object]]:
@@ -104,6 +139,15 @@ async def _anthropic_opted_out_outbound(history: list[ModelMessage]) -> list[dic
         provider=AnthropicProvider(api_key='x'),
         profile=ModelProfile(mimics_assistant_message_formatting=False),
     )
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        history, ModelRequestParameters(), AnthropicModelSettings()
+    )
+    return [dict(message) for message in messages]
+
+
+async def _anthropic_opus_outbound(history: list[ModelMessage]) -> list[dict[str, object]]:
+    """`claude-opus-4-8` takes mid-conversation system prompts inline, so its wire grows a `system` entry."""
+    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key='x'))
     _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
         history, ModelRequestParameters(), AnthropicModelSettings()
     )
@@ -482,6 +526,210 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
             ]
         ),
         marks=(pytest.mark.skipif(not xai_imports(), reason='xai not installed'),),
+    ),
+    Case(
+        'anthropic-tool-result-turn',
+        _anthropic_outbound,
+        _TOOL_RESULT_HISTORY,
+        carrying_roles={'user'},
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                            'type': 'text',
+                        }
+                    ],
+                },
+                {
+                    'role': 'assistant',
+                    'content': [{'id': 'call-1', 'type': 'tool_use', 'name': 'lookup', 'input': {'tenor': 10}}],
+                },
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'tool_use_id': 'call-1',
+                            'type': 'tool_result',
+                            'content': [{'text': '8.1', 'type': 'text'}],
+                            'is_error': False,
+                        }
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': """\
+<thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</thinking>\
+""",
+                            'type': 'text',
+                        }
+                    ],
+                },
+                {
+                    'role': 'assistant',
+                    'content': [{'text': 'The 10-year Treasury has more interest-rate risk.', 'type': 'text'}],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
+    ),
+    Case(
+        'anthropic-mid-conversation-system',
+        _anthropic_opus_outbound,
+        _MID_CONVERSATION_SYSTEM_HISTORY,
+        carrying_roles={'user'},
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                            'type': 'text',
+                        }
+                    ],
+                },
+                {
+                    'role': 'assistant',
+                    'content': [{'text': 'The 10-year Treasury has more interest-rate risk.', 'type': 'text'}],
+                },
+                {'role': 'user', 'content': [{'text': 'And a 30-year?', 'type': 'text'}]},
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': """\
+<thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</thinking>\
+""",
+                            'type': 'text',
+                        }
+                    ],
+                },
+                {'role': 'system', 'content': [{'text': 'Be terse.', 'type': 'text'}]},
+                {
+                    'role': 'assistant',
+                    'content': [{'text': 'The 10-year Treasury has more interest-rate risk.', 'type': 'text'}],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
+    ),
+    Case(
+        'anthropic-thinking-only-response',
+        _anthropic_outbound,
+        _THINKING_ONLY_HISTORY,
+        carrying_roles={'user'},
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                            'type': 'text',
+                        }
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': """\
+<thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</thinking>\
+""",
+                            'type': 'text',
+                        }
+                    ],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
+    ),
+    Case(
+        'anthropic-back-to-back-responses',
+        _anthropic_outbound,
+        _BACK_TO_BACK_RESPONSE_HISTORY,
+        carrying_roles={'user'},
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?',
+                            'type': 'text',
+                        }
+                    ],
+                },
+                {
+                    'role': 'assistant',
+                    'content': [{'text': 'The 10-year Treasury has more interest-rate risk.', 'type': 'text'}],
+                },
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': """\
+<thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</thinking>\
+""",
+                            'type': 'text',
+                        }
+                    ],
+                },
+                {
+                    'role': 'assistant',
+                    'content': [{'text': 'The 10-year Treasury has more interest-rate risk.', 'type': 'text'}],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
+    ),
+    Case(
+        'bedrock-tool-result-turn',
+        _bedrock_outbound,
+        _TOOL_RESULT_HISTORY,
+        carrying_roles={'user'},
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {'text': 'Between a 2-year and a 10-year Treasury, which has more interest-rate risk?'}
+                    ],
+                },
+                {
+                    'role': 'assistant',
+                    'content': [{'toolUse': {'toolUseId': 'call-1', 'name': 'lookup', 'input': {'tenor': 10}}}],
+                },
+                {
+                    'role': 'user',
+                    'content': [
+                        {'toolResult': {'toolUseId': 'call-1', 'content': [{'text': '8.1'}], 'status': 'success'}},
+                        {
+                            'text': """\
+<thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</thinking>\
+"""
+                        },
+                    ],
+                },
+                {'role': 'assistant', 'content': [{'text': 'The 10-year Treasury has more interest-rate risk.'}]},
+            ]
+        ),
+        marks=(pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed'),),
     ),
 ]
 
