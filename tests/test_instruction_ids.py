@@ -872,3 +872,57 @@ async def test_a_run_level_part_stays_unidentified_even_if_it_declares_an_id():
         InstructionPart(content='Agent block.', id='agent'),
         InstructionPart(content='Per run.'),
     ]
+
+
+async def test_a_deferred_capability_can_declare_its_blocks_as_parts():
+    """A part reaches the model as tool-return text when the capability it belongs to is deferred.
+
+    Loading delivers instructions as the `load_capability` result rather than as request parts, so
+    the ids are flattened away here as they are for any deferred capability — but the part's content
+    still has to arrive, which is a different code path from the literal-string one.
+    """
+    calls = 0
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'refunds'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[
+            Capability[Any](
+                id='refunds',
+                description='Refund tools.',
+                instructions=[
+                    InstructionPart(content='Check the order first.', id='order'),
+                    'Then issue the refund.',
+                ],
+                defer_loading=True,
+            )
+        ],
+    )
+
+    result = await agent.run('hi')
+    returns = [
+        part.content
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if part.part_kind == 'tool-return'
+    ]
+    assert returns == [{'instructions': 'Check the order first.\n\nThen issue the refund.'}]
+
+
+async def test_a_blank_instruction_part_contributes_nothing():
+    """Whitespace-only content is dropped, the same as a blank literal, so it can't leave an empty block."""
+    agent = Agent(
+        instructions=[
+            InstructionPart(content='Real.', id='real'),
+            InstructionPart(content='   \n  ', id='blank'),
+        ]
+    )
+
+    assert await run_and_capture(agent) == [InstructionPart(content='Real.', id='agent:real')]
