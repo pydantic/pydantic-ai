@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
-from blockbuster import BlockBuster
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 from vcr.record_mode import RecordMode
@@ -90,6 +89,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 if TYPE_CHECKING:
+    from blockbuster import BlockBuster
     from pluggy import Result
     from vcr.cassette import Cassette
 
@@ -390,6 +390,10 @@ def _configure_blockbuster(
     exemptions: Sequence[tuple[str, str, str | tuple[str, ...]]] = BLOCKBUSTER_EXEMPTIONS,
     excluded_modules: tuple[str, ...] = (),
 ) -> BlockBuster:
+    # BlockBuster imports ForbiddenFruit, which mutates builtins during import. Disabled CI lanes
+    # must remain unaffected by that instrumentation.
+    from blockbuster import BlockBuster
+
     bb = BlockBuster(
         ['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai'],
         excluded_modules=excluded_modules or None,

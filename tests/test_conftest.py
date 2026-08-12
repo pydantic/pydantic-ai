@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import io
 import os
+import subprocess
+import sys
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import pytest
-from blockbuster import BlockBuster, BlockingError
 from coverage.python import get_python_source
 from vcr.cassette import Cassette
 from vcr.record_mode import RecordMode
@@ -14,10 +16,24 @@ from vcr.request import Request
 from . import conftest
 from .conftest import BLOCKBUSTER_EXEMPTIONS, check_vcr_cassette_usage, pytest_recording_configure
 
+if TYPE_CHECKING:
+    from blockbuster import BlockBuster, BlockingError
 
-@pytest.fixture(autouse=True)
-def blockbuster() -> None:
+
+@pytest.fixture
+def blockbuster_enabled() -> bool:
     """Test the root fixture directly without activating its shared instance for this module."""
+    return False
+
+
+@pytest.fixture
+def blockbuster_types() -> tuple[type[BlockBuster], type[BlockingError]]:
+    if os.getenv('BLOCKBUSTER_ENABLED') == 'false':
+        pytest.skip('BlockBuster is disabled in this CI lane')
+
+    from blockbuster import BlockBuster, BlockingError
+
+    return BlockBuster, BlockingError
 
 
 class RecordingVCR:
@@ -72,8 +88,11 @@ def test_check_vcr_cassette_usage_allows_fully_used_cassette() -> None:
 
 
 @pytest.mark.anyio
-async def test_blockbuster_exemption_contract() -> None:
+async def test_blockbuster_exemption_contract(
+    blockbuster_types: tuple[type[BlockBuster], type[BlockingError]],
+) -> None:
     """The detector catches unapproved calls while coverage's source reads stay exempt."""
+    BlockBuster, BlockingError = blockbuster_types
     bb = BlockBuster(['tests.test_conftest'])
     for func, filename, functions in BLOCKBUSTER_EXEMPTIONS:
         bb.functions[func].can_block_in(filename, functions)
@@ -90,7 +109,9 @@ async def test_blockbuster_exemption_contract() -> None:
         bb.deactivate()
 
 
-def test_blockbuster_does_not_activate_when_configuration_fails() -> None:
+def test_blockbuster_does_not_activate_when_configuration_fails(
+    blockbuster_types: tuple[type[BlockBuster], type[BlockingError]],
+) -> None:
     stat = os.stat
     buffered_read = io.BufferedReader.read
 
@@ -112,7 +133,26 @@ def test_blockbuster_disabled_when_explicitly_configured(monkeypatch: pytest.Mon
         next(fixture)
 
 
-def test_configured_blockbusters_are_cached_per_exclusion_set() -> None:
+def test_disabled_blockbuster_does_not_import_instrumentation() -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            '-c',
+            'import builtins, sys; before = builtins.dir; import tests.test_conftest; '
+            'assert list(tests.test_conftest.conftest.blockbuster._fixture_function(True, ())) == [None]; '
+            'assert builtins.dir is before; '
+            "assert 'blockbuster' not in sys.modules; "
+            "assert 'forbiddenfruit' not in sys.modules",
+        ],
+        check=True,
+        env={**os.environ, 'BLOCKBUSTER_ENABLED': 'false'},
+    )
+
+
+def test_configured_blockbusters_are_cached_per_exclusion_set(
+    blockbuster_types: tuple[type[BlockBuster], type[BlockingError]],
+) -> None:
+    BlockBuster, _ = blockbuster_types
     default = conftest._configured_blockbuster(())  # pyright: ignore[reportPrivateUsage]
     same_default = conftest._configured_blockbuster(())  # pyright: ignore[reportPrivateUsage]
     excluding_clai = conftest._configured_blockbuster(('clai',))  # pyright: ignore[reportPrivateUsage]
@@ -124,7 +164,10 @@ def test_configured_blockbusters_are_cached_per_exclusion_set() -> None:
     assert not excluding_clai.functions['os.stat'].activated
 
 
-def test_blockbuster_deactivates_when_a_test_fails() -> None:
+def test_blockbuster_deactivates_when_a_test_fails(
+    blockbuster_types: tuple[type[BlockBuster], type[BlockingError]],
+) -> None:
+    BlockBuster, _ = blockbuster_types
     bb = BlockBuster(['tests.test_conftest'])
     stat = os.stat
 
@@ -135,7 +178,11 @@ def test_blockbuster_deactivates_when_a_test_fails() -> None:
     assert os.stat is stat
 
 
-def test_blockbuster_deactivates_when_activation_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_blockbuster_deactivates_when_activation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    blockbuster_types: tuple[type[BlockBuster], type[BlockingError]],
+) -> None:
+    BlockBuster, _ = blockbuster_types
     bb = BlockBuster(['tests.test_conftest'])
     stat = os.stat
 
