@@ -945,6 +945,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         validate_openai_profile(self.profile)
 
+        # The OpenAI SDK imports its resource modules on first attribute access; resolve them now
+        # so the first request doesn't pay ~0.5s of imports on the event loop (#7405).
+        _ = self.client.chat.completions
+
     @property
     def client(self) -> AsyncOpenAI:
         return self._provider.client
@@ -1953,6 +1957,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         self._provider = provider
 
         super().__init__(settings=settings, profile=profile)
+
+        # Resolve the SDK's lazily imported resources at construction time, as in `OpenAIChatModel`.
+        _ = self.client.responses
 
     @property
     def client(self) -> AsyncOpenAI:

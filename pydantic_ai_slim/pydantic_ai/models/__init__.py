@@ -84,6 +84,7 @@ from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 
 if TYPE_CHECKING:
     from ..agent.abstract import AbstractAgent
+from .._cost import preload_pricing_data
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
@@ -424,6 +425,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         self._settings = settings
         self._profile = profile
+        preload_pricing_data()
 
     @property
     def provider(self) -> Provider[InterfaceClient] | None:
