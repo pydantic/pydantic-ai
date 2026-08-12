@@ -363,6 +363,18 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.listdir', 'pydantic_ai/providers/bedrock.py', '__init__'),
     ('io.TextIOWrapper.read', 'pydantic_ai/providers/bedrock.py', '__init__'),
     ('io.BufferedReader.read', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    # google-genai's sync client constructor has google-auth read mTLS/credential config files.
+    ('os.stat', 'pydantic_ai/providers/google_cloud.py', '__init__'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/providers/google_cloud.py', '__init__'),
+    ('io.BufferedReader.read', 'pydantic_ai/providers/google_cloud.py', '__init__'),
+    # the anthropic SDK's Bedrock client resolves AWS credentials (botocore config reads) lazily
+    # on the first request.
+    ('os.stat', 'pydantic_ai/models/_anthropic_bedrock_count_tokens.py', 'count_tokens_via_bedrock'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/models/_anthropic_bedrock_count_tokens.py', 'count_tokens_via_bedrock'),
+    ('io.BufferedReader.read', 'pydantic_ai/models/_anthropic_bedrock_count_tokens.py', 'count_tokens_via_bedrock'),
+    ('os.stat', 'pydantic_ai/models/anthropic.py', ('_messages_create', '_messages_count_tokens')),
+    ('io.TextIOWrapper.read', 'pydantic_ai/models/anthropic.py', ('_messages_create', '_messages_count_tokens')),
+    ('io.BufferedReader.read', 'pydantic_ai/models/anthropic.py', ('_messages_create', '_messages_count_tokens')),
     # pydantic extracts field docstrings from source (`inspect`/`linecache`) the first time a
     # tool schema is built, which can happen during an agent run.
     ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),

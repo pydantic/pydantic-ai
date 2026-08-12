@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, TypeVar
 
+import anyio
 import anyio.to_thread
 import httpx
 
@@ -38,7 +39,7 @@ AgentDepsT = TypeVar('AgentDepsT')
 OutputDataT = TypeVar('OutputDataT')
 
 
-def _get_cache_dir() -> Path:
+async def _get_cache_dir() -> Path:
     """Get the cache directory for storing UI HTML files.
 
     Uses XDG_CACHE_HOME on Unix, LOCALAPPDATA on Windows, or falls back to ~/.cache.
@@ -49,18 +50,18 @@ def _get_cache_dir() -> Path:
         base = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache'))
 
     cache_dir = base / 'pydantic-ai' / 'web-ui'
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    await anyio.Path(cache_dir).mkdir(parents=True, exist_ok=True)
     return cache_dir
 
 
-def _read_cached_file(cache_file: Path) -> bytes | None:
+async def _read_cached_file(cache_file: Path) -> bytes | None:
     """Return cached file contents, or `None` if it is missing or empty.
 
     An empty file is treated as a miss (a truncated/partial write left by a prior crash)
     so the caller refetches instead of serving an incomplete payload.
     """
     try:
-        content = cache_file.read_bytes()
+        content = await anyio.Path(cache_file).read_bytes()
     except FileNotFoundError:
         return None
     return content or None
@@ -72,6 +73,9 @@ def _write_cached_file(cache_file: Path, content: bytes) -> None:
     The temp file lives in `cache_file.parent` (same filesystem, so the rename is atomic) and is
     unlinked on any failure — including a write failure or interruption — so a crashed write can
     never leave the destination existing-but-incomplete nor leak a temp file.
+
+    Kept sync and offloaded via `to_thread` as a whole: `anyio.NamedTemporaryFile` needs anyio 4.9,
+    above our floor.
     """
     tmp_file = tempfile.NamedTemporaryFile(dir=cache_file.parent, prefix=f'.{cache_file.name}.', delete=False)
     tmp_path = Path(tmp_file.name)
@@ -106,7 +110,7 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
 
     # Handle Path instances
     if isinstance(html_source, Path):
-        return await anyio.to_thread.run_sync(_read_local_file, html_source)
+        return await _read_local_file(html_source)
 
     # Handle URLs with filesystem caching
     if html_source.startswith(('http://', 'https://')):
@@ -114,24 +118,25 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
         return await _get_cached_or_fetch(f'url_{url_hash}.html', html_source)
 
     # Handle local file paths (strings)
-    return await anyio.to_thread.run_sync(_read_local_file, Path(html_source))
+    return await _read_local_file(Path(html_source))
 
 
-def _read_local_file(path: Path) -> bytes:
-    path = path.expanduser()
-    if path.is_file():
-        return path.read_bytes()
-    raise FileNotFoundError(f'Local UI file not found: {path}')
+async def _read_local_file(path: Path) -> bytes:
+    expanded = await anyio.Path(path).expanduser()
+    if await expanded.is_file():
+        return await expanded.read_bytes()
+    raise FileNotFoundError(f'Local UI file not found: {expanded}')
 
 
 async def _get_cached_or_fetch(cache_name: str, url: str) -> bytes:
     """Return `cache_name` from the filesystem cache, fetching it from `url` on a miss.
 
-    All filesystem access runs in a thread so serving the UI never blocks the event loop.
+    All filesystem access is async (`anyio.Path` / a thread for the atomic write) so serving
+    the UI never blocks the event loop.
     """
-    cache_file = await anyio.to_thread.run_sync(lambda: _get_cache_dir() / cache_name)
+    cache_file = await _get_cache_dir() / cache_name
 
-    if content := await anyio.to_thread.run_sync(_read_cached_file, cache_file):
+    if content := await _read_cached_file(cache_file):
         return content
 
     async with httpx.AsyncClient() as client:

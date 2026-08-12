@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, Literal
@@ -47,6 +47,13 @@ with try_import() as openai_import_successful:
 pytestmark = [
     pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
 ]
+
+
+def _fake_cache_dir(path: Path) -> Callable[[], Awaitable[Path]]:
+    async def get_cache_dir() -> Path:
+        return path
+
+    return get_cache_dir
 
 
 def test_agent_to_web():
@@ -267,7 +274,7 @@ def isolated_ui_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     per-test isolation, tests that serve `/` race on the same file across xdist workers
     (a non-atomic write being read mid-write), and miss the cache into a real CDN request.
     """
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
     _stub_cdn_fetch(monkeypatch, b'<html>Test UI</html>')
 
 
@@ -288,7 +295,7 @@ def test_chat_app_index_endpoint(isolated_ui_cache: None):
 @pytest.mark.anyio
 async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html fetches from CDN when filesystem cache misses."""
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
 
     test_content = b'<html>Test UI</html>'
     _stub_cdn_fetch(monkeypatch, test_content)
@@ -304,7 +311,7 @@ async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 @pytest.mark.anyio
 async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html returns cached content from filesystem."""
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
 
     test_content = b'<html>Cached UI</html>'
     cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
@@ -315,7 +322,8 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     assert result == test_content
 
 
-def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+@pytest.mark.anyio
+async def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """`_get_cache_dir` derives its path from `XDG_CACHE_HOME` and creates the directory.
 
     The index-route tests monkeypatch `_get_cache_dir` for isolation, so this is the only
@@ -323,7 +331,7 @@ def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_
     """
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
 
-    cache_dir = app_module._get_cache_dir()  # pyright: ignore[reportPrivateUsage]
+    cache_dir = await app_module._get_cache_dir()  # pyright: ignore[reportPrivateUsage]
 
     assert cache_dir == tmp_path / 'pydantic-ai' / 'web-ui'
     assert cache_dir.is_dir()
@@ -331,7 +339,7 @@ def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_
 
 @pytest.mark.anyio
 async def test_get_ui_html_refetches_empty_cache_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
 
     cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
     cache_file.write_bytes(b'')
@@ -415,7 +423,7 @@ async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch
     deterministically (no timing/threads) that the destination materializes only through the atomic
     rename, and that the rename source already holds the complete content.
     """
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
 
     full_content = b'<html>complete UI document</html>'
     _stub_cdn_fetch(monkeypatch, full_content)
@@ -765,7 +773,7 @@ async def test_instructions_passed_to_dispatch(monkeypatch: pytest.MonkeyPatch):
 @pytest.mark.anyio
 async def test_get_ui_html_custom_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html fetches from custom URL when provided."""
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
 
     test_content = b'<html>Custom CDN UI</html>'
     captured_url: list[str] = []
@@ -801,7 +809,7 @@ async def test_get_ui_html_custom_url(monkeypatch: pytest.MonkeyPatch, tmp_path:
 @pytest.mark.anyio
 async def test_get_ui_html_custom_url_caching(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that custom URLs are cached to filesystem and not re-fetched."""
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
 
     test_content = b'<html>Cached Custom UI</html>'
     fetch_count = _stub_cdn_fetch(monkeypatch, test_content)
@@ -909,7 +917,7 @@ def test_chat_app_index_http_error(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
     # Use a fresh temp dir so there's no cached file
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: Path('/tmp/nonexistent-cache-dir-for-test'))
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(Path('/tmp/nonexistent-cache-dir-for-test')))
 
     agent = Agent('test')
     app = create_web_app(agent)
