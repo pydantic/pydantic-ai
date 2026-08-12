@@ -316,6 +316,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
     if supports_tool_search:
         profile['tool_deferral_mode'] = 'standalone'
+    profile['compaction_mode'] = 'text'
     return profile
 
 

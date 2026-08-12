@@ -15,6 +15,7 @@ from ..output import StructuredOutputMode
 __all__ = [
     'ModelProfile',
     'ModelProfileSpec',
+    'CompactionMode',
     'ToolAdditionMode',
     'ToolDeferralMode',
     'DEFAULT_PROFILE',
@@ -27,6 +28,7 @@ __all__ = [
 
 ToolDeferralMode: TypeAlias = Literal['standalone', 'with_tool_search']
 ToolAdditionMode: TypeAlias = Literal['by_reference', 'with_definitions']
+CompactionMode: TypeAlias = Literal['encrypted', 'text']
 
 
 DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
@@ -172,6 +174,9 @@ class ModelProfile(TypedDict, total=False):
     tool removal (#6985) is not modeled yet and will get its own field.
     """
 
+    compaction_mode: CompactionMode | None
+    """How this model family carries compaction state. Default: `None`."""
+
     tool_additions: ToolAdditionMode | None
     """Deprecated: use `tool_addition_mode` instead.
 
@@ -232,6 +237,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
+    'compaction_mode': None,
 }
 """Fully populated default `ModelProfile`. Used as the base layer when resolving a model's effective profile."""
 

@@ -13408,8 +13408,23 @@ async def test_anthropic_trims_before_latest_compaction(allow_model_requests: No
         ModelRequest.user_text_prompt('keep tail'),
     ]
 
-    await model.request(messages, None, ModelRequestParameters())
-    await model.count_tokens(messages, None, ModelRequestParameters())
+    prepared = model.prepare_messages(messages)
+    assert prepared == snapshot(
+        [
+            ModelRequest(parts=[SystemPromptPart(content='Standing system prompt.')]),
+            ModelResponse(
+                parts=[
+                    CompactionPart(content='latest summary', provider_name='anthropic'),
+                    TextPart(content='keep after boundary'),
+                ],
+                provider_name='anthropic',
+            ),
+            ModelRequest(parts=[UserPromptPart(content='keep tail')]),
+        ]
+    )
+
+    await model.request(prepared, None, ModelRequestParameters())
+    await model.count_tokens(prepared, None, ModelRequestParameters())
 
     create_kwargs, count_kwargs = get_mock_chat_completion_kwargs(mock_client)
     # The messages start with the assistant compaction block — the API accepts that shape

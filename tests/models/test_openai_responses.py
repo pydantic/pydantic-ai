@@ -105,6 +105,7 @@ with try_import() as imports_successful:
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.openai import (
+        OpenAIChatModel,
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
@@ -13270,6 +13271,12 @@ async def test_openai_responses_compact_messages(allow_model_requests: None, ope
     assert 'encrypted_content' in compaction.provider_details
 
 
+def test_openai_compaction_mode_is_responses_only():
+    provider = OpenAIProvider(api_key='test')
+    assert OpenAIChatModel('gpt-5.2', provider=provider).compaction_mode is None
+    assert OpenAIResponsesModel('gpt-5.2', provider=provider).compaction_mode == 'encrypted'
+
+
 async def test_openai_responses_trims_before_latest_compaction(allow_model_requests: None):
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=mock_client))
@@ -13306,8 +13313,14 @@ async def test_openai_responses_trims_before_latest_compaction(allow_model_reque
         ModelRequest.user_text_prompt('keep tail'),
     ]
 
+    prepared = model.prepare_messages(messages)
+    assert prepared == [replace(messages[3], parts=messages[3].parts[1:]), messages[4]]
+    assert [[part.part_kind for part in message.parts] for message in prepared] == snapshot(
+        [['compaction', 'text'], ['user-prompt']]
+    )
+
     _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+        prepared, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
     )
 
     # Everything before the latest compaction item is dropped, since the Responses API would
@@ -13323,7 +13336,7 @@ async def test_openai_responses_trims_before_latest_compaction(allow_model_reque
         ]
     )
 
-    await model.count_tokens(messages, None, ModelRequestParameters())
+    await model.count_tokens(prepared, None, ModelRequestParameters())
     assert cast(MockOpenAIResponses, mock_client).count_kwargs[0]['input'] == mapped
 
 
@@ -13350,7 +13363,7 @@ async def test_openai_responses_unstamped_compaction_reinserts_standing_prompt(a
     ]
 
     _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+        model.prepare_messages(messages), cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
     )
 
     assert mapped == snapshot(
@@ -13388,7 +13401,7 @@ async def test_openai_responses_sanitized_compaction_reinserts_standing_prompt(a
 
     sanitized = sanitize_messages(messages, strip_system_prompts=False)
     _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        sanitized, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+        model.prepare_messages(sanitized), cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
     )
 
     assert mapped == snapshot(
@@ -13598,7 +13611,7 @@ async def test_openai_responses_conversation_id_recovered_across_compaction(allo
     ]
 
     await model.request(
-        messages,
+        model.prepare_messages(messages),
         OpenAIResponsesModelSettings(openai_conversation_id='auto'),
         ModelRequestParameters(),
     )

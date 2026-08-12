@@ -72,6 +72,7 @@ from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
 from ..profiles import (
     DEFAULT_PROFILE,
     DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
+    CompactionMode,
     ModelProfile,
     ModelProfileSpec,
     ToolAdditionMode,
@@ -405,6 +406,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     """
     supported_tool_addition_modes: ClassVar[frozenset[ToolAdditionMode]] = frozenset()
     """`tool_addition_mode` values this adapter's renderer implements. See `supported_tool_deferral_modes`."""
+    supported_compaction_modes: ClassVar[frozenset[CompactionMode]] = frozenset()
+    """`compaction_mode` values this adapter implements. See `supported_tool_deferral_modes`."""
 
     _provider: Provider[InterfaceClient]
     _profile: ModelProfileSpec | None = None
@@ -483,6 +486,12 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """The effective tool-addition mode: the profile's claim, if this adapter renders it."""
         mode = self.profile.get('tool_addition_mode')
         return mode if mode in self.supported_tool_addition_modes else None
+
+    @property
+    def compaction_mode(self) -> CompactionMode | None:
+        """The effective compaction mode: the profile's claim, if this adapter implements it."""
+        mode = self.profile.get('compaction_mode')
+        return mode if mode in self.supported_compaction_modes else None
 
     @abstractmethod
     async def request(
@@ -758,6 +767,19 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         target_provider_name = self.system if supports_native_tool_search else None
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
+
+        if compaction_mode := self.compaction_mode:
+            requires_encrypted_content = compaction_mode == 'encrypted'
+            # These are separate facts that currently pair 1:1. Responses renders its leading
+            # system items inside the compacted window, so the encrypted item retains them;
+            # Anthropic rebuilds its per-request `system` parameter and must re-insert them.
+            standing_prompt_retained = compaction_mode == 'encrypted'
+            messages = _trim_messages_before_compaction(
+                messages,
+                self.system,
+                requires_encrypted_content=requires_encrypted_content,
+                standing_prompt_retained=standing_prompt_retained,
+            )
 
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages)
@@ -1983,7 +2005,7 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
     return count
 
 
-def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
+def _trim_messages_before_compaction(
     messages: list[ModelMessage],
     system: str,
     *,
@@ -1992,9 +2014,8 @@ def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
 ) -> list[ModelMessage]:
     """Drop history before the latest same-provider compaction part the request will send.
 
-    Shared by the adapters that honor [`CompactionPart`][pydantic_ai.messages.CompactionPart]s on
-    the wire — each calls it from its own `_map_messages`, since whether a compaction part is
-    honored at all is provider semantics. Anthropic ignores (and doesn't bill) pre-boundary blocks,
+    Called by `Model.prepare_messages` for adapters whose effective `compaction_mode` honors
+    [`CompactionPart`][pydantic_ai.messages.CompactionPart]s on the wire. Anthropic ignores (and doesn't bill) pre-boundary blocks,
     so there the trim only saves request size; the OpenAI Responses API processes and bills
     replayed items that precede a compaction item (live-verified), so there it is what makes
     compaction actually compact. `requires_encrypted_content` mirrors OpenAI's render condition: a
