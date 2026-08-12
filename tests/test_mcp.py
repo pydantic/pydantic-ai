@@ -1060,13 +1060,28 @@ class TestMCPToolsetIntegration:
         assert result.data == b'binary-bytes'
         assert result.media_type == 'application/octet-stream'
 
-    async def test_read_mcp_resource_tool_bad_uri_retries(self, fastmcp_server: FastMCP[None], run_context: RunContext):
-        """A bad URI honors `tool_error_behavior`: `ModelRetry` by default so the model can
-        self-correct, and the underlying `MCPError` when `tool_error_behavior='error'`."""
-        toolset = MCPToolset(fastmcp_server, expose_resources=True)
+    @pytest.mark.parametrize(
+        'tool_error_behavior,expected_exception',
+        [
+            pytest.param('retry', ModelRetry, id='retry'),
+            pytest.param('failed', ToolFailed, id='failed'),
+            pytest.param('error', MCPError, id='error'),
+        ],
+    )
+    async def test_read_mcp_resource_tool_bad_uri_honors_error_behavior(
+        self,
+        fastmcp_server: FastMCP[None],
+        run_context: RunContext,
+        tool_error_behavior: Literal['retry', 'failed', 'error'],
+        expected_exception: type[Exception],
+    ):
+        """A bad URI is routed through `tool_error_behavior` like a server tool: `ModelRetry` by
+        default so the model can self-correct, `ToolFailed` under `'failed'`, and the raw `MCPError`
+        under `'error'` (rather than escaping the toolset unmapped)."""
+        toolset = MCPToolset(fastmcp_server, expose_resources=True, tool_error_behavior=tool_error_behavior)
         async with toolset:
             tools = await toolset.get_tools(run_context)
-            with pytest.raises(ModelRetry):
+            with pytest.raises(expected_exception):
                 await toolset.call_tool(
                     READ_MCP_RESOURCE_TOOL_NAME,
                     {'uri': 'resource://does-not-exist.txt'},
@@ -1074,15 +1089,19 @@ class TestMCPToolsetIntegration:
                     tools[READ_MCP_RESOURCE_TOOL_NAME],
                 )
 
-        error_toolset = MCPToolset(fastmcp_server, expose_resources=True, tool_error_behavior='error')
-        async with error_toolset:
-            tools = await error_toolset.get_tools(run_context)
-            with pytest.raises(MCPError):
-                await error_toolset.call_tool(
-                    READ_MCP_RESOURCE_TOOL_NAME,
-                    {'uri': 'resource://does-not-exist.txt'},
-                    run_context,
-                    tools[READ_MCP_RESOURCE_TOOL_NAME],
+    async def test_list_mcp_resources_tool_honors_error_behavior(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """An `MCPError` raised while listing resources is routed through `tool_error_behavior`
+        (here `'failed'` → `ToolFailed`) instead of aborting the run — the `list` path previously
+        had no `MCPError` handling at all, so even the default `'retry'` let it escape."""
+        toolset = MCPToolset(fastmcp_server, expose_resources=True, tool_error_behavior='failed')
+        async with toolset:
+            tools = await toolset.get_tools(run_context)
+            toolset.list_resources = AsyncMock(side_effect=MCPError('list boom', code=-32603))
+            with pytest.raises(ToolFailed, match='list boom'):
+                await toolset.call_tool(
+                    LIST_MCP_RESOURCES_TOOL_NAME, {}, run_context, tools[LIST_MCP_RESOURCES_TOOL_NAME]
                 )
 
     async def test_expose_resources_no_capability(self, fastmcp_server: FastMCP[None], run_context: RunContext):
