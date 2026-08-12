@@ -103,17 +103,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         def rebind(source: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
             if (replacement := replacements.get(id(source))) is not None:
                 return replacement
-            if isinstance(source, CombinedCapability):
-                # A retained container is not in `capabilities` — flattening splatted its children
-                # out — so it is not in `replacements` either, and left alone it would keep answering
-                # from the children it had before the bind. Its children *are* in `replacements`,
-                # having been flattened into the very list that was just rebound, so rebind it from
-                # those: otherwise its `get_instructions` reads pre-bind state, and its leaves are
-                # absent from the ordering positions, which sorts its block last.
-                children = [replacements.get(id(child), child) for child in source.capabilities]
-                if any(new is not old for new, old in zip(children, source.capabilities)):
-                    return source._rebound(children)
-            return source
+            # Anything else is a retained container: `_instruction_sources` holds either direct
+            # children, replaced above, or the containers flattening splatted out. Those are not in
+            # `capabilities` and so not in `replacements`, and left alone one would keep answering
+            # from the children it had before the bind, with its leaves absent from the ordering
+            # positions sorting its block last. Its children *are* in `replacements`, having been
+            # flattened into the very list that was just rebound, so rebuild it from those.
+            assert isinstance(source, CombinedCapability)
+            return source._rebound([replacements.get(id(child), child) for child in source.capabilities])
 
         new_self._instruction_sources = [rebind(source) for source in new_self._instruction_sources]
         new_self.__normalize_capabilities()

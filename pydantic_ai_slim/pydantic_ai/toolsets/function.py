@@ -604,8 +604,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         parts: list[InstructionPart] = []
         for instruction in self._instructions:
             if isinstance(instruction, InstructionPart):
-                if instruction.content.strip():
-                    parts.append(instruction)
+                # No blank check: `normalize_toolset_instructions` drops whitespace-only parts on
+                # every path out of a toolset, so repeating it here would be a branch nothing can
+                # tell apart.
+                parts.append(instruction)
             elif isinstance(instruction, str):
                 if instruction.strip():
                     parts.append(InstructionPart(content=instruction, dynamic=False))

@@ -966,9 +966,6 @@ async def test_a_retained_override_survives_a_rebind_that_replaces_its_children(
         def get_instructions(self) -> Any:
             return ['Override.']
 
-        def get_ordering(self) -> CapabilityOrdering | None:
-            return CapabilityOrdering(position='outermost')
-
     agent = Agent(
         capabilities=[
             OverriddenCombined(capabilities=[Rebinding(instructions='Child.', id='child')], id='group'),
@@ -979,6 +976,20 @@ async def test_a_retained_override_survives_a_rebind_that_replaces_its_children(
     assert await run_and_capture(agent) == [
         InstructionPart(content='Override.', id='capability:group'),
         InstructionPart(content='Plain.', id='capability:plain'),
+    ]
+
+    # The other side of the rebind: a sibling returns a fresh instance while the container's own
+    # child does not, so the container is carried across untouched rather than rebuilt.
+    unchanged = Agent(
+        capabilities=[
+            OverriddenCombined(capabilities=[Capability[Any](instructions='Child.', id='child')], id='group'),
+            Rebinding(instructions='Sibling.', id='sibling'),
+        ]
+    )
+
+    assert await run_and_capture(unchanged) == [
+        InstructionPart(content='Override.', id='capability:group'),
+        InstructionPart(content='Sibling.', id='capability:sibling'),
     ]
 
 
