@@ -8,13 +8,13 @@ from pydantic import BaseModel, TypeAdapter
 
 T = TypeVar('T')
 
-_VERSION_RELEASE_RE = re.compile(r'\d+(?:\.\d+)*')
+_MCP_VERSION_RE = re.compile(r'(\d+)\.(\d+)\.(\d+)')
 
 
 def is_mcp_sdk_v2() -> bool:
     """Whether the installed MCP SDK is the v2 generation, read off the `mcp` distribution version."""
-    release = _VERSION_RELEASE_RE.match(version('mcp'))
-    return release is not None and tuple(int(part) for part in release.group().split('.')) >= (2, 0, 0)
+    match = _MCP_VERSION_RE.match(version('mcp'))
+    return match is not None and tuple(map(int, match.groups())) >= (2, 0, 0)
 
 
 def wire_name(name: str) -> str:
