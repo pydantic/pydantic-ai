@@ -41,6 +41,84 @@ navigation:
         slug: "overview/gateway"
         aliases:
           - "gateway"
+  - section: "Realtime (speech-to-speech)"
+    slug: ""
+    contents:
+      - page: "Overview"
+        path: "realtime/overview.md"
+        slug: "overview/realtime/overview"
+        aliases:
+          - "realtime/overview"
+      - page: "Audio, images, and transcripts"
+        path: "realtime/audio.md"
+        slug: "overview/realtime/audio"
+        aliases:
+          - "realtime/audio"
+      - page: "Events"
+        path: "realtime/events.md"
+        slug: "overview/realtime/events"
+        aliases:
+          - "realtime/events"
+      - page: "Turns and interruptions"
+        path: "realtime/turns.md"
+        slug: "overview/realtime/turns"
+        aliases:
+          - "realtime/turns"
+      - page: "Tools"
+        path: "realtime/tools.md"
+        slug: "overview/realtime/tools"
+        aliases:
+          - "realtime/tools"
+      - page: "Capabilities and hooks"
+        path: "realtime/capabilities.md"
+        slug: "overview/realtime/capabilities"
+        aliases:
+          - "realtime/capabilities"
+      - page: "History and handoff"
+        path: "realtime/history.md"
+        slug: "overview/realtime/history"
+        aliases:
+          - "realtime/history"
+      - page: "Connecting a frontend"
+        path: "realtime/deployment.md"
+        slug: "overview/realtime/deployment"
+        aliases:
+          - "realtime/deployment"
+      - page: "Connection lifecycle"
+        path: "realtime/lifecycle.md"
+        slug: "overview/realtime/lifecycle"
+        aliases:
+          - "realtime/lifecycle"
+      - page: "Usage and observability"
+        path: "realtime/observability.md"
+        slug: "overview/realtime/observability"
+        aliases:
+          - "realtime/observability"
+      - page: "Troubleshooting"
+        path: "realtime/troubleshooting.md"
+        slug: "overview/realtime/troubleshooting"
+        aliases:
+          - "realtime/troubleshooting"
+      - page: "OpenAI"
+        path: "realtime/openai.md"
+        slug: "overview/realtime/openai"
+        aliases:
+          - "realtime/openai"
+      - page: "Azure"
+        path: "realtime/azure.md"
+        slug: "overview/realtime/azure"
+        aliases:
+          - "realtime/azure"
+      - page: "Google Gemini"
+        path: "realtime/gemini.md"
+        slug: "overview/realtime/gemini"
+        aliases:
+          - "realtime/gemini"
+      - page: "xAI"
+        path: "realtime/xai.md"
+        slug: "overview/realtime/xai"
+        aliases:
+          - "realtime/xai"
   - section: "Core Concepts"
     slug: ""
     contents:
@@ -679,6 +757,9 @@ navigation:
             slug: "examples/data-analytics/rag"
             aliases:
               - "examples/rag"
+          - page: "TwelveLabs Video Agent"
+            path: "examples/twelvelabs-video-agent.md"
+            slug: "examples/data-analytics/twelvelabs-video-agent"
       - section: "Streaming"
         slug: ""
         contents:
@@ -692,6 +773,34 @@ navigation:
             slug: "examples/streaming/stream-whales"
             aliases:
               - "examples/stream-whales"
+      - section: "Realtime"
+        slug: ""
+        contents:
+          - page: "Voice Assistant"
+            path: "examples/realtime-voice.md"
+            slug: "examples/realtime/realtime-voice"
+            aliases:
+              - "examples/realtime-voice"
+          - page: "Text to Audio"
+            path: "examples/realtime-text-to-audio.md"
+            slug: "examples/realtime/realtime-text-to-audio"
+            aliases:
+              - "examples/realtime-text-to-audio"
+          - page: "Agent Handoff"
+            path: "examples/realtime-handoff.md"
+            slug: "examples/realtime/realtime-handoff"
+            aliases:
+              - "examples/realtime-handoff"
+          - page: "Camera Agent"
+            path: "examples/realtime-camera.md"
+            slug: "examples/realtime/realtime-camera"
+            aliases:
+              - "examples/realtime-camera"
+          - page: "Browser WebRTC"
+            path: "examples/realtime-webrtc.md"
+            slug: "examples/realtime/realtime-webrtc"
+            aliases:
+              - "examples/realtime-webrtc"
       - section: "Complex Workflows"
         slug: ""
         contents:
@@ -876,6 +985,29 @@ navigation:
             slug: "api/pydantic-ai/providers"
             aliases:
               - "api/providers"
+          - page: "realtime"
+            path: "api/realtime.md"
+            slug: "api/pydantic-ai/realtime"
+            aliases:
+              - "api/realtime"
+          - section: "realtime"
+            slug: ""
+            contents:
+              - page: "codec"
+                path: "api/realtime/codec.md"
+                slug: "api/realtime/codec"
+              - page: "openai"
+                path: "api/realtime/openai.md"
+                slug: "api/realtime/openai"
+              - page: "google"
+                path: "api/realtime/google.md"
+                slug: "api/realtime/google"
+              - page: "xai"
+                path: "api/realtime/xai.md"
+                slug: "api/realtime/xai"
+              - page: "azure"
+                path: "api/realtime/azure.md"
+                slug: "api/realtime/azure"
           - page: "result"
             path: "api/result.md"
             slug: "api/pydantic-ai/result"
@@ -1022,6 +1154,9 @@ navigation:
           - "version-policy"
 redirects:
   # Section roots without their own landing page.
+  - from: "overview/realtime"
+    to: "overview/realtime/overview"
+    status: 302
   - from: "core-concepts"
     to: "core-concepts/agent"
     status: 302
