@@ -93,6 +93,9 @@ TypeExpr: TypeAlias = 'TypeSignature | SimpleTypeExpr | LiteralTypeExpr | Generi
 # =============================================================================
 
 
+# One level of nesting inside a rendered docstring (Google style: four spaces).
+_DOC_INDENT = '    '
+
 # Keeps arbitrary description text from breaking the generated `"""..."""` literal:
 # backslashes would start escape sequences, null bytes are rejected by compile(),
 # and quotes could terminate the delimiter.
@@ -300,9 +303,9 @@ class FunctionSignature:
             if not description_lines:
                 continue
             first_line, *continuation = description_lines
-            args_lines.append(f'    {param.name}: {first_line}')
-            # Continuation lines nest one level past the parameter name (Google style)
-            args_lines.extend(f'        {line}' for line in continuation)
+            args_lines.append(f'{_DOC_INDENT}{param.name}: {first_line}')
+            # Continuation lines nest one level past the parameter name
+            args_lines.extend(f'{_DOC_INDENT * 2}{line}' for line in continuation)
         if args_lines:
             description_sections.append('\n'.join(['Args:', *args_lines]))
         description = '\n\n'.join(description_sections)
