@@ -154,9 +154,6 @@ pydantic-handlebars = false
 genai-prices = false
 logfire = false
 logfire-api = false
-# TODO: Remove after 2026-08-18 07:51 UTC. https://github.com/pydantic/pydantic-ai/issues/7376
-# This admits only the reviewed HTTPX2-compatible 2.9.2 artifacts; later Mistral artifacts remain quarantined.
-mistralai = "2026-08-11T07:51:18Z"
 
 [dependency-groups]
 dev = [
@@ -361,9 +358,6 @@ filterwarnings = [
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
-    # logfire 4.40 uses the SDK logging handler deprecated by OpenTelemetry 1.44.
-    # TODO(davidsf): Remove after https://github.com/pydantic/logfire/pull/2094 is released.
-    "ignore:`LoggingHandler` in `opentelemetry-sdk` is deprecated:DeprecationWarning:opentelemetry.sdk._logs",
     # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
     "ignore: Core Pydantic V1 functionality:UserWarning",
     # prefect has a Pydantic v2 compatibility issue in RRuleSchedule
