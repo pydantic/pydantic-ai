@@ -99,7 +99,6 @@ pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
-pydantic-docs = { git = "https://github.com/pydantic/pydantic-docs" }
 
 [tool.uv.workspace]
 members = [
@@ -113,7 +112,7 @@ members = [
 [tool.uv]
 # `exclude-newer` relative durations need >= 0.9.17, `exclude-newer-package` `false` needs >= 0.9.25
 required-version = ">=0.9.25"
-default-groups = ["dev", "lint", "docs"]
+default-groups = ["dev", "lint"]
 exclude-newer = "7 days"
 conflicts = [
     # The `mcp-tasks` extra lives in the FastMCP 4 / MCP SDK v2 universe, while the dev group
@@ -226,19 +225,6 @@ dev = [
     "blockbuster>=1.5.26,<1.6",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
-docs = [
-    "black>=24.10.0",
-    "mkdocs>=1.6.1",
-    "mkdocs-glightbox>=0.4.0",
-    "mkdocs-llmstxt>=0.2.0",
-    "mkdocs-redirects>=1.2.2",
-    "mkdocs-material[imaging]>=9.7.0",
-    "mkdocstrings-python>=2.0.0",
-    "griffe-warnings-deprecated>=1.1.0",
-    "pydantic-docs",
-]
-docs-upload = ["algoliasearch>=4.12.0", "pydantic>=2.10.1"]
-
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
 exclude = ["/pydantic_ai_slim/pydantic_ai/.agents"]
@@ -375,7 +361,7 @@ files = "tests/typed_agent.py"
 strict = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "docs/.hooks", ".github/scripts/test_ci_duration.py"]
+testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
 filterwarnings = [
     "error",
