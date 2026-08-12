@@ -171,7 +171,8 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 - Override `blockbuster_enabled` only when one specific test intentionally performs blocking work.
 - Use the narrowest module or test boundary. Do not replace the autouse `blockbuster` fixture.
 - Each pytest worker configures one detector per exclusion set and activates it separately for each test.
-- CI enables BlockBuster in regular Python 3.13 variants and unique compatibility or live-provider jobs.
+- CI enables BlockBuster in Python 3.13 slim, evals, and standard jobs, plus unique compatibility or live-provider jobs.
+- The all-extras job disables BlockBuster because its stack-inspection overhead exceeds the seven-minute CI budget.
 - Redundant Python-version and lowest-version lanes disable BlockBuster to avoid repeated stack-inspection overhead.
 - Local targeted tests enable BlockBuster by default.
 
