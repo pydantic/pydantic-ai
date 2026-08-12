@@ -1077,7 +1077,12 @@ async def test_openrouter_supported_native_tools() -> None:
 
 
 async def test_openrouter_web_search_tool_request(allow_model_requests: None) -> None:
-    """`WebSearchTool` maps portable settings to an `openrouter:web_search` server tool."""
+    """`WebSearchTool` maps portable settings to an `openrouter:web_search` server tool.
+
+    A mocked client pins the exact request-payload mapping, so this is a unit test rather than a
+    VCR test despite the module-level `vcr` mark; the provider-acceptance side is covered by the
+    VCR test.
+    """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
     model = OpenRouterModel('openai/gpt-4.1', provider=OpenRouterProvider(openai_client=mock_client))
     agent = Agent(
@@ -1122,7 +1127,12 @@ async def test_openrouter_web_search_tool_request(allow_model_requests: None) ->
 
 
 async def test_openrouter_web_search_tool_is_after_tool_cache_and_advisor(allow_model_requests: None) -> None:
-    """Server tools follow the cached function definition so the cache breakpoint remains stable."""
+    """Server tools follow the cached function definition so the cache breakpoint remains stable.
+
+    A mocked client pins the exact tool ordering and cache breakpoint, so this is a unit test
+    rather than a VCR test despite the module-level `vcr` mark; the provider-acceptance side is
+    covered by the VCR test.
+    """
     mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
     model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
     agent = Agent(
@@ -1163,7 +1173,11 @@ async def test_openrouter_web_search_tool_is_after_tool_cache_and_advisor(allow_
 
 
 async def test_openrouter_settings_to_openai_settings_does_not_add_web_search() -> None:
-    """`WebSearchTool` is converted to a server tool after OpenAI settings are prepared."""
+    """`WebSearchTool` is converted to a server tool after OpenAI settings are prepared.
+
+    This calls the private converter directly with no provider request, so it is a unit test
+    rather than a VCR test despite the module-level `vcr` mark.
+    """
     settings = OpenRouterModelSettings()
     model_request_parameters = ModelRequestParameters(
         native_tools=[WebSearchTool(search_context_size='high')],
