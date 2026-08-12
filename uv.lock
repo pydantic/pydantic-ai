@@ -27,6 +27,7 @@ logfire = false
 pydantic-settings = false
 pydantic-handlebars = false
 genai-prices = false
+openai = false
 pydantic-extra-types = false
 pydantic-core = false
 pydantic = false
@@ -4481,28 +4482,21 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "2.53.0"
+version = "3.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
-    { name = "httpx" },
+    { name = "httpx2" },
     { name = "jiter" },
     { name = "pydantic" },
     { name = "sniffio" },
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ef/cf/36e3e7235fdf6d125c052acc0970924611b17a20a4fe580596faf4566a65/openai-2.53.0.tar.gz", hash = "sha256:baf5802ad08980e1d9d561e1b996e800c8bcd14af5847c6d0e7a5cc59e4d4116", size = 1099435, upload-time = "2026-08-03T21:42:01.664Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/54/8c/2f500e8be09d1ae98c530467962535198b02cd4550cd418bbbaedc8b2910/openai-3.0.0.tar.gz", hash = "sha256:ffd00ef1678d70957e1f1ed98d5bfcf1d661f41ea4482f22e7d0144a66435a49", size = 1123740, upload-time = "2026-08-12T01:55:50.849Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/0f/cc6afea3542a5142c5d8fc8211c5e059a8375105d004a41dfa2c7948dbb0/openai-2.53.0-py3-none-any.whl", hash = "sha256:c694ffc747a3c4d1663ef2b07b811315a476164ee5efa3a993967349ebca7618", size = 1659829, upload-time = "2026-08-03T21:41:59.581Z" },
-]
-
-[package.optional-dependencies]
-httpx2 = [
-    { name = "anyio" },
-    { name = "httpx" },
-    { name = "httpx2" },
+    { url = "https://files.pythonhosted.org/packages/7b/0d/9850e7eddb5e66da4439ed503e78e09ad1fd0195e6df51e4236c75763581/openai-3.0.0-py3-none-any.whl", hash = "sha256:8d32ac3a6647a66910d6cb8a64f0fa5a6c823604b6e82db83d9d055c6709bd51", size = 1665775, upload-time = "2026-08-12T01:55:48.678Z" },
 ]
 
 [[package]]
@@ -5845,10 +5839,10 @@ bedrock = [
 ]
 bedrock-mantle = [
     { name = "botocore" },
-    { name = "openai", extra = ["httpx2"] },
+    { name = "openai" },
 ]
 cerebras = [
-    { name = "openai", extra = ["httpx2"] },
+    { name = "openai" },
 ]
 cli = [
     { name = "argcomplete" },
@@ -5861,7 +5855,7 @@ cohere = [
     { name = "cohere", marker = "sys_platform != 'emscripten' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
 ]
 crusoe = [
-    { name = "openai", extra = ["httpx2"] },
+    { name = "openai" },
 ]
 dbos = [
     { name = "dbos" },
@@ -5907,16 +5901,16 @@ mistral = [
     { name = "mistralai" },
 ]
 openai = [
-    { name = "openai", extra = ["httpx2"] },
+    { name = "openai" },
     { name = "tiktoken" },
 ]
 openai-realtime = [
-    { name = "openai", extra = ["httpx2"] },
+    { name = "openai" },
     { name = "tiktoken" },
     { name = "websockets" },
 ]
 openrouter = [
-    { name = "openai", extra = ["httpx2"] },
+    { name = "openai" },
 ]
 prefect = [
     { name = "prefect" },
@@ -5932,7 +5926,7 @@ sentence-transformers = [
     { name = "sentence-transformers", marker = "python_full_version < '3.14' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
 ]
 snowflake = [
-    { name = "openai", extra = ["httpx2"] },
+    { name = "openai" },
 ]
 spec = [
     { name = "pydantic-handlebars" },
@@ -5961,13 +5955,13 @@ xai = [
     { name = "xai-sdk" },
 ]
 xai-realtime = [
-    { name = "openai", extra = ["httpx2"] },
+    { name = "openai" },
     { name = "tiktoken" },
     { name = "websockets" },
     { name = "xai-sdk" },
 ]
 zai = [
-    { name = "openai", extra = ["httpx2"] },
+    { name = "openai" },
 ]
 
 [package.metadata]
@@ -5998,15 +5992,15 @@ requires-dist = [
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.9.2" },
-    { name = "openai", extras = ["httpx2"], marker = "extra == 'bedrock-mantle'", specifier = ">=2.47.0" },
-    { name = "openai", extras = ["httpx2"], marker = "extra == 'cerebras'", specifier = ">=2.47.0" },
-    { name = "openai", extras = ["httpx2"], marker = "extra == 'crusoe'", specifier = ">=2.47.0" },
-    { name = "openai", extras = ["httpx2"], marker = "extra == 'openai'", specifier = ">=2.47.0" },
-    { name = "openai", extras = ["httpx2"], marker = "extra == 'openai-realtime'", specifier = ">=2.47.0" },
-    { name = "openai", extras = ["httpx2"], marker = "extra == 'openrouter'", specifier = ">=2.47.0" },
-    { name = "openai", extras = ["httpx2"], marker = "extra == 'snowflake'", specifier = ">=2.47.0" },
-    { name = "openai", extras = ["httpx2"], marker = "extra == 'xai-realtime'", specifier = ">=2.47.0" },
-    { name = "openai", extras = ["httpx2"], marker = "extra == 'zai'", specifier = ">=2.47.0" },
+    { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.0.0" },
+    { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.0.0" },
+    { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.0.0" },
+    { name = "openai", marker = "extra == 'openai'", specifier = ">=3.0.0" },
+    { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.0.0" },
+    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.0.0" },
+    { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.0.0" },
+    { name = "openai", marker = "extra == 'xai-realtime'", specifier = ">=3.0.0" },
+    { name = "openai", marker = "extra == 'zai'", specifier = ">=3.0.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
     { name = "opentelemetry-instrumentation-httpx", marker = "extra == 'logfire'", specifier = ">=0.65b0" },
     { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.7.5" },

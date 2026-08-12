@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import email
 import zipfile
+from importlib.metadata import requires
 from pathlib import Path
 
 from packaging.requirements import Requirement
@@ -42,10 +43,14 @@ openai_extras = {
 openai_requirements = [requirement for requirement in slim if requirement.name == 'openai']
 assert len(openai_requirements) == len(openai_extras)
 for requirement in openai_requirements:
-    assert requirement.extras == {'httpx2'}
-    assert requirement.specifier.contains('2.47.0')
+    assert not requirement.extras
+    assert requirement.specifier.contains('3.0.0')
     assert requirement.marker is not None
     assert str(requirement.marker).removeprefix('extra == ').strip('"') in openai_extras
+
+openai_dependencies = [Requirement(value) for value in requires('openai') or []]
+assert not any(requirement.name == 'httpx' for requirement in openai_dependencies)
+assert any(requirement.name == 'httpx2' and requirement.specifier.contains('2.7') for requirement in openai_dependencies)
 
 root_slim = [requirement for requirement in root if requirement.name == 'pydantic-ai-slim']
 assert root_slim

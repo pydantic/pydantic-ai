@@ -56,7 +56,7 @@ class _OpenAICompatibleProvider(Provider[AsyncOpenAI]):
         default_headers: Mapping[str, str] | None = None,
     ) -> AsyncOpenAI:
         http_client = self._get_http_client(http_client, warning_stacklevel=4)
-        # openai-python >=2.47 accepts an httpx2 client, but its type annotations still name legacy httpx.
+        # OpenAI 3 keeps legacy HTTPX as a runtime-only escape hatch, outside its public type annotations.
         return AsyncOpenAI(
             base_url=base_url,
             api_key=api_key,

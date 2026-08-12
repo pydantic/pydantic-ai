@@ -10,7 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
 
-import httpx
+import httpx2
 import pytest
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -15563,7 +15563,7 @@ async def test_resume_expired_suspended_response(allow_model_requests: None):
     """A 404 while resuming persisted suspended history raises the typed expiry error."""
     error = APIStatusError(
         'not found',
-        response=httpx.Response(status_code=404, request=httpx.Request('GET', 'https://example.com/v1/responses/id')),
+        response=httpx2.Response(status_code=404, request=httpx2.Request('GET', 'https://example.com/v1/responses/id')),
         body={'error': {'message': 'Response not found'}},
     )
     mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_responses=[error]))
@@ -15591,7 +15591,7 @@ async def test_resume_non_404_error_stays_http_error(allow_model_requests: None)
     """A non-404 error while resuming is NOT an expiry — it maps to the generic `ModelHTTPError`."""
     error = APIStatusError(
         'server error',
-        response=httpx.Response(status_code=500, request=httpx.Request('GET', 'https://example.com/v1/responses/id')),
+        response=httpx2.Response(status_code=500, request=httpx2.Request('GET', 'https://example.com/v1/responses/id')),
         body={'error': {'message': 'boom'}},
     )
     mock_client = cast(AsyncOpenAI, MockOpenAIResponses(retrieve_responses=[error]))

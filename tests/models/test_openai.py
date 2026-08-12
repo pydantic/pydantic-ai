@@ -13,6 +13,7 @@ from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import httpx
+import httpx2
 import pytest
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
@@ -58,7 +59,7 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel, _normalize_openai_timeout
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import merge_profile
@@ -2039,11 +2040,18 @@ async def test_text_content_input(allow_model_requests: None):
     )
 
 
+def test_normalize_openai_timeout() -> None:
+    timeout = _normalize_openai_timeout(httpx.Timeout(connect=1, read=2, write=3, pool=4))
+
+    assert isinstance(timeout, httpx2.Timeout)
+    assert (timeout.connect, timeout.read, timeout.write, timeout.pool) == (1, 2, 3, 4)
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'test error',
-            response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=500, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'error': 'test error'},
         )
     )
@@ -2058,7 +2066,7 @@ def test_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIConnectionError(
             message='Connection to http://localhost:11434/v1 timed out',
-            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+            request=httpx2.Request('POST', 'http://localhost:11434/v1'),
         )
     )
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
@@ -2073,7 +2081,7 @@ def test_responses_model_connection_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAIResponses.create_mock(
         APIConnectionError(
             message='Connection to http://localhost:11434/v1 timed out',
-            request=httpx.Request('POST', 'http://localhost:11434/v1'),
+            request=httpx2.Request('POST', 'http://localhost:11434/v1'),
         )
     )
     m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(openai_client=mock_client))
@@ -5608,7 +5616,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'content filter',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body=body,
         )
     )
@@ -5669,7 +5677,7 @@ def test_responses_azure_prompt_filter_error(allow_model_requests: None) -> None
     mock_client = MockOpenAIResponses.create_mock(
         APIStatusError(
             'content filter',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'error': {'code': 'content_filter', 'message': 'The content was filtered.'}},
         )
     )
@@ -5716,7 +5724,7 @@ def test_azure_400_non_content_filter(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'error': {'code': 'invalid_parameter', 'message': 'Invalid param.'}},
         )
     )
@@ -5734,7 +5742,7 @@ def test_azure_400_non_dict_body(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body='Raw string body',
         )
     )
@@ -5752,7 +5760,7 @@ def test_azure_400_malformed_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
             'Bad Request',
-            response=httpx.Response(status_code=400, request=httpx.Request('POST', 'https://example.com/v1')),
+            response=httpx2.Response(status_code=400, request=httpx2.Request('POST', 'https://example.com/v1')),
             body={'something_else': 'foo'},  # No 'error' key
         )
     )

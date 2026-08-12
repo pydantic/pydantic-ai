@@ -200,7 +200,7 @@ async def test_openai_compatible_provider_preserves_caller_owned_sdk_client() ->
     async with httpx2.AsyncClient() as http_client:
         openai_client = AsyncOpenAI(
             api_key='test',
-            http_client=http_client,  # pyright: ignore[reportArgumentType]
+            http_client=http_client,
         )
         provider = OpenAIProvider(openai_client=openai_client)
 
