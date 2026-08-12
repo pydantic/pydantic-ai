@@ -38,10 +38,18 @@ def validate_instruction_id_segment(id: str, *, kind: str) -> None:
         raise UserError(f'{kind} {id!r} cannot contain a colon because `:` is reserved as an instruction ID delimiter.')
 
 
+TOOLSET_INSTRUCTION_NAMESPACE = 'toolset'
+"""The segment every toolset's source key starts with.
+
+The one namespace `normalize_toolset_instructions` can see, which is what lets it tell a key it
+already issued from a raw value an author wrote.
+"""
+
+
 def toolset_instruction_id(toolset_id: str) -> str:
     """The [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] source key for a toolset."""
     validate_instruction_id_segment(toolset_id, kind='Toolset id')
-    return f'toolset:{toolset_id}'
+    return f'{TOOLSET_INSTRUCTION_NAMESPACE}:{toolset_id}'
 
 
 def capability_instruction_id(capability_id: str) -> str:
@@ -243,6 +251,11 @@ def normalize_toolset_instructions(
     by `'toolset:<id>'` and a part declaring `'limits'` by `'toolset:<id>:limits'`. Composition
     points pass the id of the toolset they're calling, and only the point that reaches the authoring
     toolset has one to pass — a wrapper reports no `id`, so nothing resolves an id twice.
+
+    Without one, an id the framework already issued passes straight through (that's an outer layer
+    seeing a part an inner one resolved), while anything else is dropped: an author writing on a
+    toolset with no `id` has no source key to hang a declared segment off, and letting the raw value
+    stand would let it claim a key belonging to somebody else — `'agent'`, say.
     """
     if not result:
         return []
@@ -253,9 +266,13 @@ def normalize_toolset_instructions(
         part = item if isinstance(item, InstructionPart) else InstructionPart(content=item, dynamic=True)
         if not part.content.strip():
             continue
-        # Only the layer that knows the toolset's id resolves against it; the outer layers pass a
-        # part straight through, so an id already resolved closer to the source is never dropped.
-        if source_id is not None and (resolved_id := resolve_declared_id(source_id, part.id)) != part.id:
+        if source_id is not None:
+            resolved_id = resolve_declared_id(source_id, part.id)
+        elif part.id is not None and not part.id.startswith(f'{TOOLSET_INSTRUCTION_NAMESPACE}:'):
+            resolved_id = None
+        else:
+            resolved_id = part.id
+        if resolved_id != part.id:
             part = replace(part, id=resolved_id)
         parts.append(part)
     return parts

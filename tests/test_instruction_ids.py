@@ -926,3 +926,57 @@ async def test_a_blank_instruction_part_contributes_nothing():
     )
 
     assert await run_and_capture(agent) == [InstructionPart(content='Real.', id='agent:real')]
+
+
+async def test_a_source_without_a_key_cannot_claim_someone_elses():
+    """A declared id needs a source key to hang off, and a toolset with no `id` has none.
+
+    Left as written, an author's raw value would become a top-level key — `'agent'` here, taking over
+    the agent's own block for anything keying configuration off these ids.
+    """
+    agent = Agent(
+        instructions='The agent block.',
+        toolsets=[InstructionsToolset([InstructionPart(content='From a nameless toolset.', id='agent')])],
+    )
+
+    # Only the id it could not qualify is dropped; the part keeps everything else it declared.
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='The agent block.', id='agent'),
+        InstructionPart(content='From a nameless toolset.'),
+    ]
+
+
+async def test_a_retained_override_survives_a_rebind_that_replaces_its_children():
+    """A container retained for its `get_instructions` override has to be rebound with its children.
+
+    Flattening splats its children into `capabilities`, so the container itself is not in the list
+    `for_agent`/`for_run` rebind and would otherwise keep answering from pre-bind children — and its
+    leaves, absent from the ordering positions, would sort its block last despite `outermost`.
+    """
+
+    class Rebinding(Capability[Any]):
+        """Returns a fresh instance from `for_agent`, which is what makes the container stale."""
+
+        def for_agent(self, agent: Any) -> AbstractCapability[Any]:
+            return Rebinding(instructions=self.get_instructions(), id=self.id)
+
+    class OverriddenCombined(CombinedCapability[Any]):
+        id = 'group'
+
+        def get_instructions(self) -> Any:
+            return ['Override.']
+
+        def get_ordering(self) -> CapabilityOrdering | None:
+            return CapabilityOrdering(position='outermost')
+
+    agent = Agent(
+        capabilities=[
+            OverriddenCombined(capabilities=[Rebinding(instructions='Child.', id='child')], id='group'),
+            Capability[Any](instructions='Plain.', id='plain'),
+        ]
+    )
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Override.', id='capability:group'),
+        InstructionPart(content='Plain.', id='capability:plain'),
+    ]
