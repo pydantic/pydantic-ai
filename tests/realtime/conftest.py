@@ -125,7 +125,10 @@ def _zero_sdp_addresses(request: Any) -> Any:
     hand-zeroing them (as `REAL_SDP_OFFER` above was) from being a step someone has to remember.
     """
     body = request.body
-    if isinstance(body, bytes) and b'a=candidate:' in body:
+    if isinstance(body, bytes):
+        # Zero every address the regex finds, not just when an ICE candidate is present: an SDP whose
+        # only address is the `c=IN IP4/IP6` connection line (no `a=candidate:` lines) would otherwise
+        # be recorded with the recorder's real address intact.
         request.body = _SDP_ADDRESS_RE.sub(
             lambda match: match['prefix'] + (b'0.0.0.0' if b'.' in match['address'] else b'::'), body
         )
@@ -233,7 +236,7 @@ def openai_ws_sideband_cassette(
     Stored under a dedicated subdirectory so the WebSocket cassette doesn't collide with the HTTP VCR
     cassette (SDP offer relay) a WebRTC sideband test records under the module-named subdirectory.
     """
-    if not imports_successful():
+    if not openai_imports_successful():  # pragma: no cover
         pytest.skip('openai / websockets not installed')
     with _ws_cassette(request, 'openai', subdir='test_openai_ws_sideband') as cassette:
         yield OpenAIProvider(api_key=openai_api_key), cassette
