@@ -129,14 +129,10 @@
     animation: hero-word .55s var(--ease-out) calc(.12s + var(--i, 0) * 45ms) both;
   }
   @keyframes hero-word { to { opacity: 1; filter: blur(0); transform: translateY(0); } }
-  .hero-sub {
-    margin: 0 auto 14px; max-width: 560px;
-    font-size: 15px; color: #4a4238;
-    animation: hero-fade .6s var(--ease-out) .38s both;
-  }
   .hero-cta {
     display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
-    animation: hero-fade .6s var(--ease-out) .5s both;
+    margin-top: 64px;
+    animation: hero-fade .6s var(--ease-out) .38s both;
   }
   @keyframes hero-fade { from { opacity: 0; transform: translateY(8px); } }
   @media (prefers-reduced-motion: reduce) {
@@ -348,7 +344,6 @@
   <div class="hero-content">
     <p class="eyebrow">Learning Roadmap · ~150 Pages</p>
     <h1><span class="hero-word" style="--i:0">Pydantic</span> <span class="hero-word" style="--i:1">AI</span><br><span class="hero-word cn-line" style="--i:2">文档学习路线</span></h1>
-    <p class="hero-sub">14 个阶段 · 166 页官方文档的精读路线，逐页标注读法与时长，勾选打卡、进度自动保存。</p>
     <div class="hero-cta">
       <a class="btn btn-dark" href="#roadmap">开始学习</a>
     </div>
