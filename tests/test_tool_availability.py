@@ -8,6 +8,7 @@ its own module rather than an arbitrary slice.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ import pytest
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     Capability,
+    ProcessHistory,
 )
 from pydantic_ai.exceptions import (
     ModelRetry,
@@ -23,13 +25,17 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     CompactionPart,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets import FunctionToolset
@@ -289,3 +295,53 @@ async def test_reveal_of_another_capabilitys_tool_is_rejected_even_while_loaded(
 
     with pytest.raises(UserError, match="cannot reveal 'other_op'"):
         await agent.run('go')
+
+
+async def test_loaded_capability_tool_survives_a_stripped_reveal_marker() -> None:
+    """A loaded capability's tool stays callable when its reveal marker is gone from history.
+
+    Every tool of a deferred capability is kept out of the search corpus, and reloading an
+    already-active capability is refused, so the load exchange is the only thing that can ever
+    disclose these tools. Requiring a separate reveal marker on top left the model with a refusal
+    telling it to search — for a tool no search can return — and no way to regenerate the evidence,
+    so the run burned its retry budget and aborted. History processing that drops availability
+    deltas while keeping the load pair is enough to reach it.
+    """
+    calls = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        # Match by name: `LoadCapabilityReturnPart` subclasses `ToolReturnPart`, so the seeded load
+        # return would otherwise read as "the tool already ran" and the call would never be made.
+        returns = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.tool_name == 'secret_op']
+        if returns:
+            return make_text_response('EXECUTED')
+        return ModelResponse(parts=[ToolCallPart(tool_name='secret_op', args={}, tool_call_id=f'c{calls}')])
+
+    def strip_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(message, parts=[p for p in message.parts if not isinstance(p, ToolAvailabilityDeltaPart)])
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages
+        ]
+
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(secret_op, defer_loading=True)
+    guarded = Capability[Any](id='guarded', description='Guarded tools.', toolsets=[toolset], defer_loading=True)
+    agent = Agent(FunctionModel(model_fn), capabilities=[guarded, ProcessHistory(strip_deltas)])
+
+    result = await agent.run(
+        'use the tool',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='load it')]),
+            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'guarded'}, tool_call_id='l1')]),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='l1')]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['secret_op'])]),
+        ],
+    )
+
+    assert result.output == 'EXECUTED'
+    refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
+    assert refusals == []
