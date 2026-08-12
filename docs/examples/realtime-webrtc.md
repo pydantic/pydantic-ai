@@ -53,7 +53,7 @@ AZURE_OPENAI_API_KEY=...
 With [dependencies installed and your key set](./setup.md#usage), start the server:
 
 ```bash
-uvicorn pydantic_ai_examples.realtime_webrtc.app:app
+uv run --all-packages uvicorn pydantic_ai_examples.realtime_webrtc.app:app
 ```
 
 Open <http://localhost:8000>, click **Start call**, allow microphone access, and ask "What time is it

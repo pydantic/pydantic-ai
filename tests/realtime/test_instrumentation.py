@@ -62,6 +62,7 @@ from pydantic_ai.realtime import (
     RealtimeOutputSpeechEndEvent,
     RealtimeOutputSpeechStartEvent,
     RealtimeSession as _RealtimeSession,
+    RealtimeSessionReconnectEvent,
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
@@ -286,6 +287,39 @@ async def test_no_speak_span_without_playback_reporting() -> None:
         _ = [event async for event in session]
 
     assert not [span for span in exporter.get_finished_spans() if span.name.startswith('speak')]
+
+
+async def test_reconnect_without_state_restored_ends_the_speak_span() -> None:
+    """A reconnect that didn't restore state closes the open `speak` span, so it doesn't swallow the next utterance.
+
+    The audio that was playing won't resume on the fresh connection. If the span stays open, the next
+    utterance's `RealtimeOutputSpeechStartEvent` no-ops (a span is already set) and merges into it, so
+    the two utterances land in one `speak` span that also spans the dead-air reconnect. Ending it at
+    the reconnect keeps one span per utterance. Regression for the sixth `#7392` finding.
+    """
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection(
+            [
+                RealtimeOutputSpeechStartEvent(),
+                # The default connection restores in-flight state, but a `state_restored=False` reconnect
+                # is still a disruption — the playing audio is cut regardless.
+                RealtimeSessionReconnectEvent(state_restored=False),
+                RealtimeOutputSpeechStartEvent(),
+                ResponseDone(),
+                RealtimeOutputSpeechEndEvent(),
+            ]
+        ),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        _ = [event async for event in session]
+
+    # Two distinct utterances bracketed a reconnect, so two `speak` spans -- not one merged across it.
+    assert len([span for span in exporter.get_finished_spans() if span.name == 'speak gpt-realtime']) == 2
 
 
 def _weather_agent(*, name: str | None = None, capabilities: list[Instrumentation] | None = None) -> Agent[None, str]:
