@@ -867,6 +867,8 @@ async def model_logic(  # noqa: C901
             )
         elif m.content == 'Profile the script and fix the hot spot.':
             return ModelResponse(parts=[TextPart('Optimized the hot loop; the profile is clean now.')])
+        elif m.content == 'Summarize data.csv in the working directory.':
+            return ModelResponse(parts=[TextPart('data.csv has columns a and b with a single row: 1, 2.')])
         elif m.content == 'Calculate the factorial of 15.':
             return ModelResponse(
                 parts=[

@@ -12,6 +12,7 @@
             - SupportsStart
             - SupportsStream
             - LocalSandbox
+            - ReadOnlySandbox
             - UnavailableSandbox
             - SandboxCommand
             - SandboxFilesystem

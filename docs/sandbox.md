@@ -192,6 +192,42 @@ async def main() -> None:
     )
 ```
 
+### Making a sandbox read-only
+
+Wrap any backend in [`ReadOnlySandbox`][pydantic_ai.sandboxes.ReadOnlySandbox] to let a run
+read files without being able to change anything. File reads, directory listings, and
+`working_dir` pass through; command execution and file mutation raise
+[`UserError`][pydantic_ai.exceptions.UserError] explaining the restriction. The same backend
+stays fully usable outside the wrapper, so one environment can be read-write for your
+application and read-only for the agent:
+
+```python
+from pydantic_ai import Agent, LocalSandbox, ReadOnlySandbox
+
+agent = Agent('anthropic:claude-sonnet-5')
+
+
+async def main() -> None:
+    async with LocalSandbox() as sandbox:
+        root = await sandbox.working_dir()
+        await sandbox.fs.write_bytes(f'{root}/data.csv', b'a,b\n1,2\n')
+        await agent.run(
+            'Summarize data.csv in the working directory.',
+            sandbox=ReadOnlySandbox(sandbox),
+        )
+```
+
+Commands are blocked along with writes because they execute in the same environment as the
+filesystem: a sandbox that refused writes but ran `rm` would not be read-only. If the model
+needs to execute commands against protected data, enforce read-only in the environment itself
+instead (e.g. a read-only mount).
+
+The wrapper keeps the wrapped backend's `provider` and `sandbox_id`: a
+[`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] names the environment, never the policy. A
+capability that supplies read-only access applies the wrapper in
+[`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox], so the restriction is
+re-applied on every (re)connection, including under [durable execution](#durable-execution).
+
 ## Backend protocol and facade
 
 A backend is required to implement only four members: `provider`, `sandbox_id`, command

@@ -146,6 +146,7 @@ from .profiles import (
 from .run import AgentRun, AgentRunResult, AgentRunResultEvent
 from .sandboxes import (
     LocalSandbox,
+    ReadOnlySandbox,
     Sandbox,
     SandboxBackend,
     SandboxRef,
@@ -348,6 +349,7 @@ __all__ = (
     'CapabilityFunc',
     # sandboxes
     'LocalSandbox',
+    'ReadOnlySandbox',
     'Sandbox',
     'SandboxBackend',
     'SandboxRef',

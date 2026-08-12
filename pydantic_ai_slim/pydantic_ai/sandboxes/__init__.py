@@ -13,6 +13,7 @@ from .protocol import (
     SupportsStart,
     SupportsStream,
 )
+from .readonly import ReadOnlySandbox
 from .references import SandboxRef
 from .sandbox import FileWindow, Sandbox, SandboxResolver
 from .unavailable import UnavailableSandbox
@@ -20,6 +21,7 @@ from .unavailable import UnavailableSandbox
 __all__ = (
     'FileWindow',
     'LocalSandbox',
+    'ReadOnlySandbox',
     'Sandbox',
     'SandboxBackend',
     'SandboxCommand',

@@ -94,6 +94,18 @@ from pydantic_ai import UnavailableSandbox
 sandbox = UnavailableSandbox(reason='Local execution is disabled by application policy.')
 ```
 
+To give a run read access to an environment without letting it change anything, wrap the
+backend in `ReadOnlySandbox`: file reads, listings, and `working_dir` pass through, while
+command execution and file mutation raise `UserError` with the reason. Commands are blocked
+along with writes because they run against the same filesystem. The wrapper keeps the wrapped
+backend's identity, so a capability applies it in `get_sandbox` on every (re)connection.
+
+```python
+from pydantic_ai import ReadOnlySandbox
+
+read_only = ReadOnlySandbox(backend)  # backend stays read-write for the application
+```
+
 ## Durable execution
 
 The lifecycle hooks already fit durable execution: only the ref crosses serialization
