@@ -4,15 +4,16 @@ import os
 import threading
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Literal
-from unittest.mock import MagicMock
+from typing import Any, Literal, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import BaseModel, Field
+from pydantic.errors import PydanticUserError
 
 from pydantic_ai import (
     Agent,
@@ -31,6 +32,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RetryPromptPart,
     RunContext,
     TextPart,
     TextPartDelta,
@@ -39,23 +41,49 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart
+from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import MCP, Capability, Instrumentation, ProcessEventStream, ResolveModelId, Toolset
+from pydantic_ai.capabilities import (
+    MCP,
+    Capability,
+    DynamicCapability,
+    Instrumentation,
+    ProcessEventStream,
+    ResolveModelId,
+    Toolset,
+)
 from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    RunCancelled,
+    ToolFailed,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.models import ModelRequestParameters, ModelResolutionContext, create_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.realtime import (
+    RealtimeModel,
+    RealtimeModelProfile,
+    RealtimeModelSettings,
+    RealtimeSession,
+)
+from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 try:
     from prefect import flow, task
-    from prefect.context import TaskRunContext
+    from prefect.context import FlowRunContext, TaskRunContext
     from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
@@ -72,6 +100,8 @@ try:
         _replace_run_context,  # pyright: ignore[reportPrivateUsage]
         _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.durable_exec.prefect._mcp_toolset import prefectify_mcp_toolset
+    from pydantic_ai.durable_exec.prefect._toolset import with_non_retryable_errors
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
 
@@ -685,6 +715,38 @@ async def test_prefect_agent_run_in_flow_with_runtime_event_stream_handler(
     assert exported_messages != []
 
 
+async def test_prefect_agent_iter_in_flow_fires_event_stream_handler(
+    allow_model_requests: None, capfire: CaptureLogfire
+) -> None:
+    """`agent.iter()` inside a Prefect flow delivers events to the durable `event_stream_handler`.
+
+    The handler used to be skipped entirely under `iter()`, because `wrap_run_event_stream` was
+    applied by `run()`/`run_stream()` rather than by the node stream primitives.
+    """
+    agent = Agent(
+        FunctionModel(stream_function=runtime_handler_stream_function),
+        name='iter_handler_stream_agent',
+        capabilities=[PrefectDurability(event_stream_handler=runtime_event_stream_handler)],
+    )
+
+    @flow(name='test_prefect_agent_iter_in_flow_fires_event_stream_handler')
+    async def run_iter_flow() -> str | None:
+        async with agent.iter('Say hello') as run:
+            async for _node in run:
+                pass
+        assert run.result is not None
+        return run.result.output
+
+    assert await run_iter_flow() == snapshot('Hello world')
+
+    exported_messages = [
+        attributes['logfire.msg']
+        for span in capfire.exporter.exported_spans_as_dict()
+        if (attributes := span.get('attributes')) and attributes.get('logfire.msg') == 'runtime_event'
+    ]
+    assert exported_messages != []
+
+
 async def test_event_stream_handler_property_outside_flow() -> None:
     # Outside a Prefect flow, the `event_stream_handler` property resolves to the effective handler
     # directly, rather than the in-flow per-event dispatcher.
@@ -751,6 +813,33 @@ async def test_prefect_toolset_legacy_constructors() -> None:
         wrapped_mcp = PrefectMCPToolset(mcp_toolset, task_config={})  # pyright: ignore[reportDeprecated]
     assert wrapped_mcp.wrapped is mcp_toolset
     assert wrapped_mcp.id is None
+
+
+async def test_prefect_mcptoolset_preserves_task_routing() -> None:
+    """Effective task routing forwards through Prefect task wrappers end-to-end.
+
+    Unlike Temporal/DBOS, Prefect passes live `ToolsetTool` objects through without serializing
+    `ToolDefinition`, so this pins wrapper forwarding rather than serialization round-tripping."""
+    agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            TestModel(call_tools=['required_task_tool', 'optional_task_tool']),
+            name='mcp_task_prefect_agent',
+            toolsets=[
+                MCPToolset(
+                    StdioTransport(command='python', args=['-m', 'tests.mcp_task_server']),
+                    id='mcp_tasks',
+                    init_timeout=20,
+                    prefer_tasks=False,
+                )
+            ],
+        )
+    )
+
+    @flow(name='test_prefect_mcptoolset_preserves_task_routing')
+    async def run_agent() -> str:
+        return (await agent.run('Call both tools')).output
+
+    assert await run_agent() == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
 
 
 async def test_capability_contributed_toolset_id_from_capability():
@@ -948,6 +1037,70 @@ async def test_run_stream_events_in_flow(allow_model_requests: None) -> None:
         ),
     ):
         await run_stream_events_workflow()
+
+
+async def test_realtime_session_in_flow() -> None:
+    """Realtime sessions open a long-lived, non-deterministic connection, so they can't run in a flow."""
+    with patch.object(FlowRunContext, 'get', return_value=object()):
+        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+            async with simple_prefect_agent.realtime(cast('Any', object())).session():
+                pass  # pragma: no cover
+
+
+async def test_realtime_signaling_in_flow() -> None:
+    """Browser-call signaling issues a live provider request, so it is guarded like a session."""
+    with patch.object(FlowRunContext, 'get', return_value=object()):
+        realtime = simple_prefect_agent.realtime(cast('Any', object()))
+        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+            await realtime.answer_webrtc_offer('v=0')
+        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+            await realtime.create_client_secret()
+
+
+class _FakeRealtimeConnection(RealtimeConnection):
+    async def send(self, content: Any) -> None: ...  # pragma: no cover
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        return
+        yield  # pragma: no cover
+
+
+class _FakeRealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'
+
+    @property
+    def system(self) -> str:
+        return 'fake'
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(
+            supports_image_input=True,
+            supports_manual_turn_control=True,
+            supports_interruption=True,
+            supports_output_truncation=True,
+            supports_session_seeding=True,
+            supported_native_tools=frozenset(),
+        )
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[_FakeRealtimeConnection]:
+        yield _FakeRealtimeConnection()
+
+
+async def test_realtime_session_outside_flow() -> None:
+    """Outside a flow, the session is delegated to the wrapped agent."""
+    async with simple_prefect_agent.realtime(_FakeRealtimeModel()).session() as session:
+        assert isinstance(session, RealtimeSession)
+        assert [event async for event in session] == []
 
 
 async def test_iter_in_flow(allow_model_requests: None) -> None:
@@ -1221,6 +1374,29 @@ async def test_prefect_agent_with_model_retry(allow_model_requests: None) -> Non
     assert 'sunny' in result.output.lower() or 'mexico city' in result.output.lower()
 
 
+tool_failed_agent = Agent(TestModel(call_tools=['failing_tool']), name='tool_failed_agent')
+
+
+@tool_failed_agent.tool_plain
+def failing_tool() -> str:
+    raise ToolFailed('Disk full')
+
+
+tool_failed_prefect_agent = PrefectAgent(tool_failed_agent)  # pyright: ignore[reportDeprecated]
+
+
+async def test_prefect_agent_with_tool_failed() -> None:
+    result = await tool_failed_prefect_agent.run('Call the failing tool')
+
+    tool_returns = [
+        (part.tool_name, part.content, part.outcome)
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+    assert tool_returns == [('failing_tool', 'Disk full', 'failed')]
+
+
 # Test dynamic toolsets
 @dataclass
 class ToggleableDeps:
@@ -1452,8 +1628,15 @@ def test_cache_policy_keeps_user_dataclass_fields():
         timestamp: str
         run_id: str
         conversation_id: str
+        tool_call_id: str
 
-    deps = CacheDeps(timestamp='user-time', run_id='user-run', conversation_id='user-conversation')
+    deps = CacheDeps(
+        timestamp='user-time',
+        run_id='user-run',
+        conversation_id='user-conversation',
+        # A user field whose value happens to look framework-generated must not be normalized.
+        tool_call_id='pyd_ai_user_value',
+    )
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
     projected = _strip_cache_excluded_fields(_replace_run_context({'ctx': ctx}))
@@ -1462,6 +1645,7 @@ def test_cache_policy_keeps_user_dataclass_fields():
         'timestamp': 'user-time',
         'run_id': 'user-run',
         'conversation_id': 'user-conversation',
+        'tool_call_id': 'pyd_ai_user_value',
     }
 
 
@@ -1484,6 +1668,157 @@ def test_cache_policy_excludes_timestamps_on_parts_outside_messages_module():
         return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': [part]}, flow_parameters={})
 
     assert key_for(time1) == key_for(time2)
+
+
+def test_cache_policy_normalizes_only_framework_tool_call_ids():
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(tool_call_id: str) -> str | None:
+        part = RetryPromptPart(content='retry', tool_name='tool', tool_call_id=tool_call_id)
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'messages': [part]}, flow_parameters={})
+
+    assert key_for('pyd_ai_first') == key_for('pyd_ai_second')
+    assert key_for('model-first') != key_for('model-second')
+
+
+async def test_cache_policy_hashes_tools_by_value_not_object_identity():
+    """A tool task's key must depend on the tool's value, not on which objects the payload shares.
+
+    `hash_objects` falls back to `cloudpickle` for anything its JSON serializer can't handle — a
+    `ToolsetTool` carries an `args_validator` and a live toolset — and on that path the digest
+    depends on object *sharing*, because pickle emits memo references for repeats. A first attempt
+    passes the same string object as both `tool_name` and the tool definition's name, while a retry
+    that replays the recorded `ModelResponse` passes a freshly deserialized one, so an
+    identity-sensitive key never replays a tool result.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    toolset = FunctionToolset[None](id='value_addressed_toolset')
+
+    @toolset.tool
+    async def side_effect(ctx: RunContext[None]) -> str:
+        return 'ok'  # pragma: no cover
+
+    @toolset.tool
+    async def other_effect(ctx: RunContext[None]) -> str:
+        return 'ok'  # pragma: no cover
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tools = await toolset.get_tools(ctx)
+
+    def key_for(tool_name: str, tool: ToolsetTool[None]) -> str | None:
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx,
+            inputs={'tool_name': tool_name, 'tool_args': {}, 'ctx': ctx, 'tool': tool},
+            flow_parameters={},
+        )
+
+    shared_name = tools['side_effect'].tool_def.name
+    # An equal name that is a different object, as a deserialized `ToolCallPart.tool_name` is.
+    deserialized_name = ''.join(['side', '_', 'effect'])
+    assert deserialized_name == shared_name
+    assert deserialized_name is not shared_name
+
+    assert key_for(shared_name, tools['side_effect']) == key_for(deserialized_name, tools['side_effect'])
+    # The tool definition still forks the key: a different tool is a different cache entry.
+    assert key_for(shared_name, tools['side_effect']) != key_for(shared_name, tools['other_effect'])
+
+
+async def test_cache_policy_forks_identically_defined_tools_from_different_toolsets():
+    """Two toolsets exposing an identically defined tool must not share a cache entry.
+
+    Tool names are only unique within a toolset, and every toolset's tool task is the same
+    function, so `TASK_SOURCE` doesn't tell two toolsets apart either. The toolset's `id` is what
+    separates them.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def toolset_with_search(toolset_id: str, result: str) -> FunctionToolset[None]:
+        toolset = FunctionToolset[None](id=toolset_id)
+
+        async def search(ctx: RunContext[None], query: str) -> str:
+            return result  # pragma: no cover
+
+        toolset.add_function(search)
+        return toolset
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    alpha = (await toolset_with_search('alpha', 'from alpha').get_tools(ctx))['search']
+    beta = (await toolset_with_search('beta', 'from beta').get_tools(ctx))['search']
+    assert alpha.tool_def == beta.tool_def
+
+    def key_for(tool: ToolsetTool[None]) -> str | None:
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx,
+            inputs={'tool_name': 'search', 'tool_args': {'query': 'x'}, 'ctx': ctx, 'tool': tool},
+            flow_parameters={},
+        )
+
+    assert key_for(alpha) != key_for(beta)
+
+
+def test_cache_policy_keys_the_run_context_tool_call_id_verbatim():
+    """The ID of the call being made is keyed verbatim; the ones inside `messages` are normalized.
+
+    `_strip_cache_excluded_fields` replaces framework-generated tool call IDs so an otherwise
+    identical history hashes the same across runs, but it never reaches the `RunContext` itself —
+    `_replace_run_context` has already projected it to a plain dict. That's deliberate: the current
+    call's ID is what separates two parallel calls to the same tool with identical arguments, which
+    must each execute rather than replay one another.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for_current_call(tool_call_id: str) -> str | None:
+        ctx = RunContext[None](
+            deps=None, model=TestModel(), usage=RunUsage(), tool_name='tool', tool_call_id=tool_call_id
+        )
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
+
+    assert key_for_current_call('pyd_ai_first') != key_for_current_call('pyd_ai_second')
+
+    def key_for_history(tool_call_id: str) -> str | None:
+        ctx = RunContext[None](
+            deps=None,
+            model=TestModel(),
+            usage=RunUsage(),
+            messages=[ModelResponse(parts=[ToolCallPart('tool', tool_call_id=tool_call_id)])],
+        )
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
+
+    assert key_for_history('pyd_ai_first') == key_for_history('pyd_ai_second')
+    assert key_for_history('model-first') != key_for_history('model-second')
+
+
+def test_cache_policy_excludes_non_serializable_metadata_and_validation_context():
+    """`metadata` and `validation_context` hold arbitrary user values, like `deps`.
+
+    They fork the key when they differ, and unhashable values fall back to the same stable
+    sentinel instead of failing the task.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(metadata: dict[str, Any] | None = None, validation_context: Any = None) -> str | None:
+        ctx = RunContext[None](
+            deps=None,
+            model=TestModel(),
+            usage=RunUsage(),
+            metadata=metadata,
+            validation_context=validation_context,
+        )
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'ctx': ctx}, flow_parameters={})
+
+    assert key_for(metadata={'tenant': 'acme'}) != key_for(metadata={'tenant': 'globex'})
+    assert key_for(validation_context={'lang': 'en'}) != key_for(validation_context={'lang': 'fr'})
+
+    unhashable_key = key_for(metadata={'tenant': 'acme', 'lock': threading.Lock()})
+    assert unhashable_key is not None
+    assert unhashable_key == key_for(metadata={'tenant': 'acme', 'lock': threading.Lock()})
+    assert unhashable_key != key_for(metadata={'tenant': 'globex', 'lock': threading.Lock()})
 
 
 def test_cache_policy_excludes_non_serializable_deps():
@@ -1588,28 +1923,30 @@ def test_cache_key_run_context_projection_is_exhaustive():
     one replays the other's result. This test fails when a `RunContext` field is added until
     it's either included in the projection or listed in `cache_irrelevant` with a reason — the
     same drift that left `loaded_capability_ids`/`discovered_tool_names` out of the key.
+
+    Each reason has to hold for the *tool* task, whose only other inputs are the tool's name, its
+    arguments, and its `ToolDefinition`. "Hashed as a separate task input" is a model-request-task
+    reason and never a tool-task one: nothing carries the prompt, the history or the run metadata
+    into a tool task's key except this projection.
     """
     # Fields that legitimately don't belong in the cache key, each with its reason.
     cache_irrelevant = {
-        'usage',  # accumulates per run; not an input that should fork the cache
+        'usage',  # accumulates during the run rather than being an input to it
         'tracer',  # tracing plumbing, not run state
         'tool_manager',  # live ToolManager, not hashable run state
         'capabilities',  # live capability objects, not hashable run state
         'root_capability',  # live capability tree (static config); run-varying loaded state is projected via loaded_capability_ids/discovered_tool_names
         'pending_messages',  # live run queue, not hashable run state
-        'messages',  # hashed as the separate `messages` task input
-        'prompt',  # hashed as the separate prompt task input
-        'validation_context',  # arbitrary user object, not run state
-        'trace_include_content',  # tracing config, not run state
-        'instrumentation_version',  # tracing config, not run state
-        'partial_output',  # output-validator flag, not a tool-execution input
-        'run_id',  # per-run id; deliberately excluded so keys are stable across runs
+        'trace_include_content',  # tracing config, fixed for the agent rather than varying per run
+        'instrumentation_version',  # tracing config, fixed for the agent rather than varying per run
+        'partial_output',  # only set for output validators, which run in flow code, never inside a task
+        'run_id',  # per-run id; deliberately excluded so an identical run replays instead of re-executing
         'conversation_id',  # per-conversation id; same rationale as run_id
-        'metadata',  # free-form run metadata, not a tool-execution input
-        'model_settings',  # hashed via the model request inputs, not RunContext
-        'capability_loaded',  # transient per-hook flag; `None` during tool execution
+        'capability_loaded',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
-        '_event_stream_buffer',  # live per-run event buffer drained in workflow code, not a tool-execution input
+        '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
+        'realtime_session',  # live RealtimeSession, not hashable run state; sessions don't run inside Prefect tasks
+        '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     projected = set(_replace_run_context({'ctx': ctx})['ctx'])
@@ -1703,6 +2040,97 @@ async def test_durability_repeated_run_hits_cache_preserves_provenance():
     assert result2.all_messages()[0].run_id != response2.run_id
 
 
+async def test_flow_retry_replays_tool_result() -> None:
+    """A flow retry replays a tool task's recorded result instead of re-running the tool body.
+
+    A tool task's hashed inputs have to be value-addressed. When the preceding model-request task
+    replays its recorded `ModelResponse`, the deserialized `tool_name` is a different string object
+    than the one the live call produced, so any input that pushes `hash_objects` onto its
+    `cloudpickle` fallback (before: the live `ToolsetTool` and its `args_validator`) makes the key
+    depend on pickle memo layout rather than on values, and the tool's side effects are duplicated.
+    """
+    tool_runs: list[str] = []
+    model_runs = 0
+
+    def model_fn(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        nonlocal model_runs
+        model_runs += 1
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart('record_side_effect')])
+
+    toolset = FunctionToolset[object](id='retry_replay_toolset')
+
+    @toolset.tool
+    async def record_side_effect(ctx: RunContext[object]) -> str:
+        """Stands in for a charge, an email, or any other non-idempotent effect."""
+        tool_runs.append(ctx.tool_name or '')
+        return 'ok'
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name='retry_replay_agent',
+        toolsets=[toolset],
+        capabilities=[PrefectDurability[object]()],
+    )
+
+    attempts = 0
+
+    @flow(retries=1)
+    async def flaky() -> str:
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run('go')
+        # Fail after the agent run, so the retry has both tasks' results to replay.
+        if attempts == 1:
+            raise RuntimeError('boom')
+        return result.output
+
+    assert await flaky() == 'done'
+    assert attempts == 2
+    assert tool_runs == ['record_side_effect']
+    assert model_runs == 2
+
+
+async def test_runs_in_one_flow_differing_in_metadata_do_not_share_results() -> None:
+    """Two runs in one flow that differ only in `metadata` must not share cached results.
+
+    `metadata` is a run input a tool can read, so it has to fork both the model-request and the
+    tool-call cache key. Before, neither task's key carried it and the second run silently
+    replayed the first run's response and tool result.
+    """
+    tool_metadata: list[Any] = []
+
+    async def echo_metadata(ctx: RunContext[object]) -> str:
+        tool_metadata.append(ctx.metadata)
+        assert ctx.metadata is not None
+        return f'tenant={ctx.metadata["tenant"]}'
+
+    def model_fn(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        for message in messages:
+            for part in message.parts:
+                if isinstance(part, ToolReturnPart):
+                    return ModelResponse(parts=[TextPart(str(part.content))])
+        # No `tool_call_id`, so the framework generates one, as Gemini/Cohere/Mistral responses do.
+        return ModelResponse(parts=[ToolCallPart('echo_metadata')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name='metadata_cache_probe',
+        tools=[echo_metadata],
+        capabilities=[PrefectDurability[object]()],
+    )
+
+    @flow
+    async def two_runs() -> tuple[str, str]:
+        first = await agent.run('same question', metadata={'tenant': 'a'})
+        second = await agent.run('same question', metadata={'tenant': 'b'})
+        return first.output, second.output
+
+    assert await two_runs() == ('tenant=a', 'tenant=b')
+    assert tool_metadata == [{'tenant': 'a'}, {'tenant': 'b'}]
+
+
 # Test custom model settings
 class CustomModelSettings(ModelSettings, total=False):
     custom_setting: str
@@ -1728,6 +2156,20 @@ async def test_custom_model_settings(allow_model_requests: None):
 @dataclass
 class SimpleDeps:
     value: str
+
+
+async def test_prefect_agent_explicit_run_id():
+    """A pre-minted `run_id=` is preserved through PrefectAgent inside a flow."""
+    agent = Agent(TestModel(custom_output_text='ok'), name='run_id_prefect_agent')
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    @flow(name='test_prefect_agent_explicit_run_id')
+    async def run_with_run_id() -> AgentRunResult[str]:
+        return await prefect_agent.run('Hello', run_id='run-from-prefect')
+
+    result = await run_with_run_id()
+    assert result.run_id == 'run-from-prefect'
+    assert all(m.run_id == 'run-from-prefect' for m in result.all_messages())
 
 
 async def test_tool_call_outside_flow():
@@ -1790,9 +2232,10 @@ async def test_disabled_tool():
 
 def _durability_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Simple model function for durability tests."""
-    for msg in reversed(messages):  # pragma: no branch - first message carries the prompt
-        for part in msg.parts:  # pragma: no branch - first part is the UserPromptPart
-            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
+    # The first message carries the prompt and its first part is the `UserPromptPart`, so none of these branch.
+    for msg in reversed(messages):  # pragma: no branch
+        for part in msg.parts:  # pragma: no branch
+            if isinstance(part, UserPromptPart):  # pragma: no branch
                 return ModelResponse(parts=[TextPart(content=f'Echo: {part.content}')])
     return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
 
@@ -1824,7 +2267,8 @@ def test_resolve_tool_task_config_reads_metadata() -> None:
     fn_toolset = FunctionToolset[None](id='resolve_meta_toolset')
 
     def fn_tool() -> str:
-        return 'ok'  # pragma: no cover - registered with toolset; test only resolves metadata
+        # Registered with the toolset; the test only resolves metadata.
+        return 'ok'  # pragma: no cover
 
     fn_toolset.add_function(fn_tool, metadata={'prefect': metadata_config})
     tool_def = ToolDefinition(name='fn_tool', metadata={'prefect': metadata_config})
@@ -1948,10 +2392,11 @@ async def test_prefect_durability_allows_fully_opted_out_runtime_function_toolse
 
 
 async def test_prefect_durability_rejects_partially_opted_out_runtime_function_toolset() -> None:
-    async def opted_out() -> str:  # pragma: no cover — rejected before any tool runs
+    # Both tools below are rejected before any tool runs.
+    async def opted_out() -> str:  # pragma: no cover
         return 'ok'
 
-    async def wrapped() -> str:  # pragma: no cover — rejected before any tool runs
+    async def wrapped() -> str:  # pragma: no cover
         return 'no'
 
     toolset = FunctionToolset(id='runtime')
@@ -1978,7 +2423,8 @@ async def test_prefect_durability_rejects_runtime_toolset_in_iter() -> None:
     @flow
     async def run_agent() -> None:
         async with agent.iter('Hello', toolsets=[FunctionToolset(id='iter_fn')]):
-            pass  # pragma: no cover — run setup raises before any node runs
+            # Run setup raises before any node runs.
+            pass  # pragma: no cover
 
     with pytest.raises(UserError, match='FunctionToolset cannot be passed to '):
         await run_agent()
@@ -2036,6 +2482,107 @@ async def test_prefect_durability_outside_flow() -> None:
 
     result = await agent.run('Hello outside')
     assert result.output == 'Echo: Hello outside'
+
+
+async def test_prefect_durability_dynamic_capability_tool_runs_as_task() -> None:
+    """A dynamic capability's tool calls run as Prefect tasks."""
+    calls: list[str] = []
+    task_run_names: list[str] = []
+
+    def dynamic_tool() -> str:
+        calls.append('called')
+        task_run_context = TaskRunContext.get()
+        assert task_run_context is not None
+        task_run_names.append(task_run_context.task_run.name)
+        return 'dynamic result'
+
+    def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        return Capability(tools=[dynamic_tool])
+
+    agent = Agent(
+        TestModel(),
+        name='prefect_dynamic_capability',
+        capabilities=[DynamicCapability(factory, id='dyn'), PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Call the tool')).output
+
+    assert await run_agent() == '{"dynamic_tool":"dynamic result"}'
+    assert calls == ['called']
+    assert len(task_run_names) == 1
+    assert task_run_names[0].startswith('Call Tool: dynamic_tool')
+
+
+def test_prefect_durability_dynamic_capability_requires_id() -> None:
+    def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        # Construction raises before the factory can run.
+        return Capability()  # pragma: no cover
+
+    with pytest.raises(UserError, match=r"DynamicCapability\(\.\.\., id='user-tools'\)"):
+        Agent(
+            TestModel(),
+            name='prefect_dynamic_capability_no_id',
+            capabilities=[DynamicCapability(factory), PrefectDurability()],
+        )
+
+
+async def test_prefect_durability_dynamic_capability_tool_opts_out_of_task() -> None:
+    task_contexts: list[TaskRunContext[Any] | None] = []
+    factory_calls: list[int] = []
+
+    def dynamic_tool() -> str:
+        task_contexts.append(TaskRunContext.get())
+        return 'dynamic result'
+
+    def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        factory_calls.append(1)
+        toolset = FunctionToolset()
+        toolset.add_function(dynamic_tool, metadata={'prefect': False})
+        return Capability(toolsets=[toolset])
+
+    agent = Agent(
+        TestModel(),
+        name='prefect_dynamic_capability_inline_tool',
+        capabilities=[DynamicCapability(factory, id='dyn_inline'), PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Call the tool')).output
+
+    assert await run_agent() == '{"dynamic_tool":"dynamic result"}'
+    assert task_contexts == [None]
+    # Tool discovery and the inline call both reuse the capability already resolved
+    # for the run: the factory's once-per-run contract holds through the inline path.
+    assert len(factory_calls) == 1
+
+
+async def test_prefect_durability_dynamic_capability_transparent_outside_flow() -> None:
+    """Outside a flow, dynamic-capability tools run inline — no task engine, retries, or cache.
+
+    Prefect tasks don't degrade outside a flow, so the dynamic wrapper gates on an active
+    flow run like the other Prefect toolset factories and hands the run the resolved toolset.
+    """
+    task_contexts: list[TaskRunContext[Any] | None] = []
+
+    def dynamic_tool() -> str:
+        task_contexts.append(TaskRunContext.get())
+        return 'inline result'
+
+    def factory(ctx: RunContext[Any]) -> Capability[Any]:
+        return Capability(tools=[dynamic_tool])
+
+    agent = Agent(
+        TestModel(),
+        name='prefect_dynamic_capability_outside',
+        capabilities=[DynamicCapability(factory, id='dyn_outside'), PrefectDurability()],
+    )
+
+    result = await agent.run('Call the tool')
+    assert result.output == '{"dynamic_tool":"inline result"}'
+    assert task_contexts == [None]
 
 
 async def test_prefect_durability_tool_config_is_ignored_outside_flow() -> None:
@@ -2159,20 +2706,29 @@ async def test_prefect_durability_override_registered_model() -> None:
     assert await run_agent() == 'alt-response'
 
 
-async def test_prefect_durability_unrebuildable_runtime_model_errors() -> None:
-    """An unregistered instance whose `model_id` can't be fed back through `infer_model` errors helpfully.
+async def test_prefect_durability_unregistered_model_instance_errors() -> None:
+    """An unregistered `Model` instance is rejected in the flow, before any task runs.
 
-    `TestModel()` round-trips as `'test:test'`, which `infer_model` can't rebuild; instead of a
-    bare 'Unknown provider' the task points at the `models=` / `ResolveModelId` escape hatches.
+    A `Model` can't be serialized into a task, and rebuilding this one from its `model_id` would
+    build the same model name on the default provider — dropping the tenant's `base_url` and API
+    key, so the request would silently go to `api.openai.com` with the worker's credentials.
+    Registering the instance in `models=`, or passing a string a `ResolveModelId` capability builds
+    inside the task, are the two supported paths.
     """
-    agent = Agent(_durability_fn_model, name='durability_unrebuildable', capabilities=[PrefectDurability()])
+    agent = Agent(_durability_fn_model, name='durability_unregistered_instance', capabilities=[PrefectDurability()])
+    tenant_model = OpenAIChatModel(
+        'gpt-5.6-sol', provider=OpenAIProvider(api_key='tenant-key', base_url='https://tenant.example.com/v1')
+    )
 
     @flow
     async def run_agent() -> None:
-        await agent.run('hello', model=TestModel())
+        await agent.run('hello', model=tenant_model)
 
-    with pytest.raises(UserError, match='could not be rebuilt'):
+    with pytest.raises(UserError) as exc_info:
         await run_agent()
+    assert str(exc_info.value) == snapshot(
+        "The model instance 'openai:gpt-5.6-sol' was not registered with `PrefectDurability`, so it cannot be used inside a flow. A `Model` instance cannot be serialized across the task boundary, and rebuilding it from its `model_id` would build a different model — the same model name on the provider the worker environment implies — so the request would go to another endpoint with other credentials. Register the instance in `models=` on `PrefectDurability` and reference it by key (or pass the registered instance), or pass a model-name string and build the instance from it with a `ResolveModelId` capability."
+    )
 
 
 def _prefect_tenant_resolver(ctx: ModelResolutionContext[str], model_id: str) -> FunctionModel | None:
@@ -2287,9 +2843,10 @@ async def test_prefect_durability_passes_through_non_wrappable_leaf() -> None:
 
 
 async def _durability_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    for msg in reversed(messages):  # pragma: no branch - first message carries the prompt
-        for part in msg.parts:  # pragma: no branch - first part is the UserPromptPart
-            if isinstance(part, UserPromptPart):  # pragma: no branch - same reason
+    # The first message carries the prompt and its first part is the `UserPromptPart`, so none of these branch.
+    for msg in reversed(messages):  # pragma: no branch
+        for part in msg.parts:  # pragma: no branch
+            if isinstance(part, UserPromptPart):  # pragma: no branch
                 yield f'Echo: {part.content}'
                 return
     yield 'no prompt'  # pragma: no cover
@@ -2433,6 +2990,412 @@ async def test_prefect_durability_event_stream_handler() -> None:
     assert sum(isinstance(event, FunctionToolResultEvent) for event in events) == 1
     assert any(isinstance(event, PartStartEvent) for event in events)
     assert any(isinstance(event, FinalResultEvent) for event in events)
+
+
+async def test_prefect_durability_event_stream_handler_rejects_enqueue() -> None:
+    """An `event_stream_handler` that enqueues inside a durable task raises, like a tool would.
+
+    The handler runs inside a durable task for both model events (the model-request task) and
+    graph events (the `Handle Stream Event` task); either task's cached result is replayed without
+    re-running it, so an enqueue would be dropped. The handler catches the error on every event so
+    the run still completes, exercising both delivery paths.
+    """
+    enqueue_errors: list[str] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            with pytest.raises(UserError, match='enqueued messages would be dropped') as exc_info:
+                ctx.enqueue('later')
+            # The ambient current context is guarded too, so reading it instead of the argument
+            # doesn't bypass the guard.
+            ambient = get_current_run_context()
+            assert ambient is not None
+            with pytest.raises(UserError, match='enqueued messages would be dropped'):
+                ambient.enqueue('later')
+            enqueue_errors.append(str(exc_info.value))
+
+    async def handled_tool() -> str:
+        return 'handled'
+
+    durability = PrefectDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='durability_handler_enqueue', tools=[handled_tool], capabilities=[durability])
+
+    @flow
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    await run_durable_agent()
+    # Guarded on both the model-event (model-request task) and graph-event (dispatch task) paths.
+    assert len(enqueue_errors) > 1
+
+
+async def test_prefect_durability_identical_events_are_dispatched_twice() -> None:
+    calls = 0
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        nonlocal calls
+        async for event in stream:
+            calls += isinstance(event, FunctionToolCallEvent)
+
+    async def same_tool() -> str:
+        return 'same'
+
+    durability: PrefectDurability[object] = PrefectDurability(event_stream_handler=handler)
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='duplicate_event_handler',
+        tools=[same_tool],
+        capabilities=[durability],
+    )
+
+    @flow
+    async def run_twice() -> None:
+        await agent.run('same')
+        await agent.run('same')
+
+    await run_twice()
+    assert calls == 2
+
+
+async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
+    async def enqueue(ctx: RunContext[object]) -> str:
+        ctx.enqueue('later')
+        return 'done'
+
+    durability: PrefectDurability[object] = PrefectDurability()
+    agent = Agent(TestModel(), deps_type=object, name='prefect_enqueue', tools=[enqueue], capabilities=[durability])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
+        await run_agent()
+
+    # Outside a flow the tool runs inline and enqueueing keeps working.
+    await agent.run('run')
+
+
+async def test_prefect_task_wrapped_tool_rejects_cancel() -> None:
+    """`ctx.cancel()` inside a task-wrapped tool raises instead of replay-diverging.
+
+    A cache hit replays the recorded task output without re-executing the tool, so an in-task
+    cancellation would silently not happen again. Outside a flow the tool runs inline and
+    cancellation keeps working.
+    """
+
+    async def cancel(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    durability: PrefectDurability[object] = PrefectDurability()
+    agent = Agent(TestModel(), deps_type=object, name='prefect_cancel', tools=[cancel], capabilities=[durability])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='cancellation would silently not happen again'):
+        await run_agent()
+
+    with pytest.raises(RunCancelled):
+        await agent.run('run')
+
+
+async def test_prefect_mcp_task_wrapped_call_rejects_enqueue(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The MCP task path guards enqueue too: a `process_tool_call=` hook receives the run context."""
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='enqueue_mcp')
+
+    async def enqueue_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        ctx.enqueue('later')
+        return 'done'
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', enqueue_call_tool)
+    durable = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='hook'),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @flow
+    async def run_tool() -> None:
+        await durable.call_tool('hook', {}, ctx, tool)
+
+    with pytest.raises(UserError, match='enqueued messages would be dropped'):
+        await run_tool()
+
+    # Outside a flow the call runs inline and enqueueing keeps working.
+    outside_context = RunContext(deps=None, model=TestModel(), usage=RunUsage(), pending_messages=[])
+    assert await durable.call_tool('hook', {}, outside_context, tool) == 'done'
+    assert len(outside_context.pending_messages or []) == 1
+
+
+async def test_prefect_mcp_tool_metadata_configures_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`metadata={'prefect': ...}` on an MCP tool reaches the task, as the Prefect docs promise.
+
+    The default `retries` is 0, so the retry only happens if the per-tool config is honored.
+    """
+    calls = 0
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='config_mcp')
+
+    async def flaky_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError('transient')
+        return 'done'
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', flaky_call_tool)
+    durable = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='flaky', metadata={'prefect': TaskConfig(retries=1, retry_delay_seconds=0.0)}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @flow
+    async def run_tool() -> Any:
+        return await durable.call_tool('flaky', {}, ctx, tool)
+
+    assert await run_tool() == 'done'
+    assert calls == 2
+
+
+async def test_prefect_mcp_tool_metadata_false_runs_inline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`metadata={'prefect': False}` opts an MCP tool out of task wrapping.
+
+    Unlike Temporal, where MCP tools can't leave the activity because workflow code can't do I/O,
+    a Prefect flow can call the server itself, so the opt-out runs the call inline in flow code.
+    """
+    ran_in_task: list[bool] = []
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='opt_out_mcp')
+
+    async def recording_call_tool(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        ran_in_task.append(TaskRunContext.get() is not None)
+        return 'done'
+
+    monkeypatch.setattr(mcp_toolset, 'call_tool', recording_call_tool)
+    durable = prefectify_mcp_toolset(mcp_toolset, task_config={})
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='inline', metadata={'prefect': False}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+
+    @flow
+    async def run_tool() -> Any:
+        return await durable.call_tool('inline', {}, ctx, tool)
+
+    assert await run_tool() == 'done'
+    assert ran_in_task == [False]
+
+
+async def test_prefect_model_request_task_rejects_enqueue() -> None:
+    """The non-streaming model-request task guards enqueue like its streaming sibling.
+
+    `Model.request` takes no run context, so code inside the task (a custom model, a
+    `models=` wrapper, a `resolve_model_id` capability rebuilding it) reaches the run
+    through `get_current_run_context()`. The task's cached result is replayed without
+    re-running it, so an enqueue there would be dropped.
+    """
+    enqueue_errors: list[str] = []
+    enqueued: list[str | None] = []
+
+    class AmbientEnqueueModel(TestModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            ambient = get_current_run_context()
+            assert ambient is not None
+            # Only on the first request of a run: a successful enqueue triggers another request,
+            # and enqueueing from each of those would never terminate.
+            if not (enqueue_errors or enqueued):
+                try:
+                    enqueued.append(ambient.enqueue('later'))
+                except UserError as e:
+                    enqueue_errors.append(str(e))
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    agent = Agent(AmbientEnqueueModel(), name='prefect_model_request_enqueue', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('go')
+
+    await run_agent()
+    assert enqueued == []
+    assert enqueue_errors == snapshot(
+        [
+            "`ctx.enqueue()` is not supported inside a durable task: the durable runtime replays the task's recorded result without re-running your code, so the enqueued messages would be dropped. Enqueue messages from flow-level code instead."
+        ]
+    )
+
+    # Outside a flow the model runs inline and enqueueing keeps working.
+    enqueue_errors.clear()
+    result = await agent.run('go')
+    assert enqueue_errors == []
+    assert len(enqueued) == 1
+    assert result.output == snapshot('success (no tool calls)')
+
+
+async def test_prefect_cancel_suspended_response_task_rejects_enqueue() -> None:
+    """The suspended-response cancellation task guards enqueue too.
+
+    The teardown is a provider call inside its own task, so the same replay argument applies.
+    """
+    enqueue_errors: list[str] = []
+
+    class AmbientEnqueueContinuationModel(ScriptedContinuationModel):
+        async def cancel_suspended_response(self, response: ModelResponse) -> None:
+            ambient = get_current_run_context()
+            assert ambient is not None
+            try:
+                ambient.enqueue('later')
+            except UserError as e:
+                enqueue_errors.append(str(e))
+            await super().cancel_suspended_response(response)
+
+    model = AmbientEnqueueContinuationModel(
+        responses=[
+            scripted_response(
+                texts=['still going '],
+                state='suspended',
+                provider_response_id='cont1',
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            scripted_response(
+                texts=['keeps going '],
+                state='suspended',
+                provider_response_id='cont2',
+                input_tokens=100,
+                output_tokens=50,
+            ),
+        ]
+    )
+    agent = Agent(model, name='prefect_cancel_enqueue', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('go', usage_limits=UsageLimits(total_tokens_limit=20))
+
+    with pytest.raises(UsageLimitExceeded, match='total_tokens_limit'):
+        await run_agent()
+
+    assert [cancelled.provider_response_id for cancelled in model.cancelled] == ['cont2']
+    assert enqueue_errors == snapshot(
+        [
+            "`ctx.enqueue()` is not supported inside a durable task: the durable runtime replays the task's recorded result without re-running your code, so the enqueued messages would be dropped. Enqueue messages from flow-level code instead."
+        ]
+    )
+
+
+async def test_prefect_tool_model_retry_is_not_retried_by_task_engine() -> None:
+    calls = 0
+
+    async def retry_once() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ModelRetry('again')
+        return 'done'
+
+    agent = Agent(
+        TestModel(),
+        name='prefect_model_retry',
+        tools=[retry_once],
+        capabilities=[PrefectDurability(tool_task_config={'retries': 3})],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('run')).output
+
+    await run_agent()
+    assert calls == 2
+
+
+async def test_prefect_dynamic_tool_model_retry_is_not_retried_by_task_engine() -> None:
+    """`ModelRetry` from a `DynamicToolset` tool crosses the task as a value, like static tools."""
+    calls = 0
+
+    async def retry_once() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise ModelRetry('again')
+        return 'done'
+
+    agent = Agent(
+        TestModel(),
+        name='prefect_dynamic_model_retry',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([retry_once]), id='dyn_retry')],
+        capabilities=[PrefectDurability(tool_task_config={'retries': 3})],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('run')).output
+
+    await run_agent()
+    assert calls == 2
+
+
+async def test_prefect_with_non_retryable_errors_condition() -> None:
+    """Framework errors are never retried; other failures defer to the user's own condition.
+
+    A unit test on the condition itself: Prefect only invokes `retry_condition_fn` on real
+    task failures inside its engine, so driving every arm end-to-end would need one flow per
+    combination of failure type, result awaitability, and user-configured condition.
+    """
+
+    class _State:
+        def __init__(self, result: Any):
+            self._result = result
+
+        def result(self, raise_on_failure: bool = True) -> Any:
+            return self._result
+
+    def condition_of(config: TaskConfig) -> Callable[[Any, Any, Any], Any]:
+        condition = with_non_retryable_errors(config).get('retry_condition_fn')
+        assert condition is not None
+        return condition
+
+    condition = condition_of(TaskConfig())
+    # The same three types Temporal marks non-retryable on every activity config.
+    assert await condition(None, None, _State(UserError('bad config'))) is False
+    assert await condition(None, None, _State(PydanticUserError('bad schema', code=None))) is False
+    assert await condition(None, None, _State(UnexpectedModelBehavior('bad response'))) is False
+    assert await condition(None, None, _State(RuntimeError('boom'))) is True
+
+    def deny(task: Any, task_run: Any, state: Any) -> bool:
+        return False
+
+    assert await condition_of(TaskConfig(retry_condition_fn=deny))(None, None, _State(RuntimeError('boom'))) is False
+
+    async def allow(task: Any, task_run: Any, state: Any) -> bool:
+        return True
+
+    assert await condition_of(TaskConfig(retry_condition_fn=allow))(None, None, _State(RuntimeError('boom'))) is True
 
 
 async def test_prefect_durability_event_stream_handler_outside_flow() -> None:

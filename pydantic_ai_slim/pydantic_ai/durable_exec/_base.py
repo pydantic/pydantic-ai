@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Mapping
-from typing import Any, ClassVar
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping
+from contextlib import asynccontextmanager, contextmanager
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from typing_extensions import Self
 
-from pydantic_ai._utils import get_union_args
+from pydantic_ai._run_context import set_current_run_context
+from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import ProcessEventStream
@@ -18,9 +20,19 @@ from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, Model
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
+from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._runtime_toolsets import RuntimeToolsetKind, reject_unsupported_runtime_toolsets
+from ._runtime_toolsets import (
+    RuntimeToolsetKind,
+    cancellation_token_unsupported_error,
+    reject_unsupported_runtime_toolsets,
+)
+from ._toolset import guard_run_context
 from ._utils import unwrap_model
+
+if TYPE_CHECKING:
+    pass
 
 _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
@@ -33,7 +45,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     carries a `model_id` string (`None` for the agent's default, a `models=` registry
     key, or a model-name string) and the model is rebuilt on the other side — deps-aware,
     via the agent's full [`resolve_model_id`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id]
-    capability chain, with the registry as backstop. Subclasses call
+    capability chain, with the registry as backstop. Only strings cross: a `Model` instance that
+    isn't registered in `models=` is rejected workflow-side, because rebuilding it from its own
+    `model_id` would quietly reach a different endpoint with other credentials.
+    Subclasses call
     [`_bind_models`][pydantic_ai.durable_exec._base.BaseDurabilityCapability._bind_models] on the
     bound copy in `for_agent`, [`_find_model_id`][pydantic_ai.durable_exec._base.BaseDurabilityCapability._find_model_id]
     on the workflow/flow side, and
@@ -118,15 +133,24 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return
 
         construction_leaves: set[int] = set()
-        if self._agent is not None:  # pragma: no branch — `for_agent` always binds before a run
+        # `for_agent` always binds before a run.
+        if self._agent is not None:  # pragma: no branch
             for agent_toolset in self._agent.toolsets:
                 agent_toolset.apply(lambda leaf: construction_leaves.add(id(leaf)))
 
         runtime_leaves: list[AbstractToolset[AgentDepsT]] = []
 
         def collect(leaf: AbstractToolset[AgentDepsT]) -> None:
-            if id(leaf) not in construction_leaves:
-                runtime_leaves.append(leaf)
+            if id(leaf) in construction_leaves:
+                return
+            if isinstance(leaf, CapabilityOwnedToolset):
+                # The run re-collects capability contributions in a fresh `CapabilityOwnedToolset`
+                # whenever `for_run` changed the capability tree (e.g. a `DynamicCapability`
+                # resolved, or a per-run capability was added). The wrapper itself is
+                # non-executing packaging; the toolset it wraps is visited separately by this
+                # same walk and judged on its own identity.
+                return
+            runtime_leaves.append(leaf)
 
         toolset.apply(collect)
         reject_unsupported_runtime_toolsets(
@@ -136,9 +160,33 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool_config_key=self._tool_config_key,
         )
 
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        # A `CancellationToken` is a same-process handle that cannot cross the durable execution
+        # boundary, and firing it inside a workflow/flow would cancel the durable task out of band
+        # — non-deterministic on replay. Reject it here, but only inside the durable container, so a
+        # durable-capable agent used *outside* a workflow keeps accepting tokens like a normal agent.
+        # The token is attached to the run's controller during `Agent` setup, before this hook fires.
+        # Read via `__dict__` so a restricted run-context subclass (e.g. `TemporalRunContext`) whose
+        # `__getattribute__` rejects absent fields doesn't raise a misleading error instead.
+        if not self.in_durable_context:
+            return
+        cancellation = ctx.__dict__.get('_cancellation')
+        if cancellation is not None and cancellation.has_token:
+            raise cancellation_token_unsupported_error(self.engine_name)
+
+    def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        """The handler in-boundary event delivery targets for the current run.
+
+        Engines may override to consult per-run state — e.g. DBOS honors the
+        `event_stream_handler` recorded in a wrapper-era workflow's inputs, delivering
+        it exactly the way the wrapper did so recovery replays the recorded step
+        sequence.
+        """
+        return self._event_stream_handler
+
     @property
     def has_wrap_run_event_stream(self) -> bool:
-        return self._event_stream_handler is not None
+        return self._effective_event_stream_handler() is not None
 
     async def wrap_run_event_stream(
         self,
@@ -146,23 +194,24 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        if self._event_stream_handler is None:
-            async for event in stream:
-                yield event
-            return
-        if not self.in_durable_context:
+        event_stream_handler = self._effective_event_stream_handler()
+        dispatch_events = False
+        if event_stream_handler is not None and not self.in_durable_context:
             assert self._process_event_stream is not None
-            async for event in self._process_event_stream.wrap_run_event_stream(ctx, stream=stream):
-                yield event
-            return
+            stream = self._process_event_stream.wrap_run_event_stream(ctx, stream=stream)
+        elif event_stream_handler is not None:
+            dispatch_events = True
 
-        async for event in stream:
-            # `ModelResponseStreamEvent`s were already delivered
-            # live to the handler inside the model-request boundary; workflow-side they're
-            # the replay, so only `HandleResponseEvent`s are dispatched to the handler here.
-            if not isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES):
-                await self._dispatch_event_stream_event(ctx, event)
-            yield event
+        try:
+            async for event in stream:
+                # `ModelResponseStreamEvent`s were already delivered live to the handler inside the
+                # model-request boundary; workflow-side they're the replay, so only `HandleResponseEvent`s
+                # are dispatched to the handler here.
+                if dispatch_events and not isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                    await self._dispatch_event_stream_event(ctx, event)
+                yield event
+        finally:
+            await aclose_if_supported(stream)
 
     @property
     @abstractmethod
@@ -176,6 +225,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         ts_id = ts.id
+        if ts_id is None and isinstance(ts, DynamicToolset):
+            raise UserError(
+                f"Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) "
+                f'need to have a unique `id` in order to be used with {self.engine_name}. '
+                f"The ID will be used to identify the toolset's {self._durable_unit_noun}s within the "
+                f'{self._durable_container_noun}. Set the dynamic toolset ID with `DynamicToolset(id=...)`, '
+                "or, when it is contributed by a capability, set the capability's `id` (for example, "
+                "`DynamicCapability(..., id='user-tools')`). A capability function passed directly to "
+                '`capabilities=` cannot carry an `id`; wrap it explicitly: '
+                "`DynamicCapability(my_func, id='...')`."
+            )
         if ts_id is not None and (existing := self._toolsets_by_id.get(ts_id)) is not None:
             if existing.wrapped is ts:
                 # The same toolset instance can appear in more than one place in the tree;
@@ -232,12 +292,57 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # worker-setup code for its durable units to be registered.
         return None
 
+    def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+        """The run context to hand to user code running inside this engine's durable unit.
+
+        User code inside a durable unit (a tool call, a `process_tool_call` hook, an
+        `event_stream_handler`) can't enqueue: the unit's recorded result is replayed on
+        recovery/cache-hit without re-running the code, so an enqueued message would be
+        dropped. This installs the shared `EnqueueGuard` so `enqueue()` raises a clear error
+        instead. Engines whose durable unit degrades to an inline call outside the container
+        (e.g. a DBOS step outside a workflow) override to pass the context through unchanged
+        there; Temporal reconstructs its context across the activity boundary and installs the
+        same guard in `deserialize_run_context`.
+        """
+        return guard_run_context(ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun)
+
+    @contextmanager
+    def _durable_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT]]:
+        """Run user code inside a durable unit with `ctx` guarded and set as the ambient context.
+
+        Both the yielded context and `get_current_run_context()` are guarded, so user code can't
+        enqueue whether it reads its argument or the ambient getter (Temporal gets the same guard
+        because its activity-side context comes from `deserialize_run_context`).
+        """
+        guarded = self._durable_run_context(ctx)
+        with set_current_run_context(guarded):
+            yield guarded
+
+    @asynccontextmanager
+    async def _durable_model_scope(
+        self, model_id: str | None, run_context: RunContext[AgentDepsT]
+    ) -> AsyncGenerator[tuple[Model, RunContext[AgentDepsT]]]:
+        """Enter a model durable unit: guard the run context, then rebuild the request's model.
+
+        Every model unit (request, streaming request, suspended-response cancellation) needs
+        both halves, and the guard is not optional for any of them: the unit's recorded result is
+        replayed on recovery or a cache hit without re-running its body, so a `ctx.enqueue()` from
+        the model — or from a `resolve_model_id` capability rebuilding it — would be dropped.
+        Pairing the two here means a unit can't get its model without the guard, instead of each
+        engine remembering to install it per unit (Temporal has its own chokepoint in
+        `deserialize_run_context`, so it doesn't use this).
+        """
+        with self._durable_run_context_scope(run_context) as ctx:
+            yield await self._resolve_model_for_request(model_id, ctx), ctx
+
     @abstractmethod
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
         """Deliver one workflow-side event inside an engine-specific durable boundary."""
 
     @staticmethod
-    async def _single_event_stream(event: AgentStreamEvent) -> AsyncIterator[AgentStreamEvent]:
+    async def _single_event_stream(
+        event: AgentStreamEvent,
+    ) -> AsyncIterator[AgentStreamEvent]:
         yield event
 
     def _bind_models(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
@@ -302,18 +407,23 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         so it falls back to `_find_model_id`.
         """
         provenance = request_context.model_id
-        if provenance is not None and unwrap_model(request_context.model) is unwrap_model(ctx.model):
+        # A durable run always targets a regular `Model`, never a realtime model, so `ctx.model`
+        # (typed as the wider `AbstractModel`) is a `Model` here; the guard narrows it for `unwrap_model`.
+        run_model = ctx.model
+        if (
+            provenance is not None
+            and isinstance(run_model, Model)
+            and unwrap_model(request_context.model) is unwrap_model(cast('Model[Any]', run_model))
+        ):
             return provenance
         return self._find_model_id(request_context.model)
 
     def _find_model_id(self, model: Model) -> str | None:
-        """Find the cross-boundary identifier for a `Model` instance.
+        """Find the cross-boundary identifier for a registered `Model` instance.
 
-        Returns `None` for the agent's default model (no extra info needed),
-        a registry key when an instance from `models=` is being used, or the
-        model's own `model_id` string otherwise. The activity/step/task uses the
-        result to rebuild the same `Model` on the other side via
-        `_resolve_model_for_request`.
+        Returns `None` for the agent's default model (no extra info needed) or a registry key when
+        an instance from `models=` is being used. The activity/step/task uses the result to look the
+        same `Model` up on the other side via `_resolve_model_for_request`.
 
         `WrapperModel` layers are peeled off the request's model one at a time, matching
         registered instances as-is at each depth and preferring the shallowest match: a
@@ -321,15 +431,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         unregistered wrapping, e.g. an `InstrumentedModel` around it — while an
         unregistered wrapper around the default still takes the default's fast path.
         The registered side is never unwrapped: a registered wrapper's identity holds at
-        its registered depth, so its bare inner model doesn't inherit the wrapper's ID. The
-        `model_id` fallback covers models built from a run-time
-        string (via `resolve_model_id`) and models an outer capability swaps in
-        via `before_model_request`: the worker rebuilds them by looking the
-        `model_id` up in the registry, then falling back to the `resolve_model_id`
-        capability chain / `infer_model`. This round-trip only reproduces a model
-        that the chain or `infer_model` (or the registry under that `model_id`)
-        can rebuild — a pre-built instance with a custom provider, client, or
-        settings that isn't registered in `models=` will not survive it faithfully.
+        its registered depth, so its bare inner model doesn't inherit the wrapper's ID.
+
+        An instance that matches nothing is rejected rather than round-tripped as its own
+        `model_id`: a `Model` can't be serialized across the boundary, and rebuilding one from its
+        `model_id` would build a *different* model — the same model name on whatever provider the
+        worker's environment implies — so the request would quietly go to another endpoint with
+        other credentials. Registering the instance in `models=`, or passing a model-name string
+        that a [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability builds
+        worker-side, are the two ways to get a specific instance into a durable run.
         """
         candidate: Model | None = model
         while candidate is not None:
@@ -337,9 +447,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 if registered is candidate:
                     return None if model_id == 'default' else model_id
             candidate = candidate.wrapped if isinstance(candidate, WrapperModel) else None
-        # Runtime-built or swapped-in Model: round-trip via its model_id string. The worker
-        # rebuilds it the same way (registry lookup → resolve_model_id chain → infer_model).
-        return model.model_id
+        raise UserError(
+            f'The model instance {model.model_id!r} was not registered with `{type(self).__name__}`, so it '
+            f'cannot be used inside a {self._durable_container_noun}. A `Model` instance cannot be serialized '
+            f'across the {self._durable_unit_noun} boundary, and rebuilding it from its `model_id` would build '
+            'a different model — the same model name on the provider the worker environment implies — so the '
+            f'request would go to another endpoint with other credentials. {self._model_rebuild_escape_hatches()}'
+        )
 
     async def _resolve_model_for_request(self, model_id: str | None, run_context: RunContext[AgentDepsT]) -> Model:
         """Rebuild the `Model` for a request inside the activity/step/task, deps-aware.
@@ -349,12 +463,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         `ResolveModelId` get first crack, and this capability's registry resolution
         acts as the durable backstop — so a model whose provider depends on the run's
         deps is rebuilt with the *actual* deps on the worker rather than deps-blind.
+
+        Only strings reach here: a `model_id` is `None`, a `models=` key, or a model-name string a
+        caller wrote (or that a resolver resolved from), because `_find_model_id` rejects
+        unregistered instances workflow-side.
         """
         if model_id is None:
             return self._models_by_id['default']
         agent = run_context.agent
         root_capability = run_context.root_capability
-        if agent is not None and root_capability is not None:  # pragma: no branch - the boundary carries both
+        # The boundary carries both.
+        if agent is not None and root_capability is not None:  # pragma: no branch
             resolution_ctx = ModelResolutionContext(agent=agent, deps=run_context.deps)
             # Exceptions raised by user resolvers in the chain propagate unchanged;
             # only the `infer_model` backstop below gets the translated error.
@@ -364,15 +483,20 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         try:
             return infer_model(model_id)
         except (UserError, ValueError) as e:
-            # The usual culprit: an unregistered `Model` instance was passed at run time,
-            # crossed the boundary as its `model_id` string, and that string can't be fed
-            # back through `infer_model` (e.g. `'function:...'`, `'test:test'`). Point at
-            # the registration escape hatches instead of surfacing a bare 'Unknown model'.
+            # The string a caller wrote (or a resolver resolved from) is not one `infer_model` can
+            # build, and no capability in the chain claimed it — e.g. an alias that only a
+            # `ResolveModelId` on the workflow side knows. Point at the escape hatches instead of
+            # surfacing a bare 'Unknown model'.
             raise UserError(
-                f'The model {model_id!r} could not be rebuilt on the {self.engine_name} worker. '
-                'A `Model` instance cannot be serialized across the durable boundary, so it is '
-                'sent as its `model_id` string and rebuilt on the other side. Register the '
-                f'instance in `models=` on `{type(self).__name__}` and reference it by key '
-                '(or pass the registered instance), or resolve the string with a '
-                '`ResolveModelId` capability.'
+                f'The model {model_id!r} could not be rebuilt on the {self.engine_name} worker: it is not '
+                'a model name `infer_model` can build, and no `resolve_model_id` capability claimed it. '
+                f'{self._model_rebuild_escape_hatches()}'
             ) from e
+
+    def _model_rebuild_escape_hatches(self) -> str:
+        """The two supported ways to use a specific `Model` instance in a durable run."""
+        return (
+            f'Register the instance in `models=` on `{type(self).__name__}` and reference it by key '
+            '(or pass the registered instance), or pass a model-name string and build the instance '
+            'from it with a `ResolveModelId` capability.'
+        )

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import AsyncIterable, AsyncIterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
@@ -20,26 +20,27 @@ import pytest
 import yaml
 from inline_snapshot import snapshot
 from pydantic import BaseModel
+from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
 
 import pydantic_ai.agent as agent_module
 from pydantic_ai import Agent, FunctionToolset, ToolCallPart
 from pydantic_ai._agent_graph import _clean_message_history  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai._deferred_capabilities import DEFERRED_CAPABILITY_TOOL_METADATA_KEY
+from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_search import (
     synthesize_local_from_native_call,
     synthesize_local_tool_search_messages,
 )
-from pydantic_ai.capabilities import CAPABILITY_TYPES
+from pydantic_ai.capabilities import CAPABILITY_TYPES, ProcessHistory, ToolSearch
 from pydantic_ai.capabilities._ordering import collect_leaves
-from pydantic_ai.capabilities._tool_search import ToolSearch
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.capability import Capability
 from pydantic_ai.capabilities.combined import CombinedCapability
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    CompactionPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
@@ -51,7 +52,9 @@ from pydantic_ai.messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     PartStartEvent,
+    SystemPromptPart,
     TextPart,
+    ToolAvailabilityDeltaPart,
     ToolPartKind,
     ToolReturnPart,
     ToolSearchCallPart,
@@ -61,31 +64,61 @@ from pydantic_ai.messages import (
     _model_request_part_discriminator,  # pyright: ignore[reportPrivateUsage]
     _model_response_part_discriminator,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.models import ModelRequestParameters, infer_model
+from pydantic_ai.models import Model, ModelRequestParameters, infer_model
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchMatch, ToolSearchTool
 from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_TOOL_NAME
 from pydantic_ai.toolsets._tool_search import (
-    _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
     ToolSearchToolset,
     keywords_search_fn,
     parse_discovered_tools,
 )
+from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import iter_message_parts, message, message_part, try_import
+
+_SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
 with try_import() as evals_available:
     from pydantic_evals import Case, Dataset
     from pydantic_evals.evaluators import Evaluator, EvaluatorContext
     from pydantic_evals.reporting import EvaluationReport
+
+with try_import() as ag_ui_available:
+    from pydantic_ai.ui.ag_ui import AGUIAdapter
+
+
+def ag_ui_preserves_tool_kind() -> bool:
+    """Whether the installed `ag-ui-protocol` carries a tool call's kind through a round-trip.
+
+    `0.1.10` — the floor the `ag-ui` extra declares — lacks what the adapter needs, so a
+    `ToolSearchCallPart` comes back as a plain `ToolCallPart` and the request renders differently.
+    `0.1.11` and up round-trip it. Worth recording rather than papering over: on `0.1.10` a
+    `ToolAvailabilityDeltaPart` is the only one of the three representations that survives, because
+    it doesn't ride the tool-call channel at all.
+    """
+    # `lax no cover`, not `no cover`: whether this branch runs depends on whether the `ag-ui` extra is
+    # installed, so it's covered in one CI job and dead in another.
+    if not ag_ui_available():  # pragma: lax no cover
+        return False
+
+    from importlib.metadata import version
+
+    from packaging.version import Version
+
+    return Version(version('ag-ui-protocol')) >= Version('0.1.11')
+
 
 with try_import() as anthropic_available:
     import anthropic  # pyright: ignore[reportUnusedImport]  # noqa: F401
@@ -133,12 +166,17 @@ with try_import() as openai_available:
         _normalize_tool_search_args,  # pyright: ignore[reportPrivateUsage]
         _tool_search_namespace_for_synthesis,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
     from pydantic_ai.providers.openai import OpenAIProvider
 
     from .models.mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, response_message
 
 with try_import() as google_available:
     import google.genai  # pyright: ignore[reportUnusedImport]  # noqa: F401
+    from google.genai.types import Candidate, Content, GenerateContentResponse, Part
+
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = pytest.mark.anyio
 
@@ -464,6 +502,7 @@ _CASES = [
 
 @pytest.mark.skipif(not evals_available(), reason='pydantic-evals not installed')
 @pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after ToolSearch discovery')
 @pytest.mark.parametrize(
     'case',
     [pytest.param(c, id=c.model_name.split(':')[0], marks=c.marks) for c in _CASES],
@@ -514,6 +553,7 @@ def _build_run_context(
     messages: list[ModelMessage] | None = None,
     capabilities: dict[str, AbstractCapability[T]] | None = None,
     discovered_tool_names: set[str] | None = None,
+    max_retries: int = 0,
 ) -> RunContext[T]:
     """Build a `RunContext` for unit tests using `TestModel`."""
     return RunContext(
@@ -525,6 +565,7 @@ def _build_run_context(
         run_step=run_step,
         capabilities=capabilities or {},
         discovered_tool_names=discovered_tool_names or set(),
+        max_retries=max_retries,
     )
 
 
@@ -591,7 +632,7 @@ async def test_search_tool_def_description_and_schema():
     search_tool = tools[_SEARCH_TOOLS_NAME]
 
     assert search_tool.tool_def.description == snapshot(
-        'There are additional tools not yet visible to you. When you need a capability not provided by your current tools, search here by providing one or more queries to discover and activate relevant tools. Each query is tokenized into words; tool names and descriptions are scored by token overlap. If no tools are found, they do not exist — do not retry.'
+        'Search first for a standalone deferred tool when current tools and catalog descriptions do not name the requested operation. A capability id used as an ordinary domain word does not request that capability. This cannot find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.'
     )
     assert search_tool.tool_def.parameters_json_schema == snapshot(
         {
@@ -607,6 +648,52 @@ async def test_search_tool_def_description_and_schema():
             'type': 'object',
         }
     )
+
+
+@pytest.mark.parametrize('tool_retries', [1, 3])
+async def test_search_tools_inherits_agent_tool_retries(tool_retries: int):
+    """`search_tools` honors `Agent(retries={'tools': N})` instead of a hardcoded budget.
+
+    Driven through the public API because the budget was previously pinned inside
+    `ToolSearchToolset`, where no user could reach it. The model keeps sending `queries` as
+    a bare string, so every call fails validation: `N` retries after the first attempt means
+    `N + 1` invocations before `UnexpectedModelBehavior`.
+    """
+    calls = 0
+
+    def malformed_queries(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(parts=[ToolCallPart(_SEARCH_TOOLS_NAME, {'queries': 'weather'})])
+
+    agent = Agent(
+        NoNativeToolSearchModel(malformed_queries),
+        toolsets=[_create_function_toolset()],
+        capabilities=[ToolSearch()],
+        retries={'tools': tool_retries},
+    )
+
+    with pytest.raises(UnexpectedModelBehavior, match=f'exceeded max retries count of {tool_retries}'):
+        await agent.run('find me a weather tool')
+
+    assert calls == tool_retries + 1
+
+
+async def test_tool_search_toolset_max_retries_overrides_agent_budget():
+    """An explicit `max_retries` on the toolset wins over the agent's tool retry budget.
+
+    Asserted at `get_tools` rather than through an agent run: the capability that owns tool
+    search is auto-injected, so a hand-constructed `ToolSearchToolset` can't be handed to an
+    `Agent` without the outer wrapper tripping the reserved-`search_tools` guard.
+    """
+    toolset = _create_function_toolset()
+    ctx = _build_run_context(None, max_retries=5)
+
+    inheriting = await ToolSearchToolset(wrapped=toolset).get_tools(ctx)
+    overriding = await ToolSearchToolset(wrapped=toolset, max_retries=2).get_tools(ctx)
+
+    assert inheriting[_SEARCH_TOOLS_NAME].max_retries == 5
+    assert overriding[_SEARCH_TOOLS_NAME].max_retries == 2
 
 
 async def test_tool_search_toolset_search_returns_matching_tools():
@@ -799,10 +886,170 @@ async def test_tool_search_toolset_max_results():
     assert len(rv['discovered_tools']) == 10
 
 
-async def test_tool_search_toolset_discovered_tools_flip_defer_loading():
-    """Discovered tools have `defer_loading=False`; undiscovered ones still have
-    `defer_loading=True`. Both stay in the toolset under their real names — the
-    wire-side filter in `Model.prepare_request` decides what reaches the model."""
+async def test_tool_search_toolset_ranks_undiscovered_matches_first_when_trimmed() -> None:
+    """An already-available match can never displace an undiscovered one when `max_results`
+    trims: undiscovered-first is the primary sort key, relevance the tiebreak, so discovered
+    tools only fill leftover slots."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def first_tool() -> str:  # pragma: no cover
+        return 'first'
+
+    @toolset.tool_plain(defer_loading=True)
+    def second_tool() -> str:  # pragma: no cover
+        return 'second'
+
+    searchable = ToolSearchToolset(wrapped=toolset, max_results=1)
+    ctx = _build_run_context(None, discovered_tool_names={'first_tool'})
+    search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
+
+    # `first_tool` scores higher (matches both terms) but is already discovered — the
+    # lower-scoring undiscovered `second_tool` still takes the single slot.
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['first', 'tool']}, ctx, search_tool)
+
+    assert result == {'discovered_tools': [{'name': 'second_tool'}]}
+
+    # With room for both, the discovered tool is appended after the undiscovered one rather
+    # than excluded — the corpus never shrinks with discovery.
+    searchable = ToolSearchToolset(wrapped=toolset, max_results=2)
+    search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['first', 'tool']}, ctx, search_tool)
+
+    assert result == {'discovered_tools': [{'name': 'second_tool'}, {'name': 'first_tool'}]}
+
+
+async def test_repeated_searches_paginate_through_a_large_corpus() -> None:
+    """Repeating the same query enumerates a corpus larger than `max_results`.
+
+    Each page's results become discovered and sink below undiscovered matches, so the next
+    identical search surfaces the next tranche — preserving the scan-by-repetition idiom the
+    old corpus subtraction enabled. A page that includes already-available tools is the
+    signal that enumeration is complete."""
+    toolset = FunctionToolset()
+    all_names = [f'mcp_tool_{i:02d}' for i in range(25)]
+    for tool_name in all_names:
+
+        def tool(name: str = tool_name) -> str:  # pragma: no cover
+            return name
+
+        toolset.add_function(tool, name=tool_name, defer_loading=True)
+
+    searchable = ToolSearchToolset(wrapped=toolset)
+    discovered: set[str] = set()
+    pages: list[list[str]] = []
+    for _ in range(3):
+        ctx = _build_run_context(None, discovered_tool_names=set(discovered))
+        search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
+        result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['mcp']}, ctx, search_tool)
+        page = [match['name'] for match in result['discovered_tools']]
+        pages.append(page)
+        discovered.update(page)
+
+    assert len(pages[0]) == len(pages[1]) == 10
+    assert not set(pages[0]) & set(pages[1])
+    # The final page leads with the 5 still-undiscovered tools; already-available ones
+    # fill the leftover slots — the model's signal that it has seen the whole corpus.
+    assert set(pages[0]) | set(pages[1]) | set(pages[2][:5]) == set(all_names)
+    assert set(pages[2][5:]) <= set(pages[0]) | set(pages[1])
+
+
+async def test_search_corpus_includes_already_discovered_tools() -> None:
+    """The corpus a custom `search_fn` receives never shrinks with discovery: an
+    already-discovered tool stays searchable with no compaction boundary in sight."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def first_tool() -> str:  # pragma: no cover
+        return 'first'
+
+    @toolset.tool_plain(defer_loading=True)
+    def second_tool() -> str:  # pragma: no cover
+        return 'second'
+
+    corpora: list[list[str]] = []
+
+    def search(_ctx: RunContext[None], _queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+        corpora.append(sorted(tool.name for tool in tools))
+        return ['first_tool']
+
+    searchable = ToolSearchToolset(wrapped=toolset, search_fn=search)
+    ctx = _build_run_context(None, discovered_tool_names={'first_tool'})
+    search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
+
+    await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['first']}, ctx, search_tool)
+
+    assert corpora == [['first_tool', 'second_tool']]
+
+
+async def test_stripped_reveal_exchange_heals_via_re_search() -> None:
+    """A history processor that strips a reveal exchange must not strand the revealed tool (#7259).
+
+    The search corpus never subtracts discovered names, so when the processor deletes the first
+    search exchange the model can simply search again; the new exchange survives, re-reveals the
+    tool, and the run completes. (A corpus that subtracted discovered names left the tool
+    simultaneously withheld on the wire and unsearchable — permanently unavailable.)
+    """
+
+    class SearchTwiceThenCallModel(TestModel):
+        request_number = 0
+
+        def _request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            type(self).request_number += 1
+            if self.request_number <= 2:
+                # Step 1 discovers the tool; the processor then strips that exchange, so step 2's
+                # history carries no evidence and the model searches again.
+                assert model_request_parameters.visibility_of('secret_lookup') == 'withheld'
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name=_SEARCH_TOOLS_NAME,
+                            args={'queries': ['secret lookup']},
+                            tool_call_id=f'search-{self.request_number}',
+                        )
+                    ]
+                )
+            # The second exchange survived: the tool is revealed again and callable.
+            assert model_request_parameters.visibility_of('secret_lookup') == 'visible'
+            if self.request_number == 3:
+                return ModelResponse(parts=[ToolCallPart(tool_name='secret_lookup', args={}, tool_call_id='lookup-1')])
+            return super()._request(messages, model_settings, model_request_parameters)
+
+    def strip_first_search_exchange(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(
+                message,
+                parts=[
+                    part
+                    for part in message.parts
+                    if not (
+                        isinstance(part, ToolCallPart | ToolSearchCallPart | ToolReturnPart | ToolSearchReturnPart)
+                        and part.tool_call_id == 'search-1'
+                    )
+                ],
+            )
+            for message in messages
+        ]
+
+    agent = Agent(SearchTwiceThenCallModel(), capabilities=[ProcessHistory(strip_first_search_exchange)])
+
+    @agent.tool_plain(defer_loading=True)
+    def secret_lookup() -> str:
+        return 'SECRET'
+
+    result = await agent.run('find and call the secret lookup tool')
+
+    assert 'SECRET' in str(result.output)
+
+
+async def test_tool_search_toolset_discovered_tools_keep_defer_loading():
+    """Discovery does not overwrite the tools' authored `defer_loading=True` value."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
 
@@ -818,7 +1065,7 @@ async def test_tool_search_toolset_discovered_tools_flip_defer_loading():
     ctx = _build_run_context(None, messages=messages, discovered_tool_names={'calculate_mortgage'})
 
     tools = await searchable.get_tools(ctx)
-    assert tools['calculate_mortgage'].tool_def.defer_loading is False
+    assert tools['calculate_mortgage'].tool_def.defer_loading is True
     assert tools['stock_price'].tool_def.defer_loading is True
     assert tools['crypto_price'].tool_def.defer_loading is True
 
@@ -1030,9 +1277,72 @@ async def test_tool_search_handles_capability_deferred_and_loaded_tools():
     assert result.output == 'final: also-deferred-result'
     assert seen_tool_names == snapshot(
         [
-            ['load_capability', 'search_tools'],
-            ['load_capability', 'inherited_tool', 'also_deferred_tool', 'search_tools'],
-            ['load_capability', 'inherited_tool', 'also_deferred_tool', 'search_tools'],
+            ['load_capability'],
+            ['load_capability', 'inherited_tool', 'also_deferred_tool'],
+            ['load_capability', 'inherited_tool', 'also_deferred_tool'],
+        ]
+    )
+
+
+async def test_explicit_tool_search_offers_no_search_surface_for_a_capability_only_corpus():
+    """Capability-gated tools are never searchable, so no search surface is offered at all.
+
+    Loading the capability is the only way to reach its tools, before or after — a search over them
+    could only ever answer "no matches". So an explicitly configured strategy is left with nothing
+    to index and `search_tools` never reaches the model: on a model with no native tool search it
+    would otherwise sit in every request, spending a tool slot and cache-prefix bytes to say nothing.
+    The capability's tool still shows up on the turn after the load, without any search in between.
+    """
+    toolset: FunctionToolset = FunctionToolset()
+
+    @toolset.tool_plain
+    def capability_tool() -> str:  # pragma: no cover
+        """A tool owned by the deferred capability."""
+        return 'capability-result'
+
+    capability = Capability(
+        id='example',
+        description='Example capability.',
+        defer_loading=True,
+        toolsets=[toolset],
+    )
+
+    def search_strategy(
+        ctx: RunContext[object], queries: Sequence[str], tool_defs: Sequence[ToolDefinition]
+    ) -> list[str]:  # pragma: no cover
+        raise AssertionError('nothing is searchable, so the strategy must never run')
+
+    seen_tool_names: list[list[str]] = []
+    request_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal request_count
+        request_count += 1
+        seen_tool_names.append([t.name for t in info.function_tools])
+        if request_count == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name=LOAD_CAPABILITY_TOOL_NAME,
+                        args={'id': 'example'},
+                        tool_call_id='load-example',
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    agent: Agent[object, str] = Agent(
+        NoNativeToolSearchModel(model_fn),
+        capabilities=[capability, ToolSearch(strategy=search_strategy)],
+    )
+
+    result = await agent.run('load the capability')
+
+    assert result.output == 'done'
+    assert seen_tool_names == snapshot(
+        [
+            ['load_capability'],
+            ['load_capability', 'capability_tool'],
         ]
     )
 
@@ -1073,8 +1383,8 @@ async def test_tool_search_ignores_malformed_loaded_capability_history():
 
     assert tool_defer_state == snapshot(
         {
-            'not_a_dict': [('inherited_tool', True), ('search_tools', False)],
-            'non_string_instructions': [('inherited_tool', True), ('search_tools', False)],
+            'not_a_dict': [('inherited_tool', True)],
+            'non_string_instructions': [('inherited_tool', True)],
         }
     )
 
@@ -1179,9 +1489,7 @@ async def test_tool_search_toolset_tool_with_none_description():
 
 
 async def test_tool_search_toolset_multiple_searches_accumulate():
-    """Discovery accumulates across search turns: tools surfaced in any past
-    `search_tools` return have `defer_loading=False` on the next step, and
-    not-yet-found ones keep `defer_loading=True`."""
+    """Discovery accumulates without changing the tools' authored deferred state."""
     toolset = _create_function_toolset()
     searchable = ToolSearchToolset(wrapped=toolset)
 
@@ -1204,8 +1512,8 @@ async def test_tool_search_toolset_multiple_searches_accumulate():
     ctx = _build_run_context(None, messages=messages, discovered_tool_names={'calculate_mortgage', 'stock_price'})
 
     tools = await searchable.get_tools(ctx)
-    assert tools['calculate_mortgage'].tool_def.defer_loading is False
-    assert tools['stock_price'].tool_def.defer_loading is False
+    assert tools['calculate_mortgage'].tool_def.defer_loading is True
+    assert tools['stock_price'].tool_def.defer_loading is True
     assert tools['crypto_price'].tool_def.defer_loading is True
 
 
@@ -2123,12 +2431,19 @@ async def test_openai_client_tool_search_maps_to_local_search_call():
     assert part.provider_details is None
 
 
-async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(allow_model_requests: None):
-    """A `load_capability` reveal synthesizes tool-search history for newly visible tools.
+async def test_openai_deferred_capability_reveal_sends_no_tool_search_surface(allow_model_requests: None):
+    """A capability-gated corpus sends no `tool_search` tool and no `defer_loading` on OpenAI.
 
-    OpenAI uses client-executed `tool_search` while deferred capability-owned tools are
-    in the tool-search corpus, so the same registration works for initial discovery and
-    later replay of the synthetic history.
+    Nothing here is searchable, so there's no search surface to send — and without one the Responses
+    API won't take `defer_loading` either (`Invalid Value: 'tools.defer_loading'. Deferred tools
+    require tools.tool_search.`, verified live on `gpt-5.6`). So the gated tool is simply not
+    declared until it's revealed, and `tools` carries `load_capability` alone on the first turn.
+
+    Pinned against an endpoint that doesn't implement `additional_tools`, which is where the reveal
+    is still the synthesized tool-search exchange in history — a `search_tools` call naming a tool
+    that isn't declared, which every provider measured accepts. First-party OpenAI models take the
+    native item and keep `tools` byte-identical instead; they're covered by
+    `tests/models/test_openai_tool_availability_delta.py`.
     """
     pytest.importorskip('openai')
 
@@ -2172,42 +2487,433 @@ async def test_openai_deferred_capability_tool_reveal_uses_client_tool_search(al
         ),
     ]
     mock_client = MockOpenAIResponses.create_mock(responses)
-    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    model = OpenAIResponsesModel(
+        'gpt-5.4',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=merge_profile(
+            openai_model_profile('gpt-5.4'),
+            OpenAIModelProfile(tool_addition_mode=None),
+        ),
+    )
     agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
 
     result = await agent.run('Can I get a refund on order-123?')
 
     assert result.output == 'Loaded.'
     assert any(
-        isinstance(part, ToolSearchReturnPart)
-        and [match['name'] for match in part.discovered_tools] == ['lookup_refund_policy']
+        isinstance(part, ToolAvailabilityDeltaPart) and part.tools_added == ['lookup_refund_policy']
         for message in result.all_messages()
         for part in message.parts
     )
     [first_request, second_request] = get_mock_responses_kwargs(mock_client)
 
-    for request in (first_request, second_request):
-        [tool_search] = [tool for tool in cast(list[dict[str, Any]], request['tools']) if tool['type'] == 'tool_search']
-        assert tool_search['execution'] == 'client'
-        assert cast(dict[str, Any], tool_search['parameters'])['required'] == ['queries']
+    first_tools = cast(list[dict[str, Any]], first_request['tools'])
+    second_tools = cast(list[dict[str, Any]], second_request['tools'])
+    assert [tool.get('name') or tool['type'] for tool in first_tools] == snapshot(['load_capability'])
+    assert [tool.get('name') or tool['type'] for tool in second_tools] == snapshot(
+        ['load_capability', 'lookup_refund_policy']
+    )
+    assert not any('defer_loading' in tool for tool in first_tools + second_tools)
 
+    # Nothing tool-search-shaped anywhere on the wire — no native item, and no replayed `search_tools`
+    # call either. The reveal is stated as a system instruction instead, so the history never claims
+    # the model ran a search it didn't run, and never names a `search_tools` tool that isn't declared.
     second_input = cast(list[dict[str, Any]], second_request['input'])
-    replay_calls = [item for item in second_input if item.get('type') == 'tool_search_call']
-    replay_outputs = [item for item in second_input if item.get('type') == 'tool_search_output']
-    assert replay_calls and all(item.get('execution') == 'client' for item in replay_calls)
-    assert replay_outputs and all(item.get('execution') == 'client' for item in replay_outputs)
+    assert not [item for item in second_input if str(item.get('type', '')).startswith('tool_search')]
+    assert not [item for item in second_input if item.get('name') == _SEARCH_TOOLS_NAME]
+    announcements = [
+        item for item in second_input if 'tool(s) are now available' in json.dumps(item.get('content', ''))
+    ]
+    assert len(announcements) == 1
+
+
+async def test_openai_mixed_corpus_keeps_the_search_surface_and_defers_both_kinds(allow_model_requests: None):
+    """A definition-carrying reveal keeps capability tools out of a server-searchable corpus.
+
+    `get_weather` is searchable and advertised as deferred. `lookup_refund_policy` is hidden outside
+    the corpus, so it stays off the wire until an `additional_tools` item carries its full definition.
+    """
+    pytest.importorskip('openai')
+
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed'
+
+    capability = Capability(
+        id='refunds',
+        description='Refund policy tools.',
+        defer_loading=True,
+        toolsets=[refunds_toolset],
+    )
+    mock_client = MockOpenAIResponses.create_mock(
+        response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg_done',
+                    content=[ResponseOutputText(text='Done.', type='output_text', annotations=[])],
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:  # pragma: no cover
+        """Get the weather in a city."""
+        return f'Weather in {city}.'
+
+    result = await agent.run('Hello')
+
+    assert result.output == 'Done.'
+    [request] = get_mock_responses_kwargs(mock_client)
+    tools = cast(list[dict[str, Any]], request['tools'])
+    assert [(tool.get('name') or tool['type'], tool.get('defer_loading')) for tool in tools] == snapshot(
+        [
+            ('tool_search', None),
+            ('load_capability', None),
+            ('get_weather', True),
+        ]
+    )
+    [tool_search] = [tool for tool in tools if tool['type'] == 'tool_search']
+    assert 'execution' not in tool_search
+
+
+async def test_openai_capability_only_corpus_keeps_tools_byte_identical(allow_model_requests: None):
+    """A capability load leaves `tools` byte-for-byte alone on OpenAI, with no `tool_search` in sight.
+
+    `tools` is the first cache section, ahead of `instructions` and every input item, so a difference
+    there invalidates the whole prefix on the one turn this is supposed to be free. Nothing here is
+    searchable, so there's no search tool — and the Responses API won't take `defer_loading` without
+    one. So the gated tool is never declared, and the `additional_tools` item is the entire reveal:
+    the schema arrives in an appended input item, which the prefix doesn't include.
+
+    Verified live on `gpt-5.6` before being pinned here: the model calls a tool declared only in that
+    item, 3/3, against 0/3 with the item removed.
+    """
+    pytest.importorskip('openai')
+
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed'
+
+    capability = Capability(
+        id='refunds',
+        description='Refund policy tools.',
+        defer_loading=True,
+        toolsets=[refunds_toolset],
+    )
+    mock_client = MockOpenAIResponses.create_mock(
+        [
+            response_message(
+                [
+                    ResponseFunctionToolCall(
+                        id='fc_load',
+                        arguments='{"id":"refunds"}',
+                        call_id='call_load',
+                        name=LOAD_CAPABILITY_TOOL_NAME,
+                        status='completed',
+                        type='function_call',
+                    )
+                ]
+            ),
+            response_message(
+                [
+                    ResponseOutputMessage(
+                        id='msg_done',
+                        content=[ResponseOutputText(text='Loaded.', type='output_text', annotations=[])],
+                        role='assistant',
+                        status='completed',
+                        type='message',
+                    )
+                ]
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
+
+    result = await agent.run('Can I get a refund on order-123?')
+
+    assert result.output == 'Loaded.'
+    [before, after] = get_mock_responses_kwargs(mock_client)
+    assert json.dumps(after['tools'], sort_keys=True) == json.dumps(before['tools'], sort_keys=True)
+    assert [tool.get('name') or tool['type'] for tool in cast(list[dict[str, Any]], before['tools'])] == snapshot(
+        ['load_capability']
+    )
+    # The reveal rides an appended input item, so it costs nothing the prefix has already cached.
+    assert cast(list[dict[str, Any]], after['input'])[-1] == snapshot(
+        {
+            'type': 'additional_tools',
+            'role': 'developer',
+            'tools': [
+                {
+                    'type': 'function',
+                    'name': 'lookup_refund_policy',
+                    'parameters': {
+                        'additionalProperties': False,
+                        'properties': {'order_id': {'type': 'string'}},
+                        'required': ['order_id'],
+                        'type': 'object',
+                    },
+                    'description': 'Look up the refund policy for an order.',
+                    'strict': True,
+                }
+            ],
+        }
+    )
+
+
+async def test_openai_mixed_corpus_keeps_tools_byte_identical(allow_model_requests: None):
+    """A capability load appends its definition without changing a native-search request's `tools`."""
+    pytest.importorskip('openai')
+
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:  # pragma: no cover
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed'
+
+    capability = Capability(
+        id='refunds', description='Refund policy tools.', defer_loading=True, toolsets=[refunds_toolset]
+    )
+    mock_client = MockOpenAIResponses.create_mock(
+        [
+            response_message(
+                [
+                    ResponseFunctionToolCall(
+                        id='fc_load',
+                        arguments='{"id":"refunds"}',
+                        call_id='call_load',
+                        name=LOAD_CAPABILITY_TOOL_NAME,
+                        status='completed',
+                        type='function_call',
+                    )
+                ]
+            ),
+            response_message(
+                [
+                    ResponseOutputMessage(
+                        id='msg_done',
+                        content=[ResponseOutputText(text='Loaded.', type='output_text', annotations=[])],
+                        role='assistant',
+                        status='completed',
+                        type='message',
+                    )
+                ]
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:  # pragma: no cover
+        """Get the weather in a city."""
+        return f'Weather in {city}.'
+
+    result = await agent.run('Can I get a refund on order-123?')
+
+    assert result.output == 'Loaded.'
+    [before, after] = get_mock_responses_kwargs(mock_client)
+    assert json.dumps(after['tools'], sort_keys=True) == json.dumps(before['tools'], sort_keys=True)
+    before_tools = cast(list[dict[str, Any]], before['tools'])
+    assert [(tool.get('name') or tool['type'], tool.get('defer_loading')) for tool in before_tools] == snapshot(
+        [('tool_search', None), ('load_capability', None), ('get_weather', True)]
+    )
+    [tool_search] = [tool for tool in before_tools if tool['type'] == 'tool_search']
+    assert 'execution' not in tool_search
+    assert cast(list[dict[str, Any]], after['input'])[-1] == snapshot(
+        {
+            'type': 'additional_tools',
+            'role': 'developer',
+            'tools': [
+                {
+                    'type': 'function',
+                    'name': 'lookup_refund_policy',
+                    'parameters': {
+                        'additionalProperties': False,
+                        'properties': {'order_id': {'type': 'string'}},
+                        'required': ['order_id'],
+                        'type': 'object',
+                    },
+                    'description': 'Look up the refund policy for an order.',
+                    'strict': True,
+                }
+            ],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'native_tool_search'),
+    [('gpt-5', False), ('gpt-4.1', False), ('gpt-5.6', True)],
+)
+async def test_openai_local_search_keeps_tools_byte_identical(
+    allow_model_requests: None, model_name: str, native_tool_search: bool
+) -> None:
+    """A local discovery appends its revealed schema without changing OpenAI's `tools` cache section.
+
+    This is mocked because the invariant compares two requests from one run, while a cassette records
+    each request separately and the default VCR matchers do not include the body. The native-search case
+    pins the other side of the model-profile branch so it cannot silently move onto `additional_tools`.
+    """
+    pytest.importorskip('openai')
+
+    if native_tool_search:
+        discovery = [
+            ResponseToolSearchCall(
+                id='ts_search',
+                arguments={'paths': ['lookup_exchange_rate']},
+                call_id=None,
+                execution='server',
+                status='completed',
+                type='tool_search_call',
+            ),
+            ResponseToolSearchOutputItem(
+                id='tso_search',
+                call_id=None,
+                execution='server',
+                status='completed',
+                tools=[
+                    FunctionTool(
+                        name='lookup_exchange_rate',
+                        description='Look up an exchange rate.',
+                        parameters={},
+                        strict=False,
+                        type='function',
+                    )
+                ],
+                type='tool_search_output',
+            ),
+        ]
+    else:
+        discovery = [
+            ResponseFunctionToolCall(
+                id='fc_search',
+                arguments='{"queries":["exchange rate"]}',
+                call_id='call_search',
+                name='search_tools',
+                status='completed',
+                type='function_call',
+            )
+        ]
+
+    mock_client = MockOpenAIResponses.create_mock(
+        [
+            response_message(discovery),
+            response_message(
+                [
+                    ResponseOutputMessage(
+                        id='msg_done',
+                        content=[ResponseOutputText(text='Found it.', type='output_text', annotations=[])],
+                        role='assistant',
+                        status='completed',
+                        type='message',
+                    )
+                ]
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, capabilities=[ToolSearch()])
+
+    @agent.tool_plain
+    def always_ready() -> str:  # pragma: no cover
+        """An always-visible tool."""
+        return 'ready'
+
+    @agent.tool_plain(defer_loading=True)
+    def lookup_exchange_rate(currency: str) -> str:  # pragma: no cover
+        """Look up an exchange rate."""
+        return f'1 {currency} = 1 test unit'
+
+    result = await agent.run('Find the exchange-rate tool.')
+
+    assert result.output == 'Found it.'
+    [before, after] = get_mock_responses_kwargs(mock_client)
+    assert json.dumps(after['tools'], sort_keys=True) == json.dumps(before['tools'], sort_keys=True)
+    additional_tools = [
+        item for item in cast(list[dict[str, Any]], after['input']) if item.get('type') == 'additional_tools'
+    ]
+    if native_tool_search:
+        assert additional_tools == []
+        assert any(tool['type'] == 'tool_search' for tool in cast(list[dict[str, Any]], after['tools']))
+    else:
+        assert additional_tools == [
+            {
+                'type': 'additional_tools',
+                'role': 'developer',
+                'tools': [
+                    {
+                        'type': 'function',
+                        'name': 'lookup_exchange_rate',
+                        'parameters': {
+                            'additionalProperties': False,
+                            'properties': {'currency': {'type': 'string'}},
+                            'required': ['currency'],
+                            'type': 'object',
+                        },
+                        'description': 'Look up an exchange rate.',
+                        'strict': True,
+                    }
+                ],
+            }
+        ]
+
+
+async def test_openai_stored_delta_keeps_local_search_tools_byte_identical(allow_model_requests: None) -> None:
+    """A stored availability delta preserves the same `gpt-5` local-search cache prefix as a live reveal."""
+    pytest.importorskip('openai')
+
+    mock_client = MockOpenAIResponses.create_mock([response_message([]), response_message([])])
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+    search_tool = ToolDefinition(
+        name='search_tools',
+        parameters_json_schema={'type': 'object'},
+        unless_native=ToolSearchTool.kind,
+    )
+    revealed_tool = ToolDefinition(
+        name='lookup_exchange_rate',
+        description='Look up an exchange rate.',
+        parameters_json_schema={'type': 'object'},
+        defer_loading=True,
+        with_native=ToolSearchTool.kind,
+    )
+    parameters = ModelRequestParameters(function_tools=[search_tool, revealed_tool], native_tools=[ToolSearchTool()])
+    before: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Find the exchange-rate tool.')])]
+    after = [*before, ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[revealed_tool.name])])]
+
+    model_settings, before_parameters = model.prepare_request(None, parameters)
+    _, after_parameters = model.prepare_request(None, replace(parameters, revealed_tool_names={revealed_tool.name}))
+    await model.request(before, model_settings, before_parameters)
+    await model.request(after, model_settings, after_parameters)
+
+    [before_request, after_request] = get_mock_responses_kwargs(mock_client)
+    assert json.dumps(after_request['tools'], sort_keys=True) == json.dumps(before_request['tools'], sort_keys=True)
+    assert [item['type'] for item in after_request['input'] if item.get('type') == 'additional_tools'] == [
+        'additional_tools'
+    ]
 
 
 async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loading(
     allow_model_requests: None,
 ):
-    """A tool-search corpus member discovered in a prior turn must not carry the wire-side
-    `defer_loading` flag on a model without native `tool_search` (e.g. `gpt-5.2`).
+    """A discovered tool moves to `additional_tools` on a model without native `tool_search`.
 
     OpenAI's `defer_loading` only travels alongside a native `tool_search` tool; without one the
-    provider rejects a lone `defer_loading` (#5938). Once discovered, the corpus member stays
-    callable as a plain function tool but must shed its `with_native='tool_search'` marker, so the
-    adapter (which derives `defer_loading` purely from `with_native`) stops stamping it.
+    provider rejects a lone `defer_loading` (#5938). Once discovered, the schema is appended in an
+    `additional_tools` input item and omitted from top-level `tools`, preserving that cache section.
 
     This is a unit test, not VCR: the cassette matcher keys only on method and path, so a request
     that regained a stale `defer_loading` (or an over-eager native-tool swap) would still match the
@@ -2236,8 +2942,7 @@ async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loa
     def get_weather(city: str) -> str:  # pragma: no cover
         return f'Weather in {city}.'
 
-    # `get_weather` was discovered last turn, so it now rides along as a callable tool
-    # (`defer_loading=False`, but `with_native='tool_search'` still set).
+    # `get_weather` was discovered last turn, so its schema now rides an appended input item.
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='I might want the weather later.')]),
         ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='loc_1')]),
@@ -2256,11 +2961,17 @@ async def test_openai_discovered_tool_without_native_tool_search_omits_defer_loa
     [request] = get_mock_responses_kwargs(mock_client)
     request_tools = cast(list[dict[str, Any]], request['tools'])
     assert not any(tool['type'] == 'tool_search' for tool in request_tools)
-    [weather_tool] = [tool for tool in request_tools if tool.get('name') == 'get_weather']
+    assert not any(tool.get('name') == 'get_weather' for tool in request_tools)
+    [additional_tools] = [
+        item for item in cast(list[dict[str, Any]], request['input']) if item.get('type') == 'additional_tools'
+    ]
+    [weather_tool] = additional_tools['tools']
     assert 'defer_loading' not in weather_tool
+    assert weather_tool['name'] == 'get_weather'
 
 
 @pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after ToolSearch discovery')
 async def test_openai_deferred_capability_runs_on_model_without_native_tool_search(
     allow_model_requests: None, openai_api_key: str
 ) -> None:
@@ -2307,80 +3018,160 @@ async def test_openai_deferred_capability_runs_on_model_without_native_tool_sear
     assert [p.content for p in bar_returns] == [1]
 
 
-async def test_cross_provider_history_replay_anthropic_to_openai(allow_model_requests: None):
-    """A model switch between turns (Anthropic → OpenAI) should replay cleanly: the
-    provider-specific Builtin* tool search parts are skipped by the mismatched provider,
-    and the agent can still dispatch already-discovered tools by name. This is the
-    canonical FallbackModel-style scenario the design calls for."""
-    pytest.importorskip('openai')
-    pytest.importorskip('anthropic')
-
-    # Prior turn: Anthropic ran a native BM25 search and discovered `get_weather`.
-    prior: list[ModelMessage] = [
-        ModelRequest.user_text_prompt('weather please'),
-        ModelResponse(
-            parts=[
-                NativeToolCallPart(
-                    provider_name='anthropic',
-                    tool_name='tool_search',
-                    tool_call_id='srv_a',
-                    args={'query': 'weather'},
-                    provider_details={'strategy': 'bm25'},
-                ),
-                NativeToolReturnPart(
-                    provider_name='anthropic',
-                    tool_name='tool_search',
-                    tool_call_id='srv_a',
-                    content={'discovered_tools': [{'name': 'get_weather'}]},
-                ),
-            ],
-            provider_name='anthropic',
-        ),
-    ]
-
-    # Switch to OpenAI for the follow-up. The Anthropic builtin parts should be silently
-    # skipped (`provider_name` mismatch). `get_weather` was discovered in the prior turn,
-    # so `parse_discovered_tools` picks it up and exposes the regular
-    # variant on the new provider — the model can call it directly.
-    followup = response_message(
-        [
-            ResponseOutputMessage(
-                id='msg_1',
-                content=[ResponseOutputText(text='Sunny.', type='output_text', annotations=[])],
-                role='assistant',
-                status='completed',
-                type='message',
-            ),
-        ],
+def _cross_provider_tool_search_agent(model: AnthropicModel | OpenAIResponsesModel) -> Agent[None, str]:
+    agent: Agent[None, str] = Agent(
+        model,
+        instructions='Always use get_exchange_rate to answer exchange-rate questions.',
     )
-    mock_client = MockOpenAIResponses.create_mock(followup)
-    model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model=model, capabilities=[ToolSearch()])
 
     @agent.tool_plain(defer_loading=True)
-    def get_weather(city: str) -> str:  # pragma: no cover
-        return f'Weather in {city}.'
+    def get_exchange_rate(pair: str) -> str:
+        """Look up the exchange rate for a currency pair."""
+        return f'{pair}: 0.92'
 
-    await agent.run('and what about tomorrow?', message_history=prior)
-    kwargs = get_mock_responses_kwargs(mock_client)[0]
-    # The Anthropic-generated tool search parts are not echoed back to OpenAI (wrong
-    # provider) — the replayed input contains only the user message from the prior turn
-    # and the new user prompt, plus no `tool_search_call` items.
-    item_types = [cast('dict[str, Any]', item).get('type') for item in kwargs['input']]
-    assert 'tool_search_call' not in item_types
-    # `get_weather` is visible on this turn because it was discovered in the prior turn's
-    # history — the local `ToolSearchToolset` emits its regular variant in the tool
-    # list so the OpenAI request carries `get_weather` as a regular function tool.
-    tool_names = [cast('dict[str, Any]', tool).get('name') for tool in kwargs['tools']]
-    assert 'get_weather' in tool_names
+    return agent
+
+
+def _assert_exchange_rate_called(messages: list[ModelMessage], pair: str) -> None:
+    returns = [
+        part
+        for part in iter_message_parts(messages, ModelRequest, ToolReturnPart)
+        if part.tool_name == 'get_exchange_rate'
+    ]
+    assert [part.content for part in returns] == [f'{pair}: 0.92']
+
+
+def _recorded_request_bodies(vcr: Any, provider: Literal['anthropic', 'openai']) -> list[dict[str, Any]]:
+    uri_fragment = 'api.anthropic.com' if provider == 'anthropic' else 'api.openai.com'
+    return [json.loads(request.body) for request in vcr.requests if uri_fragment in request.uri]
+
+
+def _assert_openai_native_search_replay(body: dict[str, Any]) -> None:
+    item_types = [item.get('type') for item in body['input']]
+    assert 'tool_search_call' in item_types
+    assert 'tool_search_output' in item_types
+
+
+def _assert_anthropic_native_search_replay(
+    body: dict[str, Any], result_type: Literal['tool_result', 'tool_search_tool_result']
+) -> None:
+    search_results = [
+        block for message in body['messages'] for block in message['content'] if block.get('type') == result_type
+    ]
+    if result_type == 'tool_result':
+        references = [nested for result in search_results for nested in result['content']]
+    else:
+        references = [reference for result in search_results for reference in result['content']['tool_references']]
+    assert any(reference.get('type') == 'tool_reference' for reference in references)
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='cross-provider replay rewrites native tool-search history')
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_live_tool_search_handoff_anthropic_to_openai(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    openai_api_key: str,
+    vcr: Any,
+) -> None:
+    """A real Anthropic native search remains callable after replay on OpenAI."""
+    first_agent = _cross_provider_tool_search_agent(
+        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    )
+    first = await first_agent.run('What is the USD/EUR exchange rate?')
+    assert any(isinstance(part, NativeToolSearchCallPart) for message in first.all_messages() for part in message.parts)
+
+    second_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    )
+    second = await second_agent.run(
+        'Now call get_exchange_rate for GBP/USD without searching again.',
+        message_history=first.all_messages(),
+    )
+
+    _assert_exchange_rate_called(second.new_messages(), 'GBP/USD')
+    _assert_openai_native_search_replay(_recorded_request_bodies(vcr, 'openai')[0])
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='cross-provider replay rewrites native tool-search history')
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_live_tool_search_handoff_openai_to_anthropic(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    openai_api_key: str,
+    vcr: Any,
+) -> None:
+    """A real OpenAI native search remains callable after replay on Anthropic."""
+    first_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    )
+    first = await first_agent.run('What is the USD/EUR exchange rate?')
+    assert any(isinstance(part, NativeToolSearchCallPart) for message in first.all_messages() for part in message.parts)
+
+    second_agent = _cross_provider_tool_search_agent(
+        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    )
+    second = await second_agent.run(
+        'Now call get_exchange_rate for GBP/USD without searching again.',
+        message_history=first.all_messages(),
+    )
+
+    _assert_exchange_rate_called(second.new_messages(), 'GBP/USD')
+    _assert_anthropic_native_search_replay(_recorded_request_bodies(vcr, 'anthropic')[0], 'tool_result')
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='cross-provider replay rewrites native tool-search history')
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_live_tool_search_handoff_anthropic_openai_anthropic(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    openai_api_key: str,
+    vcr: Any,
+) -> None:
+    """Twice-travelled real history remains accepted and callable on its origin vendor."""
+    first_agent = _cross_provider_tool_search_agent(
+        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    )
+    first = await first_agent.run('What is the USD/EUR exchange rate?')
+    assert any(isinstance(part, NativeToolSearchCallPart) for message in first.all_messages() for part in message.parts)
+
+    second_agent = _cross_provider_tool_search_agent(
+        OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
+    )
+    second = await second_agent.run(
+        'Now call get_exchange_rate for GBP/USD without searching again.',
+        message_history=first.all_messages(),
+    )
+    _assert_exchange_rate_called(second.new_messages(), 'GBP/USD')
+
+    third_agent = _cross_provider_tool_search_agent(
+        AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    )
+    third = await third_agent.run(
+        'Now call get_exchange_rate for CAD/USD without searching again.',
+        message_history=second.all_messages(),
+    )
+
+    _assert_exchange_rate_called(third.new_messages(), 'CAD/USD')
+    openai_bodies = _recorded_request_bodies(vcr, 'openai')
+    anthropic_bodies = _recorded_request_bodies(vcr, 'anthropic')
+    _assert_openai_native_search_replay(openai_bodies[0])
+    _assert_anthropic_native_search_replay(anthropic_bodies[-1], 'tool_search_tool_result')
 
 
 def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, list[dict[str, Any]]]]:
     """Compact one-line-per-part trace of a deferred-capability conversation.
 
     Used by the cross-provider replay tests to assert the *story* of the run
-    (load → search → tool call → answer) without coupling to provider-specific
-    wire shapes."""
+    (load → availability delta → tool call → answer) without coupling to provider-specific
+    wire shapes. There is deliberately no case for the tool-search parts: a capability-owned
+    tool is never searchable, so a search exchange appearing in one of these traces is a
+    regression, and the catch-all below says so."""
     trace: list[tuple[str, list[dict[str, Any]]]] = []
     for msg in messages:
         part_trace: list[dict[str, Any]] = []
@@ -2391,14 +3182,8 @@ def _trace_capability_messages(messages: list[ModelMessage]) -> list[tuple[str, 
                 part_info = {'type': 'load_capability_call', 'id': part.capability_id}
             elif isinstance(part, LoadCapabilityReturnPart):
                 part_info = {'type': 'load_capability_return', 'instructions': part.instructions}
-            elif isinstance(part, ToolSearchCallPart):
-                queries = part.args['queries'] if isinstance(part.args, dict) else part.args
-                part_info = {'type': 'tool_search_call', 'queries': queries}
-            elif isinstance(part, ToolSearchReturnPart):
-                part_info = {
-                    'type': 'tool_search_return',
-                    'tools': [tool['name'] for tool in part.content['discovered_tools']],
-                }
+            elif isinstance(part, ToolAvailabilityDeltaPart):
+                part_info = {'type': 'tool_availability_delta', 'added': part.tools_added}
             elif isinstance(part, ToolCallPart):
                 # Normalize args from JSON string to dict so per-row snapshots don't
                 # pin on provider-specific whitespace or key ordering.
@@ -2438,11 +3223,10 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     {
                         'type': 'load_capability_return',
                         'instructions': 'Use the refund policy tool before answering refund questions.',
-                    }
+                    },
+                    {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
                 ],
             ),
-            ('response', [{'type': 'tool_search_call', 'queries': ['refunds']}]),
-            ('request', [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -2470,11 +3254,10 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     {
                         'type': 'load_capability_return',
                         'instructions': 'Use the refund policy tool before answering refund questions.',
-                    }
+                    },
+                    {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
                 ],
             ),
-            ('response', [{'type': 'tool_search_call', 'queries': ['refunds']}]),
-            ('request', [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -2502,11 +3285,10 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     {
                         'type': 'load_capability_return',
                         'instructions': 'Use the refund policy tool before answering refund questions.',
-                    }
+                    },
+                    {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
                 ],
             ),
-            ('response', [{'type': 'tool_search_call', 'queries': ['refunds']}]),
-            ('request', [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}]),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -2521,12 +3303,6 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     }
                 ],
             ),
-            ('response', [{'type': 'tool_search_call', 'queries': ['order details', 'order status']}]),
-            ('request', [{'type': 'tool_search_return', 'tools': []}]),
-            ('response', [{'type': 'tool_search_call', 'queries': ['get order', 'order information']}]),
-            ('request', [{'type': 'tool_search_return', 'tools': []}]),
-            ('response', [{'type': 'tool_search_call', 'queries': ['refund order', 'process refund']}]),
-            ('request', [{'type': 'tool_search_return', 'tools': []}]),
             ('response', [{'type': 'text'}]),
         ]
     ),
@@ -2540,11 +3316,41 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
                     {
                         'type': 'load_capability_return',
                         'instructions': 'Use the refund policy tool before answering refund questions.',
+                    },
+                    {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                ],
+            ),
+            (
+                'response',
+                [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
+            ),
+            (
+                'request',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-123: refund allowed for 30 days',
                     }
                 ],
             ),
-            ('response', [{'type': 'tool_search_call', 'queries': ['refunds']}]),
-            ('request', [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}]),
+            ('response', [{'type': 'text'}]),
+        ]
+    ),
+    ('google:gemini-3-flash-preview', 'anthropic:claude-sonnet-4-5'): snapshot(
+        [
+            ('request', [{'type': 'user', 'content': 'Can I get a refund on order-123?'}]),
+            ('response', [{'type': 'load_capability_call', 'id': 'refunds'}]),
+            (
+                'request',
+                [
+                    {
+                        'type': 'load_capability_return',
+                        'instructions': 'Use the refund policy tool before answering refund questions.',
+                    },
+                    {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
+                ],
+            ),
             (
                 'response',
                 [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-123'}}],
@@ -2651,6 +3457,26 @@ _RESUME_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
             ('response', [{'type': 'text'}]),
         ]
     ),
+    ('google:gemini-3-flash-preview', 'anthropic:claude-sonnet-4-5'): snapshot(
+        [
+            ('request', [{'type': 'user', 'content': 'And what about order-456?'}]),
+            (
+                'response',
+                [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-456'}}],
+            ),
+            (
+                'request',
+                [
+                    {
+                        'type': 'tool_return',
+                        'tool_name': 'lookup_refund_policy',
+                        'content': 'order-456: refund allowed for 30 days',
+                    }
+                ],
+            ),
+            ('response', [{'type': 'text'}]),
+        ]
+    ),
 }
 
 
@@ -2658,6 +3484,7 @@ _RESUME_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
 # matrix. Recording: `pytest --record-mode=once --inline-snapshot=create`.
 @pytest.mark.parametrize('first_model_name,resume_model_name', list(_FIRST_TURN_EXPECTED.keys()))
 @pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after ToolSearch discovery')
 @pytest.mark.filterwarnings('ignore:`BuiltinToolCallEvent` is deprecated:DeprecationWarning')
 @pytest.mark.filterwarnings('ignore:`BuiltinToolResultEvent` is deprecated:DeprecationWarning')
 async def test_cross_provider_capability_replay(
@@ -2751,14 +3578,11 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                     part_info = {'type': 'load_capability_call', 'id': part.capability_id}
                 elif isinstance(part, LoadCapabilityReturnPart):
                     part_info = {'type': 'load_capability_return', 'instructions': part.instructions}
-                elif isinstance(part, ToolSearchCallPart):
-                    queries = part.args['queries'] if isinstance(part.args, dict) else part.args
-                    part_info = {'type': 'tool_search_call', 'queries': queries}
-                elif isinstance(part, ToolSearchReturnPart):
-                    part_info = {
-                        'type': 'tool_search_return',
-                        'tools': [tool['name'] for tool in part.content['discovered_tools']],
-                    }
+                # No `ToolSearch*Part` branches: a capability load is stored as a
+                # `ToolAvailabilityDeltaPart` now, rather than as a synthesized search exchange, which is
+                # the whole point of the part. If one ever shows up here again the `else` below names it.
+                elif isinstance(part, ToolAvailabilityDeltaPart):
+                    part_info = {'type': 'tool_availability_delta', 'added': part.tools_added}
                 elif isinstance(part, ToolCallPart):
                     part_info = {'type': 'tool_call', 'tool_name': part.tool_name, 'args': part.args}
                 elif isinstance(part, ToolReturnPart):
@@ -2799,16 +3623,9 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                     {
                         'type': 'load_capability_return',
                         'instructions': 'Use the refund policy tool before answering refund questions.',
-                    }
+                    },
+                    {'type': 'tool_availability_delta', 'added': ['lookup_refund_policy']},
                 ],
-            ),
-            (
-                'ModelResponse',
-                [{'type': 'tool_search_call', 'queries': ['refunds']}],
-            ),
-            (
-                'ModelRequest',
-                [{'type': 'tool_search_return', 'tools': ['lookup_refund_policy']}],
             ),
             (
                 'ModelResponse',
@@ -2879,6 +3696,110 @@ Is there anything else I can assist you with?\
 """)
 
 
+class _TransientlyFailingModel(WrapperModel):
+    """Fails the first N requests with a retryable API error, then delegates to the live model.
+
+    The failure is synthetic by necessity — a genuinely transient provider outage can't be
+    scripted into a recording — but every request that does not fail goes out on the real wire,
+    so the cassette captures the true cross-provider handoff and recovery.
+    """
+
+    def __init__(self, wrapped: Model, failures: int) -> None:
+        super().__init__(wrapped)
+        self.failures_remaining = failures
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        if self.failures_remaining > 0:
+            self.failures_remaining -= 1
+            raise ModelAPIError(self.model_name, 'synthetic transient failure')
+        return await super().request(messages, model_settings, model_request_parameters)
+
+
+@pytest.mark.vcr
+@pytest.mark.skipif(not anthropic_available(), reason='anthropic not installed')
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_live_fallback_failover_capability_load_and_recovery(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    openai_api_key: str,
+    vcr: Any,
+) -> None:
+    """A capability loaded during a failover leg survives the switch back to the recovered primary.
+
+    `FallbackModel` retries the primary on every request, so a transient primary failure means the
+    run's history is authored by two providers mid-run: the fallback serves the turn that loads the
+    deferred capability, then the recovered primary must project that foreign-authored reveal onto
+    its own channel — the `tool_addition` block plus the lazily appended `defer_loading` entry —
+    and call the revealed tool off it.
+    """
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed for 30 days'
+
+    primary = _TransientlyFailingModel(
+        AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key)), failures=1
+    )
+    fallback = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(
+        model=FallbackModel(primary, fallback),
+        capabilities=[
+            Capability(
+                id='refunds',
+                description='Refund policy tools.',
+                instructions='Use the refund policy tool before answering refund questions.',
+                toolsets=[refunds_toolset],
+                defer_loading=True,
+            )
+        ],
+    )
+
+    result = await agent.run('Can I get a refund on order-123? Use your tools.')
+
+    # The failover leg (OpenAI) authored the capability load; the recovered primary (Anthropic)
+    # authored the revealed tool's call. `provider_name` on each response pins who served what.
+    responses = [message for message in result.all_messages() if isinstance(message, ModelResponse)]
+    served_by = [
+        (
+            response.provider_name,
+            [part.tool_name for part in response.parts if isinstance(part, ToolCallPart)],
+        )
+        for response in responses
+    ]
+    assert served_by == snapshot(
+        [
+            ('openai', ['load_capability']),
+            ('anthropic', ['lookup_refund_policy']),
+            ('anthropic', []),
+        ]
+    )
+    assert 'refund' in result.output.lower()
+
+    # One OpenAI request (the failover leg), then two Anthropic requests after recovery.
+    openai_bodies = _recorded_request_bodies(vcr, 'openai')
+    anthropic_bodies = _recorded_request_bodies(vcr, 'anthropic')
+    assert (len(openai_bodies), len(anthropic_bodies)) == (1, 2)
+
+    # Both recovered-primary requests render the reveal on Anthropic's own channel: the
+    # `tool_addition` reference plus the lazily appended deferred entry. These bind at record
+    # time only — playback returns the recorded bodies regardless of what current code sends —
+    # so the regression guards for this rendering are the mocked byte-level tests
+    # (`test_fallback_reprojects_openai_delta_to_anthropic_tool_addition` and siblings); what
+    # stays live here is the run trajectory, `served_by`, and the cache-prefix checker.
+    for body in anthropic_bodies:
+        serialized = json.dumps(body, sort_keys=True)
+        assert serialized.count('"type": "tool_addition"') == 1
+        [revealed] = [tool for tool in body['tools'] if tool.get('name') == 'lookup_refund_policy']
+        assert revealed.get('defer_loading') is True
+
+
 def test_anthropic_tool_search_result_error_block_mapping():
     """An error result block (no `tool_references`) produces a
     `NativeToolReturnPart` without discovered tools in its metadata."""
@@ -2907,7 +3828,7 @@ def test_anthropic_custom_replay_blocks_malformed_content():
 
     malformed = ToolReturnPart(tool_name='search_tools', content='not a typed return', tool_call_id='c1')
     refs, message = _build_custom_tool_search_replay_blocks(
-        malformed, tool_search_active=True, available_tool_names=set()
+        malformed, deferred_tools_active=True, available_tool_names=set()
     )
     assert refs is None and message is None
 
@@ -3151,6 +4072,7 @@ def _openai_hosted_tool_search_parameters() -> ModelRequestParameters:
                 defer_loading=True,
             ),
         ],
+        tool_visibility={'get_exchange_rate': 'deferred', 'stock_lookup': 'deferred'},
         native_tools=[ToolSearchTool()],
     )
 
@@ -3733,6 +4655,143 @@ async def test_openai_native_tool_search_gpt_5_6(allow_model_requests: None, ope
 
 
 @pytest.mark.vcr
+async def test_openai_native_tool_search_with_deferred_capability(
+    allow_model_requests: None, openai_api_key: str
+) -> None:
+    """A mixed corpus uses server-side search and reveals a capability tool by full definition."""
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed'
+
+    capability = Capability(
+        id='refunds', description='Refund policy tools.', defer_loading=True, toolsets=[refunds_toolset]
+    )
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:
+        """Get the current weather in a city."""
+        return f'Weather in {city}: sunny'
+
+    result = await agent.run(
+        'Complete both tasks in order before answering: use tool search to find and call the weather tool '
+        'for Paris; then load the refunds capability and call its refund-policy tool for order-123.'
+    )
+
+    assert list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolSearchCallPart))
+    assert list(iter_message_parts(result.all_messages(), ModelRequest, LoadCapabilityReturnPart))
+    tool_returns = {
+        part.tool_name: part.content for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    }
+    assert tool_returns['get_weather'] == 'Weather in Paris: sunny'
+    assert tool_returns['lookup_refund_policy'] == 'order-123: refund allowed'
+
+
+@pytest.mark.vcr
+async def test_openai_native_tool_search_with_deferred_capability_gpt_5_6_sol(
+    allow_model_requests: None, openai_api_key: str, vcr: Any
+) -> None:
+    """GPT-5.6 Sol reveals a capability through `additional_tools` without changing `tools`."""
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed'
+
+    capability = Capability(
+        id='refunds', description='Refund policy tools.', defer_loading=True, toolsets=[refunds_toolset]
+    )
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key=openai_api_key))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather(city: str) -> str:
+        """Get the current weather in a city."""
+        return f'Weather in {city}: sunny'
+
+    result = await agent.run(
+        'Complete both tasks in order before answering: use tool search to find and call the weather tool '
+        'for Paris; then load the refunds capability and call its refund-policy tool for order-123.'
+    )
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 3
+    before = request_bodies[0]
+    reveal = next(
+        body for body in request_bodies[1:] if any(item.get('type') == 'additional_tools' for item in body['input'])
+    )
+    before_tool_names = [tool.get('name') for tool in before['tools']]
+    assert 'lookup_refund_policy' not in before_tool_names
+    assert reveal['tools'] == before['tools']
+    [addition] = [item for item in reveal['input'] if item.get('type') == 'additional_tools']
+    [revealed] = addition['tools']
+    assert revealed['name'] == 'lookup_refund_policy'
+    assert revealed['description'] == 'Look up the refund policy for an order.'
+    assert revealed['parameters']['properties']['order_id']['type'] == 'string'
+
+    assert list(iter_message_parts(result.all_messages(), ModelResponse, NativeToolSearchCallPart))
+    assert list(iter_message_parts(result.all_messages(), ModelRequest, LoadCapabilityReturnPart))
+    tool_returns = {
+        part.tool_name: part.content for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    }
+    assert tool_returns['get_weather'] == 'Weather in Paris: sunny'
+    assert tool_returns['lookup_refund_policy'] == 'order-123: refund allowed'
+
+
+@pytest.mark.vcr
+@pytest.mark.moves_cache_prefix(reason='Gemini reveals deferred capability tools by changing its tools declaration')
+async def test_google_deferred_capability_announcement_live(
+    allow_model_requests: None, gemini_api_key: str, vcr: Any
+) -> None:
+    """Gemini 3.6 Flash reveals a capability through the channel-less announcement path."""
+    pytest.importorskip('google.genai')
+    refunds_toolset = FunctionToolset()
+
+    @refunds_toolset.tool_plain
+    def lookup_refund_policy(order_id: str) -> str:
+        """Look up the refund policy for an order."""
+        return f'{order_id}: refund allowed'
+
+    capability = Capability(
+        id='refunds',
+        description='Refund policy tools. Load this capability before looking up refund policy.',
+        defer_loading=True,
+        toolsets=[refunds_toolset],
+    )
+    model = GoogleModel('gemini-3.6-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    agent: Agent[None, str] = Agent(model=model, capabilities=[capability])
+    result = await agent.run(
+        'First load the refunds capability. Then use its newly available tool for order A-4417. Return only the result.'
+    )
+
+    request_bodies = [json.loads(request.body) for request in vcr.requests]
+    assert len(request_bodies) >= 3
+    before, reveal, *later = request_bodies
+
+    def function_declarations(body: dict[str, Any]) -> list[dict[str, Any]]:
+        return [declaration for tool in body.get('tools', []) for declaration in tool.get('functionDeclarations', [])]
+
+    before_declarations = function_declarations(before)
+    reveal_declarations = function_declarations(reveal)
+    assert 'lookup_refund_policy' not in json.dumps(before)
+    assert [declaration['name'] for declaration in reveal_declarations] == [
+        *[declaration['name'] for declaration in before_declarations],
+        'lookup_refund_policy',
+    ]
+    assert any('tool(s) are now available' in json.dumps(content) for content in reveal['contents'])
+    assert all(function_declarations(body) == reveal_declarations for body in later)
+    assert any(
+        part.tool_name == 'lookup_refund_policy'
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+    )
+
+
+@pytest.mark.vcr
 async def test_openai_execution_client_round_trip(allow_model_requests: None, openai_api_key: str, vcr: Any) -> None:
     """End-to-end: a custom callable `ToolSearch` strategy surfaces natively on OpenAI
     Responses as `ToolSearchToolParam(execution='client')` — the provider emits a
@@ -4050,12 +5109,12 @@ async def test_tool_search_toolset_discovers_from_builtin_return_part():
         )
     ]
     # `parse_discovered_tools` extracts discovery from the native return part; mirror that
-    # into `discovered_tool_names`, which `get_tools` reads to flip visibility.
+    # into `discovered_tool_names`, which request preparation uses for visibility.
     assert parse_discovered_tools(messages) == {'calculate_mortgage'}
     ctx = _build_run_context(None, messages=messages, discovered_tool_names={'calculate_mortgage'})
 
     tools = await searchable.get_tools(ctx)
-    assert tools['calculate_mortgage'].tool_def.defer_loading is False
+    assert tools['calculate_mortgage'].tool_def.defer_loading is True
     assert tools['stock_price'].tool_def.defer_loading is True
 
 
@@ -4274,21 +5333,23 @@ def test_with_native_undiscovered_drops_on_unsupported_model():
         ),
     )
     assert prepared.native_tools == []
-    assert prepared.function_tools == []
+    assert prepared.tool_visibility == {'deferred_tool': 'withheld'}
+    assert prepared.declared_function_tools == []
 
 
 def test_with_native_discovered_kept_on_unsupported_model():
-    """A discovered corpus member (`defer_loading=False`) stays in the request even when
+    """A revealed corpus member stays in the request even when
     the builtin is unsupported — the model can call it directly by name on the local path."""
 
     m = TestModel()
-    corpus_tool = ToolDefinition(name='deferred_tool', with_native='tool_search', defer_loading=False)
+    corpus_tool = ToolDefinition(name='deferred_tool', with_native='tool_search', defer_loading=True)
 
     _, prepared = m.prepare_request(
         None,
         ModelRequestParameters(
             function_tools=[corpus_tool],
             native_tools=[ToolSearchTool(optional=True)],
+            revealed_tool_names={'deferred_tool'},
         ),
     )
     assert prepared.native_tools == []
@@ -4790,10 +5851,12 @@ def test_prepare_messages_translates_on_non_native_model() -> None:
     assert return_part.content == {'discovered_tools': [{'name': 'calculate_mortgage'}]}
 
 
-def test_prepare_messages_passes_through_on_native_model() -> None:
-    """A model whose profile *does* include `ToolSearchTool` in
-    `supported_native_tools` keeps the prior exchange as-is — the native adapter
-    knows how to ship the typed builtin parts back on the wire."""
+@pytest.mark.parametrize(
+    ('origin_provider_name', 'translated'),
+    [('test', False), ('anthropic', True), ('openai', True), (None, True)],
+)
+def test_prepare_messages_on_native_model(origin_provider_name: str | None, translated: bool) -> None:
+    """A native model preserves its own parts and translates foreign or untagged parts."""
 
     class NativeToolSearchTestModel(TestModel):
         @classmethod
@@ -4810,12 +5873,12 @@ def test_prepare_messages_passes_through_on_native_model() -> None:
                 NativeToolSearchCallPart(
                     args={'queries': ['mortgage']},
                     tool_call_id='c1',
-                    provider_name='anthropic',
+                    provider_name=origin_provider_name,
                 ),
                 NativeToolSearchReturnPart(
                     content={'discovered_tools': [{'name': 'calculate_mortgage'}]},
                     tool_call_id='c1',
-                    provider_name='anthropic',
+                    provider_name=origin_provider_name,
                 ),
             ],
         ),
@@ -4823,7 +5886,11 @@ def test_prepare_messages_passes_through_on_native_model() -> None:
 
     prepared = model.prepare_messages(history)
 
-    assert prepared is history
+    if translated:
+        assert isinstance(message_part(prepared, ToolSearchCallPart, message_index=1), ToolSearchCallPart)
+        assert isinstance(message_part(prepared, ToolSearchReturnPart, message_index=2), ToolSearchReturnPart)
+    else:
+        assert prepared is history
 
 
 def test_narrow_type_local_promotes_with_tool_kind_set() -> None:
@@ -5428,7 +6495,9 @@ def test_anthropic_custom_replay_blocks_returns_message_on_empty_discovered() ->
         content={'discovered_tools': [], 'message': 'No matches; try other keywords.'},
         tool_call_id='c1',
     )
-    refs, message = _build_custom_tool_search_replay_blocks(empty, tool_search_active=True, available_tool_names=set())
+    refs, message = _build_custom_tool_search_replay_blocks(
+        empty, deferred_tools_active=True, available_tool_names=set()
+    )
     assert refs == []
     assert message == 'No matches; try other keywords.'
 
@@ -5445,7 +6514,7 @@ def test_anthropic_custom_replay_blocks_skips_non_typed_returns() -> None:
         tool_call_id='c1',
     )
     refs, message = _build_custom_tool_search_replay_blocks(
-        base_part, tool_search_active=True, available_tool_names={'foo'}
+        base_part, deferred_tools_active=True, available_tool_names={'foo'}
     )
     assert refs is None and message is None
 
@@ -5466,7 +6535,7 @@ def test_anthropic_replay_filters_stale_tool_references() -> None:
 
     custom_part = ToolSearchReturnPart(content=content, tool_call_id='c1')
     refs, _ = _build_custom_tool_search_replay_blocks(
-        custom_part, tool_search_active=True, available_tool_names={'still_here'}
+        custom_part, deferred_tools_active=True, available_tool_names={'still_here'}
     )
     assert refs == [{'tool_name': 'still_here', 'type': 'tool_reference'}]
 
@@ -5538,7 +6607,17 @@ async def test_anthropic_map_message_empty_search_renders_message_text_block():
         ),
     ]
     params = ModelRequestParameters(
-        function_tools=[],
+        # A resolved request that withholds a schema — what makes the `tool_reference` reveal
+        # legal, and so what puts this exchange on the client-executed replay path at all.
+        function_tools=[
+            ToolDefinition(
+                name='calculate_mortgage',
+                parameters_json_schema={'type': 'object'},
+                defer_loading=True,
+                with_native=ToolSearchTool.kind,
+            )
+        ],
+        tool_visibility={'calculate_mortgage': 'deferred'},
         native_tools=[ToolSearchTool(strategy='custom')],
         allow_text_output=True,
     )
@@ -5643,7 +6722,8 @@ def test_openai_normalize_tool_search_args_raises_on_unrecognized_shape() -> Non
 # has any tool search active", not "strategy is custom".
 
 
-async def test_anthropic_promotes_local_search_history_with_default_native_strategy() -> None:
+@pytest.mark.parametrize('model_name', ['claude-sonnet-4-6', 'claude-opus-4-8'])
+async def test_anthropic_promotes_local_search_history_with_default_native_strategy(model_name: str) -> None:
     """Local-shape `ToolSearch*Part` from a prior cross-provider turn must render
     into Anthropic's native tool_search wire when the current turn is the default
     server-executed strategy (`ToolSearchTool()` / `strategy=None`).
@@ -5655,15 +6735,13 @@ async def test_anthropic_promotes_local_search_history_with_default_native_strat
     discovered tools' schemas from `defer_loading=true` once it sees the
     `tool_reference` block.
 
-    Currently fails because `_build_custom_tool_search_replay_blocks` is gated on
-    `strategy='custom'`, so the default-strategy case falls through and the return
-    is rendered as a plain `tool_result` carrying stringified content — the
-    discovered tools stay hidden and the model has to re-search.
+    The model matrix covers both Anthropic replay tiers: native tool search without
+    mid-conversation tool deltas, and the newer `tool_addition` path.
     """
     pytest.importorskip('anthropic')
 
     model = AnthropicModel(
-        'claude-sonnet-4-6',
+        model_name,
         provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(())),
     )
 
@@ -5683,12 +6761,11 @@ async def test_anthropic_promotes_local_search_history_with_default_native_strat
             ],
         ),
     ]
-    # Default native strategy (NOT 'custom') — currently the gate that activates the
-    # tool_reference replay re-formatting only fires for `strategy='custom'`. The
-    # discovered tool ships on the wire with `defer_loading=True`; the replay
-    # reference unlocks its schema server-side.
+    # Default native strategy (NOT 'custom'). The discovered tool ships on the wire
+    # with `defer_loading=True`; the replay reference unlocks its schema server-side.
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='get_weather', defer_loading=True)],
+        tool_visibility={'get_weather': 'deferred'},
         native_tools=[ToolSearchTool()],
         allow_text_output=True,
     )
@@ -5739,6 +6816,7 @@ async def test_anthropic_promotes_local_search_history_with_named_native_strateg
     ]
     params = ModelRequestParameters(
         function_tools=[ToolDefinition(name='calculate', defer_loading=True)],
+        tool_visibility={'calculate': 'deferred'},
         native_tools=[ToolSearchTool(strategy='bm25')],
         allow_text_output=True,
     )
@@ -5756,7 +6834,8 @@ async def test_anthropic_promotes_local_search_history_with_named_native_strateg
     assert tool_result['content'] == [{'type': 'tool_reference', 'tool_name': 'calculate'}]
 
 
-async def test_openai_promotes_local_search_history_with_default_native_strategy() -> None:
+@pytest.mark.parametrize('model_name', ['gpt-5.6', 'gpt-5'])
+async def test_openai_promotes_local_search_history_with_default_native_strategy(model_name: str) -> None:
     """Local-shape `ToolSearch*Part` from a prior cross-provider turn must render
     into OpenAI's client-executed tool-search replay items when tool-search replay is active.
 
@@ -5767,7 +6846,7 @@ async def test_openai_promotes_local_search_history_with_default_native_strategy
     pytest.importorskip('openai')
 
     model = OpenAIResponsesModel(
-        'gpt-5.4-mini',
+        model_name,
         provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())),
     )
 
@@ -5853,6 +6932,152 @@ async def test_openai_promotes_local_search_history_with_default_native_strategy
         for call in cast(list[ResponseFunctionToolCallParam], function_calls)
     )
     assert not function_outputs
+
+
+async def test_openai_replays_anthropic_native_search_history() -> None:
+    """Foreign native history is normalized before OpenAI renders its native replay."""
+    pytest.importorskip('openai')
+
+    model = OpenAIResponsesModel(
+        'gpt-5.4-mini',
+        provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='find a weather tool')]),
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(
+                    args={'queries': ['weather']}, tool_call_id='ant_1', provider_name='anthropic'
+                ),
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather'}]},
+                    tool_call_id='ant_1',
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+    ]
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='get_weather', defer_loading=True)],
+        tool_visibility={'get_weather': 'deferred'},
+        native_tools=[ToolSearchTool()],
+        allow_text_output=True,
+    )
+
+    prepared = model.prepare_messages(history)
+    _system, openai_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, OpenAIResponsesModelSettings(), params
+    )
+    calls = [
+        item
+        for item in openai_messages
+        if isinstance(item, dict) and cast(dict[str, Any], item).get('type') == 'tool_search_call'
+    ]
+    outputs = [
+        item
+        for item in openai_messages
+        if isinstance(item, dict) and cast(dict[str, Any], item).get('type') == 'tool_search_output'
+    ]
+
+    assert len(calls) == len(outputs) == 1
+    assert calls[0].get('execution') == outputs[0].get('execution') == 'client'
+    assert [tool['name'] for tool in cast(list[dict[str, Any]], outputs[0].get('tools'))] == ['get_weather']
+
+
+async def test_anthropic_replays_openai_native_search_history() -> None:
+    """Foreign native history is normalized before Anthropic renders its native replay."""
+    pytest.importorskip('anthropic')
+
+    model = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(())),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='find a weather tool')]),
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='oa_1', provider_name='openai'),
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather'}]},
+                    tool_call_id='oa_1',
+                    provider_name='openai',
+                ),
+            ],
+            provider_name='openai',
+        ),
+    ]
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='get_weather', defer_loading=True)],
+        tool_visibility={'get_weather': 'deferred'},
+        native_tools=[ToolSearchTool()],
+        allow_text_output=True,
+    )
+
+    prepared = model.prepare_messages(history)
+    _system, anthropic_messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        prepared, params, AnthropicModelSettings()
+    )
+    tool_uses: list[dict[str, Any]] = [
+        cast(dict[str, Any], block)
+        for message in anthropic_messages
+        if message['role'] == 'assistant' and isinstance(message['content'], list)
+        for block in cast(list[Any], message['content'])
+        if isinstance(block, dict)
+        and cast(dict[str, Any], block).get('type') == 'tool_use'
+        and cast(dict[str, Any], block).get('name') == _SEARCH_TOOLS_NAME
+    ]
+    tool_results: list[dict[str, Any]] = [
+        cast(dict[str, Any], block)
+        for message in anthropic_messages
+        if message['role'] == 'user' and isinstance(message['content'], list)
+        for block in cast(list[Any], message['content'])
+        if isinstance(block, dict) and cast(dict[str, Any], block).get('type') == 'tool_result'
+    ]
+
+    assert len(tool_uses) == len(tool_results) == 1
+    assert tool_results[0]['tool_use_id'] == tool_uses[0]['id']
+    assert tool_results[0]['content'] == [{'type': 'tool_reference', 'tool_name': 'get_weather'}]
+
+
+def test_native_search_history_replay_is_stable_across_a_b_a_switch() -> None:
+    """Preparing the same stored history for A → B → A never mutates its native shape."""
+    pytest.importorskip('openai')
+    pytest.importorskip('anthropic')
+
+    anthropic_model = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(())),
+    )
+    openai_model = OpenAIResponsesModel(
+        'gpt-5.4-mini',
+        provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(())),
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='find a weather tool')]),
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(
+                    args={'queries': ['weather']}, tool_call_id='ant_1', provider_name='anthropic'
+                ),
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'get_weather'}]},
+                    tool_call_id='ant_1',
+                    provider_name='anthropic',
+                ),
+            ],
+            provider_name='anthropic',
+        ),
+    ]
+
+    first_anthropic = anthropic_model.prepare_messages(history)
+    openai = openai_model.prepare_messages(history)
+    second_anthropic = anthropic_model.prepare_messages(history)
+
+    assert first_anthropic is second_anthropic is history
+    assert isinstance(message_part(history, NativeToolSearchCallPart, message_index=1), NativeToolSearchCallPart)
+    assert isinstance(message_part(openai, ToolSearchCallPart, message_index=1), ToolSearchCallPart)
+    assert isinstance(message_part(openai, ToolSearchReturnPart, message_index=2), ToolSearchReturnPart)
 
 
 # --- `strategy='keywords'` on natively-supporting providers ---
@@ -6029,23 +7254,18 @@ async def test_tool_search_strategy_keywords_runs_keyword_algorithm_via_search_f
     assert 'calculate_mortgage' in discovered_names
 
 
-# --- Capability-gated tool-search forces client-executed promotion ---
+# --- Pre-advertised hidden non-corpus tools force client-executed promotion ---
 #
-# Provider-side tool search can't honor capability gating — it would reveal corpus tools
-# whose owning capability hasn't been loaded yet. When any function tool has both
-# `with_native='tool_search'` and a `capability_id`, `_resolve_native_tool_swap` either
-# raises (named-native strategies have no local equivalent) or promotes `strategy=None` to
-# `'custom'` (client-executed), keeping `search_tools` on the wire as the callback.
+# This compatibility path remains only for channel-less and `by_reference` profiles that still
+# pre-advertise hidden non-corpus tools. Phase 3 removes it with lazy advertisement.
 
 
-def _capability_owned_corpus_tool() -> ToolDefinition:
+def _hidden_non_corpus_tool() -> ToolDefinition:
     return ToolDefinition(
         name='lookup_refund_policy',
         parameters_json_schema={'type': 'object', 'properties': {}},
-        with_native=ToolSearchTool.kind,
         capability_id='refunds',
         defer_loading=True,
-        metadata={DEFERRED_CAPABILITY_TOOL_METADATA_KEY: True},
     )
 
 
@@ -6053,10 +7273,91 @@ def _local_search_tools_def() -> ToolDefinition:
     return ToolDefinition(name=_SEARCH_TOOLS_NAME, parameters_json_schema={}, unless_native=ToolSearchTool.kind)
 
 
+@pytest.mark.parametrize(
+    ('defer_loading', 'corpus_member', 'revealed', 'tool_deferral_mode', 'tool_addition_mode', 'expected'),
+    [
+        (False, False, False, None, None, 'visible'),
+        (True, True, False, 'standalone', None, 'deferred'),
+        (True, True, False, None, None, 'withheld'),
+        (True, True, False, 'with_tool_search', None, 'deferred'),
+        (True, False, False, 'standalone', 'with_definitions', 'withheld'),
+        (True, False, True, 'with_tool_search', 'with_definitions', 'via_history'),
+        (True, False, True, None, None, 'visible'),
+        (True, False, True, 'standalone', None, 'deferred'),
+        (True, False, False, 'standalone', 'by_reference', 'deferred'),
+        (True, False, True, 'standalone', 'by_reference', 'deferred'),
+    ],
+)
+def test_prepare_request_resolves_tool_visibility(
+    defer_loading: bool,
+    corpus_member: bool,
+    revealed: bool,
+    tool_deferral_mode: Literal['standalone', 'with_tool_search'] | None,
+    tool_addition_mode: Literal['by_reference', 'with_definitions'] | None,
+    expected: Literal['visible', 'deferred', 'withheld', 'via_history'],
+) -> None:
+    """Pin the resolve table independently of any provider renderer."""
+
+    class M(TestModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+            return frozenset({ToolSearchTool})
+
+    tool = ToolDefinition(
+        name='dynamic_tool',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=defer_loading,
+        with_native=ToolSearchTool.kind if corpus_member else None,
+        unless_native='missing' if not defer_loading else None,
+    )
+    native_tools: list[AbstractNativeTool] = (
+        [ToolSearchTool()] if corpus_member or tool_deferral_mode == 'with_tool_search' else []
+    )
+    params = ModelRequestParameters(
+        function_tools=[tool],
+        native_tools=native_tools,
+        revealed_tool_names={'dynamic_tool'} if revealed else set(),
+    )
+    profile = ModelProfile(
+        tool_deferral_mode=tool_deferral_mode,
+        tool_addition_mode=tool_addition_mode,
+        supported_native_tools=frozenset({ToolSearchTool}),
+    )
+
+    _, prepared = M(profile=profile).prepare_request(None, params)
+
+    [resolved] = prepared.function_tools
+    assert resolved.defer_loading is defer_loading
+    assert prepared.tool_visibility == {'dynamic_tool': expected}
+
+
+def test_prepare_request_stamps_visibility_on_the_plain_path() -> None:
+    """With nothing native and nothing deferred, `prepare_request` still resolves every tool.
+
+    The consumers happen to treat an absent entry like `'visible'`, so deleting the plain-path
+    stamp would fail nothing downstream — this pins the documented invariant directly: authored
+    parameters are empty, prepared parameters cover every function tool.
+    """
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='plain_a', parameters_json_schema={'type': 'object', 'properties': {}}),
+            ToolDefinition(name='plain_b', parameters_json_schema={'type': 'object', 'properties': {}}),
+        ]
+    )
+    assert params.tool_visibility is None
+
+    _, prepared = TestModel().prepare_request(None, params)
+
+    assert prepared.tool_visibility == {'plain_a': 'visible', 'plain_b': 'visible'}
+
+    # Zero function tools still resolves: `None` means unresolved, `{}` means resolved-and-empty.
+    _, empty = TestModel().prepare_request(None, ModelRequestParameters())
+    assert empty.tool_visibility == {}
+
+
 @pytest.mark.parametrize('strategy', ['bm25', 'regex'])
-def test_capability_gated_tool_search_raises_on_named_native_strategy(strategy: str) -> None:
-    """Named-native strategies have no local equivalent — silently substituting `keywords`
-    would change the user's chosen algorithm, so we raise."""
+def test_hidden_non_corpus_tool_keeps_named_native_strategy(strategy: str) -> None:
+    """Native search stays native because hidden non-corpus tools are withheld from its index."""
 
     class M(TestModel):
         @classmethod
@@ -6064,16 +7365,24 @@ def test_capability_gated_tool_search_raises_on_named_native_strategy(strategy: 
             return frozenset({ToolSearchTool})
 
     params = ModelRequestParameters(
-        function_tools=[_capability_owned_corpus_tool()],
+        function_tools=[
+            replace(_hidden_non_corpus_tool(), name='searchable_tool', with_native=ToolSearchTool.kind),
+            _hidden_non_corpus_tool(),
+        ],
         native_tools=[ToolSearchTool(strategy=cast(Any, strategy), optional=True)],
     )
-    with pytest.raises(UserError, match=rf'strategy={strategy!r}.*incompatible with deferred-loading'):
-        M().prepare_request(None, params)
+    _, prepared = M(profile=ModelProfile(tool_deferral_mode='standalone')).prepare_request(None, params)
+
+    [native] = prepared.native_tools
+    assert isinstance(native, ToolSearchTool) and native.strategy == strategy
+    assert prepared.tool_visibility == {
+        'searchable_tool': 'deferred',
+        'lookup_refund_policy': 'withheld',
+    }
 
 
-def test_capability_gated_tool_search_promotes_default_strategy_to_custom() -> None:
-    """Promotion: `strategy=None` → `'custom'` and `search_tools` stays on the wire as the
-    client-executed callback."""
+def test_hidden_non_corpus_tool_keeps_default_native_strategy() -> None:
+    """Default search remains server-executed and its local callback is stripped."""
 
     class M(TestModel):
         @classmethod
@@ -6081,20 +7390,55 @@ def test_capability_gated_tool_search_promotes_default_strategy_to_custom() -> N
             return frozenset({ToolSearchTool})
 
     params = ModelRequestParameters(
-        function_tools=[_local_search_tools_def(), _capability_owned_corpus_tool()],
+        function_tools=[
+            _local_search_tools_def(),
+            ToolDefinition(
+                name='get_weather',
+                parameters_json_schema={'type': 'object', 'properties': {}},
+                with_native=ToolSearchTool.kind,
+                defer_loading=True,
+            ),
+            _hidden_non_corpus_tool(),
+        ],
         native_tools=[ToolSearchTool(strategy=None, optional=True)],
     )
-    _, prepared = M().prepare_request(None, params)
+    _, prepared = M(profile=ModelProfile(tool_deferral_mode='standalone')).prepare_request(None, params)
 
     [native] = prepared.native_tools
-    assert isinstance(native, ToolSearchTool) and native.strategy == 'custom'
-    assert _SEARCH_TOOLS_NAME in [t.name for t in prepared.function_tools]
+    assert isinstance(native, ToolSearchTool) and native.strategy is None
+    assert _SEARCH_TOOLS_NAME not in [t.name for t in prepared.function_tools]
+    assert prepared.visibility_of('lookup_refund_policy') == 'withheld'
 
 
-def test_capability_gated_tool_search_skips_other_natives_and_leaves_custom_strategy_unchanged() -> None:
-    """Promotion must skip past non-`ToolSearchTool` entries in `supported_natives` and
-    leave an already-`'custom'` strategy (set by `ToolSearch(strategy='keywords'|callable)`)
-    untouched — but still report `True` so `search_tools` stays on the wire."""
+def test_revealed_hidden_tool_keeps_native_search_stable() -> None:
+    """The native search surface renders identically before and after a reveal."""
+
+    class M(TestModel):
+        @classmethod
+        def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+            return frozenset({ToolSearchTool})
+
+    params = ModelRequestParameters(
+        function_tools=[
+            _local_search_tools_def(),
+            replace(_hidden_non_corpus_tool(), with_native=ToolSearchTool.kind),
+            _hidden_non_corpus_tool(),
+        ],
+        native_tools=[ToolSearchTool(strategy=None, optional=True)],
+    )
+    model = M(profile=ModelProfile(tool_deferral_mode='standalone'))
+    _, before = model.prepare_request(None, params)
+    _, after = model.prepare_request(None, replace(params, revealed_tool_names={'lookup_refund_policy'}))
+
+    assert before.native_tools == after.native_tools == [ToolSearchTool(strategy=None, optional=True)]
+    assert _SEARCH_TOOLS_NAME not in before.tool_defs
+    assert _SEARCH_TOOLS_NAME not in after.tool_defs
+    assert before.visibility_of('lookup_refund_policy') == 'withheld'
+    assert after.visibility_of('lookup_refund_policy') == 'deferred'
+
+
+def test_hidden_non_corpus_tool_leaves_other_natives_and_custom_search_unchanged() -> None:
+    """Other native tools and an explicitly client-executed search strategy are unchanged."""
 
     class M(TestModel):
         @classmethod
@@ -6102,15 +7446,19 @@ def test_capability_gated_tool_search_skips_other_natives_and_leaves_custom_stra
             return frozenset({ToolSearchTool, WebSearchTool})
 
     params = ModelRequestParameters(
-        function_tools=[_local_search_tools_def(), _capability_owned_corpus_tool()],
+        function_tools=[
+            _local_search_tools_def(),
+            replace(_hidden_non_corpus_tool(), with_native=ToolSearchTool.kind),
+            _hidden_non_corpus_tool(),
+        ],
         # WebSearchTool listed first so the promotion loop must `continue` past it.
         native_tools=[WebSearchTool(), ToolSearchTool(strategy='custom', optional=True)],
     )
-    _, prepared = M().prepare_request(None, params)
+    _, prepared = M(profile=ModelProfile(tool_deferral_mode='standalone')).prepare_request(None, params)
 
     [tool_search] = [t for t in prepared.native_tools if isinstance(t, ToolSearchTool)]
     assert tool_search.strategy == 'custom'
-    assert _SEARCH_TOOLS_NAME in [t.name for t in prepared.function_tools]
+    assert _SEARCH_TOOLS_NAME not in [t.name for t in prepared.function_tools]
 
 
 def test_capability_gated_tool_search_leaves_non_capability_corpus_alone() -> None:
@@ -6139,33 +7487,667 @@ def test_capability_gated_tool_search_leaves_non_capability_corpus_alone() -> No
     assert _SEARCH_TOOLS_NAME not in [t.name for t in prepared.function_tools]
 
 
-# --- Namespace synthesis for any tool-search corpus member ---
+# --- Namespace synthesis for any revealed tool ---
 #
-# OpenAI rejects replayed tool-search-discovered function calls without a `namespace`. For
-# cross-provider replay there's no captured namespace, so the adapter synthesizes one from
-# the tool name. The gate is `with_native='tool_search'` (any corpus member), not just
-# capability-owned tools — plain `defer_loading=True` tools also need this on replay.
+# OpenAI rejects a replayed call to a tool that arrived mid-conversation without a `namespace`. For
+# cross-provider replay there's no captured namespace, so the adapter synthesizes one from the tool
+# name. The gate is `revealed_tool_names` — a searchable corpus member the model discovered and a
+# capability-gated tool that was never searchable both land there, by different routes.
 
 
-def test_tool_search_namespace_synthesis_returns_tool_name_for_corpus_member() -> None:
-    """A function tool with `with_native='tool_search'` and no `capability_id` still gets a
-    synthesized namespace — the gate is corpus membership, not capability ownership."""
+@pytest.mark.parametrize(
+    'tool_def',
+    [
+        pytest.param(
+            ToolDefinition(
+                name='lookup_refund_policy',
+                parameters_json_schema={'type': 'object', 'properties': {}},
+                with_native=ToolSearchTool.kind,
+                defer_loading=True,
+            ),
+            id='searchable-corpus-member',
+        ),
+        pytest.param(
+            ToolDefinition(
+                name='lookup_refund_policy',
+                parameters_json_schema={'type': 'object', 'properties': {}},
+                capability_id='refunds',
+                defer_loading=True,
+            ),
+            id='capability-gated-tool',
+        ),
+    ],
+)
+def test_tool_search_namespace_synthesis_returns_tool_name_for_revealed_tool(tool_def: ToolDefinition) -> None:
+    """Either kind of reveal earns a synthesized namespace.
+
+    A capability-gated tool belongs to no corpus, so it carries no `with_native` to key off — but
+    OpenAI asks for the namespace on the replayed call just the same.
+    """
     pytest.importorskip('openai')
 
-    plain_corpus_tool = ToolDefinition(
-        name='lookup_refund_policy',
-        parameters_json_schema={'type': 'object', 'properties': {}},
-        with_native=ToolSearchTool.kind,
+    params = ModelRequestParameters(
+        function_tools=[tool_def],
+        revealed_tool_names={'lookup_refund_policy'},
     )
-    params = ModelRequestParameters(function_tools=[plain_corpus_tool])
+    params = replace(params, tool_visibility={tool_def.name: 'via_history'})
     assert _tool_search_namespace_for_synthesis('lookup_refund_policy', params) == 'lookup_refund_policy'
 
 
 def test_tool_search_namespace_synthesis_returns_none_for_unrelated_function_tool() -> None:
-    """A regular function tool (no `with_native`) must not be tagged — synthesizing a
-    namespace there would inject a field the API didn't request."""
+    """A regular function tool, declared up front and never revealed, must not be tagged —
+    synthesizing a namespace there would inject a field the API didn't request."""
     pytest.importorskip('openai')
 
     regular_tool = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
     params = ModelRequestParameters(function_tools=[regular_tool])
     assert _tool_search_namespace_for_synthesis('get_weather', params) is None
+
+
+def test_tool_availability_delta_accumulates_onto_earlier_search_returns():
+    """A delta adds to what search already discovered rather than replacing it.
+
+    Additions are the only direction, so reconstructing what the model can see is a union over both
+    shapes — the older `ToolSearchReturnPart` histories and the newer delta — and nothing ever leaves
+    the set. Withdrawal is tracked in #6985 and would make this an ordered reduction again.
+    """
+    messages = [
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'old_tool'}, {'name': 'kept_tool'}]},
+                    tool_call_id='search-1',
+                )
+            ]
+        ),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'])]),
+    ]
+
+    assert parse_discovered_tools(messages) == {'old_tool', 'kept_tool', 'new_tool'}
+
+
+def test_compaction_resets_discovered_tools_at_part_boundary() -> None:
+    """Compaction hides every discovery representation before the boundary, including
+    earlier parts in the same response, while later visible discoveries still count."""
+    before_compaction = ModelRequest(
+        parts=[
+            ToolSearchReturnPart(
+                content={'discovered_tools': [{'name': 'typed_before'}]}, tool_call_id='search-before'
+            ),
+            ToolAvailabilityDeltaPart(tools_added=['delta_before']),
+            ToolReturnPart(
+                tool_name='search_tools',
+                content='Found legacy_before',
+                tool_call_id='legacy-before',
+                metadata={'discovered_tools': ['legacy_before']},
+            ),
+        ]
+    )
+    compaction = CompactionPart(content='Summary.', provider_name='anthropic')
+    assert parse_discovered_tools([before_compaction, ModelResponse(parts=[compaction])]) == set()
+
+    messages = [
+        before_compaction,
+        ModelResponse(
+            parts=[
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'native_before'}]}, tool_call_id='native-before'
+                ),
+                compaction,
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'native_after'}]}, tool_call_id='native-after'
+                ),
+            ]
+        ),
+    ]
+
+    assert parse_discovered_tools(messages) == {'native_after'}
+
+
+def test_compaction_resets_loaded_capabilities_at_part_boundary() -> None:
+    """A capability load is visible only when its complete call/return pair follows the
+    latest compaction boundary; an unmatched pre-boundary call cannot complete later."""
+    messages = [
+        ModelResponse(
+            parts=[
+                LoadCapabilityCallPart(args={'id': 'before'}, tool_call_id='before'),
+                LoadCapabilityCallPart(args={'id': 'split'}, tool_call_id='split'),
+            ]
+        ),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='before')]),
+        ModelResponse(parts=[CompactionPart(content='Summary.', provider_name='anthropic')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='split')]),
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'after'}, tool_call_id='after')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='after')]),
+    ]
+
+    assert parse_loaded_capabilities(messages) == {'after'}
+
+
+async def test_compaction_rehides_capability_tools_until_reloaded() -> None:
+    """A capability whose load pair is before compaction starts hidden again, then its
+    tool is re-revealed after the model loads the capability in visible history."""
+    capability = Capability[None](id='refunds', description='Refund tools.', defer_loading=True)
+
+    @capability.tool_plain
+    def issue_refund() -> str:  # pragma: no cover
+        return 'refunded'
+
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='old-load')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='old-load')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['issue_refund'], tool_call_id='old-load')]),
+        ModelResponse(parts=[CompactionPart(content='Summary.', provider_name='anthropic')]),
+    ]
+    visible_tools: list[list[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        visible_tools.append([tool.name for tool in info.function_tools])
+        if len(visible_tools) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='load_capability', args={'id': 'refunds'}, tool_call_id='new-load')]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[None, str] = Agent(FunctionModel(model_fn), capabilities=[capability], deps_type=type(None))
+    await agent.run('refund', message_history=history)
+
+    assert visible_tools == [['load_capability'], ['load_capability', 'issue_refund']]
+
+
+class _HookObservingCapability(Capability[None]):
+    """A deferred capability that records its own tool-execute hook activity."""
+
+    def __init__(self) -> None:
+        super().__init__(id='refunds', description='Refund tools.', defer_loading=True)
+        self.hook_log: list[str] = []
+
+    async def before_tool_execute(
+        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.hook_log.append(f'before:{call.tool_name}:loaded={ctx.capability_loaded}')
+        return args
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[None],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: Callable[[dict[str, Any]], Awaitable[Any]],
+    ) -> Any:
+        self.hook_log.append(f'wrap:{call.tool_name}')
+        return await handler(args)
+
+
+async def _call_capability_tool_directly(history: list[ModelMessage]) -> tuple[_HookObservingCapability, list[str]]:
+    """Run an agent whose model calls the capability-owned tool directly, with no (re)load."""
+    capability = _HookObservingCapability()
+    executed: list[str] = []
+
+    @capability.tool_plain
+    def issue_refund() -> str:
+        executed.append('issue_refund')
+        return 'refunded'
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if not executed:
+            return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[None, str] = Agent(FunctionModel(model_fn), capabilities=[capability], deps_type=type(None))
+    await agent.run('refund now', message_history=history)
+    return capability, executed
+
+
+async def test_capability_tool_called_after_compaction_still_runs_owner_hooks() -> None:
+    """The boundary reset must not double as a hook bypass: a capability-owned tool called
+    post-compaction (its load pair is pre-boundary) still runs its owner's execute hooks,
+    with `capability_loaded` truthfully `False`."""
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='old-load')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='old-load')]),
+        ModelResponse(parts=[CompactionPart(content='Summary: refund tooling exists.', provider_name='anthropic')]),
+    ]
+    capability, executed = await _call_capability_tool_directly(history)
+
+    assert executed == ['issue_refund']
+    assert capability.hook_log == ['before:issue_refund:loaded=False', 'wrap:issue_refund']
+
+
+async def test_capability_tool_called_without_any_load_still_runs_owner_hooks() -> None:
+    """The same guarantee for the fabricated-history residual: reveal evidence with no
+    load pair at all keeps the tool callable, so its owner's hooks must run there too."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['issue_refund'])]),
+        ModelResponse(parts=[TextPart('ok')]),
+    ]
+    capability, executed = await _call_capability_tool_directly(history)
+
+    assert executed == ['issue_refund']
+    assert capability.hook_log == ['before:issue_refund:loaded=False', 'wrap:issue_refund']
+
+
+async def test_searchable_corpus_survives_discovery_and_compaction() -> None:
+    """A custom search sees the complete A–E corpus after A–C were discovered, and A can
+    be rediscovered after compaction and called without a runtime availability failure."""
+    toolset = FunctionToolset()
+    executed: list[str] = []
+    for tool_name in ['a', 'b', 'c', 'd', 'e']:
+
+        def tool(name: str = tool_name) -> str:
+            executed.append(name)
+            return name
+
+        toolset.add_function(tool, name=tool_name, defer_loading=True)
+
+    corpora: list[list[str]] = []
+
+    def search(_ctx: RunContext[None], queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+        corpora.append([tool.name for tool in tools])
+        return ['a', 'b', 'c'] if queries == ['first'] else ['a']
+
+    call = 0
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call
+        call += 1
+        if call == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['first']})])
+        if call == 2:
+            return ModelResponse(
+                parts=[CompactionPart(content='Summary.', provider_name='anthropic'), TextPart('compacted')]
+            )
+        if call == 3:
+            return ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['again']})])
+        if call == 4:
+            return ModelResponse(parts=[ToolCallPart(tool_name='a', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[None, str] = Agent(
+        NoNativeToolSearchModel(model_fn),
+        toolsets=[toolset],
+        capabilities=[ToolSearch(strategy=search)],
+        deps_type=type(None),
+    )
+    first = await agent.run('discover tools')
+    await agent.run('find A again', message_history=first.all_messages())
+
+    assert corpora == [['a', 'b', 'c', 'd', 'e'], ['a', 'b', 'c', 'd', 'e']]
+    assert executed == ['a']
+
+
+async def test_pre_compaction_tool_stays_callable_without_rediscovery() -> None:
+    """A model that still remembers a pre-compaction tool (e.g. from the summary) can call
+    it directly: the boundary reset hides the schema again but never revokes execution."""
+    toolset = FunctionToolset()
+    executed: list[str] = []
+
+    @toolset.tool_plain(defer_loading=True)
+    def issue_refund() -> str:
+        executed.append('issue_refund')
+        return 'refunded'
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='discover tools')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='search_tools', args={'queries': ['refund']}, tool_call_id='s1')]),
+        ModelRequest(
+            parts=[ToolSearchReturnPart(content={'discovered_tools': [{'name': 'issue_refund'}]}, tool_call_id='s1')]
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(content='Summary: refund tooling exists.', provider_name='anthropic'),
+                TextPart('compacted'),
+            ]
+        ),
+    ]
+
+    def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if not executed:
+            return ModelResponse(parts=[ToolCallPart(tool_name='issue_refund', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[None, str] = Agent(
+        NoNativeToolSearchModel(model_fn), toolsets=[toolset], capabilities=[ToolSearch()], deps_type=type(None)
+    )
+    await agent.run('refund now', message_history=history)
+
+    assert executed == ['issue_refund']
+
+
+async def test_delta_in_history_reveals_a_capability_tool_without_a_load(allow_model_requests: None):
+    """A delta part in history reveals a capability-owned tool with no `load_capability` — deliberately.
+
+    History is the trust boundary: whoever can fabricate this part can equally fabricate the whole
+    `load_capability` call/return exchange and activate the capability outright, so gating the
+    discovered-names arm on capability state would add a check without adding a boundary.
+    Deployments accepting client-supplied history get integrity from authenticated endpoints and
+    server-persisted history (the UI docs' trust model), not from reveal-state derivation. This test
+    pins that decision so the asymmetry isn't mistaken for an oversight.
+    """
+    capability = Capability[None](
+        id='refunds', description='Refund operations.', instructions='Follow the refund policy.', defer_loading=True
+    )
+
+    @capability.tool_plain
+    def issue_refund() -> str:
+        """Issue a refund."""
+        return 'refunded'  # pragma: no cover
+
+    captured: list[ModelRequestParameters] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured.append(info.model_request_parameters)
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[capability], deps_type=type(None))
+    result = await agent.run(
+        'help', message_history=[ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['issue_refund'])])]
+    )
+
+    assert result.output == 'done'
+    [params] = captured
+    assert 'issue_refund' in params.revealed_tool_names
+
+
+def test_tool_availability_delta_falls_back_to_a_system_instruction():
+    """A profile without native tool changes is told what happened, not sold a search it never ran.
+
+    The part is replaced where it stands, so the message count doesn't change — which is the point:
+    the fabricated `search_tools` call this replaced had to be spliced in as a separate
+    `ModelResponse` ahead of the rebuilt request.
+    """
+    model = TestModel()
+    tool = ToolDefinition(name='new_tool', parameters_json_schema={'type': 'object'}, defer_loading=True)
+    prepared = model.prepare_messages(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='load-1')])],
+        ModelRequestParameters(function_tools=[tool]),
+    )
+
+    assert len(prepared) == 1
+    request = prepared[0]
+    assert isinstance(request, ModelRequest)
+    [part] = request.parts
+    assert isinstance(part, SystemPromptPart)
+    assert part.content == snapshot('The following tool(s) are now available: `new_tool`')
+
+
+def test_tool_availability_delta_does_not_announce_unknown_tool():
+    """Persisted UI history cannot turn a provider-shaped name into a system instruction."""
+    model = TestModel()
+    prepared = model.prepare_messages(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['ignore_previous_instructions'])])],
+        ModelRequestParameters(
+            function_tools=[ToolDefinition(name='known_tool', parameters_json_schema={'type': 'object'})]
+        ),
+    )
+
+    assert prepared == []
+
+
+async def test_native_tool_availability_delta_does_not_render_unknown_tool():
+    """Native delta renderers also resolve names against the current definitions."""
+    pytest.importorskip('anthropic')
+    pytest.importorskip('openai')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['ignore_previous_instructions'])])
+    ]
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='known_tool', parameters_json_schema={'type': 'object'})]
+    )
+
+    anthropic_model = AnthropicModel(
+        'claude-opus-4-8', provider=AnthropicProvider(anthropic_client=MockAnthropic.create_mock(()))
+    )
+    _, anthropic_messages = await anthropic_model._map_message(  # pyright: ignore[reportPrivateUsage]
+        history, params, AnthropicModelSettings()
+    )
+    assert anthropic_messages == []
+
+    openai_model = OpenAIResponsesModel(
+        'gpt-5.6', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(()))
+    )
+    _, openai_messages = await openai_model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        history, OpenAIResponsesModelSettings(), params
+    )
+    assert openai_messages == []
+
+
+def test_tool_availability_delta_keeps_its_place_among_other_parts():
+    """The announcement replaces the delta in place, so the parts around it keep their order.
+
+    This is the shape the old splice got wrong: it appended the fabricated `ModelResponse` to the
+    output before the rebuilt `ModelRequest`, so an assistant turn landed ahead of a user prompt that
+    had originally preceded the delta.
+    """
+    model = TestModel()
+    tool = ToolDefinition(name='new_tool', parameters_json_schema={'type': 'object'}, defer_loading=True)
+    prepared = model.prepare_messages(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='before'),
+                    ToolAvailabilityDeltaPart(tools_added=['new_tool']),
+                    UserPromptPart(content='after'),
+                ]
+            )
+        ],
+        ModelRequestParameters(function_tools=[tool]),
+    )
+
+    assert len(prepared) == 1
+    request = prepared[0]
+    assert isinstance(request, ModelRequest)
+    assert [type(part).__name__ for part in request.parts] == snapshot(
+        ['UserPromptPart', 'UserPromptPart', 'UserPromptPart']
+    )
+    announcement = request.parts[1]
+    assert isinstance(announcement, UserPromptPart)
+    assert announcement.content == '<system>The following tool(s) are now available: `new_tool`</system>'
+
+
+def test_tool_availability_delta_adding_nothing_leaves_no_empty_request():
+    """A delta with nothing to announce drops out rather than reaching an adapter with no parts."""
+    model = TestModel()
+    prepared = model.prepare_messages([ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[])])])
+
+    assert prepared == snapshot([])
+
+
+def _vercel_tool_history_roundtrip(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages))
+
+
+def _ag_ui_tool_history_roundtrip(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return AGUIAdapter.load_messages(AGUIAdapter.dump_messages(messages, ag_ui_version='0.1.13'))
+
+
+def _portable_tool_history(representation: Literal['local', 'native', 'delta']) -> list[ModelMessage]:
+    if representation == 'local':
+        return [
+            ModelResponse(parts=[ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search-1')]),
+            ModelRequest(
+                parts=[
+                    ToolSearchReturnPart(
+                        content={'discovered_tools': [{'name': 'get_weather'}]},
+                        tool_call_id='search-1',
+                    )
+                ]
+            ),
+        ]
+    if representation == 'native':
+        return [
+            ModelResponse(
+                parts=[
+                    NativeToolSearchCallPart(
+                        args={'queries': ['weather']},
+                        tool_call_id='search-1',
+                        provider_name='anthropic',
+                        provider_details={'strategy': 'bm25'},
+                    ),
+                    NativeToolSearchReturnPart(
+                        content={'discovered_tools': [{'name': 'get_weather'}]},
+                        tool_call_id='search-1',
+                        provider_name='anthropic',
+                    ),
+                ],
+                provider_name='anthropic',
+            )
+        ]
+    return [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['get_weather'], tool_call_id='search-1')])]
+
+
+@pytest.mark.parametrize('representation', ['local', 'native', 'delta'])
+@pytest.mark.parametrize(
+    'roundtrip',
+    [
+        pytest.param(_vercel_tool_history_roundtrip, id='vercel'),
+        pytest.param(
+            _ag_ui_tool_history_roundtrip,
+            id='ag-ui',
+            marks=pytest.mark.skipif(
+                not ag_ui_preserves_tool_kind(),
+                reason='ag-ui-protocol not installed, or older than 0.1.11 which drops the tool kind',
+            ),
+        ),
+    ],
+)
+async def test_tool_history_ui_roundtrip_preserves_anthropic_request(
+    representation: Literal['local', 'native', 'delta'],
+    roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
+    allow_model_requests: None,
+) -> None:
+    """Every persisted tool-discovery representation renders identically after a UI adapter round-trip."""
+    pytest.importorskip('anthropic')
+
+    async def render(messages: list[ModelMessage]) -> dict[str, Any]:
+        response = completion_message(
+            [BetaTextBlock(text='done', type='text')],
+            BetaUsage(input_tokens=5, output_tokens=5),
+        )
+        mock_client = MockAnthropic.create_mock(response)
+        model = AnthropicModel(
+            'claude-opus-4-8',
+            provider=AnthropicProvider(anthropic_client=mock_client),
+        )
+        tool = ToolDefinition(
+            name='get_weather',
+            description='Get the weather.',
+            parameters_json_schema={'type': 'object', 'properties': {}},
+            defer_loading=True,
+            with_native=ToolSearchTool.kind,
+        )
+        await model.request(
+            model.prepare_messages(messages),
+            None,
+            ModelRequestParameters(function_tools=[tool], native_tools=[ToolSearchTool()]),
+        )
+        return get_mock_chat_completion_kwargs(mock_client)[0]
+
+    history = _portable_tool_history(representation)
+    assert await render(roundtrip(history)) == await render(history)
+
+
+@pytest.mark.parametrize(
+    'roundtrip',
+    [
+        pytest.param(_vercel_tool_history_roundtrip, id='vercel'),
+        pytest.param(
+            _ag_ui_tool_history_roundtrip,
+            id='ag-ui',
+            marks=pytest.mark.skipif(not ag_ui_preserves_tool_kind(), reason='ag-ui cannot preserve tool kind'),
+        ),
+    ],
+)
+@pytest.mark.parametrize('target', ['openai-responses', 'google'])
+async def test_tool_history_ui_roundtrip_delta_renders_once_on_non_anthropic_target(
+    roundtrip: Callable[[list[ModelMessage]], list[ModelMessage]],
+    target: str,
+    allow_model_requests: None,
+    mocker: MockerFixture,
+) -> None:
+    """A persisted delta renders exactly once after adapters rebuild its control representation."""
+    tool = ToolDefinition(
+        name='get_weather',
+        description='Get the weather.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+    )
+    history = roundtrip(_portable_tool_history('delta'))
+    parameters = ModelRequestParameters(function_tools=[tool], revealed_tool_names={tool.name})
+
+    if target == 'openai-responses':
+        pytest.importorskip('openai')
+        client = MockOpenAIResponses.create_mock(response_message([]))
+        model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=client))
+        settings, parameters = model.prepare_request(None, parameters)
+        await model.request(model.prepare_messages(history, parameters), settings, parameters)
+        [request] = get_mock_responses_kwargs(client)
+        additional = [item for item in request['input'] if item.get('type') == 'additional_tools']
+        assert len(additional) == 1
+        assert [wire_tool['name'] for wire_tool in additional[0]['tools']] == ['get_weather']
+    else:
+        pytest.importorskip('google.genai')
+        model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test'))
+        response = GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(text='ok')], role='model'))],
+            response_id='response-1',
+            model_version='gemini-3-flash-preview',
+        )
+        generate = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+        settings, parameters = model.prepare_request(None, parameters)
+        await model.request(model.prepare_messages(history, parameters), settings, parameters)
+        announcement = 'The following tool(s) are now available: `get_weather`'
+        assert json.dumps(generate.call_args.kwargs, default=str).count(announcement) == 1
+
+
+def test_tool_availability_delta_adding_nothing_is_dropped_on_the_reveal_path_too():
+    """An empty delta has no reveal to render, so it leaves no exchange and no empty request behind.
+
+    The counterpart of `test_tool_availability_delta_adding_nothing_leaves_no_empty_request`, on the
+    branch that renders the tool-search exchange because the model withholds schemas. A request whose
+    only part is an empty delta has to disappear entirely rather than reach the adapter with no parts.
+    """
+    pytest.importorskip('anthropic')
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    # `claude-sonnet-4-6` has native tool search and takes `defer_loading` without a search surface,
+    # so it renders the reveal as the tool-search exchange rather than announcing it.
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
+
+    assert model.prepare_messages([ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=[])])]) == snapshot([])
+
+    # And an empty delta alongside real content leaves that content untouched.
+    prepared = model.prepare_messages(
+        [ModelRequest(parts=[UserPromptPart(content='hello'), ToolAvailabilityDeltaPart(tools_added=[])])]
+    )
+    assert len(prepared) == 1
+    request = prepared[0]
+    assert isinstance(request, ModelRequest)
+    assert [type(part).__name__ for part in request.parts] == snapshot(['UserPromptPart'])
+
+
+def test_tool_availability_delta_synthesis_deconflicts_duplicate_client_ids():
+    """Two persisted deltas cannot emit provider history with duplicate call IDs."""
+    pytest.importorskip('anthropic')
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='not-used'))
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='duplicate')]),
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='duplicate')]),
+    ]
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='new_tool', defer_loading=True)],
+    )
+    _, params = model.prepare_request(None, params)
+
+    prepared = model.prepare_messages(messages, params)
+    call_ids = [
+        part.tool_call_id
+        for message in prepared
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolSearchCallPart)
+    ]
+    assert len(call_ids) == len(set(call_ids)) == 2

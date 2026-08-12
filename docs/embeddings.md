@@ -840,6 +840,10 @@ async def test_my_rag_system():
         assert test_model.last_settings is not None
 ```
 
+Setting [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] to `False` also blocks embedding requests, so an embedder you forgot to override raises instead of quietly calling the provider. [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] and [`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] are unaffected, as neither reaches a provider.
+
+This covers [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens] as well, but only where tokenization happens server-side: Google and Cohere count tokens through an API call and are blocked, while OpenAI tokenizes locally with `tiktoken` and is not.
+
 ## Instrumentation
 
 Enable OpenTelemetry instrumentation for debugging and monitoring:

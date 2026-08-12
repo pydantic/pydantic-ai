@@ -12,7 +12,9 @@ from dataclasses import dataclass, field
 from uuid import uuid4
 
 from ..._utils import now_utc
+from ...exceptions import RunCancelled
 from ...messages import (
+    CompactionPart,
     FunctionToolResultEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -22,6 +24,7 @@ from ...messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
@@ -29,6 +32,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
+from .._adapter import compaction_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
     RunFinishedInterruptOutcome,
@@ -36,10 +40,13 @@ from ._interrupt import (
     approval_to_interrupt,
 )
 from ._utils import (
+    ACTIVITY_EVENTS_VERSION,
     BUILTIN_TOOL_CALL_ID_PREFIX,
+    COMPACTION_ACTIVITY_TYPE,
     DEFAULT_AG_UI_VERSION,
     INTERRUPTS_VERSION,
     REASONING_VERSION,
+    TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
     dump_tool_return_content,
     parse_ag_ui_version,
     tool_kind_encrypted_value,
@@ -91,6 +98,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     _reasoning_text: bool = False
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
     _error: bool = False
+    _cancelled_run: bool = False
 
     def __post_init__(self) -> None:
         self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
@@ -135,6 +143,16 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if self._error:
             return
 
+        if self._cancelled_run:
+            # AG-UI has no cancelled outcome; revisit when the protocol fills this spec gap:
+            # https://github.com/ag-ui-protocol/ag-ui/issues/880
+            yield RunFinishedEvent(
+                thread_id=self.run_input.thread_id,
+                run_id=self.run_input.run_id,
+                timestamp=self._get_timestamp(),
+            )
+            return
+
         # `RunFinishedEvent.outcome` only exists in ag-ui-protocol >= 0.1.19. `ConfiguredBaseModel`
         # allows extra fields, so passing `outcome=None` on the old path wouldn't raise — but it
         # would serialize an `outcome` field that pre-interrupt clients don't expect, so we branch
@@ -174,6 +192,11 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     async def on_error(self, error: Exception) -> AsyncIterator[BaseEvent]:
         self._error = True
         yield RunErrorEvent(message=str(error), timestamp=self._get_timestamp())
+
+    async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[BaseEvent]:
+        self._cancelled_run = True
+        return
+        yield
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseEvent]:
         if follows_text:
@@ -262,7 +285,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 subtype='tool-call', entity_id=tool_call_id, encrypted_value=encrypted_value
             )
         if part.args:
-            yield ToolCallArgsEvent(tool_call_id=tool_call_id, delta=part.args_as_json_str())
+            # A `str` is emitted raw: the args this first event carries can be a partial JSON fragment
+            # that only becomes valid once the following deltas are concatenated, and
+            # `args_as_json_str()` would degrade it to the `INVALID_JSON` wrapper. `dict` args always
+            # arrive complete, so the helper is still the right encoder for them.
+            yield ToolCallArgsEvent(
+                tool_call_id=tool_call_id,
+                delta=part.args if isinstance(part.args, str) else part.args_as_json_str(),
+            )
 
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseEvent]:
         tool_call_id = delta.tool_call_id
@@ -286,17 +316,45 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # Use a one-off message ID instead of `self.new_message_id()` to avoid
         # mutating `self.message_id`, which is used as `parent_message_id` for
         # subsequent tool calls in the same response.
+        message_id = str(uuid4())
         yield ToolCallResultEvent(
-            message_id=str(uuid4()),
+            message_id=message_id,
             type=EventType.TOOL_CALL_RESULT,
             role='tool',
             tool_call_id=tool_call_id,
             content=_tool_return_content(part),
         )
+        async for event in self._handle_tool_return_outcome(part, message_id):
+            yield event
 
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
             yield e
+
+    async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseEvent]:
+        if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
+            return
+
+        from ag_ui.core import ActivitySnapshotEvent
+
+        part = event.part
+        yield ActivitySnapshotEvent(
+            message_id=str(uuid4()),
+            activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
+            content={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+        )
+
+    async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[BaseEvent]:
+        if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
+            return
+
+        from ag_ui.core import ActivitySnapshotEvent
+
+        yield ActivitySnapshotEvent(
+            message_id=str(uuid4()),
+            activity_type=COMPACTION_ACTIVITY_TYPE,
+            content=compaction_payload(part),
+        )
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:
         async for e in self._handle_tool_result(event.part):
@@ -308,8 +366,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         else:
             output = _tool_return_content(result)
 
+        message_id = self.new_message_id()
         yield ToolCallResultEvent(
-            message_id=self.new_message_id(),
+            message_id=message_id,
             type=EventType.TOOL_CALL_RESULT,
             role='tool',
             tool_call_id=result.tool_call_id,
@@ -319,6 +378,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # ToolCallResultEvent.content may hold user parts (e.g. text, images) that AG-UI does not currently have events for
 
         if isinstance(result, ToolReturnPart):
+            async for event in self._handle_tool_return_outcome(result, message_id):
+                yield event
+
             # Check for AG-UI events returned by tool calls.
             possible_event = result.metadata or result.content
             if isinstance(possible_event, BaseEvent):
@@ -330,6 +392,17 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
                 for item in possible_event:  # type: ignore[reportUnknownMemberType]
                     if isinstance(item, BaseEvent):  # pragma: no branch
                         yield item
+
+    async def _handle_tool_return_outcome(
+        self, part: NativeToolReturnPart | ToolReturnPart, message_id: str
+    ) -> AsyncIterator[BaseEvent]:
+        # `ToolCallResultEvent` cannot express an outcome. This is the only standard event whose
+        # reducer can attach continuity data to the resulting `ToolMessage`; it must follow the
+        # result event because the reducer does not queue metadata for an entity that does not exist.
+        if self._use_reasoning and (encrypted_value := tool_kind_encrypted_value(None, part.outcome)):
+            from ag_ui.core import ReasoningEncryptedValueEvent
+
+            yield ReasoningEncryptedValueEvent(subtype='message', entity_id=message_id, encrypted_value=encrypted_value)
 
 
 def _tool_return_content(part: NativeToolReturnPart | ToolReturnPart) -> str:

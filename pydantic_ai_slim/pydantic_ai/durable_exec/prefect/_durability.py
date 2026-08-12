@@ -2,19 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from prefect import task
 from prefect.context import FlowRunContext
 
 from pydantic_ai import messages as _messages
-from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import WrapModelRequestHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
-from pydantic_ai.durable_exec._toolset import DurableFunctionToolset, DurableMCPToolset
+from pydantic_ai.durable_exec._toolset import DurableDynamicToolset, DurableFunctionToolset, DurableMCPToolset
 from pydantic_ai.durable_exec._utils import (
     DurableModel,
     StreamedActivityResult,
@@ -27,8 +26,11 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
 from ._model import _stamp_response_provenance  # pyright: ignore[reportPrivateUsage]
-from ._toolset import prefectify_toolset as _default_prefectify_toolset
+from ._toolset import prefectify_toolset as _default_prefectify_toolset, with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
+
+if TYPE_CHECKING:
+    pass
 
 
 @dataclass(init=False)
@@ -84,13 +86,14 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
                 `'default'`. A `Model` instance can't be serialized across the
                 task boundary, so a run-time model (via `agent.run(model=...)`
                 / `agent.override(model=...)`, or swapped in by an outer capability)
-                is sent as its `model_id` string and rebuilt inside the task by
-                registry lookup, then the agent's `resolve_model_id` capability
-                chain / `infer_model`. Register an instance here (and reference it
-                by key or pass the registered instance) whenever its `model_id`
-                alone wouldn't rebuild it faithfully — e.g. a custom provider,
-                client, or settings. Model-name strings never need registering;
-                to customize how they're built (e.g. a custom provider), use the
+                has to be registered here and referenced by key (or passed as the
+                registered instance); an unregistered instance is rejected, because
+                rebuilding it from its `model_id` would build a different model.
+                Model-name strings never need registering: they cross as the string
+                the caller wrote and are built inside the task by the agent's
+                `resolve_model_id` capability chain, then `infer_model`. To build a
+                specific instance inside the task from such a string — a custom
+                provider, or per-user credentials carried on `deps` — use the
                 [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability.
             event_stream_handler: Optional event stream handler. Model events are handled
                 live inside model-request tasks, and tool events are handled in per-event tasks.
@@ -107,10 +110,15 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
 
-        self._model_task_config = default_task_config | (model_task_config or {})
+        # Model and event-handler tasks compose the same non-retryable condition as tool tasks: a
+        # `UserError`/`UnexpectedModelBehavior` raised inside them (e.g. a model that can't be
+        # rebuilt on the worker) is a framework misconfiguration that retrying can't fix.
+        self._model_task_config = with_non_retryable_errors(default_task_config | (model_task_config or {}))
         self._mcp_task_config = default_task_config | (mcp_task_config or {})
         self._tool_task_config = default_task_config | (tool_task_config or {})
-        self._event_stream_handler_task_config = default_task_config | (event_stream_handler_task_config or {})
+        self._event_stream_handler_task_config = with_non_retryable_errors(
+            default_task_config | (event_stream_handler_task_config or {})
+        )
 
         # Populated by for_agent when the capability is attached to an agent.
         self._request_task: Any = None
@@ -128,8 +136,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> ModelResponse:
-            model = await self._resolve_model_for_request(model_id, run_context)
-            with set_current_run_context(run_context):
+            async with self._durable_model_scope(model_id, run_context) as (model, _):
                 response = await model.request(messages, model_settings, model_request_parameters)
             _stamp_response_provenance(response, messages)
             return response
@@ -144,13 +151,12 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any],
         ) -> StreamedActivityResult:
-            model = await self._resolve_model_for_request(model_id, run_context)
-            with set_current_run_context(run_context):
+            async with self._durable_model_scope(model_id, run_context) as (model, ctx):
                 async with model.request_stream(
-                    messages, model_settings, model_request_parameters, run_context
+                    messages, model_settings, model_request_parameters, ctx
                 ) as streamed_response:
                     events = await capture_event_stream(
-                        run_context=run_context,
+                        run_context=ctx,
                         stream=streamed_response,
                         handler=self._event_stream_handler,
                     )
@@ -164,8 +170,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         async def cancel_suspended_response_task(
             model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
         ) -> None:
-            model = await self._resolve_model_for_request(model_id, run_context)
-            with set_current_run_context(run_context):
+            async with self._durable_model_scope(model_id, run_context) as (model, _):
                 await model.cancel_suspended_response(response)
 
         self._cancel_suspended_response_task = cancel_suspended_response_task
@@ -182,14 +187,29 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         handler = self._event_stream_handler
 
         @task(name='Handle Stream Event', **self._event_stream_handler_task_config)
-        async def event_stream_handler_task(stream_event: AgentStreamEvent) -> None:
-            await handler(ctx, self._single_event_stream(stream_event))
+        async def event_stream_handler_task(stream_event: AgentStreamEvent, sequence: int) -> None:
+            with self._durable_run_context_scope(ctx) as task_ctx:
+                await handler(task_ctx, self._single_event_stream(stream_event))
 
-        await event_stream_handler_task(event)
+        # The sequence number makes content-identical events within one flow run each fire
+        # (distinct task-cache keys) while a flow retry that re-executes the same run
+        # reproduces the same numbers and replays from cache. `task_run_dynamic_keys` is
+        # Prefect's own per-flow-run counter store for task-call disambiguation, so a
+        # namespaced key gets exactly the retry-lineage lifetime Prefect's task naming
+        # relies on.
+        flow_context = FlowRunContext.get()
+        assert flow_context is not None
+        sequence_key = f'pydantic_ai_event_sequence:{self.name}'
+        sequence = flow_context.task_run_dynamic_keys.get(sequence_key, 0)
+        assert isinstance(sequence, int)
+        flow_context.task_run_dynamic_keys[sequence_key] = sequence + 1
+        await event_stream_handler_task(event, sequence)
 
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         wrapped = _default_prefectify_toolset(ts, self._mcp_task_config, self._tool_task_config, {})
-        return wrapped if isinstance(wrapped, (DurableFunctionToolset, DurableMCPToolset)) else None
+        return (
+            wrapped if isinstance(wrapped, (DurableDynamicToolset, DurableFunctionToolset, DurableMCPToolset)) else None
+        )
 
     # --- Capability hooks ---
 

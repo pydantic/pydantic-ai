@@ -15,7 +15,7 @@ from pydantic_ai.messages import (
     TextPart,
     UserPromptPart,
 )
-from pydantic_ai.models import DEFAULT_PROFILE, Model, infer_model, infer_model_profile, parse_model_id
+from pydantic_ai.models import DEFAULT_PROFILE, AbstractModel, Model, infer_model, infer_model_profile, parse_model_id
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 
@@ -265,8 +265,8 @@ def test_infer_model_with_provider():
     m = infer_model('openai-chat:gpt-5', lambda x: provider_class)
 
     assert isinstance(m, OpenAIChatModel)
-    assert m._provider is provider_class  # type: ignore
-    assert m._provider.base_url == 'http://test'  # type: ignore
+    assert m._provider is provider_class  # pyright: ignore[reportPrivateUsage]
+    assert m._provider.base_url == 'http://test'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_infer_str_unknown():
@@ -487,3 +487,9 @@ def test_prepare_messages_system_prompt_wrapping(
 ):
     model = TestModel(profile=ModelProfile(supports_inline_system_prompts=supports_inline))
     assert _request_parts(model.prepare_messages(messages)) == expected
+
+
+@pytest.mark.anyio
+async def test_model_default_async_context_returns_model() -> None:
+    model = TestModel()
+    assert await AbstractModel.__aenter__(model) is model

@@ -1,13 +1,43 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Mapping
 from typing import Any, Literal, cast
 
+from pydantic.errors import PydanticUserError
+
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.durable_exec._toolset import guard_run_context
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._types import TaskConfig
+
+
+def guard_task_enqueue(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
+    """Make `ctx.enqueue()` raise inside a Prefect task-wrapped tool call."""
+    return guard_run_context(ctx, unit_noun='task', container_noun='flow')
+
+
+def with_non_retryable_errors(config: TaskConfig) -> TaskConfig:
+    """Ensure framework configuration errors are not retried by Prefect."""
+    config = config.copy()
+    configured_condition = config.get('retry_condition_fn')
+
+    async def retry_condition(task: Any, task_run: Any, state: Any) -> bool:
+        result = state.result(raise_on_failure=False)
+        if inspect.isawaitable(result):
+            result = await result
+        if isinstance(result, (UserError, PydanticUserError, UnexpectedModelBehavior)):
+            return False
+        if configured_condition is None:
+            return True
+        decision = configured_condition(task, task_run, state)
+        return await decision if inspect.isawaitable(decision) else decision
+
+    config['retry_condition_fn'] = retry_condition
+    return config
 
 
 def resolve_tool_task_config(
@@ -63,6 +93,20 @@ def prefectify_toolset(
             wrapped=toolset,
             task_config=tool_task_config,
             tool_task_config=tool_task_config_by_name,
+        )
+
+    if isinstance(toolset, DynamicToolset):
+        # The deprecated `PrefectAgent` still accepts anonymous dynamic toolsets and
+        # must retain its existing inline behavior. The capability path validates IDs
+        # before dispatching here.
+        if toolset.id is None:
+            return toolset
+        from ._dynamic_toolset import prefectify_dynamic_toolset
+
+        return prefectify_dynamic_toolset(
+            wrapped=toolset,
+            task_config=tool_task_config,
+            tool_task_config={},
         )
 
     try:

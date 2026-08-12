@@ -18,7 +18,10 @@ from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     TIME_TO_FIRST_CHUNK_HISTOGRAM_BOUNDARIES,
     TOKEN_HISTOGRAM_BOUNDARIES,
+    CachedMessageJson,
+    MessageJsonCache,
     get_instructions,
+    message_json_fragment,
     open_model_request_span,
     safe_to_json,
 )
@@ -31,8 +34,10 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     SystemPromptPart,
+    ToolAvailabilityDeltaPart,
 )
 from ..settings import ModelSettings
+from ..usage import UsageBase
 from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
@@ -90,7 +95,12 @@ class InstrumentationSettings:
             meter_provider: The OpenTelemetry meter provider to use.
                 If not provided, the global meter provider is used.
                 Calling `logfire.configure()` sets the global meter provider, so most users don't need this.
-            include_binary_content: Whether to include binary content in the instrumentation events.
+            include_binary_content: Whether to include binary file data in the instrumentation events:
+                user prompts and model responses, tool returns, the agent's output and the arguments
+                its output function receives, and run and tool deferral metadata. The media type is
+                recorded either way. Binary content is found inside dictionaries, lists and
+                `ToolReturn`s, but not inside your own types: a `BinaryContent` held as a field of a
+                model or dataclass you define is still recorded in full.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
             include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on
@@ -135,6 +145,7 @@ class InstrumentationSettings:
 
         if version not in (2, 3, 4, 5):
             raise ValueError('Instrumentation version must be one of 2, 3, 4, or 5.')
+        # TODO(v3): remove instrumentation format versions 2, 3, and 4
         if version in (2, 3, 4):
             warnings.warn(
                 'Instrumentation format versions 2, 3, and 4 are deprecated; use `version=5` instead.',
@@ -159,7 +170,7 @@ class InstrumentationSettings:
         except TypeError:  # pragma: lax no cover
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.tokens_histogram = self.meter.create_histogram(
-                **tokens_histogram_kwargs,  # pyright: ignore
+                **tokens_histogram_kwargs,  # pyright: ignore[reportArgumentType]
             )
         self.cost_histogram = self.meter.create_histogram(
             'operation.cost',
@@ -179,14 +190,16 @@ class InstrumentationSettings:
         except TypeError:  # pragma: lax no cover
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.time_to_first_chunk_histogram = self.meter.create_histogram(
-                **time_to_first_chunk_histogram_kwargs,  # pyright: ignore
+                **time_to_first_chunk_histogram_kwargs,  # pyright: ignore[reportArgumentType]
             )
 
     def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
         result: list[_otel_messages.ChatMessage] = []
         for message in messages:
             if isinstance(message, ModelRequest):
-                for is_system, group in itertools.groupby(message.parts, key=lambda p: isinstance(p, SystemPromptPart)):
+                for is_system, group in itertools.groupby(
+                    message.parts, key=lambda p: isinstance(p, SystemPromptPart | ToolAvailabilityDeltaPart)
+                ):
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
                         if hasattr(part, 'otel_message_parts'):
@@ -202,12 +215,42 @@ class InstrumentationSettings:
                 result.append(otel_message)
         return result
 
+    def _input_messages_json(
+        self, input_messages: list[ModelMessage], message_json_cache: MessageJsonCache | None
+    ) -> bytes:
+        """Serialize the input message history to a JSON array.
+
+        With a `message_json_cache` (agent runs, where the growing history is re-serialized every
+        request), each message's fragment is cached and concatenated, keeping the per-request cost
+        proportional to new messages rather than the whole history. Entries for messages no longer
+        in the input history are evicted, so the cache (and the `parts` lists it keeps alive) stays
+        bounded by the current history even when a history processor prunes or rebuilds messages.
+        Without a cache (one-off requests), the whole history is serialized in a single call.
+        """
+        if message_json_cache is None:
+            return safe_to_json(self.messages_to_otel_messages(input_messages))
+
+        fragments: list[bytes] = []
+        fresh_entries: MessageJsonCache = {}
+        for message in input_messages:
+            entry = message_json_cache.get(id(message))
+            if entry is None or entry.parts is not message.parts:
+                entry = CachedMessageJson(message, message.parts, message_json_fragment(self, message))
+            fresh_entries[id(message)] = entry
+            if entry.fragment:
+                fragments.append(entry.fragment)
+        message_json_cache.clear()
+        message_json_cache.update(fresh_entries)
+        return b'[' + b','.join(fragments) + b']'
+
     def handle_messages(
         self,
         input_messages: list[ModelMessage],
         response: ModelResponse,
         span: Span,
         parameters: ModelRequestParameters | None = None,
+        *,
+        message_json_cache: MessageJsonCache | None = None,
     ):
         output_messages = self.messages_to_otel_messages([response])
         assert len(output_messages) == 1
@@ -217,7 +260,7 @@ class InstrumentationSettings:
         system_instructions_attributes = self.system_instructions_attributes(instructions)
 
         attributes: dict[str, AttributeValue] = {
-            'gen_ai.input.messages': safe_to_json(self.messages_to_otel_messages(input_messages)).decode(),
+            'gen_ai.input.messages': self._input_messages_json(input_messages, message_json_cache).decode(),
             'gen_ai.output.messages': safe_to_json([output_message]).decode(),
             **system_instructions_attributes,
             'logfire.json_schema': to_json(
@@ -247,6 +290,19 @@ class InstrumentationSettings:
             }
         return {}
 
+    def aggregated_usage_attributes(self, usage: UsageBase) -> dict[str, int]:
+        """Cumulative-usage OpenTelemetry attributes for a run/session span.
+
+        Remaps `gen_ai.usage.*` to `gen_ai.aggregated_usage.*` when `use_aggregated_usage_attribute_names`
+        is set, so a backend that sums span attributes doesn't double-count the run's cumulative usage
+        against the per-request `chat` spans' `gen_ai.usage.*`. Shared by the classic agent-run span (the
+        `Instrumentation` capability) and the realtime session span so the two can't drift.
+        """
+        attributes = usage.opentelemetry_attributes()
+        if not self.use_aggregated_usage_attribute_names:
+            return attributes
+        return {key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value for key, value in attributes.items()}
+
     def record_metrics(
         self,
         response: ModelResponse,
@@ -255,7 +311,7 @@ class InstrumentationSettings:
         time_to_first_chunk: float | None = None,
     ):
         for typ in ['input', 'output']:
-            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
+            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
@@ -296,10 +352,13 @@ class InstrumentedModel(WrapperModel):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
-            response = await self.wrapped.request(
-                prepared_rc.messages, prepared_rc.model_settings, prepared_rc.model_request_parameters
-            )
+        # The span's prepared context is for its attributes only. The wrapped model prepares again
+        # itself, and `prepare_request` is not idempotent — a second pass appends the prompted-output
+        # instructions a second time and re-walks an already-transformed JSON schema — so it has to
+        # be handed the originals. `Instrumentation.wrap_model_request` and `FallbackModel.request`
+        # do the same.
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, _):
+            response = await self.wrapped.request(messages, model_settings, model_request_parameters)
             finish(response)
             return response
 
@@ -317,7 +376,9 @@ class InstrumentedModel(WrapperModel):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
+        # See `request()`: the prepared context is for span attributes only, and the wrapped model
+        # must be handed the originals because `prepare_request` is not idempotent.
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, _):
             response_stream: StreamedResponse | None = None
             # Stamp the request-issue instant before the wrapped model opens the stream, so the
             # `time_to_first_chunk` delta spans from when we issue the request to when the first
@@ -325,9 +386,9 @@ class InstrumentedModel(WrapperModel):
             request_start = time.perf_counter()
             try:
                 async with self.wrapped.request_stream(
-                    prepared_rc.messages,
-                    prepared_rc.model_settings,
-                    prepared_rc.model_request_parameters,
+                    messages,
+                    model_settings,
+                    model_request_parameters,
                     run_context,
                 ) as response_stream:
                     yield response_stream

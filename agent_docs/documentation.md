@@ -19,7 +19,7 @@
 <!-- rule:138 -->
 - Update all related docs in the same PR when changing functionality, APIs, or capabilities — includes docstrings, comments, external docs (e.g., `ai.pydantic.dev`), and API references — Prevents documentation drift that misleads users about actual behavior, limitations, or API contracts
 <!-- rule:107 -->
-- Register new `docs/` files in `mkdocs.yml` nav section — Ensures documentation files are discoverable in the generated site navigation; orphaned files won't appear in the docs site
+- Register new `docs/` files in both `mkdocs.yml` and `docs/navigation.yml` — Keeps the ai.pydantic.dev and pydantic.dev/docs/ai navigation trees complete and prevents orphaned pages or route drift between the two published documentation sites
 <!-- rule:31 -->
 - Use consistent terminology across code, docs, comments, and errors (e.g., `freeform` vs `free-form`, `messages` vs `last message`) — prevents user confusion and makes codebase searchable — Inconsistent terminology fragments documentation searches, confuses users trying to map concepts between docs and code, and signals poor API design quality
 <!-- rule:76 -->
@@ -44,3 +44,5 @@
 - Avoid line numbers in comments/docstrings — use function/class names instead — Line numbers become stale immediately when code changes, breaking the reference and misleading readers
 <!-- rule:656 -->
 - Document new user-facing features in dedicated sections where users naturally encounter them, not just in docstrings — Users discover features through conceptual docs and guides, not API references — ensures feature discoverability and proper context
+<!-- rule:-4 -->
+- Link to a Pydantic AI Harness capability via its docs page at `https://pydantic.dev/docs/ai/harness/<slug>/` (e.g. `https://pydantic.dev/docs/ai/harness/exa-search/`, `https://pydantic.dev/docs/ai/harness/compaction/`), not its GitHub repo/README — the harness has published docs; only fall back to a GitHub link when a capability has no docs page yet — Gives readers rendered, canonical docs instead of raw source, and matches how the rest of the repo references the harness (`https://pydantic.dev/docs/ai/harness/`)

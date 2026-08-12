@@ -7,8 +7,9 @@
 ## Pre-gathered context
 
 A pre-agent step ran `scripts/gather-pydantic-ai-review-context.sh` and
-wrote everything you need to `/tmp/gh-aw/.review-context/`. **Read these
-files instead of calling the GitHub API.**
+wrote everything you need to `.review-context/` at the root of the
+checked-out repository. **Read these files instead of calling the GitHub
+API.** Paths below are relative to that directory.
 
 - `pr-details.json` — title, body, author, branches, labels, draft/state.
 - `pr-size.txt` — `{N} files, {M} diff lines`.

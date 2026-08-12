@@ -6,11 +6,16 @@ from typing import Any
 from dbos import DBOS
 
 from pydantic_ai import ToolsetTool
-from pydantic_ai.durable_exec._toolset import DurableMCPToolset
+from pydantic_ai.durable_exec._toolset import (
+    CallToolResult,
+    DurableMCPToolset,
+    unwrap_recorded_tool_call_result,
+    wrap_tool_call_result,
+)
 from pydantic_ai.mcp import MCPToolset, ToolResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
-from ._utils import StepConfig
+from ._utils import StepConfig, guard_enqueue_in_workflow
 
 
 def dbosify_mcp_toolset(
@@ -21,12 +26,13 @@ def dbosify_mcp_toolset(
 
     @DBOS.step(name=f'{name}.get_tools', **(step_config or {}))
     async def get_tools_step(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
-        return {tool_name: tool.tool_def for tool_name, tool in (await wrapped.get_tools(ctx)).items()}
+        step_ctx = guard_enqueue_in_workflow(ctx)
+        return {tool_name: tool.tool_def for tool_name, tool in (await wrapped.get_tools(step_ctx)).items()}
 
     @DBOS.step(name=f'{name}.get_instructions', **(step_config or {}))
     async def get_instructions_step(ctx: RunContext[AgentDepsT]):
         async with wrapped:
-            return await wrapped.get_instructions(ctx)
+            return await wrapped.get_instructions(guard_enqueue_in_workflow(ctx))
 
     @DBOS.step(name=f'{name}.call_tool', **(step_config or {}))
     async def call_tool_step(
@@ -34,8 +40,13 @@ def dbosify_mcp_toolset(
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-    ) -> ToolResult:
-        return await wrapped.call_tool(tool_name, tool_args, ctx, tool)
+    ) -> CallToolResult:
+        # The context is guarded because a `process_tool_call=` hook receives it and could enqueue.
+        # DBOS has no selective non-retryable-exception support, so control-flow
+        # exceptions must cross the step boundary as successful values.
+        return await wrap_tool_call_result(
+            wrapped.call_tool(tool_name, tool_args, guard_enqueue_in_workflow(ctx), tool)
+        )
 
     async def call_tool_operation(
         tool_name: str,
@@ -44,7 +55,9 @@ def dbosify_mcp_toolset(
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
     ) -> ToolResult:
-        return await call_tool_step(tool_name, tool_args, ctx, tool)
+        # A recovering workflow may replay outputs this step recorded before it wrapped
+        # control-flow exceptions as values; those recordings are the raw tool result.
+        return unwrap_recorded_tool_call_result(await call_tool_step(tool_name, tool_args, ctx, tool))
 
     return DurableMCPToolset(
         wrapped,

@@ -8,7 +8,9 @@ from typing import Any, Literal
 
 from pydantic_core import to_json
 
+from ...exceptions import RunCancelled
 from ...messages import (
+    CompactionPart,
     FilePart,
     FinishReason as PydanticFinishReason,
     FunctionToolCallEvent,
@@ -22,6 +24,7 @@ from ...messages import (
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolAvailabilityDeltaEvent,
     ToolCallEvent,
     ToolCallPart,
     ToolCallPartDelta,
@@ -31,10 +34,20 @@ from ...output import OutputDataT
 from ...run import AgentRunResultEvent
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import UIEventStream
-from ._utils import dump_message_metadata, dump_provider_metadata, iter_metadata_chunks, tool_return_output
+from .._adapter import compaction_payload
+from ._utils import (
+    COMPACTION_DATA_TYPE,
+    TOOL_AVAILABILITY_DELTA_DATA_TYPE,
+    dump_message_metadata,
+    dump_provider_metadata,
+    iter_metadata_chunks,
+    tool_return_output,
+)
 from .request_types import RequestData
 from .response_types import (
+    AbortChunk,
     BaseChunk,
+    DataChunk,
     DoneChunk,
     ErrorChunk,
     FileChunk,
@@ -132,7 +145,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def after_stream(self) -> AsyncIterator[BaseChunk]:
         yield FinishStepChunk()
 
-        yield FinishChunk(finish_reason=self._finish_reason)
+        if self.cancelled is None:
+            yield FinishChunk(finish_reason=self._finish_reason)
         yield DoneChunk()
 
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[BaseChunk]:
@@ -174,6 +188,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # without one. A future opt-in that broadens the roundtrip should revisit this path.
         self._finish_reason = 'error'
         yield ErrorChunk(error_text=str(error))
+
+    async def on_cancelled(self, cancelled: RunCancelled) -> AsyncIterator[BaseChunk]:
+        yield AbortChunk(reason='The agent run was cancelled.')
 
     async def handle_text_start(self, part: TextPart, follows_text: bool = False) -> AsyncIterator[BaseChunk]:
         provider_metadata = dump_provider_metadata(
@@ -263,7 +280,14 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             ),
         )
         if part.args:
-            yield ToolInputDeltaChunk(tool_call_id=tool_call_id, input_text_delta=part.args_as_json_str())
+            # A `str` is emitted raw: the args this first chunk carries can be a partial JSON fragment
+            # that only becomes valid once the following deltas are concatenated, and
+            # `args_as_json_str()` would degrade it to the `INVALID_JSON` wrapper. `dict` args always
+            # arrive complete, so the helper is still the right encoder for them.
+            yield ToolInputDeltaChunk(
+                tool_call_id=tool_call_id,
+                input_text_delta=part.args if isinstance(part.args, str) else part.args_as_json_str(),
+            )
 
     async def handle_tool_call_delta(self, delta: ToolCallPartDelta) -> AsyncIterator[BaseChunk]:
         tool_call_id = delta.tool_call_id or ''
@@ -282,7 +306,8 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # run with no result event, flushed by `on_error`.
         self._streamed_call_parts[part.tool_call_id] = part
         return
-        yield  # pragma: no cover  # mark this as an async generator
+        # Marks this an async generator.
+        yield  # pragma: no cover
 
     def _tool_input_available_chunk(self, part: ToolCallPart) -> ToolInputAvailableChunk:
         """Build the `tool-input-available` chunk announcing a streamed tool call's input."""
@@ -349,7 +374,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         if self.sdk_version >= 6 and part.outcome == 'denied':
             yield ToolOutputDeniedChunk(tool_call_id=part.tool_call_id)
         elif part.outcome == 'failed':
-            yield ToolOutputErrorChunk(tool_call_id=part.tool_call_id, error_text=part.model_response_str())
+            yield ToolOutputErrorChunk(
+                tool_call_id=part.tool_call_id, error_text=part.model_response_str(wrap_if_error=False)
+            )
         else:
             # `'success'` and `'interrupted'` both render as neutral tool output. Only `'failed'` is
             # an error; `'interrupted'` (a call cut off before it produced a result) must never be.
@@ -363,9 +390,22 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         file = part.content
         yield FileChunk(url=file.data_uri, media_type=file.media_type)
 
+    async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[BaseChunk]:
+        yield DataChunk(
+            type=COMPACTION_DATA_TYPE,
+            data=compaction_payload(part),
+        )
+
     async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):
             yield chunk
+
+    async def handle_tool_availability_delta(self, event: ToolAvailabilityDeltaEvent) -> AsyncIterator[BaseChunk]:
+        part = event.part
+        yield DataChunk(
+            type=TOOL_AVAILABILITY_DELTA_DATA_TYPE,
+            data={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+        )
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):
@@ -407,12 +447,16 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                     provider_details=invalidated_part.provider_details,
                     tool_kind=invalidated_part.tool_kind,
                 ),
-                error_text=part.model_response() if isinstance(part, RetryPromptPart) else part.model_response_str(),
+                error_text=part.model_response()
+                if isinstance(part, RetryPromptPart)
+                else part.model_response_str(wrap_if_error=False),
             )
         elif isinstance(part, RetryPromptPart):
             yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response())
         elif isinstance(part, ToolReturnPart) and part.outcome == 'failed':
-            yield ToolOutputErrorChunk(tool_call_id=tool_call_id, error_text=part.model_response_str())
+            yield ToolOutputErrorChunk(
+                tool_call_id=tool_call_id, error_text=part.model_response_str(wrap_if_error=False)
+            )
         else:
             # `'success'` and `'interrupted'` both render as neutral tool output. Only `'failed'` is
             # an error; a synthesized `'interrupted'` return (from message-history repair) must never

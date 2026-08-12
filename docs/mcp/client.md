@@ -300,6 +300,20 @@ if __name__ == '__main__':
     mcp.run()
 ```
 
+## Tool errors
+
+When an MCP server reports a tool error, [`MCPToolset`][pydantic_ai.mcp.MCPToolset] lets you choose whether that error should ask the model to retry, appear as a failed tool result, or escape as an exception:
+
+| `tool_error_behavior` | Behavior |
+| --- | --- |
+| `'retry'` | Default. Raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], sending the server error back to the model as a retry prompt. Use this when the model may be able to correct the call. |
+| `'failed'` | Raises [`ToolFailed`][pydantic_ai.exceptions.ToolFailed], which is recorded as a tool result with `outcome='failed'`. Use this when the tool call is complete but failed, and the model should decide what to do next. |
+| `'error'` | Propagates the underlying MCP tool exception and fails the agent run. Use this for errors you want application code to handle outside the model loop. |
+
+Structured error content is serialized as JSON in the model-visible message for both `'retry'` and `'failed'`, so retryability hints and other machine-readable details remain available to the model. Protocol and transport errors are not reported as completed failed tool calls.
+
+This is the MCP equivalent of the [tool retry](../tools-advanced.md#tool-retries) vs [failed tool result](../tools-advanced.md#tool-failed) distinction in local tool code.
+
 ## Tool prefixes to avoid naming conflicts
 
 When connecting to multiple MCP servers that might provide tools with the same name, wrap each `MCPToolset` with [`.prefixed(...)`][pydantic_ai.toolsets.AbstractToolset.prefixed] to prepend a prefix to its tool names:
@@ -332,19 +346,23 @@ agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 
 MCP tools can include metadata that provides additional information about the tool's characteristics, which can be useful when [filtering tools][pydantic_ai.toolsets.FilteredToolset]. The `meta` and `annotations` fields can be found on the `metadata` dict on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] object that's passed to filter functions, and the tool's output schema (if any) is available as the `return_schema` field.
 
-[`MCPToolset`][pydantic_ai.mcp.MCPToolset] additionally exposes a `task: bool` flag indicating whether the server declares support for [task-augmented execution](#background-tasks) on the tool.
+[`MCPToolset`][pydantic_ai.mcp.MCPToolset] additionally exposes a `task: bool` flag indicating whether the toolset will use [task-augmented execution](#background-tasks) for the tool. For tools where task support is optional, this reflects the `prefer_tasks` setting.
 
 ## Background tasks
 
-[`MCPToolset`][pydantic_ai.mcp.MCPToolset] supports MCP [task-augmented execution](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks) (SEP-1686). Servers can declare per-tool task support via `execution.taskSupport`, and `MCPToolset` routes calls accordingly:
+[`MCPToolset`][pydantic_ai.mcp.MCPToolset] supports MCP [task-augmented execution](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks) (SEP-1686). Servers using SEP-1686, including FastMCP 3 servers, can declare per-tool task support via `execution.taskSupport`, and `MCPToolset` routes calls accordingly:
 
 | `execution.taskSupport` | Behavior |
 | --- | --- |
 | `"required"` | Always calls with `task=True`. The server creates a task and the client awaits the final result via `tasks/result`. |
-| `"optional"` | Always calls with `task=True` to opt in to durability, cancellation, and progress notifications. |
+| `"optional"` | Calls with `task=True` by default. Set [`prefer_tasks=False`][pydantic_ai.mcp.MCPToolset.prefer_tasks] to call normally instead. |
 | `"forbidden"` or absent | Calls normally. |
 
-For [FastMCP](https://gofastmcp.com/) servers, declare task support per tool with `task=TaskConfig(mode=...)`:
+The newer MCP [Tasks extension](https://tasks.extensions.modelcontextprotocol.io/seps/2663-tasks-extension) (SEP-2663) uses server-directed task creation instead, so this client-side preference does not apply.
+
+For [FastMCP 3](https://gofastmcp.com/v3/servers/tasks) servers, install the tasks extra with
+`pip install "fastmcp[tasks]>=3,<4"` and declare task support per tool with
+`task=TaskConfig(mode=...)`:
 
 ```python {title="background_task_server.py" dunder_name="not_main"}
 from fastmcp import FastMCP
@@ -353,7 +371,7 @@ from fastmcp.server.tasks import TaskConfig
 mcp = FastMCP('long_running_server')
 
 
-@mcp.tool(task=TaskConfig(mode='required'))
+@mcp.tool(task=TaskConfig(mode='optional'))
 async def deep_research(topic: str) -> str:
     import asyncio
     await asyncio.sleep(0)
@@ -364,13 +382,13 @@ if __name__ == '__main__':
     mcp.run(transport='streamable-http')
 ```
 
-The client side needs no extra configuration — `MCPToolset` sends `task=True` automatically based on the server's declaration:
+By default, [`MCPToolset`][pydantic_ai.mcp.MCPToolset] uses task-augmented execution when a tool supports it. A client that prefers normal calls for tools where task support is optional can set [`prefer_tasks=False`][pydantic_ai.mcp.MCPToolset.prefer_tasks]. This setting does not affect tools where task support is required:
 
 ```python {title="background_task_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPToolset
 
-toolset = MCPToolset('http://localhost:8000/mcp')
+toolset = MCPToolset('http://localhost:8000/mcp', prefer_tasks=False)
 agent = Agent('openai:gpt-5.2', toolsets=[toolset])
 ```
 

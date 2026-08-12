@@ -19,3 +19,6 @@ ImageGeneration(fallback_model='openai-responses:gpt-5.4')
 def my_generator(prompt: str) -> bytes: ...
 ImageGeneration(local=my_generator)
 ```
+
+!!! warning "Durable execution with Temporal"
+    Generated images have to cross Temporal's activity boundary, where the payload size limit leaves roughly 1.5MB for raw image bytes. A larger image fails with a `UserError` — naming the tool when it came from a local generator (the subagent fallback or your own `local=` callable or toolset), or naming the model when the native tool put it on the response. See [Large Payloads](../durable_execution/temporal.md#large-payloads) for the options.
