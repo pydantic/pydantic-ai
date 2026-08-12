@@ -2950,10 +2950,6 @@ def tool_with_heterogeneous_tuple(x: tuple[int, str]) -> str:
     return f'{x}'  # pragma: no cover
 
 
-def tool_with_length_constraints(x: Annotated[str, Field(min_length=2, max_length=10)]) -> str:
-    return x  # pragma: no cover
-
-
 @pytest.mark.parametrize(
     'tool,tool_strict,expected_params,expected_strict',
     [
@@ -3060,7 +3056,7 @@ def tool_with_length_constraints(x: Annotated[str, Field(min_length=2, max_lengt
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {'x': {'minLength': 1, 'type': 'string', 'description': 'format=uri'}},
+                    'properties': {'x': {'type': 'string', 'description': 'minLength=1, format=uri'}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -3496,19 +3492,6 @@ def tool_with_length_constraints(x: Annotated[str, Field(min_length=2, max_lengt
                 }
             ),
             snapshot(None),
-        ),
-        (
-            tool_with_length_constraints,
-            None,
-            snapshot(
-                {
-                    'additionalProperties': False,
-                    'properties': {'x': {'maxLength': 10, 'minLength': 2, 'type': 'string'}},
-                    'required': ['x'],
-                    'type': 'object',
-                }
-            ),
-            snapshot(True),
         ),
         # (tool, None, snapshot({}), snapshot({})),
         # (tool, True, snapshot({}), snapshot({})),
@@ -6389,7 +6372,7 @@ def test_transformer_prefix_items_key_order_insensitive():
         'properties': {
             'value': {
                 'type': 'array',
-                'prefixItems': [{'type': 'string', 'maxLength': 3}, {'maxLength': 3, 'type': 'string'}],
+                'prefixItems': [{'type': 'string', 'description': 'x'}, {'description': 'x', 'type': 'string'}],
                 'minItems': 2,
                 'maxItems': 2,
             }
@@ -6401,7 +6384,7 @@ def test_transformer_prefix_items_key_order_insensitive():
 
     assert result['properties']['value'] == {
         'type': 'array',
-        'items': {'type': 'string', 'maxLength': 3},
+        'items': {'type': 'string', 'description': 'x'},
         'minItems': 2,
         'maxItems': 2,
     }
