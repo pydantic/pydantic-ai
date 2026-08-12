@@ -564,18 +564,10 @@ async def safe_download(
             if max_bytes is not None and not any(k.lower() == 'accept-encoding' for k in request_headers):
                 request_headers['Accept-Encoding'] = _BOUNDED_ACCEPT_ENCODING
 
-            # Make request with Host header set to original hostname. Keep the existing
-            # buffered path for callers without a body limit.
-            if max_bytes is None:
-                response = await client.get(
-                    request_url,
-                    headers=request_headers,
-                    extensions=extensions,
-                    follow_redirects=False,
-                )
-            else:
-                request = client.build_request('GET', request_url, headers=request_headers, extensions=extensions)
-                response = await client.send(request, follow_redirects=False, stream=True)
+            # Stream the raw response so gzip members can be decoded and validated before
+            # httpx's automatic content decoder discards member boundaries.
+            request = client.build_request('GET', request_url, headers=request_headers, extensions=extensions)
+            response = await client.send(request, follow_redirects=False, stream=True)
 
             # Check if we need to follow a redirect
             if response.is_redirect:
@@ -606,31 +598,47 @@ async def safe_download(
                 response.raise_for_status()
                 if max_bytes is not None:
                     content = await _read_capped_body(response, max_bytes)
-                    # Body is already decoded, so the reconstructed response must not carry
-                    # the content coding, or `httpx.Response` would run it through the decoder
-                    # again. `content-length` described the encoded body and no longer applies;
-                    # httpx recomputes it from `content`.
-                    decoded_headers = [
-                        (key, value)
-                        for key, value in response.headers.multi_items()
-                        if key.lower() not in ('content-encoding', 'content-length')
-                    ]
-                    return httpx.Response(
-                        response.status_code,
-                        headers=decoded_headers,
-                        content=content,
-                        request=response.request,
-                        history=response.history,
-                        extensions=response.extensions,
-                    )
+                    return _response_with_decoded_content(response, content)
+                if _content_encodings(response) in (['gzip'], ['x-gzip']):
+                    content = await _read_gzip_body(response)
+                    return _response_with_decoded_content(response, content)
+                await response.aread()
+                return response
             finally:
-                if max_bytes is not None:
-                    await response.aclose()
-            return response
+                await response.aclose()
 
 
 def _download_exceeds(max_bytes: int) -> ValueError:
     return ValueError(_DOWNLOAD_EXCEEDS_TEMPLATE.format(max_bytes=max_bytes))
+
+
+def _response_with_decoded_content(response: httpx.Response, content: bytes) -> httpx.Response:
+    # Body is already decoded, so the reconstructed response must not carry the content
+    # coding, or `httpx.Response` would run it through the decoder again. `content-length`
+    # described the encoded body and no longer applies; httpx recomputes it from `content`.
+    decoded_headers = [
+        (key, value)
+        for key, value in response.headers.multi_items()
+        if key.lower() not in ('content-encoding', 'content-length')
+    ]
+    return httpx.Response(
+        response.status_code,
+        headers=decoded_headers,
+        content=content,
+        request=response.request,
+        history=response.history,
+        extensions=response.extensions,
+    )
+
+
+def _content_encodings(response: httpx.Response) -> list[str]:
+    encodings: list[str] = []
+    for value in response.headers.get_list('content-encoding'):
+        for part in value.split(','):
+            coding = part.strip().lower()
+            if coding and coding != 'identity':
+                encodings.append(coding)
+    return encodings
 
 
 async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
@@ -654,17 +662,12 @@ async def _read_capped_body(response: httpx.Response, max_bytes: int) -> bytes:
             raise _download_exceeds(max_bytes)
         return data
 
-    encodings: list[str] = []
-    for value in response.headers.get_list('content-encoding'):
-        for part in value.split(','):
-            coding = part.strip().lower()
-            if coding and coding != 'identity':
-                encodings.append(coding)
+    encodings = _content_encodings(response)
 
     if not encodings:
         return await _read_capped_identity(response, max_bytes)
     if encodings in (['gzip'], ['x-gzip']):
-        return await _read_capped_gzip(response, max_bytes)
+        return await _read_gzip_body(response, max_bytes)
     raise ValueError(
         f'Unsupported content-encoding for bounded download: {encodings}. '
         f'Only identity and gzip can be size-limited while streaming.'
@@ -680,23 +683,47 @@ async def _read_capped_identity(response: httpx.Response, max_bytes: int) -> byt
     return bytes(content)
 
 
-async def _read_capped_gzip(response: httpx.Response, max_bytes: int) -> bytes:
+async def _read_gzip_body(response: httpx.Response, max_bytes: int | None = None) -> bytes:
     content = bytearray()
     encoded_total = 0
     decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
+    member_started = False
     async for raw in response.aiter_raw():
         encoded_total += len(raw)
-        if encoded_total > max_bytes:
+        if max_bytes is not None and encoded_total > max_bytes:
             raise _download_exceeds(max_bytes)
         while raw:
+            if not member_started:
+                member_started = True
+            elif decompressor.eof:
+                # CPython's gzip reader accepts zero padding between/after members. Preserve
+                # that compatibility while treating any other remaining bytes as a new member.
+                raw = raw.lstrip(b'\x00')
+                if not raw:
+                    break
+                decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
+
             # Decompressing one byte past the cap distinguishes an oversized body from one that
             # exactly fills it, so a gzip CRC/ISIZE trailer arriving in a later chunk is still
             # consumed (it produces no output) instead of being rejected.
-            content.extend(decompressor.decompress(raw, max_length=max_bytes + 1 - len(content)))
-            if len(content) > max_bytes:
+            max_length = max_bytes + 1 - len(content) if max_bytes is not None else 0
+            try:
+                content.extend(decompressor.decompress(raw, max_length=max_length))
+            except zlib.error as e:
+                raise httpx.DecodingError(f'Invalid gzip response body: {e}') from e
+            if max_bytes is not None and len(content) > max_bytes:
                 raise _download_exceeds(max_bytes)
-            raw = decompressor.unconsumed_tail
-    content.extend(decompressor.flush())
-    if len(content) > max_bytes:
+
+            raw = decompressor.unconsumed_tail or decompressor.unused_data
+
+    if not member_started:
+        return b''
+    try:
+        content.extend(decompressor.flush())
+    except zlib.error as e:
+        raise httpx.DecodingError(f'Invalid gzip response body: {e}') from e
+    if max_bytes is not None and len(content) > max_bytes:
         raise _download_exceeds(max_bytes)
+    if not decompressor.eof:
+        raise httpx.DecodingError('Received an incomplete gzip response body')
     return bytes(content)
