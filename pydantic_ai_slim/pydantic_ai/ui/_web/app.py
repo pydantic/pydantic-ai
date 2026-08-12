@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, TypeVar
 
+import anyio.to_thread
 import httpx
 
 from pydantic_ai import Agent
@@ -101,49 +102,45 @@ async def _get_ui_html(html_source: str | Path | None = None) -> bytes:
     """
     # Use default CDN with caching
     if html_source is None:
-        cache_dir = _get_cache_dir()
-        cache_file = cache_dir / f'{CHAT_UI_VERSION}.html'
-
-        if content := _read_cached_file(cache_file):
-            return content
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(DEFAULT_HTML_URL)
-            response.raise_for_status()
-            content = response.content
-
-        _write_cached_file(cache_file, content)
-        return content
+        return await _get_cached_or_fetch(f'{CHAT_UI_VERSION}.html', DEFAULT_HTML_URL)
 
     # Handle Path instances
     if isinstance(html_source, Path):
-        html_source = html_source.expanduser()
-        if html_source.is_file():
-            return html_source.read_bytes()
-        raise FileNotFoundError(f'Local UI file not found: {html_source}')
+        return await anyio.to_thread.run_sync(_read_local_file, html_source)
 
     # Handle URLs with filesystem caching
     if html_source.startswith(('http://', 'https://')):
-        cache_dir = _get_cache_dir()
         url_hash = hashlib.sha256(html_source.encode()).hexdigest()[:16]
-        cache_file = cache_dir / f'url_{url_hash}.html'
-
-        if content := _read_cached_file(cache_file):
-            return content
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(html_source)
-            response.raise_for_status()
-            content = response.content
-
-        _write_cached_file(cache_file, content)
-        return content
+        return await _get_cached_or_fetch(f'url_{url_hash}.html', html_source)
 
     # Handle local file paths (strings)
-    local_path = Path(html_source).expanduser()
-    if local_path.is_file():
-        return local_path.read_bytes()
-    raise FileNotFoundError(f'Local UI file not found: {html_source}')
+    return await anyio.to_thread.run_sync(_read_local_file, Path(html_source))
+
+
+def _read_local_file(path: Path) -> bytes:
+    path = path.expanduser()
+    if path.is_file():
+        return path.read_bytes()
+    raise FileNotFoundError(f'Local UI file not found: {path}')
+
+
+async def _get_cached_or_fetch(cache_name: str, url: str) -> bytes:
+    """Return `cache_name` from the filesystem cache, fetching it from `url` on a miss.
+
+    All filesystem access runs in a thread so serving the UI never blocks the event loop.
+    """
+    cache_file = await anyio.to_thread.run_sync(lambda: _get_cache_dir() / cache_name)
+
+    if content := await anyio.to_thread.run_sync(_read_cached_file, cache_file):
+        return content
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url)
+        response.raise_for_status()
+        content = response.content
+
+    await anyio.to_thread.run_sync(_write_cached_file, cache_file, content)
+    return content
 
 
 def create_web_app(

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from blockbuster import BlockBuster, blockbuster_ctx
 from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 from vcr.record_mode import RecordMode
@@ -337,6 +338,59 @@ def env() -> Iterator[TestEnv]:
 @pytest.fixture(scope='session')
 def anyio_backend():
     return 'asyncio'
+
+
+# Modules that library or instrumentation code imports lazily, potentially inside the event loop.
+# Import them eagerly here: blockbuster would otherwise raise mid-import and leave the module
+# permanently half-initialized for every later test in the process (e.g. logfire's schema
+# introspection imports `pandas` on first use).
+for _lazy_module in ('pandas', 'ddgs.ddgs'):
+    with suppress(ImportError):
+        importlib.import_module(_lazy_module)
+
+
+# Calls that are allowed to block in the event loop, as (blockbuster function, file, functions).
+# Each entry should say why the blocking call is acceptable; anything not listed here should be
+# fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
+BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
+    # `load_mcp_toolsets` is a sync config-file loader; reading the file is its documented job.
+    ('os.stat', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
+    ('io.BufferedReader.read', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
+    # fastmcp's transport inference stats candidate paths when the client is constructed.
+    ('os.stat', 'pydantic_ai/mcp.py', '__init__'),
+    # boto3/botocore read AWS config files and service models during sync, setup-time client construction.
+    ('os.stat', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    ('os.listdir', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    ('io.BufferedReader.read', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    # pydantic extracts field docstrings from source (`inspect`/`linecache`) the first time a
+    # tool schema is built, which can happen during an agent run.
+    ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/_function_schema.py', 'function_schema'),
+    # logfire resolves source locations (working directory, file paths) when starting a span.
+    ('os.getcwd', 'logfire/_internal/main.py', ('_span', 'span')),
+    ('os.stat', 'logfire/_internal/main.py', ('_span', 'span')),
+    # `Dataset.to_file`/`from_file` and schema saving are sync serialization APIs; file I/O is
+    # their documented job, even when called from async user code.
+    ('os.stat', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.TextIOWrapper.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.TextIOWrapper.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.BufferedReader.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.BufferedWriter.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+]
+
+
+@pytest.fixture(autouse=True)
+def blockbuster() -> Iterator[BlockBuster]:
+    """Raise `BlockingError` when library code makes a blocking call inside the event loop.
+
+    Scanned modules are the shipped packages only, so blocking calls originating in tests,
+    fixtures, and third-party code (e.g. VCR reading cassettes) are not flagged.
+    """
+    with blockbuster_ctx(['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai']) as bb:
+        for func, filename, functions in BLOCKBUSTER_EXEMPTIONS:
+            bb.functions[func].can_block_in(filename, functions)
+        yield bb
 
 
 @pytest.fixture

@@ -78,6 +78,15 @@ pytestmark = [
 code_examples: dict[str, CodeExample] = {}
 
 
+@pytest.fixture(autouse=True)
+def blockbuster() -> None:
+    """Disable blocking-call detection for docs examples.
+
+    Examples deliberately show simplified user-level code (`print(...)`, sync file access), and
+    pytest-examples' print-capturing machinery itself does blocking I/O inside the event loop.
+    """
+
+
 @dataclass
 class ExamplesConfig(BaseExamplesConfig):
     known_first_party: list[str] = field(default_factory=list[str])

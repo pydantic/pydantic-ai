@@ -32,6 +32,16 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli ex
 
 
 @pytest.fixture(autouse=True)
+def blockbuster() -> None:
+    """Disable blocking-call detection: the CLI hosts a prompt_toolkit terminal app.
+
+    The sync `cli()` entry point keeps a `pydantic_ai` frame at the base of the event loop's
+    stack, so prompt_toolkit's terminal rendering and history I/O — blocking by design — would
+    all be flagged.
+    """
+
+
+@pytest.fixture(autouse=True)
 def reset_sniffio_cvar() -> Iterator[None]:
     # The anyio pytest plugin sets `current_async_library_cvar` to 'asyncio' at session
     # start and the value leaks into sync tests, causing `anyio.run` to refuse to start.

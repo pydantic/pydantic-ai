@@ -173,6 +173,15 @@ def setup_prefect_test_harness() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def blockbuster() -> None:
+    """Disable blocking-call detection: Prefect's flow engine blocks in the event loop by design.
+
+    Flow and task creation reads source via `inspect`, and the ephemeral test server is driven
+    through sync socket calls.
+    """
+
+
 @contextmanager
 def flow_raises(exc_type: type[Exception], exc_message: str) -> Generator[None]:
     """Helper for asserting that a Prefect flow fails with the expected error."""
