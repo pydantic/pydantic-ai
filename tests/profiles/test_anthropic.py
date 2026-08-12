@@ -435,6 +435,7 @@ def test_model_profile_opus_5():
     assert profile == snapshot(
         {
             'thinking_tags': ('<thinking>', '</thinking>'),
+            'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
             'anthropic_supports_fast_speed': True,
             'supports_thinking': True,
