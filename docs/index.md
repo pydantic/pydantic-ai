@@ -4,7 +4,40 @@ title: Pydantic AI
 
 # Pydantic AI {.hide}
 
---8<-- "docs/.partials/index-header.html"
+<div style="text-align: center">
+  <img class="off-glb only-dark" src="./img/pydantic-ai-dark.svg" alt="Pydantic AI" />
+</div>
+<div style="text-align: center">
+  <img class="off-glb only-light" src="./img/pydantic-ai-light.svg" alt="Pydantic AI" />
+</div>
+<p style="text-align: center">
+  <em>GenAI Agent Framework, the Pydantic way</em>
+</p>
+<p style="text-align: center">
+  <a href="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain">
+    <img src="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push" alt="CI" />
+  </a>
+  <a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai">
+    <img src="https://coverage-badge.samuelcolvin.workers.dev/pydantic/pydantic-ai.svg" alt="Coverage" />
+  </a>
+  <a href="https://pypi.python.org/pypi/pydantic-ai">
+    <img src="https://img.shields.io/pypi/v/pydantic-ai.svg" alt="PyPI" />
+  </a>
+  <a href="https://github.com/pydantic/pydantic-ai">
+    <img src="https://img.shields.io/pypi/pyversions/pydantic-ai.svg" alt="versions" />
+  </a>
+  <a href="https://github.com/pydantic/pydantic-ai/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/pydantic/pydantic-ai.svg" alt="license" />
+  </a>
+  <a href="https://logfire.pydantic.dev/docs/join-slack/">
+    <img src="https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack" alt="Join Slack" />
+  </a>
+</p>
+
+<p style="text-align: center; font-size: 1.15em">
+  Pydantic AI is a Python agent framework designed to help you
+  quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+</p>
 
 FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
 
