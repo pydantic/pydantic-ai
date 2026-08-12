@@ -15,7 +15,6 @@ from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
-from .._thinking_part import render_foreign_thinking
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..capabilities.abstract import AbstractCapability
@@ -68,7 +67,7 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
-from ..profiles import ModelProfileSpec, merge_profile
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
@@ -1916,9 +1915,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     )
                                 )
                         elif response_part.content:  # pragma: no branch
-                            assistant_content_params.append(
-                                BetaTextBlockParam(text=render_foreign_thinking(response_part.content), type='text')
-                            )
+                            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
+                            thinking_text = '\n'.join([start_tag, response_part.content, end_tag])
+                            if self.profile.get('mimics_assistant_message_formatting', False):
+                                # Claude reads assistant turns as examples of how it should write, so
+                                # reasoning replayed there teaches it to emit `<thinking>` tags in the
+                                # answers the user reads (#5869). Carrying it in the preceding user
+                                # message instead keeps the content and stops the imitation.
+                                _hoist_to_user_message(anthropic_messages, thinking_text)
+                            else:
+                                assistant_content_params.append(BetaTextBlockParam(text=thinking_text, type='text'))
                     elif isinstance(response_part, NativeToolCallPart):
                         if response_part.provider_name == self.system:
                             tool_use_id = _guard_tool_call_id(t=response_part)
@@ -3554,6 +3560,23 @@ def _map_tool_search_tool_result_block(
 web_search_tool_result_content_ta: TypeAdapter[BetaWebSearchToolResultBlockContent] = TypeAdapter(
     BetaWebSearchToolResultBlockContent
 )
+
+
+def _hoist_to_user_message(messages: list[BetaMessageParam], text: str) -> None:
+    """Carry `text` in the user message preceding the assistant turn currently being built.
+
+    The assistant turn hasn't been appended yet, so the last message is the user turn it answers; a
+    history opening with a `ModelResponse` has none, and gets one.
+    """
+    text_block = BetaTextBlockParam(text=text, type='text')
+    if messages and messages[-1]['role'] == 'user':
+        content = messages[-1]['content']
+        if isinstance(content, str):  # pragma: no cover
+            messages[-1]['content'] = [BetaTextBlockParam(text=content, type='text'), text_block]
+        else:
+            messages[-1]['content'] = [*content, text_block]
+    else:
+        messages.append(BetaMessageParam(role='user', content=[text_block]))
 
 
 def _map_web_search_tool_result_block(item: BetaWebSearchToolResultBlock, provider_name: str) -> NativeToolReturnPart:

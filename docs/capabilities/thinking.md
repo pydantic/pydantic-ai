@@ -113,6 +113,30 @@ agent = Agent(model, model_settings=settings)
 
 Anthropic reports how many thinking tokens it used in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under the `thinking_tokens` key. They are billed within `output_tokens`, so they are a readable subset of the output total rather than an addition to it, and the key is omitted entirely when a response used no thinking tokens.
 
+### Thinking carried over from another model
+
+A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] in message history can't always be sent back through Anthropic's native reasoning channel: it may have lost its signature on a round trip through storage, been rebuilt by a [history processor](../message-history.md#processing-message-history), or come from a different model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] chain. Pydantic AI still sends the reasoning, wrapped in `<thinking>` tags.
+
+!!! warning "Claude imitates formatting it sees in assistant turns"
+    Sending that text in the assistant turn teaches Claude that writing `<thinking>` tags is part of its own house style, and it starts emitting them in the answers your users read — which, once persisted to history, reinforces itself every turn. Claude Opus 4.5 and 4.8 and Sonnet 4.6 all do this.
+
+    Pydantic AI therefore carries such reasoning in the *preceding user message* for models whose profile sets [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting], which stops the imitation. The trade-off is that Claude then describes that reasoning inaccurately if you ask it who wrote it — it may credit it to you, or claim it as its own.
+
+    To send it in the assistant turn instead, turn the flag off for your model:
+
+    ```python {title="anthropic_foreign_thinking.py"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.profiles import ModelProfile
+
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        profile=ModelProfile(mimics_assistant_message_formatting=False),
+    )
+    agent = Agent(model)
+    ...
+    ```
+
 ### Interleaved Thinking
 
 To enable [interleaved thinking](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#interleaved-thinking), you need to include the beta header in your model settings:

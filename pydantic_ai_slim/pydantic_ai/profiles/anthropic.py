@@ -298,6 +298,13 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
 
     profile = AnthropicModelProfile(
         thinking_tags=('<thinking>', '</thinking>'),
+        # Measured live on the six-turn history from https://github.com/pydantic/pydantic-ai/issues/5869:
+        # `claude-opus-4-5` and `claude-opus-4-8` reproduce replayed `<thinking>` tags in their visible
+        # answers on essentially every run, `claude-sonnet-4-6` on 6 of 9. The 5-series showed none in 12
+        # runs each, which only rules out a rate above roughly 22% — not the behavior — so this stays on
+        # for the whole family rather than gating on model name: a false positive costs an inaccurate
+        # authorship answer, a false negative leaks reasoning into what the user reads.
+        mimics_assistant_message_formatting=True,
         supports_json_schema_output=supports_json_schema_output,
         anthropic_supports_fast_speed=anthropic_supports_fast_speed,
         supports_thinking=True,

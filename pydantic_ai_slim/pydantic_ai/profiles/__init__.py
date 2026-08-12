@@ -142,6 +142,18 @@ class ModelProfile(TypedDict, total=False):
     thinking_tags: tuple[str, str]
     """The tags used to indicate thinking parts in the model's output. Default: [`DEFAULT_THINKING_TAGS`][pydantic_ai.profiles.DEFAULT_THINKING_TAGS]."""
 
+    mimics_assistant_message_formatting: bool
+    """Whether the model reproduces markup it finds in prior assistant messages in its own visible output. Default: `False`.
+
+    A model with this quirk reads the assistant turns of the history as examples of how it is supposed to
+    write, so replaying another model's reasoning as assistant text teaches it to emit those tags in the
+    answers the user reads — and once that answer is persisted, the next turn reinforces it.
+
+    When `True`, a `ThinkingPart` that can't be sent through the model's native reasoning channel is
+    rendered into the preceding *user* message instead of the assistant turn, which stops the imitation.
+    The cost is that the model then reports the reasoning's authorship inaccurately when asked about it.
+    """
+
     ignore_streamed_leading_whitespace: bool
     """Whether to ignore leading whitespace when streaming a response. Default: `False`.
 
@@ -228,6 +240,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_thinking': False,
     'thinking_always_enabled': False,
     'thinking_tags': DEFAULT_THINKING_TAGS,
+    'mimics_assistant_message_formatting': False,
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     'tool_deferral_mode': None,

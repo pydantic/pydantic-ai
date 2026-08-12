@@ -61,7 +61,6 @@ from pydantic_ai import (
 )
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._thinking_part import render_foreign_thinking
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai.models import (
@@ -75,6 +74,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
+from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
@@ -1314,7 +1314,23 @@ class BedrockConverseModel(Model[BaseClient]):
                                 }
                             content.append({'reasoningContent': reasoning_content})
                         else:
-                            content.append({'text': render_foreign_thinking(item.content)})
+                            start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
+                            thinking_text = '\n'.join([start_tag, item.content, end_tag])
+                            if profile.get('mimics_assistant_message_formatting', False):
+                                # Claude reads assistant turns as examples of how it should write, so
+                                # reasoning replayed there teaches it to emit `<thinking>` tags in the
+                                # answers the user reads (#5869). Carrying it in the preceding user
+                                # message instead keeps the content and stops the imitation.
+                                thinking_block: ContentBlockUnionTypeDef = {'text': thinking_text}
+                                if bedrock_messages and (previous := bedrock_messages[-1])['role'] == 'user':
+                                    bedrock_messages[-1] = {
+                                        'role': 'user',
+                                        'content': [*previous['content'], thinking_block],
+                                    }
+                                else:
+                                    bedrock_messages.append({'role': 'user', 'content': [thinking_block]})
+                            else:
+                                content.append({'text': thinking_text})
                     elif isinstance(item, NativeToolCallPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
