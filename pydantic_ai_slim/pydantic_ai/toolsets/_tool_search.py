@@ -471,8 +471,17 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         # tool must never displace an undiscovered match when `max_results` trims — it only
         # fills whatever slots are left over.
         scored_matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        matches = [match for _, _, match in scored_matches[: self.max_results]]
-        return self._build_return(matches)
+        page, below_cut = scored_matches[: self.max_results], scored_matches[self.max_results :]
+        matches = [match for _, _, match in page]
+        # Repeating the query surfaces the *next* tranche only while undiscovered matches remain
+        # below the cut: this page becomes discovered and sinks, lifting them into the next
+        # identical search. Once everything below the cut is already available, repeating would
+        # return this same page forever, so the hint must stop promising another one.
+        return self._build_return(
+            matches,
+            total_matches=len(scored_matches),
+            can_paginate=any(undiscovered for undiscovered, _, _ in below_cut),
+        )
 
     async def _run_search_fn(
         self,
@@ -488,14 +497,20 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         if inspect.isawaitable(result):
             result = await result
 
-        matches: list[ToolSearchMatch] = []
-        for name in list(result)[: self.max_results]:
-            if (tool_def := tool_defs_by_name.get(name)) is not None:
-                matches.append({'name': tool_def.name})
+        names = list(result)
+        matches: list[ToolSearchMatch] = [
+            {'name': name} for name in names[: self.max_results] if name in tool_defs_by_name
+        ]
 
         if not matches:
             return self._empty_return()
-        return self._build_return(matches)
+        # Names the strategy made up aren't matches, so they don't count towards the total the
+        # model is told about — but they still occupy a slot above, as they always have.
+        return self._build_return(
+            matches,
+            total_matches=sum(1 for name in names if name in tool_defs_by_name),
+            can_paginate=False,
+        )
 
     @staticmethod
     def _empty_return() -> ToolSearchReturnContent:
@@ -513,6 +528,31 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
         }
 
     @staticmethod
-    def _build_return(matches: list[ToolSearchMatch]) -> ToolSearchReturnContent:
-        """Shaped matches return: typed [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]."""
-        return {'discovered_tools': matches}
+    def _build_return(
+        matches: list[ToolSearchMatch], *, total_matches: int, can_paginate: bool
+    ) -> ToolSearchReturnContent:
+        """Shaped matches return, with a truncation hint when `max_results` trimmed the list.
+
+        A trimmed list is indistinguishable from a complete one, so a model that can't see the
+        cut has no reason to look past the first page. `total_matches` states the fact
+        structurally — for UIs and history consumers — and `message` spells out the next step in
+        the text the model actually reads. Neither is set on a complete result: their absence is
+        what says "this is everything".
+
+        `can_paginate` is the caller's answer to "does repeating this exact search surface tools
+        this page didn't?". Only the default algorithm can say yes, and only while undiscovered
+        matches remain below the cut, since it's the undiscovered-first sort that sinks each page
+        and lifts the next. A user-supplied `search_fn` (which the explicit `'keywords'` strategy
+        also routes through) orders results however it likes and may hand back the same page
+        again, so it gets the narrowing advice rather than a promise the strategy can't keep.
+        """
+        content: ToolSearchReturnContent = {'discovered_tools': matches}
+        if total_matches > len(matches):
+            content['total_matches'] = total_matches
+            next_step = (
+                'Repeat this search for the next page, or use more specific queries.'
+                if can_paginate
+                else 'Use more specific queries to narrow the results.'
+            )
+            content['message'] = f'Showing {len(matches)} of {total_matches} matching tools. {next_step}'
+        return content

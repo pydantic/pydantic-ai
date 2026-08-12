@@ -109,8 +109,21 @@ class ToolSearchReturnContent(TypedDict):
     discovered_tools: list[ToolSearchMatch]
     """Matches ordered by relevance. An empty list means "search ran, nothing matched"."""
 
+    total_matches: NotRequired[int]
+    """How many tools matched in total, set only when `discovered_tools` was trimmed.
+
+    Its absence means `discovered_tools` is the complete match set, so the model can tell a
+    whole result from a page of one. Written by the local search path when the matches
+    exceeded [`ToolSearch.max_results`][pydantic_ai.capabilities.ToolSearch.max_results];
+    provider-native search reports no total of its own, so it never carries one.
+    """
+
     message: NotRequired[str]
-    """Optional text shown to the model when no matches were found.
+    """Optional text shown to the model alongside (or in place of) the matches.
+
+    Written by the local search path when no tools matched, and when `total_matches` says
+    the list was trimmed — there it names the total and the way to reach the rest, so the
+    model doesn't have to infer that the result was a page.
 
     Rendered as text on local fallback / Anthropic custom-callable empty-results path.
     Stripped on OpenAI client-execution and Anthropic server-side replay (those carry
@@ -229,12 +242,21 @@ class NativeToolSearchReturnPart(NativeToolReturnPart):
         return self.content['discovered_tools']
 
     @property
+    def total_matches(self) -> int | None:
+        """Subfield accessor for `content.get('total_matches')`.
+
+        Returns `None` when the result wasn't trimmed, in which case `discovered_tools`
+        already holds every match.
+        """
+        return self.content.get('total_matches')
+
+    @property
     def message(self) -> str | None:
         """Subfield accessor for `content.get('message')`.
 
         The message is `NotRequired` on
         [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent];
-        returns `None` when no message was set (e.g. on non-empty match returns).
+        returns `None` when no message was set (e.g. on a complete, non-empty match return).
         """
         return self.content.get('message')
 
@@ -352,12 +374,21 @@ class ToolSearchReturnPart(ToolReturnPart):
         return self.content['discovered_tools']
 
     @property
+    def total_matches(self) -> int | None:
+        """Subfield accessor for `content.get('total_matches')`.
+
+        Returns `None` when the result wasn't trimmed, in which case `discovered_tools`
+        already holds every match.
+        """
+        return self.content.get('total_matches')
+
+    @property
     def message(self) -> str | None:
         """Subfield accessor for `content.get('message')`.
 
         The message is `NotRequired` on
         [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent];
-        returns `None` when no message was set (e.g. on non-empty match returns).
+        returns `None` when no message was set (e.g. on a complete, non-empty match return).
         """
         return self.content.get('message')
 

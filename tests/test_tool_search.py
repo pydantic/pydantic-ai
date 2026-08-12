@@ -884,6 +884,42 @@ async def test_tool_search_toolset_max_results():
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['tool']}, ctx, search_tool)
     rv = cast(ToolSearchReturnContent, result)
     assert len(rv['discovered_tools']) == 10
+    # The trim is announced, so the model doesn't read a page as the whole corpus (#7232).
+    assert rv.get('total_matches') == 15
+    assert rv.get('message') == snapshot(
+        'Showing 10 of 15 matching tools. Repeat this search for the next page, or use more specific queries.'
+    )
+
+
+async def test_tool_search_toolset_search_fn_truncation_reports_total_without_promising_a_next_page() -> None:
+    """A custom `search_fn` gets the trim announced too, but never the repeat-to-paginate
+    promise: it orders results however it likes, so an identical repeat may hand back the same
+    page. Names it invents aren't matches and don't inflate the reported total, though they
+    still consume a slot as they always have."""
+    toolset = FunctionToolset()
+
+    def tool() -> str:  # pragma: no cover
+        return 'x'
+
+    for i in range(4):
+        toolset.add_function(tool, name=f'tool_{i}', defer_loading=True)
+
+    def search(_ctx: RunContext[None], _queries: Sequence[str], tools: Sequence[ToolDefinition]) -> list[str]:
+        return ['not_a_tool', *(tool_def.name for tool_def in tools)]
+
+    searchable = ToolSearchToolset(wrapped=toolset, search_fn=search, max_results=2)
+    ctx = _build_run_context(None)
+    search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
+
+    result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['tool']}, ctx, search_tool)
+
+    assert result == snapshot(
+        {
+            'discovered_tools': [{'name': 'tool_0'}],
+            'total_matches': 4,
+            'message': 'Showing 1 of 4 matching tools. Use more specific queries to narrow the results.',
+        }
+    )
 
 
 async def test_tool_search_toolset_ranks_undiscovered_matches_first_when_trimmed() -> None:
@@ -905,10 +941,16 @@ async def test_tool_search_toolset_ranks_undiscovered_matches_first_when_trimmed
     search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
 
     # `first_tool` scores higher (matches both terms) but is already discovered — the
-    # lower-scoring undiscovered `second_tool` still takes the single slot.
+    # lower-scoring undiscovered `second_tool` still takes the single slot. Everything left
+    # below the cut is already available, so the hint reports the trim without promising a
+    # next page that would just repeat this one.
     result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['first', 'tool']}, ctx, search_tool)
 
-    assert result == {'discovered_tools': [{'name': 'second_tool'}]}
+    assert result == {
+        'discovered_tools': [{'name': 'second_tool'}],
+        'total_matches': 2,
+        'message': 'Showing 1 of 2 matching tools. Use more specific queries to narrow the results.',
+    }
 
     # With room for both, the discovered tool is appended after the undiscovered one rather
     # than excluded — the corpus never shrinks with discovery.
@@ -925,8 +967,10 @@ async def test_repeated_searches_paginate_through_a_large_corpus() -> None:
 
     Each page's results become discovered and sink below undiscovered matches, so the next
     identical search surfaces the next tranche — preserving the scan-by-repetition idiom the
-    old corpus subtraction enabled. A page that includes already-available tools is the
-    signal that enumeration is complete."""
+    old corpus subtraction enabled. The truncation hint states that protocol rather than
+    leaving the model to infer it (#7232), and stops offering a next page once nothing
+    undiscovered is left below the cut — otherwise "repeat this search" would loop on the
+    same final page forever."""
     toolset = FunctionToolset()
     all_names = [f'mcp_tool_{i:02d}' for i in range(25)]
     for tool_name in all_names:
@@ -939,12 +983,15 @@ async def test_repeated_searches_paginate_through_a_large_corpus() -> None:
     searchable = ToolSearchToolset(wrapped=toolset)
     discovered: set[str] = set()
     pages: list[list[str]] = []
+    messages: list[str | None] = []
     for _ in range(3):
         ctx = _build_run_context(None, discovered_tool_names=set(discovered))
         search_tool = (await searchable.get_tools(ctx))[_SEARCH_TOOLS_NAME]
         result = await searchable.call_tool(_SEARCH_TOOLS_NAME, {'queries': ['mcp']}, ctx, search_tool)
         page = [match['name'] for match in result['discovered_tools']]
         pages.append(page)
+        messages.append(result.get('message'))
+        assert result['total_matches'] == 25
         discovered.update(page)
 
     assert len(pages[0]) == len(pages[1]) == 10
@@ -953,6 +1000,13 @@ async def test_repeated_searches_paginate_through_a_large_corpus() -> None:
     # fill the leftover slots — the model's signal that it has seen the whole corpus.
     assert set(pages[0]) | set(pages[1]) | set(pages[2][:5]) == set(all_names)
     assert set(pages[2][5:]) <= set(pages[0]) | set(pages[1])
+    assert messages == snapshot(
+        [
+            'Showing 10 of 25 matching tools. Repeat this search for the next page, or use more specific queries.',
+            'Showing 10 of 25 matching tools. Repeat this search for the next page, or use more specific queries.',
+            'Showing 10 of 25 matching tools. Use more specific queries to narrow the results.',
+        ]
+    )
 
 
 async def test_search_corpus_includes_already_discovered_tools() -> None:
@@ -6465,6 +6519,38 @@ def test_builtin_tool_search_return_part_message_accessor() -> None:
         provider_name='anthropic',
     )
     assert without_message.message is None
+
+
+def test_tool_search_return_part_total_matches_accessor() -> None:
+    """`total_matches` reads `content.get('total_matches')` on both return-part variants.
+
+    Only the local search path sets it (provider-native search reports no total of its own),
+    but the accessor is symmetric so a consumer reading history doesn't have to care which
+    path produced the part. `None` is the "not trimmed" answer — `discovered_tools` is then
+    already the whole match set.
+    """
+
+    local = ToolSearchReturnPart(
+        content={'discovered_tools': [{'name': 'foo'}], 'total_matches': 12},
+        tool_call_id='c1',
+    )
+    assert local.total_matches == 12
+    assert (
+        ToolSearchReturnPart(content={'discovered_tools': [{'name': 'foo'}]}, tool_call_id='c2').total_matches is None
+    )
+
+    native = NativeToolSearchReturnPart(
+        content={'discovered_tools': [{'name': 'foo'}], 'total_matches': 12},
+        tool_call_id='c3',
+        provider_name='anthropic',
+    )
+    assert native.total_matches == 12
+    assert (
+        NativeToolSearchReturnPart(
+            content={'discovered_tools': [{'name': 'foo'}]}, tool_call_id='c4', provider_name='anthropic'
+        ).total_matches
+        is None
+    )
 
 
 async def test_tool_search_toolset_async_search_fn_is_awaited() -> None:
