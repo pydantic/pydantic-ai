@@ -2682,7 +2682,7 @@ async def test_run_stream_response_error():
                 'type': 'tool-output-error',
                 'toolCallId': IsStr(),
                 'errorText': """\
-Unknown tool name: 'unknown_tool'. No tools available.
+Unknown tool name: 'unknown_tool'. No tools are defined.
 
 Fix the errors and try again.\
 """,

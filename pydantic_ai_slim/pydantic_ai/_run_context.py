@@ -2,19 +2,22 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import sys
+import warnings
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import field
+from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic
 
 from opentelemetry.trace import NoOpTracer, Tracer
-from typing_extensions import TypeVar
+from typing_extensions import TypeVar, deprecated
 
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 
 from . import _utils, messages as _messages
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority
+from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
 
 if TYPE_CHECKING:
@@ -233,8 +236,15 @@ class RunContext(Generic[RunContextAgentDepsT]):
     plus these). Managed by the framework: safe to read, but don't mutate it directly.
     """
 
-    capability_loaded: bool | None = None
-    """Whether the capability whose hook or callback is currently running is loaded.
+    capability_available: bool | None = None
+    """Whether the capability whose hook or callback is currently running is active right now.
+
+    Available, not loaded: an always-on capability is available for the whole run, so this reads
+    `True` inside its hooks although nothing ever loaded it. Only a deferred capability has to be
+    loaded before it becomes available, and its hooks are skipped until then — so it reads `True`
+    there too. What it answers is "may this capability act now?", not "was it selected?"; for the
+    latter, look an id up in
+    [`loaded_capability_ids`][pydantic_ai.tools.RunContext.loaded_capability_ids].
 
     This is `None` outside capability dispatch, where there is no current capability.
     """
@@ -258,6 +268,20 @@ class RunContext(Generic[RunContextAgentDepsT]):
     stay the answer for everything that feeds a *future* request, whose provider isn't knowable yet;
     this one is the answer for a call the model has already made, where it is. See `AnchoredEvidence`.
     """
+
+    @property
+    @deprecated(
+        '`capability_loaded` is deprecated, use `capability_available` instead: the value is `True` for an '
+        'always-on capability that was never loaded.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def capability_loaded(self) -> bool | None:
+        """Whether the capability whose hook or callback is currently running is active right now.
+
+        Deprecated: use [`capability_available`][pydantic_ai.tools.RunContext.capability_available]. This
+        never meant "loaded" — it is `True` for an always-on capability nothing ever loaded.
+        """
+        return self.capability_available
 
     @property
     def realtime(self) -> bool:
@@ -496,6 +520,32 @@ class RunContext(Generic[RunContextAgentDepsT]):
         cancellation.cancel()
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_run_context_init = RunContext.__init__
+
+
+@wraps(_run_context_init)
+def _run_context_init_with_capability_loaded(
+    self: RunContext[Any], *, capability_loaded: bool | None = None, **kwargs: Any
+) -> None:
+    if capability_loaded is not None:
+        warnings.warn(
+            '`capability_loaded` is deprecated, use `capability_available` instead: the value is `True` for an '
+            'always-on capability that was never loaded.',
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        kwargs.setdefault('capability_available', capability_loaded)
+    _run_context_init(self, **kwargs)
+
+
+# Wrapping the generated `__init__` rather than keeping an `InitVar` field: on Python 3.13+
+# `dataclasses.replace()` round-trips every init-only variable through `getattr`, which would fire
+# the deprecation warning on each of the run's internal `replace(ctx, ...)` calls. A non-field
+# keyword is invisible to `replace()`, and `@wraps` keeps `inspect.signature` resolving to the real
+# one. `TemporalRunContext` defines its own `__init__` and is unaffected either way.
+RunContext.__init__ = _run_context_init_with_capability_loaded
 
 
 _CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(

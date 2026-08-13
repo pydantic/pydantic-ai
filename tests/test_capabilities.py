@@ -2855,7 +2855,7 @@ def test_combined_capability_get_model_settings_deferred():
     class DynamicSettingsCap(AbstractCapability):
         def get_model_settings(self) -> Callable[[RunContext], _ModelSettings]:
             def settings(ctx: RunContext) -> _ModelSettings:
-                seen_dynamic_loaded.append(ctx.capability_loaded)
+                seen_dynamic_loaded.append(ctx.capability_available)
                 return _ModelSettings(temperature=0.2)
 
             return settings
@@ -2900,7 +2900,7 @@ async def test_deferred_hooks_do_not_fire_until_capability_is_loaded() -> None:
 
     @hooks.on.before_model_request
     async def record(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
-        seen_loaded.append(ctx.capability_loaded)
+        seen_loaded.append(ctx.capability_available)
         return request_context
 
     def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -9001,7 +9001,7 @@ class TestPrepareToolsCapability:
                 ModelRequest(
                     parts=[
                         RetryPromptPart(
-                            content="Unknown tool name: 'secret_tool'. No tools available.",
+                            content="Unknown tool name: 'secret_tool'. No tools are defined.",
                             tool_name='secret_tool',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
@@ -9013,7 +9013,7 @@ class TestPrepareToolsCapability:
                 ),
                 ModelResponse(
                     parts=[TextPart(content='done')],
-                    usage=RequestUsage(input_tokens=65, output_tokens=3),
+                    usage=RequestUsage(input_tokens=66, output_tokens=3),
                     model_name='function:model_fn:',
                     timestamp=IsDatetime(),
                     run_id=IsStr(),

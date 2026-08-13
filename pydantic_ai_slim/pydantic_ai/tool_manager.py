@@ -501,11 +501,15 @@ class ToolManager(Generic[AgentDepsT]):
         name = call.tool_name
         tool = self.tools.get(name)
         if tool is None:
+            # *Known*, not *available*: the branch below refuses tools that are in `self.tools` but
+            # not callable yet, so this set is deliberately the wider one. The question here is
+            # whether the name is real at all, and a deferred tool is a real name the model may yet
+            # be given — narrowing it would report a not-yet-revealed tool as a typo.
             if self.tools:
-                available = sorted(self.tools.keys())
-                msg = f'Available tools: {", ".join(f"{n!r}" for n in available)}'
+                known = sorted(self.tools.keys())
+                msg = f'Known tools: {", ".join(f"{n!r}" for n in known)}'
             else:
-                msg = 'No tools available.'
+                msg = 'No tools are defined.'
             raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
         if (unavailable := self._unavailable_reason(tool.tool_def)) is not None:
             raise _ToolUnavailable(unavailable, tool)

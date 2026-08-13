@@ -809,7 +809,7 @@ async def test_run_stream_response_error():
             '</response>',
             '<request>',
             "<function-tool-call name='unknown_tool'>None</function-tool-call>",
-            "<function-tool-result name='unknown_tool'>Unknown tool name: 'unknown_tool'. No tools available.</function-tool-result>",
+            "<function-tool-result name='unknown_tool'>Unknown tool name: 'unknown_tool'. No tools are defined.</function-tool-result>",
             '</request>',
             '<response>',
             "<tool-call name='unknown_tool'>None",

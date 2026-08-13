@@ -194,8 +194,8 @@ class ModelRequestParameters:
 
     Input to visibility resolution: `ToolDefinition.defer_loading` records what the author asked
     for and stays set after a reveal, so this answers the separate question of what the model can
-    see *now*. History can name tools that no longer exist in the current run's definitions, so
-    this is not necessarily a subset of `function_tools`' names; resolution ignores unknown names.
+    see *now*. History can name tools that no longer exist in the current run's definitions; those
+    are dropped where this is derived, so it is a subset of `function_tools`' names by construction.
     """
 
     deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)

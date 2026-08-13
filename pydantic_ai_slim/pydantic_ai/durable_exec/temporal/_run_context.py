@@ -55,6 +55,12 @@ _NONE_UNLESS_ATTACHED = ('agent', 'root_capability', 'pending_messages', 'tool_m
 # the history-derived window — instead of raising for a field it never knew to carry.
 _DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (('_anchored_evidence', AnchoredEvidence()),)
 
+# Payloads written by a worker running an older version, or by a custom `serialize_run_context` that
+# still spells the old name. An activity can be dispatched by one worker version and replayed by
+# another, so the old key has to keep arriving at the renamed field — otherwise the field lands in
+# `__dict__` under a name nothing reads, and `capability_available` raises as "not carried".
+_RENAMED_FIELDS: tuple[tuple[str, str], ...] = (('capability_loaded', 'capability_available'),)
+
 # Reading any other omitted field raises instead of returning the `RunContext` dataclass default,
 # which would silently pass for real run state (e.g. `instrumentation_version` reading as the
 # default version rather than the run's, or `prompt` as `None` for a subclass that drops it).
@@ -64,7 +70,7 @@ _GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', *_NONE_U
 class TemporalRunContext(RunContext[AgentDepsT]):
     """The [`RunContext`][pydantic_ai.tools.RunContext] subclass to use to serialize and deserialize the run context for use inside a Temporal activity.
 
-    By default, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `partial_output`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, the private dispatch-only availability supplements, and `capability_loaded` attributes will be available. Reading any other attribute raises a `UserError` explaining how to make it available, rather than returning its default value, so a field that didn't cross the boundary can't be mistaken for real run state.
+    By default, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `partial_output`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, the private dispatch-only availability supplements, and `capability_available` attributes will be available. Reading any other attribute raises a `UserError` explaining how to make it available, rather than returning its default value, so a field that didn't cross the boundary can't be mistaken for real run state.
 
     `agent` and `root_capability` are re-attached from the worker's agent instance, `pending_messages` holds a guard that makes [`enqueue`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, and `tool_manager` and `realtime_session` are `None`: they hold live run state that isn't serializable (for `tool_manager`, `available_tool_names` returns the resolved snapshot serialized at activity dispatch time, falling back to `discovered_tool_names` if a custom subclass doesn't carry it; for `realtime_session`, `None` already means "not available here"). The `capabilities` registry is excluded for the same reason — it holds live capability objects (toolsets, hooks, callables) — so `available_capability_ids` likewise returns a snapshot serialized at dispatch time, which is what lets [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answer for a capability-owned tool inside an activity; reading `capabilities` itself still raises. `model` and `tracer` are excluded as live objects too. `messages` is excluded because the full history would be duplicated into every activity payload, and `prompt` is excluded because a multi-modal prompt can carry large `BinaryContent` that would likewise ride in every activity payload, risking Temporal's 2 MB limit. `model_settings` is excluded because it's only set for model requests, which receive it as their own activity parameter, and `validation_context` because it's an arbitrary user object with no serialization contract.
     To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A subclass can use this escape hatch to opt in to carrying `prompt` if it knows its prompts are text-only.
@@ -72,6 +78,9 @@ class TemporalRunContext(RunContext[AgentDepsT]):
 
     def __init__(self, deps: AgentDepsT, **kwargs: Any):
         self.__dict__ = {**kwargs, 'deps': deps}
+        for old_name, new_name in _RENAMED_FIELDS:
+            if (value := self.__dict__.pop(old_name, None)) is not None:
+                self.__dict__.setdefault(new_name, value)
         for name in _NONE_UNLESS_ATTACHED:
             self.__dict__.setdefault(name, None)
         for name, default in _DEFAULTED_UNLESS_CARRIED:
@@ -175,7 +184,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             # deferred capability (whose load is itself the reveal for its tools) from one that has
             # since been reconfigured always-on. Derived from the registry, so it must travel too.
             '_deferred_capability_ids': ctx._deferred_capability_ids,
-            'capability_loaded': ctx.capability_loaded,
+            'capability_available': ctx.capability_available,
         }
 
     @classmethod
