@@ -43,7 +43,6 @@ from . import _enqueue, _output, _system_prompt, exceptions, messages as _messag
 from ._cancel import RunCancellation
 from ._cost import best_effort_price, fill_response_cost
 from ._deferred_capabilities import parse_loaded_capabilities
-from ._instructions import normalize_toolset_instructions
 from ._run_context import set_current_run_context
 from .exceptions import ToolRetryError
 
@@ -68,6 +67,7 @@ from .tools import (
     RunContext,
     ToolDefinition,
 )
+from .toolsets._instruction_collection import collect_toolset_instructions
 
 if TYPE_CHECKING:
     from .agent import Agent
@@ -748,8 +748,7 @@ async def _get_instructions(
     if base:
         parts.extend(base)
 
-    toolset_result = await ctx.deps.tool_manager.toolset.get_instructions(run_context)
-    parts.extend(normalize_toolset_instructions(toolset_result))
+    parts.extend(await collect_toolset_instructions(ctx.deps.tool_manager.toolset, run_context))
 
     return parts or None
 

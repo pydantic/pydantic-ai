@@ -103,6 +103,7 @@ from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
 )
+from ..toolsets._instruction_collection import collect_toolset_instructions
 from ..toolsets._tool_search import parse_discovered_tools
 from ..toolsets.abstract import AGENT_TOOLSET_ID
 from ..toolsets.combined import CombinedToolset
@@ -3408,9 +3409,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # separator, static-before-dynamic ordering, and per-source `id`s as the graph run.
             # KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
             instruction_parts = await _instructions.resolve_sourced_instructions(sourced_instructions, run_context)
-            instruction_parts.extend(
-                _instructions.normalize_toolset_instructions(await tool_manager.toolset.get_instructions(run_context))
-            )
+            instruction_parts.extend(await collect_toolset_instructions(tool_manager.toolset, run_context))
             resolved_instructions = _messages.InstructionPart.join(_messages.InstructionPart.sorted(instruction_parts))
             request_messages = [
                 *(message_history or ()),
