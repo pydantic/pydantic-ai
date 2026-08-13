@@ -941,16 +941,16 @@ print(result.output)
     [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message)
     for details.
 
-### Nebius AI Studio
+### Nebius Token Factory
 
-Go to [Nebius AI Studio](https://studio.nebius.com/) and create an API key.
+Go to [Nebius Token Factory](https://tokenfactory.nebius.com/) and create an API key.
 
 You can set the `NEBIUS_API_KEY` environment variable and use [`NebiusProvider`][pydantic_ai.providers.nebius.NebiusProvider] by name:
 
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('nebius:Qwen/Qwen3-32B-fast')
+agent = Agent('nebius:openai/gpt-oss-120b')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
@@ -964,7 +964,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.nebius import NebiusProvider
 
 model = OpenAIChatModel(
-    'Qwen/Qwen3-32B-fast',
+    'openai/gpt-oss-120b',
     provider=NebiusProvider(api_key='your-nebius-api-key'),
 )
 agent = Agent(model)
