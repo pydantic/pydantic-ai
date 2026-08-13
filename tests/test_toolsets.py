@@ -2348,6 +2348,9 @@ async def test_for_run_returns_fresh_instance():
     assert isinstance(run_toolset, StatefulToolset)
     assert run_toolset.call_count == 0
     assert original.call_count == 5  # original unchanged
+    # State resets, identity doesn't: the `id` keys the toolset's instruction blocks and its
+    # durable-execution activities, so a per-run copy that dropped it would change both.
+    assert run_toolset.id == original.id == 'stateful'
 
 
 async def test_for_run_step_default_returns_self():
