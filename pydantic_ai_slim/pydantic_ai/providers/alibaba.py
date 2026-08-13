@@ -13,7 +13,7 @@ from pydantic_ai.profiles.qwen import qwen_model_profile
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Alibaba provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'

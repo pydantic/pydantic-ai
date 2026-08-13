@@ -16,7 +16,7 @@ from pydantic_ai.profiles.zai import zai_model_profile
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Cerebras provider, '
         'you can use the `cerebras` optional group — `pip install "pydantic-ai-slim[cerebras]"`'

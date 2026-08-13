@@ -14,7 +14,7 @@ from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
 try:
     from openai import AsyncBedrockOpenAI, AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the Bedrock Mantle dependencies to use the Bedrock Mantle provider, '
         'you can use the `bedrock-mantle` optional group — `pip install "pydantic-ai-slim[bedrock-mantle]"`'

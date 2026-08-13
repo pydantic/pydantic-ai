@@ -18,7 +18,7 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModel
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Snowflake provider, '
         'you can use the `snowflake` optional group — `pip install "pydantic-ai-slim[snowflake]"`'
