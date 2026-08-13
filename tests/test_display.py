@@ -90,7 +90,7 @@ def test_display_banner_without_logfire(monkeypatch: pytest.MonkeyPatch, stderr:
 
 def test_display_banner_with_loaded_logfire(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
     def fail_find_logfire(name: str) -> None:
-        pytest.fail('find_spec should not be called')
+        pytest.fail('find_spec should not be called')  # pragma: no cover
 
     monkeypatch.setattr(sys, 'stderr', stderr)
     monkeypatch.setitem(sys.modules, 'logfire', None)
