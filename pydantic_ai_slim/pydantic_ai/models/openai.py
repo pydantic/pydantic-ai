@@ -707,6 +707,9 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     See [OpenAI's streaming documentation](https://platform.openai.com/docs/api-reference/chat/create#stream_options) for more information.
     """
 
+    openai_include_raw_annotations: bool
+    """Whether to include raw annotations in `TextPart.provider_details`."""
+
 
 class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
@@ -858,14 +861,6 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Whether to include the file search results in the response.
 
     Corresponds to the `file_search_call.results` value of the `include` parameter in the Responses API.
-    """
-
-    openai_include_raw_annotations: bool
-    """Whether to include the raw annotations in `TextPart.provider_details`.
-
-    Supported citations are always available as normalized `TextPart.citations`.
-    Enable this setting when the original OpenAI annotation payload is also needed in
-    `provider_details['annotations']`.
     """
 
     openai_context_management: list[ContextManagement]
