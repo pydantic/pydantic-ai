@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai._deferred_capabilities import LoadCapabilityCallPart, LoadCapabilityReturnPart
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     Capability,

@@ -4449,8 +4449,8 @@ async def test_temporal_run_context_preserves_dispatch_availability_supplements(
     wire = await _serialized_run_context_across_the_wire(ctx)
     reconstructed = TemporalRunContext.deserialize_run_context(wire, deps=None)
 
-    assert reconstructed._discovered_tool_names_supplement == {'deferred_tool'}
-    assert reconstructed._loaded_capability_ids_supplement == {'deferred_capability'}
+    assert reconstructed._discovered_tool_names_supplement == {'deferred_tool'}  # pyright: ignore[reportPrivateUsage]
+    assert reconstructed._loaded_capability_ids_supplement == {'deferred_capability'}  # pyright: ignore[reportPrivateUsage]
 
 
 def test_temporal_run_context_serialization_is_exhaustive():
