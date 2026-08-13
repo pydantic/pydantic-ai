@@ -106,8 +106,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     `None` when the stream is used as a standalone encoder, transforming events that reached it
     over a transport of their own — a durable execution workflow, a queue, a websocket fan-out —
     rather than over the HTTP request a [`UIAdapter`][pydantic_ai.ui.UIAdapter] serves. A subclass
-    that needs a value the run input carries takes it as a field of its own, defaulting to the run
-    input's when one is given.
+    that needs a value the run input carries takes it as a field of its own, overwritten by the run
+    input's value when one is given.
     """
 
     accept: str | None = None
