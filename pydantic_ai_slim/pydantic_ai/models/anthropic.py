@@ -1672,6 +1672,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # wire regardless, rather than silently dropping a block whenever the two sets diverge.
         available_tool_names = set(model_request_parameters.declared_tool_defs)
         orphan_tool_search_call_ids = _collect_orphan_tool_search_call_ids(messages)
+        preceding_response_has_unresolved_server_tool = False
         # Only the opening `SystemPromptPart`s in the first request are the run's own system prompt and
         # hoist to the top-level `system` parameter. Later ones are mid-conversation operator instructions:
         # where we support them they reach us verbatim (rather than `<system>`-tagged by `prepare_messages`)
@@ -1884,6 +1885,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     | BetaCompactionBlockParam
                 ] = []
                 carried_thinking_params: list[BetaTextBlockParam] = []
+                carry_thinking_in_user_turn = (
+                    self.profile.get('mimics_assistant_message_formatting', False)
+                    and not preceding_response_has_unresolved_server_tool
+                )
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
                         if response_part.content:
@@ -1919,7 +1924,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             thinking_text = '\n'.join([start_tag, response_part.content, end_tag])
                             thinking_param = BetaTextBlockParam(text=thinking_text, type='text')
-                            if self.profile.get('mimics_assistant_message_formatting', False):
+                            if carry_thinking_in_user_turn:
                                 carried_thinking_params.append(thinking_param)
                             else:
                                 assistant_content_params.append(thinking_param)
@@ -2165,12 +2170,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     # A model that imitates assistant formatting reads reasoning replayed in an
                     # assistant turn as house style and starts writing `<thinking>` tags into the
                     # answers the user reads (https://github.com/pydantic/pydantic-ai/issues/5869).
-                    # Its own turn, rather than merged into the user message ahead of it: appending
-                    # to that message puts text after any `tool_result` blocks it carries, which the
-                    # API rejects when the response also called a server tool it never resolved.
-                    anthropic_messages.append(BetaMessageParam(role='user', content=carried_thinking_params))
+                    #
+                    # Emitted as its own turn here rather than merged into the user message ahead of
+                    # it, which the API combines it with anyway: the position is known while mapping,
+                    # so a `system` entry, a response that renders no assistant turn, or two
+                    # responses in a row can't move the target out from under a backwards search.
+                    # It goes *ahead* of any `system` entry this request emitted, so that entry
+                    # still has no user turn to hop and keeps the cache boundary it was authored
+                    # with — see `_place_system_messages_before_generation`.
+                    insert_at = len(anthropic_messages)
+                    while insert_at > 0 and anthropic_messages[insert_at - 1]['role'] == 'system':
+                        insert_at -= 1
+                    anthropic_messages.insert(insert_at, BetaMessageParam(role='user', content=carried_thinking_params))
                 if len(assistant_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
+                    preceding_response_has_unresolved_server_tool = _response_has_unresolved_server_tool_call(m)
             else:
                 assert_never(m)
 
@@ -3471,6 +3485,26 @@ def _leave_cache_boundary_behind(anthropic_messages: list[BetaMessageParam], ind
     if (cache_control := last_block.pop('cache_control', None)) is None:
         return
     _add_cache_control_param(_last_message_content(anthropic_messages[:index]), cache_control)
+
+
+def _response_has_unresolved_server_tool_call(response: ModelResponse) -> bool:
+    """Whether `response` calls an Anthropic server tool it never delivers a result for.
+
+    Anthropic accepts such a turn as long as the user message after it holds nothing but
+    `tool_result` blocks — any other content there fails the request with `<tool> tool use with id
+    ... was found without a corresponding <tool>_tool_result block`. Consecutive user turns are
+    combined before that check, so a separate turn is no escape: carried-over reasoning has to go
+    back in the assistant turn for this one response, tags and all.
+
+    Orphaned `tool_search` calls never reach here — `_collect_orphan_tool_search_call_ids` strips
+    them from the payload — so this only sees the server tools that are sent as-is.
+    """
+    returned_ids = {
+        part.tool_call_id for part in response.parts if isinstance(part, NativeToolReturnPart) and part.tool_call_id
+    }
+    return any(
+        isinstance(part, NativeToolCallPart) and part.tool_call_id not in returned_ids for part in response.parts
+    )
 
 
 def _collect_orphan_tool_search_call_ids(messages: list[ModelMessage]) -> set[str]:

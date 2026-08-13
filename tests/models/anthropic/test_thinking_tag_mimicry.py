@@ -130,7 +130,8 @@ class Case:
 
 CASES = [
     Case(
-        # The #5869 report, live: bare tags, 6/9 across repeated runs.
+        # The report in https://github.com/pydantic/pydantic-ai/issues/5869, live: bare tags, 6/9 across
+        # repeated runs.
         'sonnet-bare-leaks',
         'claude-sonnet-4-6',
         '',

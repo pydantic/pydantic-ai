@@ -1354,8 +1354,10 @@ class BedrockConverseModel(Model[BaseClient]):
                 if carried_thinking:
                     # See `ModelProfile.mimics_assistant_message_formatting`: reasoning replayed in an
                     # assistant turn teaches the model to write `<thinking>` tags into its visible
-                    # answers. Appended as a plain user turn so the merge pass below decides whether it
-                    # may share a turn with preceding tool results.
+                    # answers. Appended as a plain user turn rather than merged here, so the pass below
+                    # applies `bedrock_tool_result_colocatable_content` to it like any other user
+                    # content — for Claude that set contains `text`, so it does end up sharing the turn
+                    # with preceding tool results.
                     bedrock_messages.append({'role': 'user', 'content': carried_thinking})
                 if content:
                     bedrock_messages.append({'role': 'assistant', 'content': content})
