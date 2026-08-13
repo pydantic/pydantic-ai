@@ -2308,6 +2308,7 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
         ]
     )
 
+
 @pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
 class TestGoogleUsageMapping:
     """`_map_usage` maps Google embedding responses to RequestUsage.
