@@ -104,7 +104,7 @@ class SpanNode:
 
     @property
     def duration(self) -> timedelta:
-        """Return the span's duration as a timedelta, or None if start/end not set."""
+        """Return the span's duration as a timedelta."""
         return self.end_timestamp - self.start_timestamp
 
     @property
