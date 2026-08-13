@@ -50,3 +50,4 @@ declared and availability deltas fall back to a system-text announcement. Deferr
 on that model. Reading `declared_tool_defs` and `visibility_of()` opts the adapter into withholding.
 
 <!-- /braindump -->
+- When a model forwards a generic `ModelSettings` field, add it to that field's `Supported by:` list in `pydantic_ai/settings.py`, and give a new `Model` class a case in `tests/models/test_model_settings_support.py` — that test probes each class's outgoing request and fails when a list and the wire disagree.

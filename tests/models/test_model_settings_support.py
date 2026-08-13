@@ -13,6 +13,12 @@ than hunting for the value survives wire renames (`stop_sequences` -> `stop`), u
 distinguishing value of their own (`parallel_tool_calls`), and the `extra_body` merges the
 OpenAI-derived models perform.
 
+This is not a VCR test, and can't be one: a cassette is a frozen recording, so it keeps matching after the
+code stops sending a field — the very drift this file exists to catch. Nothing is recorded either, since
+every probe aborts before a response. For the same reason it doesn't use the `request_capture` fixture:
+that records only path, body and headers on a live transport, while `timeout` is observable only in
+`httpx.Request.extensions` and the probe needs a `MockTransport` to fail the call without a network.
+
 `tool_choice` and `thinking` are excluded and stay hand-maintained, for different reasons:
 
 - `tool_choice` reaches every adapter through `resolve_tool_choice`, and the adapters that cannot
@@ -38,6 +44,7 @@ import inspect
 import json
 import pkgutil
 import textwrap
+import types
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -522,7 +529,10 @@ _NOT_API_BACKED = frozenset(
 
 
 def test_every_api_backed_model_class_is_probed():
-    """A new `Model` class has to join `CASES`, so it cannot be added and left out of every list.
+    """A new `Model` class in a `pydantic_ai.models` module has to join `CASES`.
+
+    The walk is not recursive, matching the package's flat layout; a model added inside a subpackage would
+    escape it.
 
     Derived from the package rather than a hardcoded list because the hardcoded list is the failure
     this file exists to prevent: `CrusoeModel`, `SnowflakeModel` and the Bedrock Mantle models drifted
@@ -534,11 +544,14 @@ def test_every_api_backed_model_class_is_probed():
             module = importlib.import_module(module_info.name)
         except ImportError:  # pragma: lax no cover
             continue  # an optional provider SDK isn't installed; its classes can't be probed either
-        discovered.update(
-            name
-            for name, obj in vars(module).items()
-            if isinstance(obj, type) and issubclass(obj, Model) and obj.__module__ == module_info.name
-        )
+        for name, obj in vars(module).items():
+            # A subscripted generic (`dict[str, Any]`) passes `isinstance(_, type)` on Python 3.10 and
+            # then makes `issubclass` raise, so both it and anything merely imported into the module
+            # are screened out before the base-class question is asked.
+            if not isinstance(obj, type) or isinstance(obj, types.GenericAlias):
+                continue
+            if obj.__module__ == module_info.name and issubclass(obj, Model):
+                discovered.add(name)
 
     unprobed = discovered - _NOT_API_BACKED - {case.id for case in CASES}
     assert not unprobed, f'model classes with no probe case, so no `Supported by:` list covers them: {sorted(unprobed)}'

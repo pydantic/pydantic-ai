@@ -53,7 +53,8 @@ Values:
 - `'default'`: Explicitly request the provider's standard tier — opts out of any server-side
   auto-promotion to premium tiers.
 - `'flex'`: Lower-cost, latency-tolerant tier where the provider offers one. Silently ignored on
-  providers that don't (e.g. Anthropic).
+  providers that don't (e.g. Anthropic) — though a few reject the field outright rather than ignore it,
+  as noted on the [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] entries.
 - `'priority'`: Higher-priority / lower-latency tier where the provider offers one. Silently ignored
   on providers that don't.
 
@@ -90,6 +91,10 @@ class ModelSettings(TypedDict, total=False):
     [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]; a name qualified with an
     interface, like `OpenAI Chat Completions`, covers only that one, because the Responses API does
     not accept the setting at all.
+
+    These lists are parsed and checked against the wire by
+    `tests/models/test_model_settings_support.py`, so keep the `* Name` bullet shape and put any nuance in
+    parentheses after the name.
 
     Being listed means Pydantic AI sends the setting, not that the service honors it: the
     OpenAI-compatible model classes forward whatever the OpenAI schema accepts, and an individual
@@ -166,14 +171,14 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * Google
     * Groq
-    * Cohere (a named subset is honored by filtering the tool list, not sent as a parameter)
-    * Mistral (a named subset is honored by filtering the tool list, not sent as a parameter)
+    * Cohere
+    * Mistral
     * Bedrock
     * xAI
     * HuggingFace
     * Cerebras
     * Crusoe
-    * Ollama (sent, but Ollama documents `tool_choice` as unsupported)
+    * Ollama
     * OpenRouter
     * Snowflake
     * Z.AI
@@ -405,9 +410,10 @@ class ModelSettings(TypedDict, total=False):
     Provider-specific thinking settings (e.g., `anthropic_thinking`,
     `openai_reasoning_effort`) take precedence over this unified field.
 
-    Listed below are the model classes that translate this field onto the request. A model that always
-    reasons and takes no thinking parameter (Cohere, Mistral's `magistral`) is not listed, because
-    there is nothing for the setting to change.
+    Listed below are the model classes that translate this field onto the request. A class whose models
+    always reason and take no thinking parameter is not listed at all (Cohere); where only some of a
+    class's models are always-on it stays listed, and the per-model behavior is on the
+    [Thinking page](../capabilities/thinking.md) (Mistral's `magistral`).
 
     Supported by:
 
