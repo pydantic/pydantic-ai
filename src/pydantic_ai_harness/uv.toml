@@ -1,1 +1,7 @@
 exclude-newer-package = { pydantic-ai = false, pydantic-ai-slim = false, pydantic-evals = false, pydantic-graph = false }
+
+# hatchling 1.32.0 (2026-08-11) bumped its default core metadata version to 2.5,
+# which the pinned gh-action-pypi-publish validator rejects as "not a valid
+# metadata version". Ceiling until the publish action (or PyPI's own validator)
+# catches up. Affects `uv build`'s PEP 517 build isolation, not runtime installs.
+build-constraint-dependencies = ['hatchling<1.32']
