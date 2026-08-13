@@ -8751,7 +8751,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 index=4,
                 part=TextPart(
                     content="""\
-Here's the chart of y = x^2 for x from -5 to 5.  \n\
+Here\u2019s the chart of y = x^2 for x from -5 to 5.  \n\
 Download the image: [Download the chart](sandbox:/mnt/data/y_eq_x_squared_plot.png)\
 """,
                     id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4',
