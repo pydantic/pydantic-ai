@@ -8,11 +8,11 @@ from pydantic.json_schema import GenerateJsonSchema
 
 from pydantic_ai._instructions import (
     AgentInstructions,
-    DeclaredInstruction,
     SourcedInstruction,
     capability_instruction_id,
     normalize_instructions,
-    source_declared_instructions,
+    resolve_declared_id,
+    source_instructions,
     validate_instruction_id_segment,
 )
 from pydantic_ai._run_context import AgentDepsT, RunContext
@@ -64,7 +64,7 @@ class Capability(AbstractCapability[AgentDepsT]):
     """
 
     _function_toolset: FunctionToolset[AgentDepsT] = field(init=False, repr=False)
-    _instructions: list[DeclaredInstruction[AgentDepsT]] = field(init=False, repr=False, default_factory=lambda: [])
+    _instructions: list[SourcedInstruction[AgentDepsT]] = field(init=False, repr=False, default_factory=lambda: [])
     _description: CapabilityDescription[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
     def __init__(
@@ -109,9 +109,8 @@ class Capability(AbstractCapability[AgentDepsT]):
         # durable execution, which wraps leaf toolsets by `id` at construction time (see
         # `docs/capabilities/`). User-provided `toolsets=` keep their own ids and are never overwritten.
         self._function_toolset = FunctionToolset[AgentDepsT](tools, id=id)
-        self._instructions = [
-            DeclaredInstruction[AgentDepsT](instruction) for instruction in normalize_instructions(instructions)
-        ]
+        instruction_source_id = capability_instruction_id(id) if id is not None else None
+        self._instructions = source_instructions(normalize_instructions(instructions), instruction_source_id)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -124,15 +123,13 @@ class Capability(AbstractCapability[AgentDepsT]):
         return self._description
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        return [declared.instruction for declared in self._instructions] or None
+        return [sourced.instruction for sourced in self._instructions] or None
 
     def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         if type(self).get_instructions is not Capability.get_instructions:
             # A subclass computes its own instructions, so there are no declared ids to resolve.
             return super()._collect_instructions()
-        return source_declared_instructions(
-            self._instructions, capability_instruction_id(self.id) if self.id is not None else None
-        )
+        return list(self._instructions)
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         toolsets: list[AgentToolset[AgentDepsT]] = []
@@ -355,7 +352,8 @@ class Capability(AbstractCapability[AgentDepsT]):
         def decorator(
             func_: SystemPromptFunc[AgentDepsT],
         ) -> SystemPromptFunc[AgentDepsT]:
-            self._instructions.append(DeclaredInstruction[AgentDepsT](func_, declared_id=id))
+            source_id = capability_instruction_id(self.id) if self.id is not None else None
+            self._instructions.append(SourcedInstruction(func_, id=resolve_declared_id(source_id, id)))
             return func_
 
         return decorator if func is None else decorator(func)

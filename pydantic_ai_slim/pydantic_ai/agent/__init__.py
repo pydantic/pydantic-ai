@@ -1625,7 +1625,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         # Build instructions with per-run capability contributions
-        static_instruction_parts, instructions_functions = self._get_instructions(
+        sourced_instructions = self._get_instructions(
             additional_instructions=instructions,
             cap_instructions=cap_instructions,
         )
@@ -1633,14 +1633,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         async def get_instructions(
             run_context: RunContext[AgentDepsT],
         ) -> list[_messages.InstructionPart] | None:
-            parts: list[_messages.InstructionPart] = [*static_instruction_parts]
-
-            for func in instructions_functions:
-                text = await func.runner.run(run_context)
-                if text:
-                    parts.append(_messages.InstructionPart(content=text, dynamic=True, id=func.id))
-
-            return parts or None
+            return await _instructions.resolve_sourced_instructions(sourced_instructions, run_context) or None
 
         # The deferred capabilities the model has already loaded in prior steps; the graph
         # refreshes this from history before each model request, so the seed only matters
@@ -1746,8 +1739,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
             deferred_tool_results=deferred_tool_results,
-            instructions=_messages.InstructionPart.join(static_instruction_parts),
-            instructions_functions=[func.runner for func in instructions_functions],
+            instructions=None,
+            instructions_functions=[],
             system_prompts=self._system_prompts,
             system_prompt_functions=self._system_prompt_functions,
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
@@ -2988,8 +2981,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
         additional_instructions: AgentInstructions[AgentDepsT] = None,
         cap_instructions: list[_instructions.SourcedInstruction[AgentDepsT]] | None = None,
-    ) -> tuple[list[_messages.InstructionPart], list[_instructions.SourcedInstructionRunner[AgentDepsT]]]:
-        """Prepare agent-level instructions, splitting them into static parts and functions.
+    ) -> list[_instructions.SourcedInstruction[AgentDepsT]]:
+        """Collect the lazy agent-level instructions for final request resolution.
 
         Toolset instructions are collected separately during run execution.
 
@@ -2997,11 +2990,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             additional_instructions: Additional instructions to include for this run.
             cap_instructions: Instructions from capabilities, resolved at run time.
 
-        Returns:
-            A tuple of (static_parts, instruction_functions) where:
-            - static_parts: Literal instructions, as one `InstructionPart` per source
-            - instruction_functions: Instruction functions that need to be evaluated at runtime,
-              each with the id its output should be addressed by
         """
         override_instructions = self._override_instructions.get()
         instructions: list[_instructions.SourcedInstruction[AgentDepsT]]
@@ -3021,51 +3009,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     )
                 )
 
-        static_parts: list[_messages.InstructionPart] = []
-        functions: list[_instructions.SourcedInstructionRunner[AgentDepsT]] = []
-        # Literals sharing an id make up a single addressable block: `Agent(instructions=['a', 'b'])`
-        # is one `'agent'` part, not two competing for the key. An unidentified literal is a block of
-        # its own -- there is no key to merge it under, and fusing them would render two anonymous
-        # sources as one.
-        group: list[_messages.InstructionPart] = []
-        group_key: str | None = None
-
-        def flush_group() -> None:
-            if content := _messages.InstructionPart.join(group):
-                static_parts.append(_messages.InstructionPart(content=content, id=group[0].id))
-            group.clear()
-
-        for sourced in instructions:
-            instruction = sourced.instruction
-            if isinstance(instruction, _messages.InstructionPart):
-                if not (content := instruction.content.strip()):
-                    continue
-                # An author who writes a part is describing one block, so it never merges into a
-                # neighbour: its `dynamic` (which decides what falls inside the cacheable prefix)
-                # applies to that text alone. `sourced.id` is the part's own id already resolved
-                # against its source's key.
-                flush_group()
-                group_key = None
-                static_parts.append(dataclasses.replace(instruction, content=content, id=sourced.id))
-            elif isinstance(instruction, str):
-                if not (content := instruction.strip()):
-                    continue
-                if group and (sourced.id is None or group_key != sourced.id):
-                    flush_group()
-                group_key = sourced.id
-                group.append(_messages.InstructionPart(content=content, id=sourced.id))
-            else:
-                # TemplateStr instances land here too: they are callable with a
-                # RunContext parameter, so SystemPromptRunner handles them like
-                # any other system prompt function.
-                functions.append(
-                    _instructions.SourcedInstructionRunner(
-                        _system_prompt.SystemPromptRunner[AgentDepsT](instruction), id=sourced.id
-                    )
-                )
-        flush_group()
-
-        return static_parts, functions
+        return instructions
 
     def _get_toolset(
         self,
@@ -3456,17 +3400,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Evaluate literal + dynamic instructions once, then fold in toolset-contributed
             # instructions, mirroring the run/iter graph. Capability-contributed instructions come from
             # the resolved capabilities (like `iter`), not just the init-time snapshot.
-            static_instruction_parts, instruction_functions = self._get_instructions(
+            sourced_instructions = self._get_instructions(
                 additional_instructions=instructions, cap_instructions=resolved_caps.instructions
             )
             # Build `InstructionPart`s (static parts first, then dynamic functions, then dynamic toolset
             # instructions) and join with the canonical `InstructionPart.join` — same double-newline
             # separator, static-before-dynamic ordering, and per-source `id`s as the graph run.
             # KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
-            instruction_parts: list[_messages.InstructionPart] = [*static_instruction_parts]
-            for fn in instruction_functions:
-                if text := await fn.runner.run(run_context):
-                    instruction_parts.append(_messages.InstructionPart(content=text, dynamic=True, id=fn.id))
+            instruction_parts = await _instructions.resolve_sourced_instructions(sourced_instructions, run_context)
             instruction_parts.extend(
                 _instructions.normalize_toolset_instructions(await tool_manager.toolset.get_instructions(run_context))
             )
