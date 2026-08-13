@@ -43,6 +43,14 @@ implements a reveal renderer must declare its supported values in
 `supported_tool_deferral_modes` and `supported_tool_addition_modes`; the inherited empty sets are
 the safe default for adapters with no renderer.
 
+An adapter that honors `CompactionPart`s on the wire declares `compaction_mode` and calls
+`self._trim_before_compaction()` from its own message-prep step — never `_trim_messages_before_compaction`
+directly, and never restating what its mode implies about `requires_encrypted_content` or
+`standing_prompt_retained`. Where in a request build the trim belongs stays adapter mechanics (OpenAI
+Responses resolves server-side state from the *untrimmed* history, so it keeps a separate trimmed
+view), but what a mode means belongs to the one helper. The inherited `None` is the safe default:
+an adapter without a compaction surface leaves history untouched.
+
 ### Third-party model fallback
 
 Custom `Model` subclasses that continue reading `tool_defs` degrade gracefully: all tools are fully

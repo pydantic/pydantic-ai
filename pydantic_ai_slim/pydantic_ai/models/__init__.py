@@ -169,6 +169,20 @@ ToolVisibility = Literal['visible', 'deferred', 'withheld', 'via_history']
 
 Resolved per tool name into [`ModelRequestParameters.tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility]."""
 
+CompactionMode = Literal['encrypted', 'text']
+"""How an API carries the compaction state that a [`CompactionPart`][pydantic_ai.messages.CompactionPart] round-trips.
+
+- `'encrypted'`: an opaque blob the provider decrypts, sent as an input item alongside the messages
+  (OpenAI Responses). The window it replaced included the leading system items, so the item retains
+  them.
+- `'text'`: a readable summary sent as message content (Anthropic). The standing prompt travels in
+  a separate per-request channel that compaction never replaces.
+
+Declared by the adapter rather than the model profile: which form an API uses is a property of the
+API, not of the model behind it — the same model reached through OpenAI's Chat Completions and
+Responses APIs answers differently. Read it through
+[`Model.compaction_mode`][pydantic_ai.models.Model.compaction_mode]."""
+
 
 @dataclass(repr=False, kw_only=True)
 class ModelRequestParameters:
@@ -406,6 +420,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     """
     supported_tool_addition_modes: ClassVar[frozenset[ToolAdditionMode]] = frozenset()
     """`tool_addition_mode` values this adapter's renderer implements. See `supported_tool_deferral_modes`."""
+    compaction_mode: ClassVar[CompactionMode | None] = None
+    """How this adapter's API carries compaction state, or `None` if it doesn't honor
+    [`CompactionPart`][pydantic_ai.messages.CompactionPart]s on the wire.
+
+    Set by adapters that round-trip compaction; `None` (the default) leaves history untouched.
+    Drives [`_trim_before_compaction`][pydantic_ai.models.Model._trim_before_compaction], which is
+    the single place a mode is turned into trim behavior — adapters call it rather than deciding
+    what their mode implies."""
 
     _provider: Provider[InterfaceClient]
     _profile: ModelProfileSpec | None = None
@@ -485,6 +507,39 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """The effective tool-addition mode: the profile's claim, if this adapter renders it."""
         mode = self.profile.get('tool_addition_mode')
         return mode if mode in self.supported_tool_addition_modes else None
+
+    def _trim_before_compaction(
+        self,
+        messages: list[ModelMessage],
+        *,
+        standing_prompt_retained: bool | None = None,
+    ) -> list[ModelMessage]:
+        """Drop history before the latest compaction boundary this adapter's API honors.
+
+        The one place [`compaction_mode`][pydantic_ai.models.Model.compaction_mode] is turned into
+        trim behavior, so adapters call this instead of restating what their own mode implies. A
+        `None` mode returns the history unchanged. See `_trim_messages_before_compaction` for what
+        the trim preserves.
+
+        `standing_prompt_retained` defaults to what the mode implies: an `'encrypted'` carrier
+        retains the compacted window's leading system items, so re-inserting them would duplicate
+        the standing prompt, while a `'text'` summary does not carry them and the per-request
+        system channel has to be rebuilt. The two are separate facts that pair 1:1 across today's
+        two carriers; a caller passes an explicit value where its window is not an ordinary one
+        (re-compaction plants the standing prompt afresh, since retention decays across a second
+        compaction).
+        """
+        mode = self.compaction_mode
+        if mode is None:
+            return messages
+        return _trim_messages_before_compaction(
+            messages,
+            self.system,
+            requires_encrypted_content=mode == 'encrypted',
+            standing_prompt_retained=mode == 'encrypted'
+            if standing_prompt_retained is None
+            else standing_prompt_retained,
+        )
 
     @abstractmethod
     async def request(
@@ -1985,7 +2040,7 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
     return count
 
 
-def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
+def _trim_messages_before_compaction(
     messages: list[ModelMessage],
     system: str,
     *,
@@ -1994,9 +2049,10 @@ def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
 ) -> list[ModelMessage]:
     """Drop history before the latest same-provider compaction part the request will send.
 
-    Shared by the adapters that honor [`CompactionPart`][pydantic_ai.messages.CompactionPart]s on
-    the wire — each calls it from its own `_map_messages`, since whether a compaction part is
-    honored at all is provider semantics. Anthropic ignores (and doesn't bill) pre-boundary blocks,
+    Reached through [`Model._trim_before_compaction`][pydantic_ai.models.Model._trim_before_compaction],
+    which derives both flags from the adapter's `compaction_mode`; adapters call that from their own
+    message-prep step, since where in a request build the trim belongs is provider mechanics.
+    Anthropic ignores (and doesn't bill) pre-boundary blocks,
     so there the trim only saves request size; the OpenAI Responses API processes and bills
     replayed items that precede a compaction item (live-verified), so there it is what makes
     compaction actually compact. `requires_encrypted_content` mirrors OpenAI's render condition: a
