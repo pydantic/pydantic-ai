@@ -7,6 +7,8 @@ import textwrap
 import httpx2
 import pytest
 
+from pydantic_ai._http import create_httpx2_client
+
 from .conftest import try_import
 
 with try_import() as anthropic_imports_successful:
@@ -118,6 +120,12 @@ def test_openai_providers_run_without_httpx() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert result.stderr == ''
+
+
+@pytest.mark.anyio
+async def test_httpx2_client_constructs_without_blocking() -> None:
+    client = create_httpx2_client()
+    assert isinstance(client, httpx2.AsyncClient)
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
