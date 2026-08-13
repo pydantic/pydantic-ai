@@ -78,6 +78,14 @@ pytestmark = [
 code_examples: dict[str, CodeExample] = {}
 
 
+@pytest.fixture(autouse=True)
+def blockbuster_enabled(example: CodeExample) -> bool:
+    """Skip the detector for pytest-examples' synchronous output-file reader."""
+    if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
+        return False
+    return True
+
+
 @dataclass
 class ExamplesConfig(BaseExamplesConfig):
     known_first_party: list[str] = field(default_factory=list[str])
