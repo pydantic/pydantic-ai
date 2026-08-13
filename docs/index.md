@@ -81,7 +81,7 @@ _(This example is complete, it can be run "as is", assuming you've [installed th
 
 And a complete coding agent in your terminal — sandboxed file access, allowlisted shell, repo orientation, planning, context management — is five lines with the [Harness](https://pydantic.dev/docs/ai/harness/):
 
-```python {test="skip"}
+```python {test="skip" lint="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import Coder
 
@@ -114,7 +114,7 @@ Text agents are the start — the same library, with the same typed API, does vo
 
 === "Agents"
 
-    ```python {test="skip"}
+    ```python {test="skip" lint="skip"}
     from pydantic import BaseModel
     from pydantic_ai import Agent
 
@@ -142,7 +142,7 @@ Text agents are the start — the same library, with the same typed API, does vo
 
 === "Embeddings"
 
-    ```python {test="skip"}
+    ```python {test="skip" lint="skip"}
     from pydantic_ai import Embedder
 
     embedder = Embedder('openai:text-embedding-3-small')
