@@ -43,13 +43,17 @@ implements a reveal renderer must declare its supported values in
 `supported_tool_deferral_modes` and `supported_tool_addition_modes`; the inherited empty sets are
 the safe default for adapters with no renderer.
 
-An adapter that honors `CompactionPart`s on the wire declares `compaction_mode` and calls
+An adapter that honors `CompactionPart`s on the wire declares
+`compaction_requires_encrypted_content` and `compaction_retains_standing_prompt` and calls
 `self._trim_before_compaction()` from its own message-prep step — never `_trim_messages_before_compaction`
-directly, and never restating what its mode implies about `requires_encrypted_content` or
-`standing_prompt_retained`. Where in a request build the trim belongs stays adapter mechanics (OpenAI
-Responses resolves server-side state from the *untrimmed* history, so it keeps a separate trimmed
-view), but what a mode means belongs to the one helper. The inherited `None` is the safe default:
-an adapter without a compaction surface leaves history untouched.
+directly, and never restating what those declarations imply. Each states only what the API does
+(does it need the encrypted blob to honor an item; does the item keep serving the window's system
+items); turning that into trim behavior belongs to the one helper. The two are independent — today's
+two adapters happen to answer both the same way, so don't infer one from the other when adding a
+third. They belong on the adapter, not the profile: eight providers route a profile of their own
+through `OpenAIResponsesModel`, so a profile key would be absent exactly where the wire format is
+most certain. Where in a request build the trim belongs stays adapter mechanics (OpenAI Responses
+resolves server-side state from the *untrimmed* history, so it keeps a separate trimmed view).
 
 ### Third-party model fallback
 

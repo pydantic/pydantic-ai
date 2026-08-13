@@ -1936,8 +1936,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     supported_tool_addition_modes = frozenset({'with_definitions'})
     # Responses only: `OpenAIChatModel` shares this model family's profile but has no compaction
     # surface, and the Responses API bills replayed pre-boundary items, so the trim is what makes
-    # compaction actually compact there.
-    compaction_mode = 'encrypted'
+    # compaction actually compact here.
+    #
+    # The compaction item is an opaque blob the API decrypts; without it there is nothing to send in
+    # place of the history the boundary would hide.
+    compaction_requires_encrypted_content = True
+    # `SystemPromptPart`s render as `system` input items *inside* the compacted window, and the item
+    # keeps serving them: a latent directive that never fired before the boundary still governs
+    # post-compaction replies without being re-sent (live-verified).
+    compaction_retains_standing_prompt = True
 
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)

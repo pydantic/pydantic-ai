@@ -565,7 +565,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     # The API ignores (and doesn't bill) blocks before a compaction block, so the trim only saves
     # request size here — but it also keeps a `tool_result` whose `tool_use` was trimmed away from
     # 400ing, since validation runs even on ignored content.
-    compaction_mode = 'text'
+    #
+    # Both declarations match the inherited defaults, restated because they're what makes this
+    # adapter's trim correct rather than an accident: the summary is plaintext message content, so
+    # there is no encrypted blob to require, and the standing prompt travels in the top-level
+    # `system` parameter, rebuilt from the opening `SystemPromptPart`s on every request, so the trim
+    # has to re-insert them.
+    compaction_requires_encrypted_content = False
+    compaction_retains_standing_prompt = False
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
