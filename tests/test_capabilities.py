@@ -869,9 +869,8 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:zai.glm-4.7',
                         'bedrock:zai.glm-4.7-flash',
                         'bedrock:zai.glm-5',
+                        'cerebras:gemma-4-31b',
                         'cerebras:gpt-oss-120b',
-                        'cerebras:llama3.1-8b',
-                        'cerebras:qwen-3-235b-a22b-instruct-2507',
                         'cerebras:zai-glm-4.7',
                         'cohere:c4ai-aya-expanse-32b',
                         'cohere:c4ai-aya-expanse-8b',
@@ -879,6 +878,21 @@ def test_model_json_schema_with_capabilities():
                         'cohere:command-r-08-2024',
                         'cohere:command-r-plus-08-2024',
                         'cohere:command-r7b-12-2024',
+                        'crusoe:Qwen/Qwen3-235B-A22B-Instruct-2507',
+                        'crusoe:deepseek-ai/DeepSeek-V3-0324',
+                        'crusoe:deepseek-ai/DeepSeek-V4-Pro',
+                        'crusoe:deepseek-ai/Deepseek-V4-Flash',
+                        'crusoe:google/gemma-4-31b-it',
+                        'crusoe:meta-llama/Llama-3.3-70B-Instruct',
+                        'crusoe:moonshotai/Kimi-K2.6',
+                        'crusoe:nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B',
+                        'crusoe:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B',
+                        'crusoe:nvidia/Nemotron-3-Nano-Omni-Reasoning-30B-A3B',
+                        'crusoe:nvidia/Nemotron-3.5-Lightning-30B-A3B',
+                        'crusoe:openai/gpt-oss-120b',
+                        'crusoe:yutori/n1.5',
+                        'crusoe:zai/GLM-5.1',
+                        'crusoe:zai/GLM-5.2',
                         'deepseek:deepseek-chat',
                         'deepseek:deepseek-reasoner',
                         'deepseek:deepseek-v4-flash',
@@ -967,6 +981,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-3.5-flash',
                         'gateway/google-cloud:gemini-3.5-flash-lite',
                         'gateway/google-cloud:gemini-3.6-flash',
+                        'gateway/google-cloud:gemini-3.7-flash',
                         'gateway/google:gemini-2.5-flash',
                         'gateway/google:gemini-2.5-flash-image',
                         'gateway/google:gemini-2.5-flash-lite',
@@ -979,6 +994,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-3.5-flash',
                         'gateway/google:gemini-3.5-flash-lite',
                         'gateway/google:gemini-3.6-flash',
+                        'gateway/google:gemini-3.7-flash',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:openai/gpt-oss-120b',
@@ -1057,6 +1073,7 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-3.5-flash',
                         'google-cloud:gemini-3.5-flash-lite',
                         'google-cloud:gemini-3.6-flash',
+                        'google-cloud:gemini-3.7-flash',
                         'google-cloud:gemini-flash-latest',
                         'google-cloud:gemini-flash-lite-latest',
                         'google:gemini-2.0-flash',
@@ -1077,6 +1094,7 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-3.5-flash',
                         'google:gemini-3.5-flash-lite',
                         'google:gemini-3.6-flash',
+                        'google:gemini-3.7-flash',
                         'google:gemini-flash-latest',
                         'google:gemini-flash-lite-latest',
                         'groq:llama-3.1-8b-instant',
@@ -3904,8 +3922,7 @@ async def test_model_calling_a_withheld_tool_is_refused_and_reveals_nothing() ->
     retries = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
     assert [str(part.content) for part in retries] == snapshot(
         [
-            "Tool 'hidden_tool' is not available yet: search for it first, then call it once the "
-            'search result has shown you its schema.'
+            "Tool 'hidden_tool' is not available yet: search for it first, then call it again once you've seen its schema."
         ]
     )
     deltas = [
@@ -16584,6 +16601,25 @@ async def test_resolve_model_id_capability_async_resolver() -> None:
         return target if model_id == 'alias' else None
 
     agent = Agent(name='resolve_cap_async', capabilities=[ResolveModelId(resolver)])
+    result = await agent.run('hi', model='alias')
+    assert result.output == 'ok'
+
+
+async def test_resolve_model_id_capability_sync_resolver_returning_coroutine() -> None:
+    """A plain-`def` resolver returning a coroutine is awaited, not mistaken for the resolved model.
+
+    `ModelIdResolver` permits a sync function whose return value is an `Awaitable[Model | None]`;
+    the hook must await that coroutine to obtain the model rather than returning the coroutine itself.
+    """
+    target = FunctionModel(_resolve_dummy_model_fn, model_name='coroutine-resolved')
+
+    async def _resolve(model_id: str) -> FunctionModel | None:
+        return target if model_id == 'alias' else None
+
+    def resolver(ctx: ModelResolutionContext[Any], model_id: str) -> Awaitable[FunctionModel | None]:
+        return _resolve(model_id)
+
+    agent = Agent(name='resolve_cap_sync_coroutine', capabilities=[ResolveModelId(resolver)])
     result = await agent.run('hi', model='alias')
     assert result.output == 'ok'
 

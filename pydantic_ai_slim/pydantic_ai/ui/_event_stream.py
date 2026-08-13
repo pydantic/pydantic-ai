@@ -31,6 +31,8 @@ from ..messages import (
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
+    RealtimeOutputSpeechEndEvent,
+    RealtimeOutputSpeechStartEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
@@ -435,6 +437,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 RealtimeTurnCompleteEvent()
                 | RealtimeInputSpeechStartEvent()
                 | RealtimeInputSpeechEndEvent()
+                | RealtimeOutputSpeechStartEvent()
+                | RealtimeOutputSpeechEndEvent()
                 | RealtimeResponseInterruptedEvent()
                 | RealtimeInputTranscriptionErrorEvent()
                 | RealtimeSessionReconnectEvent()

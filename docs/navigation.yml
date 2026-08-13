@@ -1,7 +1,6 @@
 # Canonical Pydantic AI sidebar, public routes, and redirects for pydantic/unified-docs.
 # Keep source paths relative to their named content root. Page slugs are complete
 # library-relative canonical routes; aliases are library-relative redirect sources.
-# docs/nav.json remains temporarily for release compatibility during the consumer cutover.
 # yaml-language-server: $schema=https://pydantic.dev/docs/schemas/repository-navigation.schema.json
 version: 1
 navigation:
@@ -136,6 +135,9 @@ navigation:
       - page: "Cohere"
         path: "models/cohere.md"
         slug: "models/cohere"
+      - page: "Crusoe"
+        path: "models/crusoe.md"
+        slug: "models/crusoe"
       - page: "Groq"
         path: "models/groq.md"
         slug: "models/groq"
@@ -283,6 +285,54 @@ navigation:
       - page: "Third-Party Capabilities"
         path: "capabilities/third-party.md"
         slug: "capabilities/third-party"
+  - section: "Realtime (speech-to-speech)"
+    slug: ""
+    contents:
+      - page: "Overview"
+        path: "realtime/overview.md"
+        slug: "realtime/overview"
+      - page: "Audio, images, and transcripts"
+        path: "realtime/audio.md"
+        slug: "realtime/audio"
+      - page: "Events"
+        path: "realtime/events.md"
+        slug: "realtime/events"
+      - page: "Turns and interruptions"
+        path: "realtime/turns.md"
+        slug: "realtime/turns"
+      - page: "Tools"
+        path: "realtime/tools.md"
+        slug: "realtime/tools"
+      - page: "Capabilities and hooks"
+        path: "realtime/capabilities.md"
+        slug: "realtime/capabilities"
+      - page: "History and handoff"
+        path: "realtime/history.md"
+        slug: "realtime/history"
+      - page: "Connecting a frontend"
+        path: "realtime/deployment.md"
+        slug: "realtime/deployment"
+      - page: "Connection lifecycle"
+        path: "realtime/lifecycle.md"
+        slug: "realtime/lifecycle"
+      - page: "Usage and observability"
+        path: "realtime/observability.md"
+        slug: "realtime/observability"
+      - page: "Troubleshooting"
+        path: "realtime/troubleshooting.md"
+        slug: "realtime/troubleshooting"
+      - page: "OpenAI"
+        path: "realtime/openai.md"
+        slug: "realtime/openai"
+      - page: "Azure"
+        path: "realtime/azure.md"
+        slug: "realtime/azure"
+      - page: "Google Gemini"
+        path: "realtime/gemini.md"
+        slug: "realtime/gemini"
+      - page: "xAI"
+        path: "realtime/xai.md"
+        slug: "realtime/xai"
   - section: "Durable Execution"
     slug: ""
     contents:
@@ -676,6 +726,11 @@ navigation:
             slug: "examples/data-analytics/rag"
             aliases:
               - "examples/rag"
+          - page: "TwelveLabs Video Agent"
+            path: "examples/twelvelabs-video-agent.md"
+            slug: "examples/data-analytics/twelvelabs-video-agent"
+            aliases:
+              - "examples/twelvelabs-video-agent"
       - section: "Streaming"
         slug: ""
         contents:
@@ -689,6 +744,34 @@ navigation:
             slug: "examples/streaming/stream-whales"
             aliases:
               - "examples/stream-whales"
+      - section: "Realtime"
+        slug: ""
+        contents:
+          - page: "Voice Assistant"
+            path: "examples/realtime-voice.md"
+            slug: "examples/realtime/realtime-voice"
+            aliases:
+              - "examples/realtime-voice"
+          - page: "Text to Audio"
+            path: "examples/realtime-text-to-audio.md"
+            slug: "examples/realtime/realtime-text-to-audio"
+            aliases:
+              - "examples/realtime-text-to-audio"
+          - page: "Agent Handoff"
+            path: "examples/realtime-handoff.md"
+            slug: "examples/realtime/realtime-handoff"
+            aliases:
+              - "examples/realtime-handoff"
+          - page: "Camera Agent"
+            path: "examples/realtime-camera.md"
+            slug: "examples/realtime/realtime-camera"
+            aliases:
+              - "examples/realtime-camera"
+          - page: "Browser WebRTC"
+            path: "examples/realtime-webrtc.md"
+            slug: "examples/realtime/realtime-webrtc"
+            aliases:
+              - "examples/realtime-webrtc"
       - section: "Complex Workflows"
         slug: ""
         contents:
@@ -803,6 +886,9 @@ navigation:
               - page: "cohere"
                 path: "api/models/cohere.md"
                 slug: "api/models/cohere"
+              - page: "crusoe"
+                path: "api/models/crusoe.md"
+                slug: "api/models/crusoe"
               - page: "fallback"
                 path: "api/models/fallback.md"
                 slug: "api/models/fallback"
@@ -870,6 +956,29 @@ navigation:
             slug: "api/pydantic-ai/providers"
             aliases:
               - "api/providers"
+          - page: "realtime"
+            path: "api/realtime.md"
+            slug: "api/pydantic-ai/realtime"
+            aliases:
+              - "api/realtime"
+          - section: "realtime"
+            slug: ""
+            contents:
+              - page: "codec"
+                path: "api/realtime/codec.md"
+                slug: "api/realtime/codec"
+              - page: "openai"
+                path: "api/realtime/openai.md"
+                slug: "api/realtime/openai"
+              - page: "google"
+                path: "api/realtime/google.md"
+                slug: "api/realtime/google"
+              - page: "xai"
+                path: "api/realtime/xai.md"
+                slug: "api/realtime/xai"
+              - page: "azure"
+                path: "api/realtime/azure.md"
+                slug: "api/realtime/azure"
           - page: "result"
             path: "api/result.md"
             slug: "api/pydantic-ai/result"
@@ -1016,6 +1125,9 @@ navigation:
           - "version-policy"
 redirects:
   # Section roots without their own landing page.
+  - from: "realtime"
+    to: "realtime/overview"
+    status: 302
   - from: "core-concepts"
     to: "core-concepts/agent"
     status: 302

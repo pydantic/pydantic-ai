@@ -104,7 +104,9 @@ configured with `google_input_transcription`: a pinned model ID in the shared se
 deployment constraints live on the provider pages.
 
 Disabling transcription changes what a spoken turn contributes to history, replay, and text-agent
-handoff; see [History and handoff](history.md#retaining-audio) before relying on it.
+handoff; see [History and handoff](history.md#retaining-audio) before relying on it. A
+[WebRTC sideband](deployment.md#browser-webrtc-server-sideband) receives no audio bytes to retain, so without input
+transcription its user turns contain no spoken text.
 
 ## Images
 

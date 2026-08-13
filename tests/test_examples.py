@@ -78,6 +78,14 @@ pytestmark = [
 code_examples: dict[str, CodeExample] = {}
 
 
+@pytest.fixture(autouse=True)
+def blockbuster_enabled(example: CodeExample) -> bool:
+    """Skip the detector for pytest-examples' synchronous output-file reader."""
+    if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
+        return False
+    return True
+
+
 @dataclass
 class ExamplesConfig(BaseExamplesConfig):
     known_first_party: list[str] = field(default_factory=list[str])
@@ -269,6 +277,7 @@ def test_docs_examples(
     env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
     env.set('CEREBRAS_API_KEY', 'testing')
     env.set('NEBIUS_API_KEY', 'testing')
+    env.set('CRUSOE_API_KEY', 'testing')
     env.set('HEROKU_INFERENCE_KEY', 'testing')
     env.set('FIREWORKS_API_KEY', 'testing')
     env.set('TOGETHER_API_KEY', 'testing')

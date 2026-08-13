@@ -173,6 +173,12 @@ def setup_prefect_test_harness() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def blockbuster_excluded_modules() -> tuple[str, ...]:
+    """Prefect's `@flow` constructor synchronously inspects its decorated function's source."""
+    return ('pydantic_ai.durable_exec.prefect',)
+
+
 @contextmanager
 def flow_raises(exc_type: type[Exception], exc_message: str) -> Generator[None]:
     """Helper for asserting that a Prefect flow fails with the expected error."""
@@ -1045,6 +1051,16 @@ async def test_realtime_session_in_flow() -> None:
         with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
             async with simple_prefect_agent.realtime(cast('Any', object())).session():
                 pass  # pragma: no cover
+
+
+async def test_realtime_signaling_in_flow() -> None:
+    """Browser-call signaling issues a live provider request, so it is guarded like a session."""
+    with patch.object(FlowRunContext, 'get', return_value=object()):
+        realtime = simple_prefect_agent.realtime(cast('Any', object()))
+        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+            await realtime.answer_webrtc_offer('v=0')
+        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+            await realtime.create_client_secret()
 
 
 class _FakeRealtimeConnection(RealtimeConnection):

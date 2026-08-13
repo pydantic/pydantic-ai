@@ -16,7 +16,7 @@ from typing_extensions import assert_never
 
 from pydantic_ai._instrumentation import model_attributes, model_request_parameters_attributes
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import get_first_param_type, is_async_callable
+from pydantic_ai._utils import await_maybe, get_first_param_type
 
 from .._cost import fill_response_cost
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
@@ -176,7 +176,7 @@ class FallbackModel(Model):
         handlers = self._exception_handlers if isinstance(value, Exception) else self._response_handlers
         for handler in handlers:
             # pyright can't narrow handler's param type from the isinstance check on value
-            result = await handler(value) if is_async_callable(handler) else handler(value)  # type: ignore[arg-type]
+            result = await await_maybe(handler(value))  # type: ignore[arg-type]
             if result:
                 return True
         return False

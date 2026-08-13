@@ -276,6 +276,18 @@ pytestmark = [
 ]
 
 
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    """Disable detection for Temporal's synchronous worker and integration setup.
+
+    It performs module/config introspection above Pydantic AI plugin frames; BlockBuster changes
+    its error handling and makes these tests unusably slow. Rebenchmark after
+    https://github.com/cbornet/blockbuster/pull/61 is released, but retain this opt-out until the
+    synchronous-introspection false positives are isolated too.
+    """
+    return False
+
+
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
 http_client = create_async_http_client()
@@ -2850,6 +2862,17 @@ async def test_temporal_agent_realtime_session_in_workflow():
         with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
             async with simple_temporal_agent.realtime(cast('Any', object())).session():
                 pass  # pragma: no cover
+
+
+async def test_temporal_agent_realtime_signaling_in_workflow():
+    # Browser-call signaling issues a live provider request, so it is guarded like a session: the two
+    # helpers reach the agent through `_resolve_realtime_session`, which the wrapper guards too.
+    with patch.object(workflow, 'in_workflow', return_value=True):
+        realtime = simple_temporal_agent.realtime(cast('Any', object()))
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            await realtime.answer_webrtc_offer('v=0')
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            await realtime.create_client_secret()
 
 
 class _FakeRealtimeConnection(RealtimeConnection):

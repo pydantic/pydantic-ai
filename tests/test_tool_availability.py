@@ -286,9 +286,7 @@ class TestUnavailableCapabilityToolsAreNotCallable:
         result = await agent.run('hello')
 
         assert result.output == snapshot(
-            "BLOCKED: Tool 'secret_op' is not available yet: it belongs to capability 'guarded'. "
-            'Call `load_capability` for it first, then call the tool on a later turn, once the '
-            "capability's instructions are in view."
+            "BLOCKED: Tool 'secret_op' is not available yet: it belongs to capability 'guarded'. Call `load_capability` for it first, then call the tool again once you've read the capability's instructions."
         )
 
     async def test_capability_tool_is_refused_again_after_compaction(self):
@@ -318,8 +316,7 @@ class TestUnavailableCapabilityToolsAreNotCallable:
         result = await agent.run('hello')
 
         assert result.output == snapshot(
-            "BLOCKED: Tool 'secret_op' is not available yet: search for it first, then call it once "
-            'the search result has shown you its schema.'
+            "BLOCKED: Tool 'secret_op' is not available yet: search for it first, then call it again once you've seen its schema."
         )
 
     async def test_an_availability_refusal_leaves_room_to_act_on_it(self):

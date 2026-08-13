@@ -22,6 +22,8 @@ from ..messages import (
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
+    RealtimeOutputSpeechEndEvent,
+    RealtimeOutputSpeechStartEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
@@ -29,7 +31,16 @@ from ..messages import (
 )
 from ._session import RealtimeEvent, RealtimeSession, TranscriptUpdate
 from .codec import RealtimeSessionInput
-from .model import KnownRealtimeModelName, RealtimeError, RealtimeModel, infer_realtime_model
+from .model import (
+    KnownRealtimeModelName,
+    RealtimeClientSecret,
+    RealtimeError,
+    RealtimeModel,
+    RealtimeProviderSession,
+    WebRTCAnswer,
+    WebRTCSession,
+    infer_realtime_model,
+)
 from .profiles import RealtimeModelProfile, RealtimeModelProfileSpec
 from .settings import (
     AudioRetention,
@@ -50,10 +61,13 @@ __all__ = (
     'AudioRetention',
     'RealtimeInputSpeechStartEvent',
     'RealtimeInputSpeechEndEvent',
+    'RealtimeOutputSpeechStartEvent',
+    'RealtimeOutputSpeechEndEvent',
     'RealtimeInputTranscriptionErrorEvent',
     'KnownRealtimeTranscriptionModelName',
     'KnownRealtimeModelName',
     'RealtimeEvent',
+    'RealtimeClientSecret',
     'RealtimeError',
     'RealtimeModel',
     'RealtimeModelProfile',
@@ -62,11 +76,14 @@ __all__ = (
     'RealtimeSession',
     'RealtimeSessionInput',
     'ReconnectPolicy',
+    'RealtimeProviderSession',
     'RealtimeSessionErrorEvent',
     'RealtimeSessionReconnectEvent',
     'TranscriptUpdate',
     'RealtimeTurnCompleteEvent',
     'TurnDetection',
     'RealtimeResponseInterruptedEvent',
+    'WebRTCAnswer',
+    'WebRTCSession',
     'infer_realtime_model',
 )
