@@ -30,6 +30,7 @@ from ._toolset import (
     GetToolsParams,
     heartbeating,
     resolve_tool_activity_config,
+    tool_result_payload_errors,
 )
 
 if TYPE_CHECKING:
@@ -124,19 +125,20 @@ def temporalize_dynamic_toolset(
         config: Mapping[str, Any],
     ) -> Any:
         merged_config = cast('ActivityConfig', {'summary': summary, **activity_config, **config})
-        result = await execute_activity(
-            activity=registered,
-            args=[
-                CallToolParams(
-                    name=name,
-                    tool_args=tool_args,
-                    serialized_run_context=run_context_type.serialize_run_context(ctx),
-                    tool_def=tool.tool_def,
-                ),
-                ctx.deps,
-            ],
-            **merged_config,
-        )
+        with tool_result_payload_errors(name):
+            result = await execute_activity(
+                activity=registered,
+                args=[
+                    CallToolParams(
+                        name=name,
+                        tool_args=tool_args,
+                        serialized_run_context=run_context_type.serialize_run_context(ctx),
+                        tool_def=tool.tool_def,
+                    ),
+                    ctx.deps,
+                ],
+                **merged_config,
+            )
         return unwrap_tool_call_result(result)
 
     async def call_tool_operation(

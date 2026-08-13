@@ -4,12 +4,12 @@ import copy
 from abc import abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from typing_extensions import Self
 
 from pydantic_ai._run_context import set_current_run_context
-from pydantic_ai._utils import get_union_args
+from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import ProcessEventStream
@@ -23,9 +23,16 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._runtime_toolsets import RuntimeToolsetKind, reject_unsupported_runtime_toolsets
-from ._toolset import guard_run_context_enqueue
+from ._runtime_toolsets import (
+    RuntimeToolsetKind,
+    cancellation_token_unsupported_error,
+    reject_unsupported_runtime_toolsets,
+)
+from ._toolset import guard_run_context
 from ._utils import unwrap_model
+
+if TYPE_CHECKING:
+    pass
 
 _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
@@ -153,6 +160,20 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool_config_key=self._tool_config_key,
         )
 
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        # A `CancellationToken` is a same-process handle that cannot cross the durable execution
+        # boundary, and firing it inside a workflow/flow would cancel the durable task out of band
+        # — non-deterministic on replay. Reject it here, but only inside the durable container, so a
+        # durable-capable agent used *outside* a workflow keeps accepting tokens like a normal agent.
+        # The token is attached to the run's controller during `Agent` setup, before this hook fires.
+        # Read via `__dict__` so a restricted run-context subclass (e.g. `TemporalRunContext`) whose
+        # `__getattribute__` rejects absent fields doesn't raise a misleading error instead.
+        if not self.in_durable_context:
+            return
+        cancellation = ctx.__dict__.get('_cancellation')
+        if cancellation is not None and cancellation.has_token:
+            raise cancellation_token_unsupported_error(self.engine_name)
+
     def _effective_event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         """The handler in-boundary event delivery targets for the current run.
 
@@ -173,23 +194,24 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        if self._effective_event_stream_handler() is None:
-            async for event in stream:
-                yield event
-            return
-        if not self.in_durable_context:
+        event_stream_handler = self._effective_event_stream_handler()
+        dispatch_events = False
+        if event_stream_handler is not None and not self.in_durable_context:
             assert self._process_event_stream is not None
-            async for event in self._process_event_stream.wrap_run_event_stream(ctx, stream=stream):
-                yield event
-            return
+            stream = self._process_event_stream.wrap_run_event_stream(ctx, stream=stream)
+        elif event_stream_handler is not None:
+            dispatch_events = True
 
-        async for event in stream:
-            # `ModelResponseStreamEvent`s were already delivered
-            # live to the handler inside the model-request boundary; workflow-side they're
-            # the replay, so only `HandleResponseEvent`s are dispatched to the handler here.
-            if not isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES):
-                await self._dispatch_event_stream_event(ctx, event)
-            yield event
+        try:
+            async for event in stream:
+                # `ModelResponseStreamEvent`s were already delivered live to the handler inside the
+                # model-request boundary; workflow-side they're the replay, so only `HandleResponseEvent`s
+                # are dispatched to the handler here.
+                if dispatch_events and not isinstance(event, _MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                    await self._dispatch_event_stream_event(ctx, event)
+                yield event
+        finally:
+            await aclose_if_supported(stream)
 
     @property
     @abstractmethod
@@ -282,9 +304,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         there; Temporal reconstructs its context across the activity boundary and installs the
         same guard in `deserialize_run_context`.
         """
-        return guard_run_context_enqueue(
-            ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun
-        )
+        return guard_run_context(ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun)
 
     @contextmanager
     def _durable_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT]]:
@@ -320,7 +340,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Deliver one workflow-side event inside an engine-specific durable boundary."""
 
     @staticmethod
-    async def _single_event_stream(event: AgentStreamEvent) -> AsyncIterator[AgentStreamEvent]:
+    async def _single_event_stream(
+        event: AgentStreamEvent,
+    ) -> AsyncIterator[AgentStreamEvent]:
         yield event
 
     def _bind_models(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
@@ -385,7 +407,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         so it falls back to `_find_model_id`.
         """
         provenance = request_context.model_id
-        if provenance is not None and unwrap_model(request_context.model) is unwrap_model(ctx.model):
+        # A durable run always targets a regular `Model`, never a realtime model, so `ctx.model`
+        # (typed as the wider `AbstractModel`) is a `Model` here; the guard narrows it for `unwrap_model`.
+        run_model = ctx.model
+        if (
+            provenance is not None
+            and isinstance(run_model, Model)
+            and unwrap_model(request_context.model) is unwrap_model(cast('Model[Any]', run_model))
+        ):
             return provenance
         return self._find_model_id(request_context.model)
 
