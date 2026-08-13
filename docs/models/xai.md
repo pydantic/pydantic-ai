@@ -74,7 +74,10 @@ agent = Agent(model)
 ...
 ```
 
-`api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes. The provider-level `timeout` is distinct from [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout], which overrides the timeout for an individual request. Both options are omitted when left unset, so the SDK's own defaults apply.
+`api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes. Both options are omitted when left unset, so the SDK's own defaults apply.
+
+!!! note
+    The provider-level `timeout` is the only way to set a timeout for xAI: the SDK bakes it into the gRPC channel when the client is constructed and offers no per-request override, so [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] is not supported. [`ModelSettings.extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers] is not supported either — pass `metadata` to your own `xai_sdk.AsyncClient` (below) to send extra gRPC metadata with every request.
 
 Or with a custom `xai_sdk.AsyncClient`:
 
