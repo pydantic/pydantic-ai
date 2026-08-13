@@ -162,16 +162,16 @@ PROBE_TOOL = ToolDefinition(
 PROBE_KEY = 'probe-key'
 
 
-def parse_supported_by_lists() -> dict[str, list[str]]:
-    """Read every `Supported by:` list out of the `ModelSettings` field docstrings.
+def _field_docstrings() -> dict[str, str]:
+    """Each field's docstring, parsed once from the `ModelSettings` source.
 
-    Parses the source because a `TypedDict` field's docstring is a bare string expression that Python
-    discards at import time, leaving nothing to introspect at runtime.
+    A `TypedDict` field's docstring is a bare string expression that Python discards at import
+    time, leaving nothing to introspect at runtime, so the source is parsed to recover it.
     """
     class_def = ast.parse(textwrap.dedent(inspect.getsource(ModelSettings))).body[0]
     assert isinstance(class_def, ast.ClassDef)
 
-    lists: dict[str, list[str]] = {}
+    docstrings: dict[str, str] = {}
     field_name: str | None = None
     for node in class_def.body:
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
@@ -182,9 +182,14 @@ def parse_supported_by_lists() -> dict[str, list[str]]:
             and isinstance(node.value, ast.Constant)
             and isinstance(node.value.value, str)
         ):
-            lists[field_name] = _parse_bullets(node.value.value)
+            docstrings[field_name] = node.value.value
             field_name = None
-    return lists
+    return docstrings
+
+
+def parse_supported_by_lists() -> dict[str, list[str]]:
+    """Read every `Supported by:` list out of the `ModelSettings` field docstrings."""
+    return {field: _parse_bullets(doc) for field, doc in _field_docstrings().items()}
 
 
 def parse_caveats() -> dict[str, list[str]]:
@@ -222,22 +227,7 @@ def _supported_by_block(docstring: str) -> str:
 
 def _supported_by_blocks() -> dict[str, str]:
     """Each field's bullet paragraph, parsed once from the `ModelSettings` source."""
-    class_def = ast.parse(textwrap.dedent(inspect.getsource(ModelSettings))).body[0]
-    assert isinstance(class_def, ast.ClassDef)
-    blocks: dict[str, str] = {}
-    field_name: str | None = None
-    for node in class_def.body:
-        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            field_name = node.target.id
-        elif (
-            field_name is not None
-            and isinstance(node, ast.Expr)
-            and isinstance(node.value, ast.Constant)
-            and isinstance(node.value.value, str)
-        ):
-            blocks[field_name] = _supported_by_block(node.value.value)
-            field_name = None
-    return blocks
+    return {field: _supported_by_block(doc) for field, doc in _field_docstrings().items()}
 
 
 class ProbeAborted(Exception):
