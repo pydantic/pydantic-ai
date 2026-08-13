@@ -363,6 +363,9 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
+# TEMPORARY DIAGNOSTIC (revert before merge): dump all thread stacks when a test
+# stalls, to locate the CI-only hang in tests/test_temporal.py
+faulthandler_timeout = 420
 filterwarnings = [
     "error",
     # boto3
