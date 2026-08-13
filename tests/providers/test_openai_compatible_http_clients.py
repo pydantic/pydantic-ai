@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -161,6 +163,51 @@ CASES = [
         lambda http_client: ZaiProvider(api_key='test', http_client=http_client),
     ),
 ]
+
+IMPORT_GUARD_CASES = [
+    ('alibaba', 'use the Alibaba provider'),
+    ('azure', 'use the Azure provider'),
+    ('bedrock_mantle', 'use the Bedrock Mantle provider'),
+    ('cerebras', 'use the Cerebras provider'),
+    ('crusoe', 'use the Crusoe provider'),
+    ('deepseek', 'use the DeepSeek provider'),
+    ('fireworks', 'use the Fireworks AI provider'),
+    ('heroku', 'use the Heroku provider'),
+    ('litellm', 'use the LiteLLM provider'),
+    ('moonshotai', 'use the MoonshotAI provider'),
+    ('nebius', 'use the Nebius provider'),
+    ('ollama', 'use the Ollama provider'),
+    ('openai', 'use the OpenAI provider'),
+    ('openrouter', 'use the OpenRouter provider'),
+    ('ovhcloud', 'use OVHcloud AI Endpoints provider'),
+    ('sambanova', 'use the SambaNova provider'),
+    ('snowflake', 'use the Snowflake provider'),
+    ('together', 'use the Together AI provider'),
+    ('vercel', 'use the Vercel provider'),
+    ('zai', 'use the Z.AI provider'),
+]
+
+
+@pytest.mark.parametrize(('module', 'error_hint'), IMPORT_GUARD_CASES)
+def test_openai_compatible_provider_import_guard(module: str, error_hint: str) -> None:
+    code = f"""
+import builtins
+import importlib
+
+original_import = builtins.__import__
+
+def import_without_openai(name, globals=None, locals=None, fromlist=(), level=0):
+    if level == 0 and (name == "openai" or name.startswith("openai.")):
+        raise ImportError("simulated missing OpenAI SDK")
+    return original_import(name, globals, locals, fromlist, level)
+
+builtins.__import__ = import_without_openai
+importlib.import_module("pydantic_ai.providers.{module}")
+"""
+    result = subprocess.run([sys.executable, '-c', code], text=True, capture_output=True)
+
+    assert result.returncode != 0
+    assert error_hint in result.stderr
 
 
 @pytest.mark.anyio

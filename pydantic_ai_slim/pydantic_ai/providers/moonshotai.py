@@ -4,7 +4,6 @@ import os
 from typing import Literal, overload
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
@@ -15,7 +14,15 @@ from pydantic_ai.profiles.openai import (
     OpenAIModelProfile,
 )
 
-from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+try:
+    from openai import AsyncOpenAI
+except ImportError as _import_error:  # pragma: no cover
+    raise ImportError(
+        'Please install the `openai` package to use the MoonshotAI provider, '
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+    ) from _import_error
+else:
+    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 MoonshotAIModelName = Literal[
     'moonshot-v1-8k',

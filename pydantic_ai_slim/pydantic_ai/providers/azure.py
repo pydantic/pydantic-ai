@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, overload
 from urllib.parse import urlparse
 
 import httpx
-from openai import AsyncOpenAI
 from typing_extensions import Self
 
 from pydantic_ai import ModelProfile
@@ -17,20 +16,21 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
-from pydantic_ai.providers.openai import OpenAIProvider
-
-from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 if TYPE_CHECKING:
     from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
-    from openai import AsyncAzureOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the Azure provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+else:
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 try:
     from openai.lib.azure import API_KEY_SENTINEL as _api_key_sentinel
