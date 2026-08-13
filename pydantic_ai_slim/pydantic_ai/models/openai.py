@@ -3893,6 +3893,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_settings: OpenAIChatModelSettings | None = None
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
+    _raw_text_content: str = field(default='', init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -4025,6 +4026,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         # Handle the text part of the response
         content = choice.delta.content
         if content:
+            self._raw_text_content += content
             for event in self._parts_manager.handle_text_delta(
                 vendor_part_id='content',
                 content=content,
@@ -4044,7 +4046,13 @@ class OpenAIStreamedResponse(StreamedResponse):
                 provider_details = {'unsupported_annotations': raw_annotations}
                 citations = None
             else:
-                citations, unsupported = _map_chat_citations(annotations, part.content)
+                if self._raw_text_content == part.content:
+                    citations, unsupported = _map_chat_citations(annotations, part.content)
+                else:
+                    # Annotation offsets address the raw provider text, not text transformed by
+                    # thinking-tag removal or leading-whitespace normalization.
+                    citations = None
+                    unsupported = chat_annotations_ta.dump_python(annotations, warnings=False)
                 provider_details = {'unsupported_annotations': unsupported} if unsupported else {}
                 if self._model_settings and self._model_settings.get('openai_include_raw_annotations'):
                     provider_details['annotations'] = chat_annotations_ta.dump_python(annotations, warnings=False)
@@ -4203,6 +4211,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # filter commentary from final-answer text as it streams, rather than having to
             # buffer the whole part), or on `output_text.done` if no delta was received.
             _phase_by_item: dict[str, Literal['commentary', 'final_answer']] = {}
+            _phase_started_content: set[tuple[str, int]] = set()
             mcp_list_tools_return_ids: set[str] = set()
 
             if self._provider_timestamp is not None:  # pragma: no branch
@@ -4594,11 +4603,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                     # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
                     if chunk.delta is not None:  # pyright: ignore[reportUnnecessaryComparison]
-                        # Pop so the phase rides along with the `PartStartEvent` for the new text part
-                        # and isn't repeated on every subsequent delta.
+                        # Attach the message-level phase once to each content part.
                         delta_provider_details: dict[str, Any] | None = None
-                        if (phase := _phase_by_item.pop(chunk.item_id, None)) is not None:
+                        content_key = (chunk.item_id, chunk.content_index)
+                        if (
+                            content_key not in _phase_started_content
+                            and (phase := _phase_by_item.get(chunk.item_id)) is not None
+                        ):
                             delta_provider_details = {'phase': phase}
+                            _phase_started_content.add(content_key)
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=(chunk.item_id, chunk.content_index),
                             content=chunk.delta,
@@ -4629,8 +4642,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         provider_details['annotations'] = serialized_annotations
                     if chunk.logprobs:
                         provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
-                    if (phase := _phase_by_item.get(chunk.item_id)) is not None:
+                    content_key = (chunk.item_id, chunk.content_index)
+                    if (
+                        content_key not in _phase_started_content
+                        and (phase := _phase_by_item.get(chunk.item_id)) is not None
+                    ):
                         provider_details['phase'] = phase
+                        _phase_started_content.add(content_key)
                     if provider_details or citations:
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=(chunk.item_id, chunk.content_index),
