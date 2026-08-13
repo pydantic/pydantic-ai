@@ -1528,6 +1528,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer = NoOpTracer()
             instrumentation_cap = None
 
+        from .._display import display_agent_banner
+
+        display_agent_banner(
+            name=self.name,
+            model=model_id or model_used.model_id,
+            output_type=output_type_,
+            tools=len(self._function_toolset.tools),
+            instrumented=instrumentation_settings is not None,
+        )
+
         # Build initial RunContext for for_run lifecycle hooks. Includes every
         # field that's already known here — `tool_manager` and `validation_context`
         # are populated later by `build_run_context` once the run is iterating.
