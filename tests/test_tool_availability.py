@@ -489,3 +489,53 @@ async def test_loaded_capability_tool_survives_a_stripped_reveal_marker() -> Non
     assert result.output == 'EXECUTED'
     refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
     assert refusals == []
+
+
+async def test_stripped_reveal_marker_survives_a_boundary_the_wire_skipped() -> None:
+    """The load-is-the-reveal shortcut has to read the anchored window, not just the agnostic one.
+
+    Where the two features meet, both halves of the evidence are hidden from the provider-agnostic
+    window: the boundary moves the load out of `loaded_capability_ids`, and history processing
+    removes the delta that would otherwise stand in for it. Only the anchored window still holds
+    the load, and only the shortcut can turn it into an answer, since nothing else discloses a
+    capability's own tools.
+    """
+    calls = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        returns = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.tool_name == 'secret_op']
+        if returns:
+            return _provider_response([make_text_response('EXECUTED').parts[0]], 'openai')
+        return _provider_response([ToolCallPart(tool_name='secret_op', args={}, tool_call_id=f'c{calls}')], 'openai')
+
+    def strip_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(message, parts=[p for p in message.parts if not isinstance(p, ToolAvailabilityDeltaPart)])
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages
+        ]
+
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(secret_op, defer_loading=True)
+    guarded = Capability[Any](id='guarded', description='Guarded tools.', toolsets=[toolset], defer_loading=True)
+    agent = Agent(FunctionModel(model_fn), capabilities=[guarded, ProcessHistory(strip_deltas)])
+
+    result = await agent.run(
+        'use the tool',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='load it')]),
+            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'guarded'}, tool_call_id='l1')]),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='l1')]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['secret_op'])]),
+            # Stamped by another provider, so the OpenAI request that carried this call replayed
+            # the whole history and the model saw the load exchange.
+            ModelResponse(parts=[CompactionPart(content='foreign', provider_name='anthropic')]),
+        ],
+    )
+
+    assert result.output == 'EXECUTED'
+    refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
+    assert refusals == []
