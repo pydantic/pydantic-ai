@@ -2081,29 +2081,28 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         evidence_window = _messages._post_compaction_window_for_response(  # pyright: ignore[reportPrivateUsage]
             ctx.state.message_history, self.model_response
         )
+        # Held in locals because they land in two places below, and a third supplement added later
+        # has to reach both or it silently won't apply on the same-step path.
+        discovered_supplement = set(_discovered_tool_names_in_order(evidence_window)) - ctx.deps.discovered_tool_names
+        loaded_supplement = _parse_loaded_capabilities(evidence_window) - ctx.deps.loaded_capability_ids
         run_context = replace(
             run_context,
             retry=ctx.state.output_retries_used,
             max_retries=ctx.deps.tool_manager.default_max_retries,
-            _discovered_tool_names_supplement=set(_discovered_tool_names_in_order(evidence_window))
-            - ctx.deps.discovered_tool_names,
-            _loaded_capability_ids_supplement=_parse_loaded_capabilities(evidence_window)
-            - ctx.deps.loaded_capability_ids,
+            _discovered_tool_names_supplement=discovered_supplement,
+            _loaded_capability_ids_supplement=loaded_supplement,
         )
 
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
         # The manager was already prepared for this same run step before the model request, so
-        # `for_run_step` deliberately returns it unchanged. Carry only the retrospective evidence
-        # onto its existing context; replacing the prospective shared sets would affect the next
-        # request's reveal pruning and search ranking.
+        # `for_run_step` deliberately returns it unchanged, keeping the retries it accumulated —
+        # which is why the evidence lands field by field rather than by swapping in `run_context`.
+        # Only the retrospective evidence is carried: replacing the prospective shared sets would
+        # affect the next request's reveal pruning and search ranking.
         assert ctx.deps.tool_manager.ctx is not None
-        ctx.deps.tool_manager.ctx._discovered_tool_names_supplement = (  # pyright: ignore[reportPrivateUsage]
-            run_context._discovered_tool_names_supplement  # pyright: ignore[reportPrivateUsage]
-        )
-        ctx.deps.tool_manager.ctx._loaded_capability_ids_supplement = (  # pyright: ignore[reportPrivateUsage]
-            run_context._loaded_capability_ids_supplement  # pyright: ignore[reportPrivateUsage]
-        )
+        ctx.deps.tool_manager.ctx._discovered_tool_names_supplement = discovered_supplement  # pyright: ignore[reportPrivateUsage]
+        ctx.deps.tool_manager.ctx._loaded_capability_ids_supplement = loaded_supplement  # pyright: ignore[reportPrivateUsage]
 
         # Under `end_strategy='early'`, `response_output` holds the response's `(text, files)`. If it carries a
         # valid non-tool output (schema-validated text, or an image) and every co-emitted tool call is a plain
