@@ -89,6 +89,12 @@ agent = Agent('anthropic:claude-fable-5', capabilities=[Coder()])
 agent.to_cli_sync()
 ```
 
+Run that file and you're chatting with the agent in your terminal — or skip the file entirely:
+
+```bash
+uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent
+```
+
 Everything between those two is composition, not rewriting: add [tools](tools.md), [structured outputs](output.md), and [capabilities](capabilities/overview.md) one at a time — like [thinking](capabilities/thinking.md) and [web search](capabilities/web-search.md):
 
 ```python {title="hello_world_capabilities.py"}
@@ -127,6 +133,8 @@ Text agents are the start — the same library, with the same typed API, does vo
     print(result.output)  # a validated, typed Sentiment
     ```
 
+    **Build this →** [Agents](agent.md) and [Structured Output](output.md)
+
 === "Realtime voice"
 
     ```python {test="skip"}
@@ -138,7 +146,9 @@ Text agents are the start — the same library, with the same typed API, does vo
         ...  # stream microphone audio in, play session.stream_audio() out
     ```
 
-    Same tools, same capabilities, same observability as any other agent — [voice is just another frontend](realtime/overview.md), on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
+    Same tools, same capabilities, same observability as any other agent — voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
+
+    **Build this →** [Realtime Voice](realtime/overview.md)
 
 === "Embeddings"
 
@@ -149,7 +159,9 @@ Text agents are the start — the same library, with the same typed API, does vo
     result = await embedder.embed_query('What is machine learning?')
     ```
 
-    Seven providers, one [typed API](embeddings.md), instrumented like everything else.
+    Seven providers, one typed API, instrumented like everything else.
+
+    **Build this →** [Embeddings](embeddings.md)
 
 === "Image generation"
 
@@ -161,7 +173,9 @@ Text agents are the start — the same library, with the same typed API, does vo
     result = agent.run_sync('Generate a minimalist logo for a coffee shop called Extract.')
     ```
 
-    Provider-native where supported, [with a fallback path everywhere else](capabilities/image-generation.md).
+    Provider-native where supported, with a fallback path everywhere else.
+
+    **Build this →** [Image Generation](capabilities/image-generation.md)
 
 ## Why Pydantic AI
 
