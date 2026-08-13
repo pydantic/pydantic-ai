@@ -4952,7 +4952,14 @@ def test_run_context_is_tool_available_falls_back_while_tools_unresolved() -> No
 
 
 async def test_run_context_available_tool_names_unions_discovered_current_tools() -> None:
-    """Available tool names are always-visible current tools plus revealed corpus tools."""
+    """Available tool names are always-visible current tools plus revealed corpus tools.
+
+    `loaded_capability_tool` counts as revealed on the strength of its capability's load alone:
+    `is_gated_by_deferred_capability` keeps every tool of a deferred capability out of the search
+    corpus, so the load is the only thing that can ever disclose it, and requiring a separate reveal
+    marker would strand it for good once history processing dropped one. `pending_tool` is the
+    contrast — search-gated but unowned, so it still has to be searched for.
+    """
     toolset = FunctionToolset()
 
     @toolset.tool_plain
@@ -4997,7 +5004,7 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
     tool_manager = ToolManager(toolset=toolset, ctx=ctx, tools=tools)
     ctx.tool_manager = tool_manager
 
-    assert ctx.available_tool_names == {'always_tool', 'discovered_tool'}
+    assert ctx.available_tool_names == {'always_tool', 'discovered_tool', 'loaded_capability_tool'}
 
 
 async def test_run_context_is_tool_available() -> None:

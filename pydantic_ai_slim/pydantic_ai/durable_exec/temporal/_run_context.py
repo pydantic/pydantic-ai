@@ -33,6 +33,7 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
     ('discovered_tool_names', list, _str_set_ta),
     ('available_tool_names', list, _str_set_ta),
     ('available_capability_ids', list, _str_set_ta),
+    ('_deferred_capability_ids', list, _str_set_ta),
     ('_discovered_tool_names_supplement', list, _str_set_ta),
     ('_loaded_capability_ids_supplement', list, _str_set_ta),
 )
@@ -112,6 +113,21 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             return snapshot
         return super().available_capability_ids
 
+    @property
+    def _deferred_capability_ids(self) -> set[str]:
+        """The set of on-demand capability ids serialized at activity dispatch time.
+
+        `is_tool_available` needs the *configured* shape of a capability, not just what history says
+        was loaded, and reads it from the registry — which cannot cross the boundary. Carrying the
+        ids keeps a loaded capability's own tools answering as available inside an activity instead
+        of falling back to a reveal marker that, for these tools, nothing can regenerate. Custom
+        subclasses whose `serialize_run_context` omits the snapshot fall back to the base property,
+        which reads the registry and raises inside an activity.
+        """
+        if (snapshot := self.__dict__.get('_deferred_capability_ids')) is not None:
+            return snapshot
+        return super()._deferred_capability_ids
+
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
         """Serialize the run context to a `dict[str, Any]`."""
@@ -144,6 +160,10 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             # for any capability-owned tool, so without it the definition form — the form the docs
             # send toolset authors to — raises inside an activity instead of answering.
             'available_capability_ids': ctx.available_capability_ids,
+            # The configured on-demand set, which `is_tool_available` consults to tell a loaded
+            # deferred capability (whose load is itself the reveal for its tools) from one that has
+            # since been reconfigured always-on. Derived from the registry, so it must travel too.
+            '_deferred_capability_ids': ctx._deferred_capability_ids,
             'capability_loaded': ctx.capability_loaded,
         }
 

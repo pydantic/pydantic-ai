@@ -286,6 +286,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
         } | self.loaded_capability_ids
 
     @property
+    def _deferred_capability_ids(self) -> set[str]:
+        """IDs of the capabilities configured to load on demand.
+
+        Private, and read only by `is_tool_available`, which needs the *configured* shape rather
+        than the runtime one: `loaded_capability_ids` records what history says was loaded, which
+        can name a capability that has since been reconfigured as always-on. Overridden in
+        `TemporalRunContext` with the snapshot serialized at activity dispatch, since the
+        `capabilities` registry this reads does not cross that boundary.
+        """
+        return {id for id, cap in self.capabilities.items() if cap.defer_loading is True}
+
+    @property
     def available_tool_names(self) -> set[str]:
         """Names of function tools the model can call on the current turn.
 
@@ -338,6 +350,23 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # definition can be observed before tool search stamps `with_native='tool-search'` on it.
         if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading:
             return True
+        capability_id = tool_def.capability_id
+        # Loading a deferred capability discloses its tools as a bundle — the load exchange carries
+        # the instructions *and* the schemas — so for its own tools the load already is the reveal.
+        # Demanding a separate reveal marker on top would strand a tool permanently: history
+        # processing can drop the reveal while keeping the load, and from there the model has no way
+        # back, because a capability-owned tool is not in the search corpus and reloading an
+        # already-active capability is refused.
+        #
+        # Both halves are load-bearing. The capability must still be *configured* deferred, not just
+        # named by a load record in history: a capability that has since been reconfigured as
+        # always-on never announced its tools as a bundle, so a stale record must not reveal them.
+        if (
+            capability_id is not None
+            and capability_id in self._deferred_capability_ids
+            and capability_id in self.loaded_capability_ids | self._loaded_capability_ids_supplement
+        ):
+            return capability_id in self.available_capability_ids | self._loaded_capability_ids_supplement
         if tool_def.name not in self.discovered_tool_names | self._discovered_tool_names_supplement:
             return False
         # A run holds to load, then reveal, then call. `discovered_tool_names` is raw history
@@ -345,7 +374,6 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # never loaded — a history no real run produces, and one that would skip the instructions
         # written to be read first. Checking the owner here keeps this predicate in step with what
         # `ToolManager` will run, so "available" means one thing everywhere it is asked.
-        capability_id = tool_def.capability_id
         return capability_id is None or capability_id in (
             self.available_capability_ids | self._loaded_capability_ids_supplement
         )
