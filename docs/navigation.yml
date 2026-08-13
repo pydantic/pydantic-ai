@@ -17,6 +17,11 @@ navigation:
         aliases:
           - "installation"
           - "install"
+      - page: "Interfaces"
+        path: "interfaces.md"
+        slug: "overview/interfaces"
+        aliases:
+          - "interfaces"
       - page: "V1 → V2 Migration Map"
         path: "migration.md"
         slug: "overview/migration"
