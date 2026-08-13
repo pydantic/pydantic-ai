@@ -87,7 +87,6 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
 
         instructions_text = InstructionPart.join(parts)
 
-        ctx.loaded_capability_ids.add(capability_id)
         result: LoadCapabilityReturn = {'instructions': instructions_text} if instructions_text is not None else {}
         tools = sorted(name for name, tool_def in ctx.tools.items() if tool_def.capability_id == capability_id)
         return ToolReturn(return_value=result, tools=tools or None)

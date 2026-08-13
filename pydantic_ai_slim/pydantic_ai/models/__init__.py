@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, 
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from functools import cache, cached_property, wraps
+from functools import cache, cached_property
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
 
@@ -84,6 +84,7 @@ from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 
 if TYPE_CHECKING:
     from ..agent.abstract import AbstractAgent
+from .._cost import preload_pricing_data
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
@@ -196,6 +197,19 @@ class ModelRequestParameters:
     this is not necessarily a subset of `function_tools`' names; resolution ignores unknown names.
     """
 
+    deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)
+    """IDs of the run's capabilities that defer their loading.
+
+    Read from the capability instances themselves, so it means what it says. It cannot be derived
+    from the function tools: `ToolDefinition.capability_id` records which capability *contributed* a
+    tool, and `defer_loading` is set both by a deferred capability and by a search-gated tool inside
+    an always-on one — so the two cases are indistinguishable from the definitions alone.
+
+    Used to answer "may this tool be revealed yet?": a tool whose `capability_id` is in this set is
+    gated on that capability being loaded, while one whose owner is absent here is gated only on its
+    own discovery.
+    """
+
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
@@ -256,24 +270,6 @@ class ModelRequestParameters:
             tool for tool in self.function_tools if self.visibility_of(tool.name) not in ('withheld', 'via_history')
         ]
 
-    @property
-    def deferred_capability_ids(self) -> set[str]:
-        """Deprecated: derive capability ownership from the authored definitions instead.
-
-        Returns the IDs of deferred capabilities that gate at least one of this request's function
-        tools — the membership test adapters used this field for. Read
-        [`ToolDefinition.capability_id`][pydantic_ai.tools.ToolDefinition.capability_id] together
-        with `defer_loading`, or [`tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility],
-        instead.
-        """
-        warnings.warn(
-            '`ModelRequestParameters.deferred_capability_ids` is deprecated: read '
-            '`ToolDefinition.capability_id` on the function tools, or `tool_visibility`, instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return {t.capability_id for t in self.function_tools if t.capability_id is not None and t.defer_loading}
-
     @cached_property
     def prompted_output_instructions(self) -> str | None:
         if self.prompted_output_template and self.output_object:
@@ -292,32 +288,6 @@ class ModelRequestParameters:
         return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-_generated_model_request_parameters_init = ModelRequestParameters.__init__
-
-
-@wraps(_generated_model_request_parameters_init)
-def _init_accepting_deferred_capability_ids(
-    self: ModelRequestParameters, *, deferred_capability_ids: set[str] | None = None, **kwargs: Any
-) -> None:
-    # `deferred_capability_ids` shipped as a regular field, so its removal must keep the
-    # constructor argument working through the deprecation period, next to the derived read
-    # property above. An `InitVar` would be the natural spelling, but `dataclasses.replace()` on
-    # Python 3.13+ round-trips init-only variables through `getattr`, which would fire both
-    # deprecation warnings on every internal `replace()` call — so the generated `__init__` is
-    # wrapped instead, and `replace()` never sees the non-field name.
-    if deferred_capability_ids is not None:
-        warnings.warn(
-            '`ModelRequestParameters.deferred_capability_ids` is deprecated: set '
-            '`ToolDefinition.capability_id` and `defer_loading` on the function tools instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-    _generated_model_request_parameters_init(self, **kwargs)
-
-
-ModelRequestParameters.__init__ = _init_accepting_deferred_capability_ids
 
 
 @dataclass(kw_only=True)
@@ -424,6 +394,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         self._settings = settings
         self._profile = profile
+        preload_pricing_data()
 
     @property
     def provider(self) -> Provider[InterfaceClient] | None:

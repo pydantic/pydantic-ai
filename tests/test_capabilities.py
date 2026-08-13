@@ -935,9 +935,8 @@ def test_model_json_schema_with_capabilities():
                         'bedrock:zai.glm-4.7',
                         'bedrock:zai.glm-4.7-flash',
                         'bedrock:zai.glm-5',
+                        'cerebras:gemma-4-31b',
                         'cerebras:gpt-oss-120b',
-                        'cerebras:llama3.1-8b',
-                        'cerebras:qwen-3-235b-a22b-instruct-2507',
                         'cerebras:zai-glm-4.7',
                         'cohere:c4ai-aya-expanse-32b',
                         'cohere:c4ai-aya-expanse-8b',
@@ -1048,6 +1047,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-3.5-flash',
                         'gateway/google-cloud:gemini-3.5-flash-lite',
                         'gateway/google-cloud:gemini-3.6-flash',
+                        'gateway/google-cloud:gemini-3.7-flash',
                         'gateway/google:gemini-2.5-flash',
                         'gateway/google:gemini-2.5-flash-image',
                         'gateway/google:gemini-2.5-flash-lite',
@@ -1060,6 +1060,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-3.5-flash',
                         'gateway/google:gemini-3.5-flash-lite',
                         'gateway/google:gemini-3.6-flash',
+                        'gateway/google:gemini-3.7-flash',
                         'gateway/groq:llama-3.1-8b-instant',
                         'gateway/groq:llama-3.3-70b-versatile',
                         'gateway/groq:openai/gpt-oss-120b',
@@ -1138,6 +1139,7 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-3.5-flash',
                         'google-cloud:gemini-3.5-flash-lite',
                         'google-cloud:gemini-3.6-flash',
+                        'google-cloud:gemini-3.7-flash',
                         'google-cloud:gemini-flash-latest',
                         'google-cloud:gemini-flash-lite-latest',
                         'google:gemini-2.0-flash',
@@ -1158,6 +1160,7 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-3.5-flash',
                         'google:gemini-3.5-flash-lite',
                         'google:gemini-3.6-flash',
+                        'google:gemini-3.7-flash',
                         'google:gemini-flash-latest',
                         'google:gemini-flash-lite-latest',
                         'groq:llama-3.1-8b-instant',
@@ -3998,32 +4001,39 @@ async def test_orphaned_reveal_evidence_stripped_by_cleanup_does_not_count_as_re
     assert seen == [set()]
 
 
-async def test_model_calling_a_withheld_tool_executes_without_revealing_it() -> None:
-    """Calling a hidden tool by (guessed) name executes it and authors no reveal.
+async def test_model_calling_a_withheld_tool_is_refused_and_reveals_nothing() -> None:
+    """Calling a hidden tool by (guessed) name is refused, and authors no reveal.
 
-    Pins the documented no-trust-boundary stance: hiding is prompt engineering, not access
-    control, so execution is accepted — but execution is not discovery, and the tool stays off
-    the wire afterwards.
+    Hiding is now an availability gate, not just prompt engineering: a tool the model was never
+    shown cannot be executed by guessing its name. The refusal is a retry pointing at search, and
+    a refused call is not a discovery, so the tool stays off the wire afterwards.
     """
     wire_tools: list[list[str]] = []
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         wire_tools.append(sorted(tool.name for tool in info.function_tools))
-        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
-            return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='guess')])
-        return ModelResponse(parts=[TextPart('done')])
+        if list(iter_message_parts(messages, ModelRequest, RetryPromptPart)):
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='hidden_tool', args={}, tool_call_id='guess')])
 
     agent = Agent(FunctionModel(model_fn))
 
     @agent.tool_plain(defer_loading=True)
     def hidden_tool() -> str:
-        return 'secret'
+        return 'secret'  # pragma: no cover
 
     result = await agent.run('guess the hidden tool')
 
     assert result.output == 'done'
     returns = list(iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart))
-    assert [(part.tool_name, part.content) for part in returns] == [('hidden_tool', 'secret')]
+    assert returns == []
+    retries = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+    assert [str(part.content) for part in retries] == snapshot(
+        [
+            "Tool 'hidden_tool' is not available yet: search for it first, then call it once the "
+            'search result has shown you its schema.'
+        ]
+    )
     deltas = [
         part
         for message in result.all_messages()
@@ -5068,7 +5078,14 @@ def test_run_context_is_tool_available_falls_back_while_tools_unresolved() -> No
 
 
 async def test_run_context_available_tool_names_unions_discovered_current_tools() -> None:
-    """Available tool names are always-visible current tools plus revealed corpus tools."""
+    """Available tool names are always-visible current tools plus revealed corpus tools.
+
+    `loaded_capability_tool` counts as revealed on the strength of its capability's load alone:
+    `is_gated_by_deferred_capability` keeps every tool of a deferred capability out of the search
+    corpus, so the load is the only thing that can ever disclose it, and requiring a separate reveal
+    marker would strand it for good once history processing dropped one. `pending_tool` is the
+    contrast — search-gated but unowned, so it still has to be searched for.
+    """
     toolset = FunctionToolset()
 
     @toolset.tool_plain
@@ -5113,7 +5130,7 @@ async def test_run_context_available_tool_names_unions_discovered_current_tools(
     tool_manager = ToolManager(toolset=toolset, ctx=ctx, tools=tools)
     ctx.tool_manager = tool_manager
 
-    assert ctx.available_tool_names == {'always_tool', 'discovered_tool'}
+    assert ctx.available_tool_names == {'always_tool', 'discovered_tool', 'loaded_capability_tool'}
 
 
 async def test_run_context_is_tool_available() -> None:

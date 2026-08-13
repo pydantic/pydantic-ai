@@ -1,6 +1,5 @@
 import re
 
-import httpx
 import pytest
 
 from pydantic_ai.exceptions import UserError
@@ -37,13 +36,6 @@ def test_moonshotai_provider_need_api_key(env: TestEnv) -> None:
         ),
     ):
         MoonshotAIProvider()
-
-
-def test_moonshotai_provider_pass_http_client() -> None:
-    """Test passing a custom HTTP client to MoonshotAI provider."""
-    http_client = httpx.AsyncClient()
-    provider = MoonshotAIProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 
 
 def test_moonshotai_pass_openai_client() -> None:

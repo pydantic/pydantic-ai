@@ -210,6 +210,9 @@ jobs:
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
+      # Rebenchmark all-extras after https://github.com/cbornet/blockbuster/pull/61 is released
+      # in a compatible version; enable it if the job stays within seven minutes.
+      BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' && matrix.install.name != 'all-extras' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -325,6 +328,9 @@ jobs:
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
+      # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
+      # repeating its stack-inspection overhead here pushes lowest-version jobs past the CI budget.
+      BLOCKBUSTER_ENABLED: false
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:

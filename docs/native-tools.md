@@ -89,7 +89,7 @@ making it ideal for queries that require up-to-date data.
 | Google | ✅ | No parameter support. No [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] is generated when streaming. See [Google tool combinations](#google-tool-combinations). |
 | xAI | ✅ | Supports `blocked_domains`, `allowed_domains`, and `user_location` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
-| OpenRouter | ✅ | Web search via [plugins](https://openrouter.ai/docs/features/web-search). Supports `search_context_size`. Uses native search for supported providers (OpenAI, Anthropic, Perplexity, xAI), Exa for others. |
+| OpenRouter | ✅ | Uses OpenRouter's [Beta web-search server tool](https://openrouter.ai/docs/guides/features/server-tools/web-search). The model can make 0–N searches. Recorded requests verify only that OpenRouter accepts the parameter names; the per-engine effects below are per OpenRouter's docs: native search ignores `search_context_size`; `user_location` is native-only; native OpenAI ignores `blocked_domains`; and `max_uses` works with non-native or Anthropic native search. |
 | OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
@@ -166,11 +166,13 @@ _(This example is complete, it can be run "as is")_
 | Parameter | OpenAI | Anthropic | xAI | Groq | OpenRouter |
 |-----------|--------|-----------|-----|------|------------|
 | `search_context_size` | ✅ | ❌ | ❌ | ❌ | ✅ |
-| `user_location` | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ❌ |
-| `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `max_uses` | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `user_location` | ✅ | ✅ | ✅ | ❌ | ✅ |
+| `blocked_domains` | ❌ | ✅ | ✅ | ✅ | ✅ |
+| `allowed_domains` | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `max_uses` | ❌ | ✅ | ❌ | ❌ | ✅* |
 | `external_web_access` | ✅ | ❌ | ❌ | ❌ | ❌ |
+
+* Per OpenRouter's documentation, native provider search forwards `max_uses` only to Anthropic; other native providers ignore it.
 
 !!! note "Anthropic Domain Filtering"
     With Anthropic, you can only use either `blocked_domains` or `allowed_domains`, not both.

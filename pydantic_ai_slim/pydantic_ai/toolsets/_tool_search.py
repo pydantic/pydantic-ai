@@ -199,7 +199,10 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     Every [`CompactionPart`][pydantic_ai.messages.CompactionPart] resets the derived
     state at its exact position in a response. This is deliberately provider-agnostic:
     over-counting can prevent rediscovery or claim a schema is visible when it is not,
-    while under-counting only permits a redundant, idempotent search.
+    while under-counting once only permitted a redundant, idempotent search. Now that
+    availability gates execution, an under-count also *refuses* the call — see
+    [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] for when that
+    is wrong and what is tracked to fix it.
 
     Trusts that any `ToolSearchReturnPart` / `NativeToolSearchReturnPart` in the
     history has a validated `ToolSearchReturnContent`:

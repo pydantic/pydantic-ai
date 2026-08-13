@@ -173,6 +173,12 @@ def setup_prefect_test_harness() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def blockbuster_excluded_modules() -> tuple[str, ...]:
+    """Prefect's `@flow` constructor synchronously inspects its decorated function's source."""
+    return ('pydantic_ai.durable_exec.prefect',)
+
+
 @contextmanager
 def flow_raises(exc_type: type[Exception], exc_message: str) -> Generator[None]:
     """Helper for asserting that a Prefect flow fails with the expected error."""
