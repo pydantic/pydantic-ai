@@ -92,15 +92,23 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Gemini
-    * Anthropic
     * OpenAI
+    * Anthropic
+    * Google
     * Groq
     * Cohere
     * Mistral
     * Bedrock
     * MCP Sampling
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     temperature: float
@@ -113,14 +121,23 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Gemini
-    * Anthropic
     * OpenAI
+    * Anthropic
+    * Google
     * Groq
     * Cohere
     * Mistral
     * Bedrock
+    * MCP Sampling
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     top_p: float
@@ -132,14 +149,22 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Gemini
-    * Anthropic
     * OpenAI
+    * Anthropic
+    * Google
     * Groq
     * Cohere
     * Mistral
     * Bedrock
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     top_k: int
@@ -149,8 +174,8 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Gemini
     * Anthropic
+    * Google
     * Cohere
     * Bedrock (Anthropic and Amazon Nova models only)
     """
@@ -160,11 +185,18 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Gemini (numeric seconds only, not `httpx.Timeout`)
-    * Anthropic
     * OpenAI
+    * Anthropic
+    * Google (numeric seconds only, not `httpx.Timeout`)
     * Groq
     * Mistral (numeric seconds only, not `httpx.Timeout`)
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     parallel_tool_calls: bool
@@ -173,9 +205,16 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI (some models, not o1)
-    * Groq
     * Anthropic
+    * Groq
+    * Mistral
     * xAI
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     tool_choice: ToolChoice
@@ -206,10 +245,18 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic (`'required'` and specific tools not supported with thinking enabled)
     * Google
     * Groq
+    * Cohere
     * Mistral
-    * HuggingFace
     * Bedrock
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     seed: int
@@ -217,12 +264,20 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI Chat Completions
+    * Google
     * Groq
     * Cohere
     * Mistral
-    * Gemini
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle Chat Completions
     """
 
     presence_penalty: float
@@ -230,12 +285,19 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI Chat Completions
+    * Google
     * Groq
     * Cohere
-    * Gemini
     * Mistral
     * xAI
+    * HuggingFace
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle Chat Completions
     """
 
     frequency_penalty: float
@@ -243,12 +305,19 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI Chat Completions
+    * Google
     * Groq
     * Cohere
-    * Gemini
     * Mistral
     * xAI
+    * HuggingFace
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle Chat Completions
     """
 
     logit_bias: dict[str, int]
@@ -256,8 +325,15 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI Chat Completions
     * Groq
+    * HuggingFace
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle Chat Completions
     """
 
     stop_sequences: list[str]
@@ -265,14 +341,23 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI Chat Completions
     * Anthropic
-    * Bedrock
-    * Mistral
+    * Google
     * Groq
     * Cohere
-    * Google
+    * Mistral
+    * Bedrock
+    * MCP Sampling
     * xAI
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle Chat Completions
     """
 
     extra_headers: dict[str, str]
@@ -282,9 +367,16 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Anthropic
-    * Bedrock
-    * Gemini
+    * Google
     * Groq
+    * Bedrock
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     thinking: ThinkingLevel
@@ -302,15 +394,20 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic
     * OpenAI
-    * Gemini
+    * Anthropic
+    * Google
     * Groq
-    * Bedrock
-    * OpenRouter
-    * Cerebras
-    * xAI
     * Mistral
+    * Bedrock
+    * xAI
+    * Cerebras (only `False`, sent as a `reasoning_effort` of `none`; Cerebras models reason by default
+      and ignore the effort levels)
+    * Ollama
+    * OpenRouter (as `extra_body['reasoning']`)
+    * Snowflake (as `extra_body['reasoning']` on Claude models, otherwise as `reasoning_effort`)
+    * Z.AI (as `extra_body['thinking']`)
+    * Bedrock Mantle
     """
 
     service_tier: ServiceTier
@@ -325,8 +422,14 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Anthropic
-    * Bedrock
     * Google (Gemini API and Google Cloud)
+    * Bedrock
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
     """
 
     extra_body: object
@@ -337,6 +440,17 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Anthropic
     * Groq
+    * HuggingFace
+    * Cerebras
+    * Crusoe
+    * Ollama
+    * OpenRouter
+    * Snowflake
+    * Z.AI
+    * Bedrock Mantle
+
+    On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
+    Z.AI), the model's own derived keys overwrite yours when the keys collide.
     """
 
 
