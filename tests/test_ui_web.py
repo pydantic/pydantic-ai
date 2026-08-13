@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from pydantic_ai import Agent, ModelSettings
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
 from pydantic_ai.profiles import ModelProfile
@@ -527,6 +528,24 @@ def test_host_validation_normalizes_configured_hosts(host: str):
         response = client.get('/api/health', headers={'host': host})
 
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    'pattern',
+    [
+        # The dangerous one: normalizing away the root dot would leave `*`, the sentinel that
+        # accepts every host, so a typo would silently turn the whole check off.
+        pytest.param('*.', id='wildcard-with-no-domain'),
+        pytest.param('*..', id='wildcard-with-only-dots'),
+        # Matches nothing, since a `Host` header can't contain `*` — accepting it would leave the
+        # user believing they had allowlisted something.
+        pytest.param('*example.com', id='wildcard-without-a-label-boundary'),
+    ],
+)
+def test_host_validation_rejects_malformed_patterns(pattern: str):
+    """A malformed `allowed_hosts` entry fails loudly instead of quietly meaning something else."""
+    with pytest.raises(UserError, match='Invalid `allowed_hosts` pattern'):
+        create_web_app(Agent('test'), allowed_hosts=[pattern])
 
 
 def test_host_validation_can_be_turned_off():

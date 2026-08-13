@@ -12,7 +12,7 @@ from pydantic_ai import Agent
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 
-from ._hosts import HostValidationMiddleware
+from ._hosts import HostValidationMiddleware, normalized_pattern
 from .api import ModelsParam, create_api_app
 
 try:
@@ -152,11 +152,19 @@ def create_web_app(
 
     Returns:
         A configured Starlette application ready to be served
+
+    Raises:
+        UserError: If an `allowed_hosts` entry is not a hostname, `*.example.com`, or `*`.
     """
     from ... import _utils
 
     native_tools = _utils.consume_deprecated_builtin_tools(_deprecated_kwargs, native_tools)
     _utils.validate_empty_kwargs(_deprecated_kwargs)
+
+    # Normalized here rather than left to the middleware so a bad pattern is reported from this call
+    # instead of from the first request: Starlette builds its middleware stack lazily. Normalizing is
+    # idempotent, so the middleware doing it again over the same list is a no-op.
+    allowed_hosts = [normalized_pattern(pattern) for pattern in allowed_hosts or ()]
 
     api_app = create_api_app(
         agent=agent,
@@ -171,7 +179,7 @@ def create_web_app(
     # Applied to the whole app rather than just `/api/chat`: a request that reaches us under a
     # hostname we don't answer to is misdirected whatever it asks for, and guarding every route
     # means a route added later is covered without anyone having to remember to opt it in.
-    middleware = [Middleware(HostValidationMiddleware, allowed_hosts=allowed_hosts or ())]
+    middleware = [Middleware(HostValidationMiddleware, allowed_hosts=allowed_hosts)]
     app = Starlette(routes=routes, middleware=middleware)
 
     async def index(request: Request) -> Response:

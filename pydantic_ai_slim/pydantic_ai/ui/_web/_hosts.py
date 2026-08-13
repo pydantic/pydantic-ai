@@ -23,6 +23,8 @@ from starlette.datastructures import Headers
 from starlette.responses import PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from pydantic_ai.exceptions import UserError
+
 ANY_HOST = '*'
 """`allowed_hosts` entry that accepts every `Host` header, turning the protection off."""
 
@@ -65,6 +67,24 @@ def _is_ip_address(hostname: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def normalized_pattern(pattern: str) -> str:
+    """Normalize an `allowed_hosts` entry the way `_hostname` normalizes an incoming header.
+
+    Raises `UserError` on a wildcard naming no domain. `'*.'` is the one that matters: it reads like
+    a wildcard for something, but dropping its root dot would leave `'*'` — the sentinel that accepts
+    every host — so a typo would silently turn the check off rather than fail. A wildcard that isn't
+    `*.`-prefixed (`'*example.com'`) is rejected in the same pass; it can only ever match a literal
+    host of that name, which is to say never.
+    """
+    lowered = pattern.lower()
+    if lowered != ANY_HOST and lowered.startswith('*') and not (lowered.startswith('*.') and lowered[2:].strip('.')):
+        raise UserError(
+            f'Invalid `allowed_hosts` pattern {pattern!r}. '
+            f'Use a hostname, `*.example.com` to match its subdomains, or `{ANY_HOST}` to allow any host.'
+        )
+    return lowered.removesuffix('.')
 
 
 def _matches(hostname: str, pattern: str) -> bool:
@@ -120,7 +140,7 @@ class HostValidationMiddleware:
 
     def __init__(self, app: ASGIApp, allowed_hosts: Sequence[str]) -> None:
         self.app = app
-        self.allowed_hosts = [pattern.lower().removesuffix('.') for pattern in allowed_hosts]
+        self.allowed_hosts = [normalized_pattern(pattern) for pattern in allowed_hosts]
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope['type'] not in ('http', 'websocket'):
@@ -138,9 +158,9 @@ class HostValidationMiddleware:
 
         response = PlainTextResponse(
             f'Host {host_header!r} is not allowed.\n\n'
-            'The web chat UI only answers requests whose `Host` header is an IP address or '
-            '`localhost`, so that a website cannot reach it on your machine by pointing a hostname '
-            'it controls at you (DNS rebinding).\n\n'
+            'The web chat UI only answers requests whose `Host` header is an IP address, '
+            '`localhost`, or a name under `.localhost`, so that a website cannot reach it on your '
+            'machine by pointing a hostname it controls at you (DNS rebinding).\n\n'
             'To serve the UI under a hostname, pass it in `allowed_hosts`, or run `clai web` with '
             '`--allowed-host`.\n',
             status_code=421,
