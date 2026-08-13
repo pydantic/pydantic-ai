@@ -40,6 +40,8 @@ AgentDepsT = TypeVar('AgentDepsT')
 OutputDataT = TypeVar('OutputDataT')
 
 
+# Cache operations run in worker threads. Serialize reads and atomic replacement because Windows
+# may reject replacing a destination file while another thread has it open for reading.
 _CACHE_FILE_LOCK = threading.Lock()
 
 
