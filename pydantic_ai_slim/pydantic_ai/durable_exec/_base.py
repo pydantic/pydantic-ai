@@ -477,9 +477,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _build_resolve_tool_config(self, base_config: Any) -> Callable[[ToolsetTool[Any] | None, str], ToolConfig]:
         """Build the per-tool config resolver from declarative fields (metadata key + polarity)."""
-        metadata_key = self._tool_config_key or ''
+        metadata_key = self._tool_config_key
 
         def resolve(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
+            if metadata_key is None:
+                # An engine that declares no config key takes no per-tool config at all, so tool
+                # metadata is not consulted. Collapsing `None` to `''` here would instead read the
+                # empty-string key, letting `metadata={'': False}` opt a tool out of its durable
+                # unit -- un-checkpointing the call and shifting the recorded unit sequence, which
+                # is exactly what DBOS's "tool metadata is ignored" contract exists to prevent.
+                return self._normalize_unit_config(base_config)
+
             config = resolve_tool_durable_config(
                 tool,
                 tool_name,

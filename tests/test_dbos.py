@@ -3770,7 +3770,8 @@ async def test_dbos_durability_dynamic_capability_tool_runs_in_step(dbos: DBOS) 
     assert 'dbos_dynamic_capability__dynamic_toolset__dyn.call_tool' in step_names
 
 
-async def test_dbos_durability_ignores_per_tool_metadata(dbos: DBOS) -> None:
+@pytest.mark.parametrize('metadata', [{'dbos': False}, {'': False}])
+async def test_dbos_durability_ignores_per_tool_metadata(dbos: DBOS, metadata: dict[str, Any]) -> None:
     """DBOS takes no per-tool config: tool metadata never opts a tool out of its step.
 
     DBOS registers a step once per name and its tool-call step names carry no tool name, so
@@ -3778,6 +3779,9 @@ async def test_dbos_durability_ignores_per_tool_metadata(dbos: DBOS) -> None:
     be an opt-out under Prefect/Temporal's `_tool_config_key`) must leave the step in place --
     dropping it would both un-checkpoint the call and shift the recorded step sequence, breaking
     recovery of workflows recorded before this capability existed.
+
+    The empty-string key is the same contract from the other side: an engine with no
+    `_tool_config_key` must not consult metadata at all, rather than reading key `''`.
     """
     calls: list[str] = []
 
@@ -3786,7 +3790,7 @@ async def test_dbos_durability_ignores_per_tool_metadata(dbos: DBOS) -> None:
         return 'dynamic result'
 
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
-        return Capability(tools=[Tool(opted_out_tool, metadata={'dbos': False})])
+        return Capability(tools=[Tool(opted_out_tool, metadata=metadata)])
 
     agent = Agent(
         TestModel(),
