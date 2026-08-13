@@ -31,6 +31,12 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
 
+@pytest.fixture
+def blockbuster_excluded_modules() -> tuple[str, ...]:
+    """The CLI owns intentionally synchronous terminal and history operations."""
+    return ('pydantic_ai._cli',)
+
+
 @pytest.fixture(autouse=True)
 def reset_sniffio_cvar() -> Iterator[None]:
     # The anyio pytest plugin sets `current_async_library_cvar` to 'asyncio' at session
