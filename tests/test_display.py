@@ -58,8 +58,9 @@ def test_display_banner_with_logfire(monkeypatch: pytest.MonkeyPatch, stderr: TT
     assert stderr.getvalue() == (
         f'pydantic-ai v{_display.__version__} • Python {_display.platform.python_version()}\n'
         'agent: support_agent • model: openai:gpt-5.6-sol • output: str • tools: 2\n'
-        'observability: not configured — set `instrument=True` and run `logfire.configure()` to see every\n'
-        '  model call and tool call (OpenTelemetry: works with Logfire or any OTel backend)\n'
+        'observability: not configured — set `instrument=True` and run `logfire.configure()` to see\n'
+        '  this agent live: every model call, tool call, and cost. Free with a Logfire account —\n'
+        '  sign up: https://logfire.pydantic.dev (or use any OpenTelemetry backend)\n'
         '  docs: https://pydantic.dev/docs/ai/logfire/ • hide this banner: PYDANTIC_AI_NO_BANNER=1\n'
     )
 
@@ -74,10 +75,15 @@ def test_display_banner_without_logfire(monkeypatch: pytest.MonkeyPatch, stderr:
 
     display_banner(name=None, output_type=list[str])
 
-    output = stderr.getvalue()
-    assert 'agent: (unnamed)' in output
-    assert 'output: list[str]' in output
-    assert 'install `logfire`, set `instrument=True`, then run `logfire.configure()`' in output
+    assert stderr.getvalue() == (
+        f'pydantic-ai v{_display.__version__} • Python {_display.platform.python_version()}\n'
+        'agent: (unnamed) • model: openai:gpt-5.6-sol • output: list[str] • tools: 2\n'
+        'observability: not configured — install `logfire`, set `instrument=True`,\n'
+        '  then run `logfire.configure()` to see\n'
+        '  this agent live: every model call, tool call, and cost. Free with a Logfire account —\n'
+        '  sign up: https://logfire.pydantic.dev (or use any OpenTelemetry backend)\n'
+        '  docs: https://pydantic.dev/docs/ai/logfire/ • hide this banner: PYDANTIC_AI_NO_BANNER=1\n'
+    )
 
 
 def test_display_banner_with_loaded_logfire(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):

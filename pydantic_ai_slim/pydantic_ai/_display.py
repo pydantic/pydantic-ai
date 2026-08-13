@@ -45,15 +45,16 @@ def display_agent_banner(
         output_name = str(output_type)
 
     if 'logfire' not in sys.modules and importlib.util.find_spec('logfire') is None:
-        setup = 'install `logfire`, set `instrument=True`, then run `logfire.configure()`'
+        setup = 'install `logfire`, set `instrument=True`,\n  then run `logfire.configure()`'
     else:
         setup = 'set `instrument=True` and run `logfire.configure()`'
 
     print(
         f'pydantic-ai v{__version__} • Python {platform.python_version()}\n'
         f'agent: {name or "(unnamed)"} • model: {model} • output: {output_name} • tools: {tools}\n'
-        f'observability: not configured — {setup} to see every\n'
-        '  model call and tool call (OpenTelemetry: works with Logfire or any OTel backend)\n'
+        f'observability: not configured — {setup} to see\n'
+        '  this agent live: every model call, tool call, and cost. Free with a Logfire account —\n'
+        '  sign up: https://logfire.pydantic.dev (or use any OpenTelemetry backend)\n'
         '  docs: https://pydantic.dev/docs/ai/logfire/ • hide this banner: PYDANTIC_AI_NO_BANNER=1',
         file=sys.stderr,
     )
