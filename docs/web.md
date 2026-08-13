@@ -101,11 +101,38 @@ Tools that [require approval](deferred-tools.md#human-in-the-loop-tool-approval)
 !!! warning
     The chat endpoint executes tool approvals relayed by the client, including for tools marked `requires_approval=True`. The server trusts the approval decision it receives, so any client that can reach the endpoint can approve any pending call.
 
-    Binding to localhost is not on its own a security boundary here: a web page open in the same browser can also reach `http://127.0.0.1:7932`. The chat endpoint therefore only accepts `Content-Type: application/json`, which a browser cannot send cross-origin without a preflight that the server refuses. Treat approval prompts as a convenience for the developer driving the UI rather than an authorization control, and don't expose `to_web()` to untrusted clients without putting authentication in front of it.
+    Binding to localhost is not on its own a security boundary here: a web page open in the same browser can also reach `http://127.0.0.1:7932`. The chat endpoint therefore only accepts `Content-Type: application/json`, which a browser cannot send cross-origin without a preflight that the server refuses, and the app only answers to [local `Host` headers](#reaching-the-ui-under-a-hostname). Treat approval prompts as a convenience for the developer driving the UI rather than an authorization control, and don't expose `to_web()` to untrusted clients without putting authentication in front of it.
+
+## Reaching the UI under a hostname
+
+The app answers only to requests whose `Host` header is an IP address (`127.0.0.1`, `[::1]`, or a LAN address like `192.168.1.5`) or `localhost` — including names under it, like `my-app.localhost`. Any other `Host` gets a `421 Misdirected Request`. Hostnames are compared in ASCII form, so an internationalized name goes in the list as punycode (`xn--bcher-kva.example`), which is what the browser sends.
+
+This is what stops a website from reaching the UI on your machine by pointing a hostname it controls at `127.0.0.1` — a DNS rebinding attack, which makes the browser treat that website and the UI as the same origin, so the content type requirement above no longer applies. An IP address can't be rebound that way, because rebinding works by pointing a *name* at an address.
+
+If you serve the UI under a real hostname — behind a reverse proxy, or through a tunnel like ngrok — name that hostname in `allowed_hosts`:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2')
+
+app = agent.to_web(allowed_hosts=['ui.example.com'])
+
+# `*.example.com` matches subdomains only; list the apex separately if you serve it too
+app = agent.to_web(allowed_hosts=['example.com', '*.example.com'])
+```
+
+Or with the CLI:
+
+```bash
+clai web -m openai:gpt-5.2 --allowed-host ui.example.com
+```
+
+Pass `allowed_hosts=['*']` to answer to any host, but only if something in front of the app already authenticates requests.
 
 ## Reserved Routes
 
-The web UI app uses the following routes which should not be overwritten:
+All routes are answered only for [allowed `Host` headers](#reaching-the-ui-under-a-hostname). The web UI app uses the following routes which should not be overwritten:
 
 - `/` and `/{id}` - Serves the chat UI
 - `/api/chat` - Chat endpoint (POST, OPTIONS). Requires `Content-Type: application/json`; other content types are rejected with `415`.
