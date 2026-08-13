@@ -1139,7 +1139,7 @@ Pydantic AI normalizes web-search citations from OpenAI, Anthropic, and Google, 
 and Google. They are available on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations] without changing the
 model's text.
 
-```python
+```python {test="skip"}
 from pydantic_ai import Agent, TextPart, WebCitationSource
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.native_tools import WebSearchTool

@@ -8199,6 +8199,7 @@ def test_binary_content_serializable():
                         'provider_name': None,
                         'part_kind': 'text',
                         'provider_details': None,
+                        'citations': None,
                     }
                 ],
                 'usage': {
@@ -8274,6 +8275,7 @@ def test_image_url_serializable_missing_media_type():
                         'provider_name': None,
                         'part_kind': 'text',
                         'provider_details': None,
+                        'citations': None,
                     }
                 ],
                 'usage': {
@@ -8355,6 +8357,7 @@ def test_image_url_serializable():
                         'provider_name': None,
                         'part_kind': 'text',
                         'provider_details': None,
+                        'citations': None,
                     }
                 ],
                 'usage': {

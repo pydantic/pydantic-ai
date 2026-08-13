@@ -1997,7 +1997,7 @@ class TextPart:
     When this field is set, `provider_name` is required to identify the provider that generated this data.
     """
 
-    citations: Annotated[list[Citation] | None, pydantic.Field(exclude_if=lambda value: value is None)] = None
+    citations: list[Citation] | None = None
     """Citations associated with this text part, if any."""
 
     part_kind: Literal['text'] = 'text'

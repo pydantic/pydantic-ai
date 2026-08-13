@@ -41,7 +41,7 @@ Important distinctions:
 
 - `new_messages()` returns only the current run
 - `all_messages()` returns the full history accumulated so far
-- provider-returned web and document citations are preserved on `TextPart.citations`; `CitationAnchor` offsets are Python
+- provider-returned web and document citations are available on `TextPart.citations`; `CitationAnchor` offsets are Python
   character indices into that part's content, and `anchor.kind` tells whether the range is supported content or an
   already-rendered citation marker
 - when `message_history` is non-empty, Pydantic AI assumes the history already carries the system prompt

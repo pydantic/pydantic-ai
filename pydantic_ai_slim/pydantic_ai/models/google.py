@@ -1377,6 +1377,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _active_parts: list[tuple[_GoogleStreamPartKind, UUID | None]] = field(
         default_factory=list[tuple[_GoogleStreamPartKind, UUID | None]], init=False
     )
+    _grounding_chunks: list[GroundingChunk] = field(default_factory=list[GroundingChunk], init=False)
     # Empty file_search returns whose contexts are still to arrive in `grounding_metadata` (see
     # `_fill_empty_file_search_return_content`). Each is reserved in the parts manager keyed by its
     # `tool_call_id`, with its `PartStartEvent` deferred until it's filled — or until the stream ends.
@@ -1592,6 +1593,8 @@ class GeminiStreamedResponse(StreamedResponse):
                     del self._active_parts[len(parts) :]
 
                 if candidate.grounding_metadata or candidate.citation_metadata:
+                    if candidate.grounding_metadata and candidate.grounding_metadata.grounding_chunks:
+                        self._grounding_chunks.extend(candidate.grounding_metadata.grounding_chunks)
                     google_parts = [Part() for _ in self._part_ids]
                     text_parts: dict[int, TextPart] = {}
                     text_part_ids: dict[int, UUID] = {}
@@ -1603,7 +1606,11 @@ class GeminiStreamedResponse(StreamedResponse):
                             text_parts[index] = text_part
                             text_part_ids[index] = part_id
                             google_parts[index] = Part(text=text_part.content)
-                    grounding_citations = _map_grounding_citations(google_parts, candidate.grounding_metadata)
+                    grounding_citations = _map_grounding_citations(
+                        google_parts,
+                        candidate.grounding_metadata,
+                        grounding_chunks=self._grounding_chunks,
+                    )
                     for index, citations in grounding_citations.items():
                         text_part = text_parts[index]
                         new_citations = [
@@ -1620,6 +1627,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         candidate.grounding_metadata,
                         candidate.citation_metadata,
                         grounding_citations,
+                        grounding_chunks=self._grounding_chunks,
                     )
                     last_text_part_id = next(
                         (
@@ -2026,12 +2034,15 @@ def _map_grounding_source(chunk: GroundingChunk) -> CitationSource | None:
 
 
 def _map_grounding_citations(
-    parts: Sequence[Part], grounding_metadata: GroundingMetadata | None
+    parts: Sequence[Part],
+    grounding_metadata: GroundingMetadata | None,
+    *,
+    grounding_chunks: Sequence[GroundingChunk] | None = None,
 ) -> dict[int, list[Citation]]:
     if not grounding_metadata or not grounding_metadata.grounding_supports:
         return {}
 
-    chunks = grounding_metadata.grounding_chunks or []
+    chunks = grounding_chunks if grounding_chunks is not None else grounding_metadata.grounding_chunks or []
     citations_by_part: dict[int, list[Citation]] = {}
     for support in grounding_metadata.grounding_supports:
         segment = support.segment
@@ -2069,10 +2080,16 @@ def _citation_provider_details(
     grounding_metadata: GroundingMetadata | None,
     citation_metadata: CitationMetadata | None,
     grounding_citations: dict[int, list[Citation]],
+    *,
+    grounding_chunks: Sequence[GroundingChunk] | None = None,
 ) -> dict[str, Any] | None:
     details: dict[str, Any] = {}
     grounding_supports = (grounding_metadata and grounding_metadata.grounding_supports) or []
-    grounding_chunks = (grounding_metadata and grounding_metadata.grounding_chunks) or []
+    grounding_chunks = (
+        grounding_chunks
+        if grounding_chunks is not None
+        else (grounding_metadata and grounding_metadata.grounding_chunks) or []
+    )
     has_unmapped_source = any(
         chunk_index < 0
         or chunk_index >= len(grounding_chunks)

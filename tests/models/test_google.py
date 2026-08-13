@@ -4205,7 +4205,11 @@ Based on your location in **San Francisco**, here is the weather forecast for to
 **Note:** While it is currently comfortable in the city due to the marine layer (fog), meteorologists are tracking a heatwave expected to arrive later this week, which could bring much higher temperatures to the Bay Area by the weekend. For today, however, you can expect typical mild San Francisco summer weather.\
 """,
                         provider_name='google-cloud',
-                        provider_details={'thought_signature': IsStr()},
+                        provider_details={
+                            'thought_signature': IsStr(),
+                            'unsupported_grounding_metadata': IsInstance(dict),
+                        },
+                        citations=IsCitationList(),
                     ),
                 ],
                 usage=RequestUsage(
@@ -5574,6 +5578,55 @@ async def test_google_stream_citations_follow_provider_part_index_on_metadata_on
         ),
     ]
     assert any(isinstance(event, PartDeltaEvent) and event.index == 1 for event in events)
+
+
+async def test_google_stream_citations_can_reference_earlier_grounding_chunks():
+    chunks = [
+        GenerateContentResponse(
+            candidates=[
+                Candidate(
+                    content=Content(parts=[Part(text='answer')], role='model'),
+                    grounding_metadata=GroundingMetadata(
+                        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri='https://example.com'))]
+                    ),
+                )
+            ],
+            model_version='gemini-test',
+        ),
+        GenerateContentResponse(
+            candidates=[
+                Candidate(
+                    grounding_metadata=GroundingMetadata(
+                        grounding_supports=[
+                            GroundingSupport(
+                                grounding_chunk_indices=[0],
+                                segment=Segment(part_index=0, start_index=0, end_index=6),
+                            )
+                        ]
+                    )
+                )
+            ],
+            model_version='gemini-test',
+        ),
+    ]
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
+        _provider_name='google',
+        _provider_url='',
+    )
+
+    _ = [event async for event in streamed_response]
+
+    [text_part] = streamed_response.get().parts
+    assert isinstance(text_part, TextPart)
+    assert text_part.citations == [
+        Citation(
+            sources=[WebCitationSource(url='https://example.com')],
+            anchor=CitationAnchor(start=0, end=6, kind='content'),
+        )
+    ]
 
 
 async def test_google_stream_keeps_text_parts_separate_across_non_text_parts():
