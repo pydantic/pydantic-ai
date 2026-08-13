@@ -311,6 +311,7 @@ class ModelSettings(TypedDict, total=False):
     * Cerebras
     * xAI
     * Mistral
+    * Cohere
     """
 
     service_tier: ServiceTier
