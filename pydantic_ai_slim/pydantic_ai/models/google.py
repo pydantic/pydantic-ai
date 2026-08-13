@@ -1613,7 +1613,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         new_citations = [
                             citation for citation in citations if citation not in (text_part.citations or [])
                         ]
-                        if new_citations:
+                        if new_citations:  # pragma: no branch
                             for event in self._parts_manager.handle_text_delta(
                                 vendor_part_id=text_part_ids[index],
                                 content='',
