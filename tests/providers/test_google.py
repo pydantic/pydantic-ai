@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable, Sequence
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import httpx
@@ -44,7 +44,8 @@ with try_import() as imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
 
-GoogleProviderFactory = Callable[[httpx.AsyncClient | httpx2.AsyncClient | None], BaseGoogleProvider]
+if TYPE_CHECKING:
+    GoogleProviderFactory = Callable[[httpx.AsyncClient | httpx2.AsyncClient | None], BaseGoogleProvider]
 
 
 def _google_provider(http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None) -> BaseGoogleProvider:
