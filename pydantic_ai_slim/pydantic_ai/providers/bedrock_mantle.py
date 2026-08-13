@@ -19,8 +19,8 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the Bedrock Mantle dependencies to use the Bedrock Mantle provider, '
         'you can use the `bedrock-mantle` optional group — `pip install "pydantic-ai-slim[bedrock-mantle]"`'
     ) from _import_error
-
-from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+else:
+    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 BedrockMantleInterface = Literal['chat', 'responses', 'openai-responses']
 """The OpenAI-compatible endpoint family a Bedrock Mantle model is served on.

@@ -23,8 +23,8 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the Snowflake provider, '
         'you can use the `snowflake` optional group — `pip install "pydantic-ai-slim[snowflake]"`'
     ) from _import_error
-
-from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+else:
+    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 
 class SnowflakeModelProfile(OpenAIModelProfile, total=False):

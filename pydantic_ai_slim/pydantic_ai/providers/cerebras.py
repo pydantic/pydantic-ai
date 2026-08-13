@@ -21,8 +21,8 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the Cerebras provider, '
         'you can use the `cerebras` optional group — `pip install "pydantic-ai-slim[cerebras]"`'
     ) from _import_error
-
-from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
+else:
+    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 
 class CerebrasProvider(_OpenAICompatibleProvider):
