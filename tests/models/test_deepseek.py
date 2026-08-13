@@ -130,6 +130,7 @@ async def test_deepseek_model_thinking_part(
                     cost=Decimal('0.00005908'),
                 ),
                 model_name='deepseek-v4-flash',
+                timestamp=IsDatetime(),
                 provider_name='deepseek',
                 provider_url='https://api.deepseek.com',
                 provider_details={
@@ -187,6 +188,7 @@ async def test_deepseek_model_thinking_stream(
                     cost=Decimal('0.00009744'),
                 ),
                 model_name='deepseek-v4-flash',
+                timestamp=IsDatetime(),
                 provider_name='deepseek',
                 provider_url='https://api.deepseek.com',
                 provider_details={
