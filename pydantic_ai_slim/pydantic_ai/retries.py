@@ -6,8 +6,8 @@ used with HTTP clients that support custom transports (such as httpx), while the
 strategies can be used with any tenacity retry decorator.
 
 The module includes:
-- HTTPX2TenacityTransport: Synchronous HTTPX2 transport with retry capabilities
-- AsyncHTTPX2TenacityTransport: Asynchronous HTTPX2 transport with retry capabilities
+- HTTPX2TenacityTransport: Synchronous httpx2 transport with retry capabilities
+- AsyncHTTPX2TenacityTransport: Asynchronous httpx2 transport with retry capabilities
 - wait_retry_after: Wait strategy that respects HTTP Retry-After headers
 """
 
@@ -126,7 +126,7 @@ class RetryConfig(TypedDict, total=False):
 
 
 class HTTPX2TenacityTransport(httpx2.BaseTransport):
-    """Synchronous HTTPX2 transport with Tenacity-based retry functionality."""
+    """Synchronous httpx2 transport with Tenacity-based retry functionality."""
 
     def __init__(
         self,
@@ -170,7 +170,7 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
 
 
 class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
-    """Asynchronous HTTPX2 transport with Tenacity-based retry functionality."""
+    """Asynchronous httpx2 transport with Tenacity-based retry functionality."""
 
     def __init__(
         self,
@@ -388,7 +388,7 @@ def wait_retry_after(
 ) -> Callable[[RetryCallState], float]:
     """Create a tenacity-compatible wait strategy that respects HTTP Retry-After headers.
 
-    This wait strategy checks if the exception contains an HTTPX or HTTPX2 HTTPStatusError
+    This wait strategy checks if the exception contains an httpx or httpx2 HTTPStatusError
     with a Retry-After header, and if so, waits for the time specified in the header.
     If no header is present or parsing fails, it falls back to the provided strategy.
 

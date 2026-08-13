@@ -660,7 +660,7 @@ def _download_exceeds(max_bytes: int) -> ValueError:
 def _response_with_decoded_content(response: httpx2.Response, content: bytes) -> httpx2.Response:
     # Body is already decoded, so the reconstructed response must not carry the content
     # coding, or `httpx2.Response` would run it through the decoder again. `content-length`
-    # described the encoded body and no longer applies; HTTPX2 recomputes it from `content`.
+    # described the encoded body and no longer applies; httpx2 recomputes it from `content`.
     decoded_headers = [
         (key, value)
         for key, value in response.headers.multi_items()

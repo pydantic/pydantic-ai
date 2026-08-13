@@ -119,7 +119,7 @@ class MistralProvider(Provider[Mistral]):
             else:
                 warn_if_legacy_httpx_client(http_client, consumer='the Mistral provider', stacklevel=2)
 
-            # Mistral's runtime-checkable client protocol accepts HTTPX2, but its annotations name legacy HTTPX types.
+            # Mistral's runtime-checkable client protocol accepts httpx2, but its annotations name legacy httpx types.
             self._client = Mistral(
                 api_key=api_key,
                 async_client=http_client,  # pyright: ignore[reportArgumentType]

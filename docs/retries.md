@@ -18,7 +18,7 @@ Only the last three are "agent retries" — they cost a model round trip each, b
 
 Transport retries live below the model client: a failed HTTP request is re-sent without the agent ever knowing. Nothing retries at this layer unless you install a retrying transport on the HTTP client you pass to the provider, and you decide which errors qualify.
 
-This is the right layer for rate limits, connection resets, and 5xx responses. See [HTTP Request Retries](models/http-request-retries.md) for the transports, the `Retry-After`-aware wait strategy, and per-provider notes — including AWS Bedrock, which retries through boto3 rather than HTTPX2.
+This is the right layer for rate limits, connection resets, and 5xx responses. See [HTTP Request Retries](models/http-request-retries.md) for the transports, the `Retry-After`-aware wait strategy, and per-provider notes — including AWS Bedrock, which retries through boto3 rather than `httpx2`.
 
 When you build your own backoff outside a transport, [`ModelHTTPError.retry_after`][pydantic_ai.exceptions.ModelHTTPError.retry_after] gives you the provider's `Retry-After` header already parsed into seconds.
 

@@ -8,8 +8,8 @@ This is the lowest of the [several layers that can retry](../retries.md) in an a
 ## Overview
 
 The retry functionality is built on top of the [tenacity](https://github.com/jd/tenacity) library and integrates
-seamlessly with [HTTPX2](https://httpx2.pydantic.dev/) clients. You can configure retry behavior for providers whose
-SDK accepts a custom HTTPX2 client.
+seamlessly with [`httpx2`](https://httpx2.pydantic.dev/) clients. You can configure retry behavior for providers whose
+SDK accepts a custom `httpx2` client.
 
 ## Installation
 
@@ -263,9 +263,9 @@ client = create_custom_retry_client()
 # Client will retry server errors (5xx) and network errors, but not client errors (4xx)
 ```
 
-## Using with HTTPX2-Compatible Providers
+## Using with `httpx2`-Compatible Providers
 
-The retry transports work with providers that accept an HTTPX2 client, including OpenAI and OpenAI-compatible
+The retry transports work with providers that accept an `httpx2` client, including OpenAI and OpenAI-compatible
 providers:
 
 ### OpenAI
@@ -313,7 +313,7 @@ agent = Agent(model)
 
 4. **Handle Rate Limits Properly**: Respect `Retry-After` headers when possible.
 
-5. **Log Retry Attempts**: Add logging to monitor retry behavior in production. (This will be picked up by Logfire automatically if you instrument HTTPX2.)
+5. **Log Retry Attempts**: Add logging to monitor retry behavior in production. (This will be picked up by Logfire automatically if you instrument `httpx2`.)
 
 6. **Consider Circuit Breakers**: For high-traffic applications, consider implementing circuit breaker patterns.
 
@@ -356,7 +356,7 @@ For more advanced retry configurations, refer to the [tenacity documentation](ht
 
 ### AWS Bedrock
 
-The AWS Bedrock provider uses boto3's built-in retry mechanisms instead of HTTPX2. To configure retries for Bedrock, use boto3's `Config`:
+The AWS Bedrock provider uses boto3's built-in retry mechanisms instead of `httpx2`. To configure retries for Bedrock, use boto3's `Config`:
 
 ```python
 from botocore.config import Config
