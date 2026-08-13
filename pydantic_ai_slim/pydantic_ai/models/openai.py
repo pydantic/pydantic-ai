@@ -3227,7 +3227,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # plus a replayed search return), and one declaration per request is enough.
         rendered_additional_tools: set[str] = set()
         openai_messages: list[responses.ResponseInputItemParam] = []
-        for message in messages:
+        for message_index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, SystemPromptPart):
@@ -3319,7 +3319,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
                 file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
-                for item in message.parts:
+                response_parts: Sequence[ModelResponsePart] = message.parts
+                if profile.get('openai_responses_requires_function_call_grouping', False):
+                    response_parts = _group_settled_portable_function_calls(messages, message_index, message)
+                for item in response_parts:
                     from_same_provider = item.provider_name == self.system or (
                         item.provider_name is None and message.provider_name == self.system
                     )
@@ -5022,6 +5025,42 @@ def _map_provider_details(
         provider_details['finish_reason'] = raw_finish_reason
 
     return provider_details or None
+
+
+def _group_settled_portable_function_calls(
+    messages: list[ModelMessage], message_index: int, message: ModelResponse
+) -> Sequence[ModelResponsePart]:
+    """Stable-group settled portable function calls for strict Responses replay."""
+    parts = message.parts
+    first_call_index = next((index for index, part in enumerate(parts) if isinstance(part, ToolCallPart)), None)
+    if (
+        first_call_index is None
+        or not any(not isinstance(part, ToolCallPart) for part in parts[first_call_index + 1 :])
+        or any(isinstance(part, (NativeToolCallPart, NativeToolReturnPart, CompactionPart)) for part in parts)
+        or any(
+            (isinstance(part, (TextPart, ThinkingPart, FilePart)) and part.id is not None)
+            or (
+                isinstance(part, ToolCallPart)
+                and (part.id is not None or _split_combined_tool_call_id(part.tool_call_id)[1] is not None)
+            )
+            for part in parts
+        )
+    ):
+        return parts
+
+    unsettled_call_ids = [part.tool_call_id for part in parts if isinstance(part, ToolCallPart)]
+    for following_message in messages[message_index + 1 :]:
+        if isinstance(following_message, ModelResponse):
+            break
+        for part in following_message.parts:
+            if (
+                isinstance(part, ToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+            ) and part.tool_call_id in unsettled_call_ids:
+                unsettled_call_ids.remove(part.tool_call_id)
+    if unsettled_call_ids:
+        return parts
+
+    return sorted(parts, key=lambda part: isinstance(part, ToolCallPart))
 
 
 def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:

@@ -19,6 +19,7 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Callable, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -32,6 +33,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -830,3 +832,61 @@ async def test_deepseek_responses(case: Case, allow_model_requests: None, deepse
     assert output == case.expected_output
     assert messages == case.expected_messages
     assert sent_bodies == case.expected_request_bodies
+
+
+async def test_deepseek_responses_replay_interleaved_settled_function_calls(
+    allow_model_requests: None, deepseek_api_key: str
+) -> None:
+    """DeepSeek accepts the grouped wire projection of complete portable history."""
+    sent_bodies: list[dict[str, Any]] = []
+
+    async def capture_request(request: httpx.Request) -> None:
+        sent_bodies.append(json.loads(request.read()))
+
+    history = [
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='inspect inputs'),
+                ToolCallPart('read', {'path': 'a'}, tool_call_id='call-a'),
+                ThinkingPart(content='inspect views'),
+                ToolCallPart('view', {'path': 'b'}, tool_call_id='call-b'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart('read failed', tool_name='read', tool_call_id='call-a'),
+                ToolReturnPart('view', 'contents', tool_call_id='call-b'),
+            ]
+        ),
+    ]
+    original_history = deepcopy(history)
+
+    async with httpx.AsyncClient(event_hooks={'request': [capture_request]}) as http_client:
+        model = OpenAIResponsesModel(
+            'deepseek-v4-flash', provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=http_client)
+        )
+        result = await Agent(model).run('Reply exactly: done', message_history=history)
+
+    assert result.output == 'done'
+    assert history == original_history
+    assert sent_bodies == snapshot(
+        [
+            {
+                'input': [
+                    {'role': 'assistant', 'content': '<think>\ninspect inputs\n</think>'},
+                    {'role': 'assistant', 'content': '<think>\ninspect views\n</think>'},
+                    {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'name': 'view', 'arguments': '{"path":"b"}', 'call_id': 'call-b', 'type': 'function_call'},
+                    {
+                        'type': 'function_call_output',
+                        'call_id': 'call-a',
+                        'output': 'read failed\n\nFix the errors and try again.',
+                    },
+                    {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
+                    {'role': 'user', 'content': 'Reply exactly: done'},
+                ],
+                'model': 'deepseek-v4-flash',
+                'stream': False,
+            }
+        ]
+    )

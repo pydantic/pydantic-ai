@@ -3,15 +3,16 @@ import re
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
@@ -48,6 +49,20 @@ def test_deep_seek_model_profile():
     assert model.profile.get('json_schema_transformer', None) == OpenAIJsonSchemaTransformer
     assert model.profile.get('supports_thinking', False) is True
     assert model.profile.get('thinking_always_enabled', False) is True
+
+
+def test_deep_seek_responses_function_call_grouping_profile_matrix() -> None:
+    for model_name in ('deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash'):
+        model = OpenAIResponsesModel(model_name, provider=DeepSeekProvider(api_key='api-key'))
+        assert model.profile.get('openai_responses_requires_function_call_grouping', False) is True
+    unverified_deepseek_model = OpenAIResponsesModel('deepseek-v4-pro', provider=DeepSeekProvider(api_key='api-key'))
+    assert unverified_deepseek_model.profile.get('openai_responses_requires_function_call_grouping', False) is False
+    openai_model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='api-key'))
+    assert openai_model.profile.get('openai_responses_requires_function_call_grouping', False) is False
+    default_model = OpenAIResponsesModel(
+        'custom-model', provider=OpenAIProvider(api_key='api-key'), profile=OpenAIModelProfile()
+    )
+    assert default_model.profile.get('openai_responses_requires_function_call_grouping', False) is False
 
 
 @pytest.mark.parametrize('model_name', ['deepseek-v4-flash', 'deepseek-v4-pro'])

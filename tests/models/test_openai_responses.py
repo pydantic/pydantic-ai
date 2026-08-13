@@ -15689,6 +15689,149 @@ async def test_openai_responses_web_search_tool_external_web_access_default_omit
     assert response_kwargs['tools'] == snapshot([{'type': 'web_search', 'search_context_size': 'medium'}])
 
 
+async def _replay_input(history: list[ModelMessage], *, group_function_calls: bool) -> list[dict[str, Any]]:
+    model = OpenAIResponsesModel(
+        'custom-model',
+        provider=OpenAIProvider(api_key='not-used'),
+        profile=OpenAIModelProfile(openai_responses_requires_function_call_grouping=group_function_calls),
+    )
+    _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        history, OpenAIResponsesModelSettings(), ModelRequestParameters()
+    )
+    return [dict(item) for item in items]
+
+
+async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
+    """The opt-in profile changes only settled portable Responses wire order."""
+    history = [
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='inspect inputs'),
+                ToolCallPart('read', {'path': 'a'}, tool_call_id='call-a'),
+                ThinkingPart(content='inspect views'),
+                ToolCallPart('view', {'path': 'b'}, tool_call_id='call-b'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart('read failed', tool_name='read', tool_call_id='call-a'),
+                ToolReturnPart('view', 'contents', tool_call_id='call-b'),
+            ]
+        ),
+    ]
+
+    disabled = await _replay_input(history, group_function_calls=False)
+    enabled = await _replay_input(history, group_function_calls=True)
+
+    assert disabled == snapshot(
+        [
+            {'role': 'assistant', 'content': '<think>\ninspect inputs\n</think>'},
+            {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-a', 'type': 'function_call'},
+            {'role': 'assistant', 'content': '<think>\ninspect views\n</think>'},
+            {'name': 'view', 'arguments': '{"path":"b"}', 'call_id': 'call-b', 'type': 'function_call'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call-a',
+                'output': 'read failed\n\nFix the errors and try again.',
+            },
+            {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
+        ]
+    )
+    assert enabled == snapshot(
+        [
+            {'role': 'assistant', 'content': '<think>\ninspect inputs\n</think>'},
+            {'role': 'assistant', 'content': '<think>\ninspect views\n</think>'},
+            {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-a', 'type': 'function_call'},
+            {'name': 'view', 'arguments': '{"path":"b"}', 'call_id': 'call-b', 'type': 'function_call'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call-a',
+                'output': 'read failed\n\nFix the errors and try again.',
+            },
+            {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'contents'},
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'history',
+    [
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a', id='fc-a', provider_name='openai'),
+                        ThinkingPart(content='provider-owned item follows'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            id='item-id',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(content='native item follows'),
+                        NativeToolCallPart('web_search', {}, tool_call_id='native-a', provider_name='other'),
+                        NativeToolReturnPart('web_search', 'result', tool_call_id='native-a', provider_name='other'),
+                    ]
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            id='native',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        CompactionPart(content='provider summary', provider_name='other'),
+                        ThinkingPart(content='compaction follows'),
+                    ]
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            id='compaction',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(content='unsettled call follows'),
+                    ]
+                ),
+                ModelRequest.user_text_prompt('continue'),
+            ],
+            id='unsettled-frontier',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(content='next response follows'),
+                    ]
+                ),
+                ModelResponse(parts=[TextPart(content='boundary')]),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            id='following-response-boundary',
+        ),
+    ],
+)
+async def test_openai_responses_function_call_grouping_preserves_protected_boundaries(
+    history: list[ModelMessage],
+) -> None:
+    """Protected provider-owned and unsettled histories serialize identically with the profile on or off."""
+    assert await _replay_input(history, group_function_calls=True) == await _replay_input(
+        history, group_function_calls=False
+    )
+
+
 async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_model_requests: None):
     """Malformed tool-call args are sent to the Responses API as the `INVALID_JSON` wrapper.
 

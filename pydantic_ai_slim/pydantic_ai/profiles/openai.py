@@ -292,6 +292,13 @@ class OpenAIModelProfile(ModelProfile, total=False):
     colon-containing tool call IDs in follow-up requests.
     """
 
+    openai_responses_requires_function_call_grouping: bool
+    """Whether settled portable function calls must follow other assistant items during replay. Default: `False`.
+
+    Verified DeepSeek Responses models treat an assistant item after a function call as a new output
+    group, so interleaved portable history must be stable-grouped before matching function call outputs.
+    """
+
     openai_supports_phase: bool
     """Whether the Responses API supports the `phase` field on assistant messages. Default: `False`.
 
