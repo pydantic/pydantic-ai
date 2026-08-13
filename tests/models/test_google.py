@@ -5505,18 +5505,38 @@ async def test_google_stream_citations_follow_provider_part_index_on_metadata_on
     events = [event async for event in streamed_response]
 
     assert streamed_response.get().parts == [
-        TextPart('first'),
         TextPart(
-            'second',
+            'firstsecond',
             citations=[
                 Citation(
                     sources=[WebCitationSource(url='https://example.com', title='Example')],
-                    anchor=CitationAnchor(start=0, end=6, kind='content'),
+                    anchor=CitationAnchor(start=5, end=11, kind='content'),
                 )
             ],
-        ),
+        )
     ]
-    assert any(isinstance(event, PartDeltaEvent) and event.index == 1 for event in events)
+    assert any(isinstance(event, PartDeltaEvent) and event.index == 0 for event in events)
+
+
+async def test_google_stream_merges_adjacent_text_without_citations():
+    chunks = [
+        GenerateContentResponse(
+            candidates=[Candidate(content=Content(parts=[Part(text='first'), Part(text='second')], role='model'))],
+            model_version='gemini-test',
+        )
+    ]
+    streamed_response = GeminiStreamedResponse(
+        model_request_parameters=ModelRequestParameters(),
+        _model_name='gemini-test',
+        _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
+        _provider_name='google',
+        _provider_url='',
+    )
+
+    events = [event async for event in streamed_response]
+
+    assert streamed_response.get().parts == [TextPart('firstsecond')]
+    assert sum(isinstance(event, PartStartEvent) for event in events) == 1
 
 
 async def test_google_stream_citations_can_reference_earlier_grounding_chunks():

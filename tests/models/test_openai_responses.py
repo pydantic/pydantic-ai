@@ -14389,8 +14389,9 @@ async def test_openai_responses_phase_streamed_on_part_start(allow_model_request
     assert delta_phases == snapshot({None})
 
 
-async def test_openai_responses_done_without_deltas_preserves_text_phase_and_citations(allow_model_requests: None):
-    """The done event is complete when a gateway omits text deltas.
+@pytest.mark.parametrize('partial_delta', [None, 'Par'])
+async def test_openai_responses_done_uses_complete_text(allow_model_requests: None, partial_delta: str | None):
+    """The done event is complete when a gateway omits some or all text deltas.
 
     Not a VCR test: OpenAI itself always sends deltas — `test_openai_responses_phase_streamed_on_part_start`
     records them for every text part — so this fallback only ever runs against OpenAI-compatible gateways
@@ -14422,49 +14423,67 @@ async def test_openai_responses_done_without_deltas_preserves_text_phase_and_cit
             type='response.output_item.added',
             sequence_number=1,
         ),
-        resp.ResponseOutputTextAnnotationAddedEvent(
-            annotation=AnnotationURLCitation(
-                type='url_citation',
-                start_index=0,
-                end_index=6,
-                title='France',
-                url='https://example.com/france',
-            ),
-            annotation_index=0,
-            content_index=0,
-            item_id='msg_001',
-            output_index=0,
-            sequence_number=2,
-            type='response.output_text.annotation.added',
-        ),
-        resp.ResponseTextDoneEvent(
-            content_index=0,
-            item_id='msg_001',
-            output_index=0,
-            text='Paris.',
-            type='response.output_text.done',
-            sequence_number=3,
-            logprobs=[],
-        ),
-        resp.ResponseOutputItemDoneEvent(
-            item=ResponseOutputMessage.model_construct(
-                id='msg_001',
-                content=cast(list[Content], [ResponseOutputText(text='Paris.', type='output_text', annotations=[])]),
-                role='assistant',
-                status='completed',
-                type='message',
-                phase='final_answer',
-            ),
-            output_index=0,
-            type='response.output_item.done',
-            sequence_number=4,
-        ),
-        resp.ResponseCompletedEvent(
-            response=base_response.model_copy(update={'status': 'completed'}),
-            type='response.completed',
-            sequence_number=5,
-        ),
     ]
+    if partial_delta is not None:
+        stream.append(
+            resp.ResponseTextDeltaEvent(
+                content_index=0,
+                delta=partial_delta,
+                item_id='msg_001',
+                output_index=0,
+                type='response.output_text.delta',
+                sequence_number=2,
+                logprobs=[],
+            )
+        )
+    stream.extend(
+        [
+            resp.ResponseOutputTextAnnotationAddedEvent(
+                annotation=AnnotationURLCitation(
+                    type='url_citation',
+                    start_index=0,
+                    end_index=6,
+                    title='France',
+                    url='https://example.com/france',
+                ),
+                annotation_index=0,
+                content_index=0,
+                item_id='msg_001',
+                output_index=0,
+                sequence_number=2,
+                type='response.output_text.annotation.added',
+            ),
+            resp.ResponseTextDoneEvent(
+                content_index=0,
+                item_id='msg_001',
+                output_index=0,
+                text='Paris.',
+                type='response.output_text.done',
+                sequence_number=3,
+                logprobs=[],
+            ),
+            resp.ResponseOutputItemDoneEvent(
+                item=ResponseOutputMessage.model_construct(
+                    id='msg_001',
+                    content=cast(
+                        list[Content], [ResponseOutputText(text='Paris.', type='output_text', annotations=[])]
+                    ),
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                    phase='final_answer',
+                ),
+                output_index=0,
+                type='response.output_item.done',
+                sequence_number=4,
+            ),
+            resp.ResponseCompletedEvent(
+                response=base_response.model_copy(update={'status': 'completed'}),
+                type='response.completed',
+                sequence_number=5,
+            ),
+        ]
+    )
 
     mock_client = MockOpenAIResponses.create_mock_stream(stream)
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
@@ -14477,43 +14496,21 @@ async def test_openai_responses_done_without_deltas_preserves_text_phase_and_cit
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
                         events.append(event)
-                # The run would go on to retry this text-less response; only the stream matters here.
+                # Only the model stream is under test.
                 break
 
-    assert events == snapshot(
-        [
-            PartStartEvent(
-                index=0,
-                part=TextPart(
-                    content='Paris.',
-                    id='msg_001',
-                    provider_name='openai',
-                    provider_details={'phase': 'final_answer'},
-                    citations=[
-                        Citation(
-                            sources=[WebCitationSource(url='https://example.com/france', title='France')],
-                            anchor=CitationAnchor(start=0, end=6, kind='marker'),
-                        )
-                    ],
-                ),
-            ),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartEndEvent(
-                index=0,
-                part=TextPart(
-                    content='Paris.',
-                    id='msg_001',
-                    provider_name='openai',
-                    provider_details={'phase': 'final_answer'},
-                    citations=[
-                        Citation(
-                            sources=[WebCitationSource(url='https://example.com/france', title='France')],
-                            anchor=CitationAnchor(start=0, end=6, kind='marker'),
-                        )
-                    ],
-                ),
-            ),
-        ]
+    [part_end] = [event for event in events if isinstance(event, PartEndEvent)]
+    assert part_end.part == TextPart(
+        content='Paris.',
+        id='msg_001',
+        provider_name='openai',
+        provider_details={'phase': 'final_answer'},
+        citations=[
+            Citation(
+                sources=[WebCitationSource(url='https://example.com/france', title='France')],
+                anchor=CitationAnchor(start=0, end=6, kind='marker'),
+            )
+        ],
     )
 
 

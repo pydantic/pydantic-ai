@@ -4645,7 +4645,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         _phase_started_content.add(content_key)
                     vendor_part_id = (chunk.item_id, chunk.content_index)
                     existing_part = self._parts_manager.get_part_by_vendor_id(vendor_part_id)
-                    content = chunk.text if not isinstance(existing_part, TextPart) else ''
+                    content = chunk.text
+                    if isinstance(existing_part, TextPart):
+                        # The done event is authoritative when a compatible gateway omits some deltas.
+                        content = (
+                            chunk.text[len(existing_part.content) :]
+                            if chunk.text.startswith(existing_part.content)
+                            else ''
+                        )
                     if content or provider_details or citations:
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=vendor_part_id,
