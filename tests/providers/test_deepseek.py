@@ -52,11 +52,9 @@ def test_deep_seek_model_profile():
 
 
 def test_deep_seek_responses_function_call_grouping_profile_matrix() -> None:
-    for model_name in ('deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash'):
+    for model_name in ('deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro'):
         model = OpenAIResponsesModel(model_name, provider=DeepSeekProvider(api_key='api-key'))
         assert model.profile.get('openai_responses_requires_function_call_grouping', False) is True
-    unverified_deepseek_model = OpenAIResponsesModel('deepseek-v4-pro', provider=DeepSeekProvider(api_key='api-key'))
-    assert unverified_deepseek_model.profile.get('openai_responses_requires_function_call_grouping', False) is False
     openai_model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='api-key'))
     assert openai_model.profile.get('openai_responses_requires_function_call_grouping', False) is False
     default_model = OpenAIResponsesModel(
