@@ -119,10 +119,6 @@ def _map_citations(citations: Sequence[BetaTextCitation] | None) -> list[Citatio
                         WebCitationSource(
                             url=citation.url,
                             title=citation.title,
-                            provider_details={
-                                'cited_text': citation.cited_text,
-                                'encrypted_index': citation.encrypted_index,
-                            },
                         )
                     ]
                 )

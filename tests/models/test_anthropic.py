@@ -196,7 +196,7 @@ pytestmark = [
 ]
 
 
-def test_anthropic_unsupported_citations_are_ignored():
+def test_anthropic_maps_only_web_search_citations():
     web = BetaCitationsWebSearchResultLocation(
         type='web_search_result_location',
         url='https://example.com',
@@ -218,7 +218,6 @@ def test_anthropic_unsupported_citations_are_ignored():
                 WebCitationSource(
                     url='https://example.com',
                     title='Example',
-                    provider_details={'cited_text': 'web excerpt', 'encrypted_index': 'opaque-index'},
                 )
             ]
         )
@@ -306,7 +305,6 @@ async def test_anthropic_stream_citations(allow_model_requests: None):
                         WebCitationSource(
                             url='https://example.com',
                             title='Example',
-                            provider_details={'cited_text': 'web excerpt', 'encrypted_index': 'opaque-index'},
                         )
                     ]
                 )
@@ -5321,7 +5319,7 @@ async def test_anthropic_web_search_tool(
     assert isinstance(first_source, WebCitationSource)
     assert first_source.url == 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629'
     assert first_source.title == 'San Francisco, CA Weather Forecast | AccuWeather'
-    assert first_source.provider_details == {'cited_text': IsStr(), 'encrypted_index': IsStr()}
+    assert first_source.provider_details is None
     assert messages == snapshot(
         [
             ModelRequest(

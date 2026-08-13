@@ -82,7 +82,7 @@ from ..conftest import (
     message,
     try_import,
 )
-from .citation_utils import IsCitationList, IsUnsupportedCitationDetails, citations_from_messages
+from .citation_utils import IsCitationList, citations_from_messages
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_mock_retrieve_kwargs, response_message
 
 with try_import() as imports_successful:
@@ -130,7 +130,7 @@ pytestmark = [
 ]
 
 
-def test_openai_unsupported_annotation_is_preserved():
+def test_openai_unsupported_annotation_is_ignored():
     annotation = AnnotationContainerFileCitation(
         container_id='container-1',
         file_id='file-1',
@@ -160,10 +160,10 @@ def test_openai_unsupported_annotation_is_preserved():
 
     [part] = result.parts
     assert isinstance(part, TextPart)
-    assert part.provider_details == {'unsupported_annotations': [annotation.model_dump()]}
+    assert part.provider_details is None
 
 
-def test_openai_invalid_url_citation_range_is_preserved():
+def test_openai_invalid_url_citation_range_is_ignored():
     annotation = AnnotationURLCitation(
         type='url_citation',
         start_index=20,
@@ -190,7 +190,7 @@ def test_openai_invalid_url_citation_range_is_preserved():
 
     [part] = result.parts
     assert isinstance(part, TextPart)
-    assert part.provider_details == {'unsupported_annotations': [annotation.model_dump()]}
+    assert part.provider_details is None
 
 
 async def test_openai_response_with_null_text_and_citation(allow_model_requests: None):
@@ -7104,7 +7104,6 @@ plt.show()\r
                         content=IsStr(),
                         id='msg_68cdc398d3bc8190bbcf78c0293a4ca60187028ba77f15f7',
                         provider_name='openai',
-                        provider_details=IsUnsupportedCitationDetails(),
                     ),
                 ],
                 usage=RequestUsage(
@@ -7265,7 +7264,6 @@ If you want different colors or a holographic gradient background, tell me your 
 """,
                         id='msg_68cdc3d0303c8190b2a86413acbedbe60187028ba77f15f7',
                         provider_name='openai',
-                        provider_details=IsUnsupportedCitationDetails(),
                     ),
                 ],
                 usage=RequestUsage(
@@ -7354,7 +7352,6 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                         content=IsStr(),
                         id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4',
                         provider_name='openai',
-                        provider_details=IsUnsupportedCitationDetails(),
                     ),
                 ],
                 usage=RequestUsage(
@@ -8770,13 +8767,6 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='_plot')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='.png')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=')')),
-            PartDeltaEvent(
-                index=4,
-                delta=TextPartDelta(
-                    content_delta='',
-                    provider_details=IsUnsupportedCitationDetails(),
-                ),
-            ),
             PartEndEvent(
                 index=4,
                 part=TextPart(
@@ -8786,7 +8776,6 @@ Download the image: [Download the chart](sandbox:/mnt/data/y_eq_x_squared_plot.p
 """,
                     id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4',
                     provider_name='openai',
-                    provider_details=IsUnsupportedCitationDetails(),
                 ),
             ),
         ]
@@ -14400,8 +14389,8 @@ async def test_openai_responses_phase_streamed_on_part_start(allow_model_request
     assert delta_phases == snapshot({None})
 
 
-async def test_openai_responses_phase_streamed_without_deltas(allow_model_requests: None):
-    """`phase` is still captured when a gateway emits `output_text.done` without any deltas.
+async def test_openai_responses_done_without_deltas_preserves_text_phase_and_citations(allow_model_requests: None):
+    """The done event is complete when a gateway omits text deltas.
 
     Not a VCR test: OpenAI itself always sends deltas — `test_openai_responses_phase_streamed_on_part_start`
     records them for every text part — so this fallback only ever runs against OpenAI-compatible gateways
@@ -14433,13 +14422,28 @@ async def test_openai_responses_phase_streamed_without_deltas(allow_model_reques
             type='response.output_item.added',
             sequence_number=1,
         ),
+        resp.ResponseOutputTextAnnotationAddedEvent(
+            annotation=AnnotationURLCitation(
+                type='url_citation',
+                start_index=0,
+                end_index=6,
+                title='France',
+                url='https://example.com/france',
+            ),
+            annotation_index=0,
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            sequence_number=2,
+            type='response.output_text.annotation.added',
+        ),
         resp.ResponseTextDoneEvent(
             content_index=0,
             item_id='msg_001',
             output_index=0,
             text='Paris.',
             type='response.output_text.done',
-            sequence_number=2,
+            sequence_number=3,
             logprobs=[],
         ),
         resp.ResponseOutputItemDoneEvent(
@@ -14453,12 +14457,12 @@ async def test_openai_responses_phase_streamed_without_deltas(allow_model_reques
             ),
             output_index=0,
             type='response.output_item.done',
-            sequence_number=3,
+            sequence_number=4,
         ),
         resp.ResponseCompletedEvent(
             response=base_response.model_copy(update={'status': 'completed'}),
             type='response.completed',
-            sequence_number=4,
+            sequence_number=5,
         ),
     ]
 
@@ -14476,18 +14480,36 @@ async def test_openai_responses_phase_streamed_without_deltas(allow_model_reques
                 # The run would go on to retry this text-less response; only the stream matters here.
                 break
 
-    # Same contract as the delta path: the phase arrives on the `PartStartEvent` that opens the
-    # part, and the completed part carries it too.
     assert events == snapshot(
         [
             PartStartEvent(
                 index=0,
-                part=TextPart(content='', provider_name='openai', provider_details={'phase': 'final_answer'}),
+                part=TextPart(
+                    content='Paris.',
+                    provider_name='openai',
+                    provider_details={'phase': 'final_answer'},
+                    citations=[
+                        Citation(
+                            sources=[WebCitationSource(url='https://example.com/france', title='France')],
+                            anchor=CitationAnchor(start=0, end=6, kind='marker'),
+                        )
+                    ],
+                ),
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartEndEvent(
                 index=0,
-                part=TextPart(content='', provider_name='openai', provider_details={'phase': 'final_answer'}),
+                part=TextPart(
+                    content='Paris.',
+                    provider_name='openai',
+                    provider_details={'phase': 'final_answer'},
+                    citations=[
+                        Citation(
+                            sources=[WebCitationSource(url='https://example.com/france', title='France')],
+                            anchor=CitationAnchor(start=0, end=6, kind='marker'),
+                        )
+                    ],
+                ),
             ),
         ]
     )

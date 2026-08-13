@@ -4012,7 +4012,7 @@ async def test_openai_chat_url_citation(allow_model_requests: None):
     ]
 
 
-async def test_openai_chat_invalid_citation_range_is_preserved(allow_model_requests: None):
+async def test_openai_chat_invalid_citation_range_is_ignored(allow_model_requests: None):
     annotation = chat.chat_completion_message.Annotation(
         type='url_citation',
         url_citation=chat.chat_completion_message.AnnotationURLCitation(
@@ -4026,16 +4026,10 @@ async def test_openai_chat_invalid_citation_range_is_preserved(allow_model_reque
 
     result = await Agent(model).run('Question')
 
-    assert result.all_messages()[1].parts == [
-        TextPart(
-            'Answer',
-            provider_name='openai',
-            provider_details={'unsupported_annotations': [annotation.model_dump()]},
-        )
-    ]
+    assert result.all_messages()[1].parts == [TextPart('Answer')]
 
 
-async def test_openai_chat_stream_citation_after_text_transformation_is_not_anchored(allow_model_requests: None):
+async def test_openai_chat_stream_citation_after_text_transformation_is_ignored(allow_model_requests: None):
     annotation = chat.chat_completion_message.Annotation(
         type='url_citation',
         url_citation=chat.chat_completion_message.AnnotationURLCitation(
@@ -4064,13 +4058,28 @@ async def test_openai_chat_stream_citation_after_text_transformation_is_not_anch
     async with Agent(model).run_stream('Question') as result:
         await result.get_output()
 
-    assert result.all_messages()[1].parts == [
-        TextPart(
-            '[1] extra',
-            provider_name='openai',
-            provider_details={'unsupported_annotations': [annotation.model_dump()]},
-        )
-    ]
+    assert result.all_messages()[1].parts == [TextPart('[1] extra')]
+
+
+async def test_openai_chat_raw_annotations_non_streaming(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=7, end_index=10
+        ),
+    )
+    completion = completion_message(
+        chat.ChatCompletionMessage(role='assistant', content='Answer [1]', annotations=[annotation])
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    result = await Agent(model).run(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    )
+
+    [part] = result.all_messages()[1].parts
+    assert isinstance(part, TextPart)
+    assert part.provider_details == {'annotations': [annotation.model_dump()]}
 
 
 async def test_openai_chat_stream_citation_with_raw_annotations(allow_model_requests: None):
@@ -4105,7 +4114,7 @@ async def test_openai_chat_stream_citation_with_raw_annotations(allow_model_requ
     assert part.provider_details == {'annotations': [annotation.model_dump()]}
 
 
-def test_openai_chat_citation_with_thinking_is_preserved():
+def test_openai_chat_citation_with_thinking_is_ignored():
     annotation = chat.chat_completion_message.Annotation(
         type='url_citation',
         url_citation=chat.chat_completion_message.AnnotationURLCitation(
@@ -4120,11 +4129,7 @@ def test_openai_chat_citation_with_thinking_is_preserved():
 
     assert parts == [
         ThinkingPart('reasoning', id='content', provider_name='openai'),
-        TextPart(
-            'Answer [1]',
-            provider_name='openai',
-            provider_details={'unsupported_annotations': [annotation.model_dump()]},
-        ),
+        TextPart('Answer [1]'),
     ]
 
 

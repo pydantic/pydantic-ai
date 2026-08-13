@@ -1,4 +1,4 @@
-from typing import Any, cast
+from typing import cast
 
 from pydantic_ai import Citation, ModelMessage, ModelResponse, TextPart
 
@@ -11,16 +11,6 @@ class IsCitationList(list[Citation]):
             return False  # pragma: no cover
         citations = cast(list[object], other)
         return bool(citations) and all(isinstance(item, Citation) for item in citations)
-
-
-class IsUnsupportedCitationDetails(dict[str, Any]):
-    """Match provider details containing unsupported citation annotations."""
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, dict):  # pragma: no cover
-            return False  # pragma: no cover
-        details = cast(dict[object, object], other)
-        return bool(details.get('unsupported_annotations'))
 
 
 def citations_from_messages(messages: list[ModelMessage]) -> list[Citation]:
