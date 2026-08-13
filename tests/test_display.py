@@ -78,9 +78,9 @@ def test_display_banner_without_logfire(monkeypatch: pytest.MonkeyPatch, stderr:
     assert stderr.getvalue() == (
         f'pydantic-ai v{_display.__version__} • Python {_display.platform.python_version()}\n'
         'agent: (unnamed) • model: openai:gpt-5.6-sol • output: list[str] • tools: 2\n'
-        'observability: not configured — install `logfire`, set `instrument=True`,\n'
-        '  then run `logfire.configure()` to see\n'
-        '  this agent live: every model call, tool call, and cost. Free with a Logfire account —\n'
+        'observability: not configured — install `logfire` and set `instrument=True`.\n'
+        '  Then run `logfire.configure()` to see this agent live:\n'
+        '  Every model call, tool call, and cost. Free with a Logfire account —\n'
         '  sign up: https://logfire.pydantic.dev (or use any OpenTelemetry backend)\n'
         '  docs: https://pydantic.dev/docs/ai/logfire/ • hide this banner: PYDANTIC_AI_NO_BANNER=1\n'
     )
