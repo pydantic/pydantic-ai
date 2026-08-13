@@ -35,8 +35,15 @@ provider rejects an orphaned pair. The zero-LLM strategies never call a model.
 ## Triggers
 
 Every size-based strategy triggers on `max_messages`, `max_tokens` (estimated), or `max_fraction`.
-Token counts use a ~4-chars-per-token heuristic by default; pass a `tokenizer` callable (e.g.
-`tiktoken`) for accuracy. `DeduplicateFileReads` runs on every request when no trigger is set (it is
+Token counts anchor on the provider-reported usage of the most recent model response when one is
+available: its `input_tokens` measured the whole request that produced it (instructions, tool
+definitions, every prior message), so only the messages added since are estimated. The estimate for
+those, and the fallback when no response carries usage yet, is a ~4-chars-per-token heuristic; pass
+a `tokenizer` callable (e.g. `tiktoken`) to sharpen it. The anchor is what keeps triggers honest on
+token-dense content -- minified JSON or base64 tokenizes at ~1-2 chars per token, which the
+heuristic underestimates severely enough for a history to blow the context window without any
+trigger firing. Newly revealed tool schemas that are pending in the request are conservatively
+estimated by the implementation. `DeduplicateFileReads` runs on every request when no trigger is set (it is
 cheap and near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` /
 `target_fraction` budget. `ClampOversizedMessages` triggers per *part* (`max_part_tokens` /
 `max_part_chars`), not on the whole history -- the failure it targets is one oversized part, not a
@@ -145,11 +152,16 @@ agent = Agent(
 
 ### What counts toward the fraction
 
-The estimator counts every part that is sent: prompts, system prompts, tool calls and their
-results, retry prompts, extended-thinking blocks, provider-side tool results, and the
-instructions, once. It is a ~4-characters-per-token approximation, not a tokenizer; pass
-`tokenizer=` to any strategy to measure with the real one. `FilePart` is not counted -- its
-payload is binary, and its length in characters would mean nothing.
+With a usage anchor, everything the provider billed for the anchored request counts -- including
+tool definitions and `FilePart` payloads, which no character estimate can see. For the messages
+after the anchor (and for whole histories with no reported usage), the estimator counts every part
+that is sent: prompts, system prompts, tool calls and their results, retry prompts,
+extended-thinking blocks, provider-side tool results, and the instructions, once (or again after
+the anchor only when they changed since it). That estimated portion is a ~4-characters-per-token
+approximation, not a tokenizer; pass `tokenizer=` to any strategy to measure with the real one.
+`FilePart` is not counted there -- its payload is binary, and its length in characters would mean
+nothing. Newly revealed tool schemas pending in the current request are conservatively estimated
+by the implementation, since they are not covered by the earlier anchor.
 
 **If you already set an absolute `max_tokens`, re-check it.** The estimator used to count only user
 and system prompts, tool returns, response text, and tool calls. `ThinkingPart` / `CompactionPart`
@@ -184,13 +196,14 @@ fallback rather than the model's real one, so a gauge can show that the percenta
 `on_usage` may be a coroutine function, so a gauge that pushes over a socket does not need a sync
 bridge.
 
-Order matters: register the monitor *after* a compaction capability to observe the compacted history,
-or before it to see what triggered the compaction.
+Order matters: register the monitor *after* a compaction capability to observe the corrected current
+history after same-cycle compaction, or before it to see what triggered the compaction.
 
-`used_tokens` counts the same way the triggers do: every message part that is sent, plus the most
-recent `ModelRequest.instructions` once. Tool schemas are outside that count, so the reading is lower
-than what the provider bills; tool-schema accounting is tracked in
-[#100](https://github.com/pydantic/pydantic-ai-harness/issues/100).
+`used_tokens` follows the accounting above: provider usage anchors include instructions, tool
+definitions, and `FilePart` payloads from the anchored request. The suffix after the anchor, or a
+history with no anchor, uses `tokenizer` or a ~4-characters-per-token heuristic and cannot see
+`FilePart` payloads. Pending newly revealed tool schemas are conservatively estimated by the
+implementation.
 
 ## Compacting outside a run: `compact_now`
 

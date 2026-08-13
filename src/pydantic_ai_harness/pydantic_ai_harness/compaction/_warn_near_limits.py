@@ -12,7 +12,7 @@ from pydantic_ai.tools import RunContext
 
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
-    estimate_token_count,
+    estimate_context_tokens,
     resolve_token_trigger,
     validate_token_trigger,
 )
@@ -248,7 +248,13 @@ class WarnNearLimits(AbstractCapability[AgentDepsT]):
                 self.context_window,
             )
             if context_limit is not None:  # pragma: no branch -- the kind is only active when one is set
-                w = self._build_context_warning(estimate_token_count(messages), context_limit)
+                w = self._build_context_warning(
+                    estimate_context_tokens(
+                        messages,
+                        model_request_parameters=request_context.model_request_parameters,
+                    ),
+                    context_limit,
+                )
                 if w is not None:
                     active.append(w)
 

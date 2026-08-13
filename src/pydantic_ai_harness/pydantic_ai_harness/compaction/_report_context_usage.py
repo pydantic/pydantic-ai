@@ -12,7 +12,11 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import RunContext
 
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW, resolve_context_window
-from pydantic_ai_harness.compaction._shared import estimate_token_count
+from pydantic_ai_harness.compaction._shared import (
+    estimate_context_tokens,
+    get_compaction_reclaim,
+    has_context_usage_anchor,
+)
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
@@ -25,10 +29,11 @@ class ContextUsage:
     used_tokens: int
     """Estimated tokens in the message history about to be sent.
 
-    Counted by `estimate_token_count`: every message part that is sent, plus the most recent
-    `ModelRequest.instructions` once. Tool schemas are outside the count, so a gauge built on
-    this reads lower than what the provider bills. Tool-schema accounting is tracked separately
-    in pydantic/pydantic-ai-harness#100.
+    Counted by `estimate_context_tokens`: the provider-reported usage of the most recent model
+    response (tool schemas included) plus an estimate of messages and newly revealed tool schemas
+    added since. With no reported usage, message text falls back to the character heuristic;
+    schemas named by availability deltas are still estimated from the pending request
+    parameters, but other tool schemas remain outside that heuristic.
     """
 
     window_tokens: int
@@ -59,7 +64,9 @@ class ReportContextUsage(AbstractCapability[AgentDepsT]):
     It only observes -- it never edits the history.
 
     Order matters: register it *after* a compaction capability to see the compacted history,
-    or before it to see what triggered the compaction.
+    or before it to see what triggered the compaction. After a preceding compactor rewrites
+    anchored history, the reading subtracts that compactor's heuristic reclaim while retaining
+    the anchor's fixed provider overhead.
 
     Example:
         ```python
@@ -101,7 +108,13 @@ class ReportContextUsage(AbstractCapability[AgentDepsT]):
     def _measure(self, request_context: ModelRequestContext) -> ContextUsage:
         """Build a reading for the request as it stands."""
         messages: list[ModelMessage] = list(request_context.messages)
-        used = estimate_token_count(messages, self.tokenizer)
+        used = estimate_context_tokens(
+            messages,
+            self.tokenizer,
+            model_request_parameters=request_context.model_request_parameters,
+        )
+        if has_context_usage_anchor(messages):
+            used = max(used - get_compaction_reclaim(request_context), 0)
         if self.context_window is not None:
             return ContextUsage(used_tokens=used, window_tokens=self.context_window, resolved=True)
         # Resolved from the request's model rather than the run's: a capability may replace

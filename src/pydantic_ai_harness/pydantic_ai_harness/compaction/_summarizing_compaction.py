@@ -43,6 +43,7 @@ from pydantic_ai_harness.compaction._shared import (
     find_safe_cutoff,
     find_token_cutoff,
     is_realtime_model,
+    record_compaction_reclaim,
     resolve_token_trigger,
     validate_token_trigger,
 )
@@ -566,15 +567,27 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
         token_trigger = resolve_token_trigger(
             self.max_tokens, self.max_fraction, request_ctx.model, self.fallback_context_window, self.context_window
         )
-        if not exceeds(messages, self.max_messages, token_trigger, self.tokenizer):
+        if not exceeds(
+            messages,
+            self.max_messages,
+            token_trigger,
+            self.tokenizer,
+            model_request_parameters=request_context.model_request_parameters,
+        ):
             return request_context
-        request_context.messages = await compact_with_span(
+        compacted = await compact_with_span(
             request_ctx,
             strategy='SummarizingCompaction',
             messages=messages,
             compact=lambda: self.compact(messages, request_ctx),
             tokenizer=self.tokenizer,
         )
+        record_compaction_reclaim(
+            request_context,
+            estimate_token_count(messages, self.tokenizer),
+            estimate_token_count(compacted, self.tokenizer),
+        )
+        request_context.messages = compacted
         return request_context
 
     async def _summarize(

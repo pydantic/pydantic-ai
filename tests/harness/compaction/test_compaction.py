@@ -30,7 +30,7 @@ from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameter
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
@@ -41,6 +41,7 @@ from pydantic_ai_harness.compaction import (
     TieredCompaction,
     TranscriptHandleProvider,
     WarnNearLimits,
+    estimate_context_tokens,
     estimate_token_count,
     is_pinned,
     pin,
@@ -167,6 +168,73 @@ class TestEstimateTokenCount:
             _tool_return('search', 'tc1', 'result text here'),
         ]
         assert estimate_token_count(msgs) > 0
+
+
+# ---------------------------------------------------------------------------
+# estimate_context_tokens
+# ---------------------------------------------------------------------------
+
+
+def _assistant_with_usage(text: str, input_tokens: int, output_tokens: int) -> ModelResponse:
+    return ModelResponse(
+        parts=[TextPart(content=text)],
+        usage=RequestUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+    )
+
+
+class TestEstimateContextTokens:
+    def test_no_usage_falls_back_to_heuristic(self):
+        msgs: list[ModelMessage] = [_user('x' * 40), _assistant('y' * 40)]
+        assert estimate_context_tokens(msgs) == estimate_token_count(msgs)
+
+    def test_anchors_on_reported_usage(self):
+        # The heuristic would say ~12 tokens; the provider said the request was 50K.
+        msgs: list[ModelMessage] = [_user('x' * 40), _assistant_with_usage('short', 50_000, 500)]
+        assert estimate_context_tokens(msgs) == 50_500
+
+    def test_counts_only_messages_after_the_anchor(self):
+        msgs: list[ModelMessage] = [
+            _user('x' * 40),
+            _assistant_with_usage('short', 50_000, 500),
+            _tool_return('search', 'tc1', 'z' * 400),
+        ]
+        assert estimate_context_tokens(msgs) == 50_500 + 100
+
+    def test_anchors_on_the_most_recent_usage(self):
+        msgs: list[ModelMessage] = [
+            _assistant_with_usage('a', 10_000, 100),
+            _user('x' * 40),
+            _assistant_with_usage('b', 50_000, 1_000),
+        ]
+        assert estimate_context_tokens(msgs) == 51_000
+
+    def test_zero_usage_response_is_not_an_anchor(self):
+        # TestModel/FunctionModel histories report no usage; the whole history falls back.
+        msgs: list[ModelMessage] = [_user('x' * 40), _assistant('y' * 40)]
+        assert estimate_context_tokens(msgs) == estimate_token_count(msgs) > 0
+
+    def test_suffix_does_not_recount_unchanged_instructions(self):
+        # Instructions travelled inside the anchor's input_tokens; counting the copy carried
+        # by a later request would double them.
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='i' * 4_000)
+        request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='i' * 4_000)
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs) == 50_500 + 10
+
+    def test_instructions_changed_after_the_anchor_are_counted(self):
+        # The anchor paid for the old instructions only; a new set (dynamic instructions, or a
+        # resumed history under a new prompt) must be added to the estimate.
+        request_before = ModelRequest(parts=[UserPromptPart(content='q')], instructions='old')
+        request_after = ModelRequest(parts=[UserPromptPart(content='a' * 40)], instructions='i' * 4_000)
+        msgs: list[ModelMessage] = [request_before, _assistant_with_usage('short', 50_000, 500), request_after]
+        assert estimate_context_tokens(msgs) == 50_500 + 10 + 1_000
+
+    def test_tokenizer_applies_to_the_suffix(self):
+        msgs: list[ModelMessage] = [
+            _assistant_with_usage('short', 50_000, 500),
+            _user('three short words'),
+        ]
+        assert estimate_context_tokens(msgs, tokenizer=lambda s: len(s.split())) == 50_503
 
 
 # ---------------------------------------------------------------------------
@@ -1808,6 +1876,52 @@ class TestTieredCompaction:
         result = await cap.before_model_request(_make_ctx(), rc)
         assert calls == ['t1']  # t2 never reached
         assert len(result.messages) == 1
+
+    @pytest.mark.anyio
+    async def test_triggers_on_anchored_usage_the_heuristic_cannot_see(self):
+        # ~101 tokens by the heuristic, but the provider reported the request at 90K:
+        # dense content the character estimate is blind to. The anchored gate must fire.
+        calls: list[str] = []
+        t1 = _RecordingTier('t1', calls, drop=1)
+        cap = TieredCompaction(tiers=[t1], target_tokens=50_000)
+        messages: list[ModelMessage] = [_user('x' * 400), _assistant_with_usage('short', 90_000, 100)]
+        rc = _make_request_context(messages)
+        result = await cap.before_model_request(_make_ctx(), rc)
+        assert calls == ['t1']
+        assert len(result.messages) == 1
+
+    @pytest.mark.anyio
+    async def test_escalation_subtracts_tier_reclaim_from_anchored_baseline(self):
+        # The anchor predates any tier rewrite, so re-anchoring would show no reclaim and
+        # always escalate to the last tier. Subtracting the removed text's estimate must
+        # register t1's reclaim (14K -> 12K <= 13K target) and never reach t2.
+        calls: list[str] = []
+        t1 = _RecordingTier('t1', calls, drop=6)
+        t2 = _RecordingTier('t2', calls)
+        cap = TieredCompaction(tiers=[t1, t2], target_tokens=13_000, tokenizer=len)
+        messages: list[ModelMessage] = [_assistant_with_usage('', 10_000, 0)] + [
+            _tool_return('search', f'tc{i}', 'z' * 400) for i in range(10)
+        ]
+        rc = _make_request_context(messages)
+        result = await cap.before_model_request(_make_ctx(), rc)
+        assert calls == ['t1']
+        assert len(result.messages) == 5
+
+    @pytest.mark.anyio
+    async def test_escalation_never_counts_fixed_overhead_as_reclaimed(self):
+        # 100K of the baseline is anchored overhead (tool definitions, instructions) that no
+        # tier can touch. Halving the 4K of message text must leave the estimate at ~102K,
+        # not the ~52K a proportional rescale would claim, so escalation continues to t2.
+        calls: list[str] = []
+        t1 = _RecordingTier('t1', calls, drop=6)
+        t2 = _RecordingTier('t2', calls)
+        cap = TieredCompaction(tiers=[t1, t2], target_tokens=60_000, tokenizer=len)
+        messages: list[ModelMessage] = [_assistant_with_usage('', 100_000, 0)] + [
+            _tool_return('search', f'tc{i}', 'z' * 400) for i in range(10)
+        ]
+        rc = _make_request_context(messages)
+        await cap.before_model_request(_make_ctx(), rc)
+        assert calls == ['t1', 't2']
 
     @pytest.mark.anyio
     async def test_full_escalation(self):

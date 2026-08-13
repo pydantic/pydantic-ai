@@ -32,7 +32,7 @@ An agent that runs for many turns accumulates history: tool outputs, file reads,
 
 ## Triggers
 
-Every size-based strategy triggers on `max_messages`, `max_tokens` (estimated), or `max_fraction`. Token counts use a ~4-chars-per-token heuristic by default; pass a `tokenizer` callable (for example `tiktoken`) for accuracy. `DeduplicateFileReads` runs on every request when no trigger is set (it is cheap and near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` / `target_fraction` budget. `ClampOversizedMessages` triggers per *part* (`max_part_tokens` / `max_part_chars`), not on the whole history -- the failure it targets is one oversized part, not a large total.
+Every size-based strategy triggers on `max_messages`, `max_tokens` (estimated), or `max_fraction`. Token counts anchor on the provider-reported usage of the most recent model response when one is available. That provider usage includes the instructions, tool definitions, and `FilePart` payloads sent in the anchored request; only the messages added since are estimated. The suffix after the anchor, or a history with no usage anchor, uses `tokenizer` or a ~4-chars-per-token heuristic and cannot see `FilePart` payloads. Pending tool schemas newly revealed for the request are conservatively estimated by the implementation. `DeduplicateFileReads` runs on every request when no trigger is set (it is cheap and near-lossless). `TieredCompaction` triggers and stops on a single `target_tokens` / `target_fraction` budget. `ClampOversizedMessages` triggers per *part* (`max_part_tokens` / `max_part_chars`), not on the whole history -- the failure it targets is one oversized part, not a large total.
 
 ### `max_fraction`: one setting for every model
 
@@ -106,7 +106,12 @@ agent = Agent(
 
 ### What counts toward the fraction
 
-The estimator counts every part that is sent: prompts, system prompts, tool calls and their results, retry prompts, extended-thinking blocks, provider-side tool results, and the instructions, once. It is a ~4-characters-per-token approximation, not a tokenizer; pass `tokenizer=` to any strategy to measure with the real one. `FilePart` is not counted -- its payload is binary, and its length in characters would mean nothing.
+With a usage anchor, the provider-reported usage covers everything billed for the anchored request,
+including its instructions, tool definitions, and `FilePart` payloads. For the suffix after the
+anchor, and for a whole history with no usage anchor, the estimator uses `tokenizer` when supplied
+or a ~4-characters-per-token heuristic. That estimated portion cannot see `FilePart` payloads.
+Pending tool schemas newly revealed for the request are conservatively estimated by the
+implementation, since they are not covered by the earlier anchor.
 
 **If you already set an absolute `max_tokens`, re-check it.** The estimator used to count only user and system prompts, tool returns, response text, and tool calls. `ThinkingPart` / `CompactionPart` content, `RetryPromptPart` content, `NativeToolCallPart` / `NativeToolReturnPart`, and the most recent `ModelRequest.instructions` are now counted too, so the same history measures higher and an unchanged `max_tokens` compacts earlier. How much earlier depends on how much of the history is thinking blocks, retries, and instructions; on a thinking-heavy tool-calling history it can be several times the old count. What each strategy clears is unchanged -- only when it runs.
 
@@ -127,9 +132,15 @@ agent = Agent(
 )
 ```
 
-Each reading carries `used_tokens`, `window_tokens`, and `resolved` -- `False` when the window is the fallback rather than the model's real one, so a gauge can show that the percentage is a guess. `on_usage` may be a coroutine function, so a gauge that pushes over a socket does not need a sync bridge. Order matters: register the monitor *after* a compaction capability to observe the compacted history, or before it to see what triggered the compaction.
+Each reading carries `used_tokens`, `window_tokens`, and `resolved` -- `False` when the window is the fallback rather than the model's real one, so a gauge can show that the percentage is a guess. `on_usage` may be a coroutine function, so a gauge that pushes over a socket does not need a sync bridge. Order matters: register the monitor *after* a compaction capability to observe the corrected current history after same-cycle compaction, or before it to see what triggered the compaction.
 
-`used_tokens` counts the same way the triggers do: every message part that is sent, plus the most recent `ModelRequest.instructions` once. Tool schemas are outside that count, so the reading is lower than what the provider bills; tool-schema accounting is tracked in [#100](https://github.com/pydantic/pydantic-ai-harness/issues/100).
+`used_tokens` follows the accounting above: provider usage anchors include instructions, tool
+definitions, and `FilePart` payloads from the anchored request. The suffix after the anchor, or a
+history with no anchor, uses `tokenizer` or a ~4-characters-per-token heuristic and cannot see
+`FilePart` payloads. Pending newly revealed tool schemas are conservatively estimated by the
+implementation. When a compaction capability runs earlier in the same cycle, a monitor registered
+after it subtracts the rewrite's heuristic reclaim while retaining the anchor's fixed provider
+overhead.
 
 ## Compacting outside a run: `compact_now`
 
