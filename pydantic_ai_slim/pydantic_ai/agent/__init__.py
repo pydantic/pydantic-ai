@@ -3023,12 +3023,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         static_parts: list[_messages.InstructionPart] = []
         functions: list[_instructions.SourcedInstructionRunner[AgentDepsT]] = []
-        # Literals from the same source (the agent itself, or one capability) make up a single
-        # addressable block; a new source starts a new part. Grouped on the source rather than on
-        # its `id`, so two sources that are both unidentified still get a part each, and one source
-        # that gave two of its blocks distinct declared ids still gets a part per block.
+        # Literals sharing an id make up a single addressable block: `Agent(instructions=['a', 'b'])`
+        # is one `'agent'` part, not two competing for the key. An unidentified literal is a block of
+        # its own -- there is no key to merge it under, and fusing them would render two anonymous
+        # sources as one.
         group: list[_messages.InstructionPart] = []
-        group_key: tuple[str | None, object] | None = None
+        group_key: str | None = None
 
         def flush_group() -> None:
             if content := _messages.InstructionPart.join(group):
@@ -3050,9 +3050,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             elif isinstance(instruction, str):
                 if not (content := instruction.strip()):
                     continue
-                if group and group_key != (sourced.id, sourced.source):
+                if group and (sourced.id is None or group_key != sourced.id):
                     flush_group()
-                group_key = (sourced.id, sourced.source)
+                group_key = sourced.id
                 group.append(_messages.InstructionPart(content=content, id=sourced.id))
             else:
                 # TemplateStr instances land here too: they are callable with a

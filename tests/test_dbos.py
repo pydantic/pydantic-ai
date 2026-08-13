@@ -963,10 +963,10 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
     Both `MCP(url=...)` capabilities leave `cap.id=None` (so the agent-level capability-id uniqueness
     check passes), yet both derive `a.com-api` from their URLs' host + last path segment.
 
-    `DBOSAgent` never sees this one: the toolset-id uniqueness check rejects it while the plain
-    `Agent` is being built, which is strictly better than catching it here — every agent gets it, not
-    just the durable ones. It reaches that check because the contributed toolsets are siblings and it
-    unwraps the `CapabilityOwnedToolset` each arrives in.
+    A plain `Agent` lets this through: it only rejects a shared id where the id has to become an
+    instruction key, and neither server has been connected to, so neither has contributed a block.
+    DBOS needs more — the id keys each server's step names whether or not it says anything to the
+    model — so its own leaf walk is what reports this, naming the toolset to change.
 
     This isn't a VCR test: the collision is rejected during local construction, before any model or
     MCP request, so there's no network round-trip to record.
@@ -974,8 +974,10 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
     with pytest.raises(
         UserError,
         match=re.escape(
-            "Two toolsets have the same `id` 'a.com-api'. "
-            'Toolset `id`s must be unique among all toolsets registered with the same agent.'
+            'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
+            "but more than one leaf toolset uses the id 'a.com-api'. "
+            "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
+            'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
         ),
     ):
         DBOSAgent(  # pyright: ignore[reportDeprecated]
@@ -988,12 +990,11 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
 
 
 async def test_nested_toolsets_with_colliding_id():
-    """The DBOS guard still earns its place for a collision the framework check can't see.
+    """DBOS reports the shape of the collision, not just that there is one.
 
-    Uniqueness is enforced among a `CombinedToolset`'s direct members, so a leaf nested inside
-    another `CombinedToolset` is never compared against its outer siblings. DBOS needs more than
-    that — the id keys the MCP server's step names across the whole workflow, whatever the toolset
-    tree looks like — so it walks the leaves itself and reports what the user has to change.
+    Its guard walks the leaves, so it sees a duplicate however deeply the toolset tree nests it, and
+    names the `MCPToolset` the user has to change. The id keys the MCP server's step names across
+    the whole workflow, so DBOS needs it unique whether or not the server contributes instructions.
     """
     with pytest.raises(
         UserError,

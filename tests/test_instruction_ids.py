@@ -322,8 +322,19 @@ def test_instruction_id_segments_reject_colons_at_registration():
     with pytest.raises(UserError, match="Declared instruction id 'remaining:usd' cannot contain a colon"):
         capability.instructions(id='remaining:usd')
 
+
+async def test_a_toolset_id_with_a_colon_is_rejected_when_it_keys_a_block():
+    """A toolset's id is only held to the delimiter rule where it has to become one.
+
+    A colon breaks `'toolset:<id>'` apart, so it is rejected as the id is turned into a key. A
+    toolset that contributes no instructions never gets one, and its id is its own business.
+    """
+    agent = Agent(toolsets=[InstructionsToolset('From a remote toolset.', id='weather:remote')])
+
     with pytest.raises(UserError, match="Toolset id 'weather:remote' cannot contain a colon"):
-        Agent(toolsets=[InstructionsToolset(id='weather:remote')])
+        await run_and_capture(agent)
+
+    await run_and_capture(Agent(toolsets=[InstructionsToolset(id='weather:remote')]))
 
 
 async def test_declared_instruction_ids_qualify_rather_than_collide():
@@ -723,9 +734,9 @@ async def test_instruction_blocks_follow_the_capability_ordering():
 async def test_each_unidentified_source_gets_its_own_part():
     """Two sources that are both unaddressable are still two blocks, not one fused one.
 
-    They share an `id` of `None` — grouping on that alone would run an anonymous capability's
-    instructions together with the ones passed to this single run, which have nothing to do with
-    each other and don't even share a lifetime.
+    `None` is not a key. Fusing on it would run an anonymous capability's instructions together
+    with the ones passed to this single run, which have nothing to do with each other and don't
+    even share a lifetime.
     """
 
     agent = Agent(
@@ -739,6 +750,27 @@ async def test_each_unidentified_source_gets_its_own_part():
         InstructionPart(content='From an anonymous capability.'),
         InstructionPart(content='From another anonymous capability.'),
         InstructionPart(content='Passed to this run.'),
+    ]
+
+
+async def test_an_unidentified_source_gets_a_part_per_block():
+    """Blocks are fused by their id, so an unidentified source's blocks are never fused.
+
+    Sharing an id is what makes several literals one part: a key has to name one block, so
+    everything `Agent(instructions=[...])` was built with arrives as a single `'agent'`. `None`
+    names nothing, and there is no boundary to preserve beyond the ones the author wrote — so an
+    anonymous source contributes a part per block rather than one fused one, exactly like two
+    anonymous sources beside each other. The rendered prompt is identical either way; only the
+    part boundaries differ.
+    """
+
+    agent = Agent(capabilities=[Capability[Any](instructions=['Anonymous one.', 'Anonymous two.'])])
+
+    assert await run_and_capture(agent, instructions=['Passed to this run.', 'And this.']) == [
+        InstructionPart(content='Anonymous one.'),
+        InstructionPart(content='Anonymous two.'),
+        InstructionPart(content='Passed to this run.'),
+        InstructionPart(content='And this.'),
     ]
 
 

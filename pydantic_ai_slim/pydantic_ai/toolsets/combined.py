@@ -7,13 +7,27 @@ from typing import Any
 
 from typing_extensions import Self
 
-from .._instructions import normalize_toolset_instructions, validate_instruction_id_segment
+from .._instructions import normalize_toolset_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
 from ..exceptions import UserError
 from ..messages import InstructionPart
-from .abstract import FRAMEWORK_TOOLSET_IDS, AbstractToolset, ToolsetTool
+from .abstract import AbstractToolset, ToolsetTool
 from .wrapper import WrapperToolset
+
+
+def _instruction_source(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+    """The toolset whose `id` keys the instruction blocks reached through `toolset`.
+
+    A wrapper reports no `id` of its own — it isn't itself a registered toolset — but
+    `WrapperToolset.get_instructions` keys what it passes through with the *wrapped* toolset's id,
+    and a capability's contributed toolset always arrives inside a `CapabilityOwnedToolset`.
+    Unwrapping is what makes one toolset reached through two different wrappers a single source
+    rather than a false conflict: `Agent(toolsets=[shared.filtered(...), shared.prefixed('p')])`.
+    """
+    while isinstance(toolset, WrapperToolset):
+        toolset = toolset.wrapped
+    return toolset
 
 
 @dataclass(kw_only=True)
@@ -34,41 +48,6 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     toolsets: Sequence[AbstractToolset[AgentDepsT]]
 
     _exit_stack: AsyncExitStack | None = field(init=False, default=None)
-
-    def __post_init__(self) -> None:
-        # Only the direct members are checked, rather than walking the tree with `apply()`: a nested
-        # `CombinedToolset` validates its own members when it is constructed. Walking would also mean
-        # calling a method on every child on every construction, which the run loop does per step.
-        seen: dict[str, AbstractToolset[AgentDepsT]] = {}
-        for member in self.toolsets:
-            # A wrapper's own `id` is `None` — it isn't itself a registered toolset — but the blocks
-            # it passes through are keyed with the *wrapped* toolset's id, and a capability's
-            # contributed toolset always arrives inside a `CapabilityOwnedToolset`. Unwrapping is
-            # what makes this cover every id that can key a `toolset:<id>` block rather than only the
-            # ones registered bare, and comparing the unwrapped instances keeps one toolset reached
-            # through two different wrappers a single entry instead of a false conflict.
-            toolset = member
-            while isinstance(toolset, WrapperToolset):
-                toolset = toolset.wrapped
-            if (toolset_id := toolset.id) is None:
-                continue
-            # An id the framework assigns on the user's behalf can legitimately appear twice in one
-            # agent: `durable_exec` reads `agent.toolsets` (which includes the function toolset),
-            # wraps each member, and feeds the result back through `override(toolsets=..., tools=[])`,
-            # while `_build_toolset_list` always prepends a function toolset for the overridden
-            # `tools`. Both stand for the same logical toolset, so neither `toolset:<id>` addressing
-            # nor `ToolDefinition.toolset_id` is made ambiguous by the pair. Uniqueness is a rule
-            # about ids a user chose, which is also all an override can address -- so the exemption
-            # is by membership rather than by the angle-bracket shape, which a user could adopt.
-            if toolset_id in FRAMEWORK_TOOLSET_IDS:
-                continue
-            validate_instruction_id_segment(toolset_id, kind='Toolset id')
-            if (existing := seen.get(toolset_id)) is not None and existing is not toolset:
-                raise UserError(
-                    f'Two toolsets have the same `id` {toolset_id!r}. '
-                    'Toolset `id`s must be unique among all toolsets registered with the same agent.'
-                )
-            seen[toolset_id] = toolset
 
     @property
     def id(self) -> str | None:
@@ -148,6 +127,25 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         results = await gather(*(ts.get_instructions(ctx) for ts in self.toolsets))
         parts: list[InstructionPart] = []
+        # An `InstructionPart.id` has to name one block, so two toolsets contributing under one
+        # `toolset:<id>` would leave an application unable to tell whose text it is addressing.
+        # Checked as the blocks are keyed rather than when the agent is built: a shared id makes
+        # nothing ambiguous until both toolsets actually contribute one, and most never do. That
+        # also exempts the ids the framework assigns on the user's behalf for free -- `durable_exec`
+        # feeds the agent's own function toolset back through `override(toolsets=...)` alongside the
+        # one `_build_toolset_list` prepends, and neither carries instructions.
+        sources_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
         for toolset, result in zip(self.toolsets, results):
-            parts.extend(normalize_toolset_instructions(result, toolset.id))
+            toolset_parts = normalize_toolset_instructions(result, toolset.id)
+            source = _instruction_source(toolset)
+            for part in toolset_parts:
+                if part.id is None:
+                    continue
+                if (existing := sources_by_id.setdefault(part.id, source)) is not source:
+                    raise UserError(
+                        f'Two toolsets have the same `id` {existing.id!r} and both contribute instructions, '
+                        f'so {part.id!r} would address blocks from each. '
+                        'Toolset `id`s must be unique among all toolsets registered with the same agent.'
+                    )
+            parts.extend(toolset_parts)
         return parts or None

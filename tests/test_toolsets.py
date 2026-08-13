@@ -1779,28 +1779,35 @@ async def test_combined_toolset_instructions_empty():
     assert instructions is None
 
 
-def test_toolset_ids_must_be_unique_when_combined():
-    """Distinct toolsets cannot share the stable identity used for instructions and dispatch."""
-    with pytest.raises(UserError, match="Two toolsets have the same `id` 'same'"):
-        Agent(toolsets=[FunctionToolset(id='same'), FunctionToolset(id='same')])
+async def test_toolset_ids_must_be_unique_when_they_key_instruction_blocks():
+    """Distinct toolsets cannot share the id that addresses their instruction blocks.
 
-    shared = FunctionToolset(id='shared')
-    Agent(toolsets=[shared, shared])
-
-
-def test_toolset_ids_in_angle_brackets_are_not_self_exempting():
-    """Only the ids the framework assigns skip the uniqueness rule, not everything shaped like one.
-
-    `<agent>` and `<output>` are exempt because one agent can legitimately hold two toolsets standing
-    for the same framework role. Exempting on the bracket *shape* instead would let a toolset opt
-    itself out of the rule by picking a name, and two `'<custom>'` toolsets would then contribute two
-    instruction blocks under one `toolset:<custom>` key.
+    Raised as the blocks are keyed rather than when the agent is built, because that is where the
+    ambiguity is: a shared id costs nothing until both toolsets actually contribute a block, and a
+    toolset that never contributes one is left alone. That also covers the ids the framework
+    assigns itself — `durable_exec` legitimately puts two `'<agent>'` toolsets in one agent, and
+    neither carries instructions.
     """
-    with pytest.raises(UserError, match=r"Two toolsets have the same `id` '<custom>'"):
-        Agent(toolsets=[FunctionToolset(id='<custom>'), FunctionToolset(id='<custom>')])
+    colliding = Agent(
+        TestModel(),
+        toolsets=[
+            FunctionToolset(id='same', instructions='From A.'),
+            FunctionToolset(id='same', instructions='From B.'),
+        ],
+    )
+    with pytest.raises(UserError, match=r"Two toolsets have the same `id` 'same' and both contribute instructions"):
+        await colliding.run('hello')
+
+    # A shared id with only one contributor addresses exactly one block, so nothing is ambiguous.
+    await Agent(
+        TestModel(), toolsets=[FunctionToolset(id='same'), FunctionToolset(id='same', instructions='Only one.')]
+    ).run('hello')
+
+    shared = FunctionToolset(id='shared', instructions='From the shared toolset.')
+    await Agent(TestModel(), toolsets=[shared, shared]).run('hello')
 
 
-def test_toolset_ids_must_be_unique_behind_a_wrapper():
+async def test_toolset_ids_must_be_unique_behind_a_wrapper():
     """A wrapper reports no `id` of its own, but the id it hides is still what keys its blocks.
 
     A capability's contributed toolset always arrives inside a `CapabilityOwnedToolset`, so without
@@ -1816,12 +1823,13 @@ def test_toolset_ids_must_be_unique_behind_a_wrapper():
         def get_toolset(self) -> AbstractToolset[Any]:
             return self._toolset
 
+    colliding = Agent(TestModel(), capabilities=[ToolsetCapability('From A.'), ToolsetCapability('From B.')])
     with pytest.raises(UserError, match="Two toolsets have the same `id` 'contributed'"):
-        Agent(capabilities=[ToolsetCapability('From A.'), ToolsetCapability('From B.')])
+        await colliding.run('hello')
 
     # The same toolset reached through two different wrappers is one toolset, not a conflict.
-    shared = FunctionToolset[Any](id='shared')
-    Agent(toolsets=[shared.filtered(lambda ctx, tool_def: True), shared.prefixed('p')])
+    shared = FunctionToolset[Any](id='shared', instructions='From the shared toolset.')
+    await Agent(TestModel(), toolsets=[shared.filtered(lambda ctx, tool_def: True), shared.prefixed('p')]).run('hello')
 
 
 def test_agent_toolset_decorator_id():

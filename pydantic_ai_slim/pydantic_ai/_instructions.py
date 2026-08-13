@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, replace
 from typing import Generic
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
@@ -102,14 +102,6 @@ class SourcedInstruction(Generic[AgentDepsT]):
     _: KW_ONLY
 
     id: str | None = None
-    source: object = field(default_factory=object, repr=False)
-    """Identity of the source this came from, so blocks can be grouped by it rather than by `id`.
-
-    Unidentified sources all have `id` `None`, and grouping on that alone would render an anonymous
-    capability's blocks and the ones passed to a single run as one fused block. They're equally
-    unaddressable either way, but a source is meant to get a part of its own. Defaults to a fresh
-    token, so an instruction only shares a source by being given one.
-    """
 
     __repr__ = dataclasses_no_defaults_repr
 
@@ -163,9 +155,8 @@ def source_instructions(
     it tells the model, the same way a toolset's id covers every block it returns. A block that
     declared an id of its own is addressed by that, qualified against the source key.
     """
-    source = object()
     return [
-        SourcedInstruction(instruction, id=resolve_declared_id(id, declared_id_of(instruction)), source=source)
+        SourcedInstruction(instruction, id=resolve_declared_id(id, declared_id_of(instruction)))
         for instruction in instructions
     ]
 
@@ -179,12 +170,10 @@ def source_declared_instructions(
     `InstructionPart` the author wrote; the two never both apply, since only a function is
     registered with an id and only a part carries one.
     """
-    source = object()
     return [
         SourcedInstruction(
             declared.instruction,
             id=resolve_declared_id(source_id, declared.declared_id or declared_id_of(declared.instruction)),
-            source=source,
         )
         for declared in instructions
     ]
@@ -199,14 +188,12 @@ def source_agent_instructions(
     `@agent.instructions` function that injects the date or the user's name — mixing the two is
     routine on the agent itself. Such a function opts in separately via `@agent.instructions(id=...)`.
     """
-    source = object()
     return [
         SourcedInstruction(
             instruction,
             id=resolve_declared_id(AGENT_INSTRUCTION_ID, declared_id_of(instruction))
             if isinstance(instruction, (str, InstructionPart))
             else None,
-            source=source,
         )
         for instruction in instructions
     ]
