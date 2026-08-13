@@ -4,7 +4,6 @@ from xai_sdk.types import ImageAspectRatio, ImageResolution
 
 from pydantic_ai.exceptions import UserError
 
-from ._validation import validate_image_dimensions
 from .settings import (
     ImageDimensions,
     ImageGenerationAspectRatio,
@@ -100,7 +99,6 @@ def resolve_xai_geometry(
 
 def resolve_xai_dimensions(model_name: str, dimensions: ImageDimensions) -> tuple[ImageAspectRatio, ImageResolution]:
     """Map exact dimensions to the verified xAI aspect-ratio and resolution pair."""
-    validate_image_dimensions(dimensions)
     if model_name not in _XAI_GEOMETRY_MODELS:
         raise UserError(f'xAI model {model_name!r} does not have a known exact-dimensions mapping')
     for aspect_ratio, resolutions in _XAI_GEOMETRIES.items():

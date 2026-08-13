@@ -5,6 +5,8 @@ import json
 import os
 import re
 import warnings
+from collections.abc import AsyncGenerator, Callable
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,6 +38,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.images import (
     ImageGenerationAspectRatio,
+    ImageGenerationModel,
     ImageGenerationSettings,
     InstrumentedImageGenerationModel,
     KnownImageGenerationModelName,
@@ -133,47 +136,48 @@ async def test_test_image_generation_model_generates_png():
     assert generated_image.output_format == 'png'
 
 
-@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
-async def test_openai_image_generation_model_blocks_requests_when_disabled():
-    model = OpenAIImageGenerationModel('gpt-image-2', provider=OpenAIProvider(api_key='test-key'))
+@pytest.mark.parametrize(
+    'build_target',
+    [
+        pytest.param(
+            lambda: OpenAIImageGenerationModel('gpt-image-2', provider=OpenAIProvider(api_key='test-key')),
+            id='openai-model',
+            marks=pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed'),
+        ),
+        pytest.param(
+            lambda: GoogleImageGenerationModel('gemini-2.5-flash-image', provider=GoogleProvider(api_key='test-key')),
+            id='google-model',
+            marks=pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed'),
+        ),
+        pytest.param(
+            lambda: XaiImageGenerationModel('grok-imagine-image', provider=XaiProvider(api_key='test-key')),
+            id='xai-model',
+            marks=pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed'),
+        ),
+        pytest.param(
+            lambda: ImageGenerator(
+                OpenAIImageGenerationModel('gpt-image-2', provider=OpenAIProvider(api_key='test-key'))
+            ),
+            id='image-generator',
+            marks=pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed'),
+        ),
+    ],
+)
+async def test_image_generation_blocks_requests_when_disabled(
+    build_target: Callable[[], ImageGenerationModel | ImageGenerator],
+):
+    """Every entry point guards on `ALLOW_MODEL_REQUESTS` before reaching the provider.
 
-    with override_allow_model_requests(False):
-        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
-            await model.generate('a robot')
-
-
-@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
-async def test_google_image_generation_model_blocks_requests_when_disabled():
-    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=GoogleProvider(api_key='test-key'))
-
-    with override_allow_model_requests(False):
-        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
-            await model.generate('a robot')
-
-
-@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
-async def test_xai_image_generation_model_blocks_requests_when_disabled():
-    model = XaiImageGenerationModel('grok-imagine-image', provider=XaiProvider(api_key='test-key'))
-
-    with override_allow_model_requests(False):
-        with pytest.raises(RuntimeError, match='Model requests are not allowed'):
-            await model.generate('a robot')
-
-
-@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
-async def test_image_generator_blocks_requests_when_disabled():
-    """Pins the guard on the public `ImageGenerator` surface, not just the concrete adapters.
-
-    A guard that fires before the request is made can't be exercised through a VCR recording.
-    The per-model tests above prove each `generate()` guards; this proves the wrapper chain
-    (`ImageGenerator` -> `InstrumentedImageGenerationModel` / `WrapperImageGenerationModel` ->
-    concrete model) surfaces the `RuntimeError` rather than swallowing or wrapping it.
+    A guard that fires before the request is made can't be exercised through a VCR recording. The
+    per-model cases prove each concrete `generate()` guards; the `ImageGenerator` case proves the
+    wrapper chain (`ImageGenerator` -> `InstrumentedImageGenerationModel` / `WrapperImageGenerationModel`
+    -> concrete model) surfaces the `RuntimeError` rather than swallowing or wrapping it.
     """
-    generator = ImageGenerator(OpenAIImageGenerationModel('gpt-image-2', provider=OpenAIProvider(api_key='test-key')))
+    target = build_target()
 
     with override_allow_model_requests(False):
         with pytest.raises(RuntimeError, match='Model requests are not allowed'):
-            await generator.generate('a robot')
+            await target.generate('a robot')
 
 
 async def test_test_image_generation_model_is_exempt_from_request_guard():
@@ -671,6 +675,22 @@ def test_google_image_generation_model_infers_string_provider(monkeypatch: pytes
     infer_provider.assert_called_once_with('google')
 
 
+@asynccontextmanager
+async def _mock_google_provider(
+    handle_request: Callable[[httpx.Request], httpx.Response],
+) -> AsyncGenerator[GoogleProvider]:
+    """A `GoogleProvider` whose transport is `handle_request`, closed when the block exits.
+
+    `base_url` is pinned so `provider_url` is asserted against a value the test controls rather than
+    the SDK's default endpoint.
+    """
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+    try:
+        yield GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
+    finally:
+        await http_client.aclose()
+
+
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 async def test_google_image_generation_wire_payload_and_response_mapping():
     requests: list[httpx.Request] = []
@@ -721,15 +741,14 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
             },
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
-    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
     settings = GoogleImageGenerationSettings(
         google_image_config={'aspect_ratio': '1:1'},
         extra_headers={'x-test-header': 'test-value'},
     )
 
-    try:
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
         result = await model.generate(
             'replace the subject',
             images=[
@@ -765,8 +784,6 @@ async def test_google_image_generation_wire_payload_and_response_mapping():
             'provider-specific size',
             settings=GoogleImageGenerationSettings(google_image_config={'image_size': '4K'}),
         )
-    finally:
-        await http_client.aclose()
 
     assert len(requests) == 3
     request = requests[0]
@@ -886,13 +903,10 @@ async def test_google_image_generation_resolves_dimensions_and_aspect_ratio():
             },
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
-    model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-3.1-flash-image', provider=provider)
+        unknown_model = GoogleImageGenerationModel('future-image-model', provider=provider)
 
-    unknown_model = GoogleImageGenerationModel('future-image-model', provider=provider)
-
-    try:
         await model.generate('wide image', settings={'dimensions': (1376, 768)})
         await model.generate('portrait image', settings={'aspect_ratio': '3:4'})
         # No Gemini geometry profile lists `1:2`, and it reaches the wire anyway: the profiles record
@@ -905,8 +919,6 @@ async def test_google_image_generation_resolves_dimensions_and_aspect_ratio():
         )
         with pytest.raises(UserError, match=r'does not support `dimensions=\(1920, 1080\)`'):
             await model.generate('unsupported dimensions', settings={'dimensions': (1920, 1080)})
-    finally:
-        await http_client.aclose()
 
     assert [json.loads(request.content)['generationConfig']['imageConfig'] for request in requests] == [
         {'aspectRatio': '16:9', 'imageSize': '1K'},
@@ -950,16 +962,12 @@ async def test_google_image_generation_wires_extra_body():
             },
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
-    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
-    try:
         with warnings.catch_warnings():
             warnings.simplefilter('error')
             await model.generate('a robot', settings={'extra_body': {'labels': {'team': 'growth'}}})
-    finally:
-        await http_client.aclose()
 
     assert json.loads(requests[0].content)['labels'] == snapshot({'team': 'growth'})
 
@@ -987,15 +995,12 @@ async def test_google_image_generation_downloads_image_url(monkeypatch: pytest.M
             },
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
-    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
     image_url = ImageUrl('https://example.com/reference.png')
 
-    try:
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+
         await model.generate('edit this image', images=[image_url])
-    finally:
-        await http_client.aclose()
 
     download_mock.assert_awaited_once_with(image_url, data_format='bytes')
     body = json.loads(requests[0].content)
@@ -1038,14 +1043,10 @@ async def test_google_image_generation_media_type_without_mime_type(image_bytes:
             },
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
-    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
-    try:
         result = await model.generate('a robot')
-    finally:
-        await http_client.aclose()
 
     generated_image = result.images[0]
     assert generated_image.content.data == image_bytes
@@ -1101,17 +1102,13 @@ async def test_google_image_generation_no_image_finish_reason():
             },
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
-    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
-    try:
         with pytest.raises(
             UnexpectedModelBehavior, match=r'did not contain any images \(finish_reason: NO_IMAGE\)'
         ) as exc_info:
             await model.generate('tiny robot')
-    finally:
-        await http_client.aclose()
 
     assert not isinstance(exc_info.value, ContentFilterError)
     assert exc_info.value.body is not None
@@ -1142,15 +1139,11 @@ async def test_google_image_generation_image_safety_finish_reason():
             },
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
-    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
-    try:
         with pytest.raises(ContentFilterError, match=r'content moderation \(reason: IMAGE_SAFETY\)') as exc_info:
             await model.generate('tiny robot')
-    finally:
-        await http_client.aclose()
 
     assert exc_info.value.body is not None
     assert "'finish_reason': 'IMAGE_SAFETY'" in exc_info.value.body
@@ -1178,15 +1171,11 @@ async def test_google_image_generation_prompt_blocked():
             },
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
-    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
-    try:
         with pytest.raises(ContentFilterError, match=r'content moderation \(reason: PROHIBITED_CONTENT\)') as exc_info:
             await model.generate('tiny robot')
-    finally:
-        await http_client.aclose()
 
     assert exc_info.value.body is not None
     assert "'block_reason': 'PROHIBITED_CONTENT'" in exc_info.value.body
@@ -1212,19 +1201,15 @@ async def test_google_image_generation_degenerate_candidates():
     def handle_request(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=next(responses))
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
-    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
-    try:
         with pytest.raises(
             UnexpectedModelBehavior, match=r'did not contain any images \(finish_reason: STOP\)'
         ) as empty_parts:
             await model.generate('empty parts')
         with pytest.raises(UnexpectedModelBehavior, match=r'did not contain any images$') as no_candidates:
             await model.generate('no candidates')
-    finally:
-        await http_client.aclose()
 
     assert not isinstance(empty_parts.value, ContentFilterError)
     assert no_candidates.value.body is None
@@ -1257,21 +1242,18 @@ async def test_google_image_generation_supported_settings_emit_no_warning():
             },
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
-    model = GoogleImageGenerationModel('gemini-3-pro-image', provider=provider)
     settings = GoogleImageGenerationSettings(
         extra_headers={'x-team': 'growth'},
         extra_body={'labels': {'team': 'growth'}},
         google_image_config={'aspect_ratio': '16:9'},
     )
 
-    try:
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-3-pro-image', provider=provider)
+
         with warnings.catch_warnings():
             warnings.simplefilter('error')
             await model.generate('a robot', settings=settings)
-    finally:
-        await http_client.aclose()
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -1300,14 +1282,10 @@ async def test_google_image_generation_maps_complete_provider_metadata():
             },
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
-    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
-    try:
         result = await model.generate('tiny robot')
-    finally:
-        await http_client.aclose()
 
     assert result.provider_details is not None
     assert result.provider_details['finish_reason'] == 'STOP'
@@ -1372,15 +1350,11 @@ async def test_google_image_generation_status_error():
             json={'error': {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'}},
         )
 
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
-    provider = GoogleProvider(api_key='test-api-key', base_url='https://example.com', http_client=http_client)
-    model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+    async with _mock_google_provider(handle_request) as provider:
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
-    try:
         with pytest.raises(ModelHTTPError) as exc_info:
             await model.generate('tiny robot')
-    finally:
-        await http_client.aclose()
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.body == {
@@ -1928,7 +1902,9 @@ async def test_xai_image_generation_single_uploaded_file():
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
 async def test_xai_image_generation_downloads_forced_image_url(monkeypatch: pytest.MonkeyPatch):
-    download_mock = AsyncMock(return_value={'data': b'downloaded-image', 'data_type': 'image/webp'})
+    download_mock = AsyncMock(
+        return_value={'data': 'data:image/webp;base64,ZG93bmxvYWRlZC1pbWFnZQ==', 'data_type': 'image/webp'}
+    )
     monkeypatch.setattr(xai_images, 'download_item', download_mock)
     mock_client = AsyncMock()
     mock_client.image.sample.return_value = _xai_image_responses(b'edited-image')[0]
@@ -1940,7 +1916,7 @@ async def test_xai_image_generation_downloads_forced_image_url(monkeypatch: pyte
 
     await model.generate('edit this image', images=[image_url])
 
-    download_mock.assert_awaited_once_with(image_url, data_format='bytes')
+    download_mock.assert_awaited_once_with(image_url, data_format='base64_uri')
     assert mock_client.image.sample.await_args.kwargs['image_url'] == (
         'data:image/webp;base64,ZG93bmxvYWRlZC1pbWFnZQ=='
     )
@@ -2118,6 +2094,26 @@ async def test_xai_image_generation_response_without_cost_details():
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
+async def test_xai_image_generation_usage_falls_back_to_sdk_totals(monkeypatch: pytest.MonkeyPatch):
+    """The SDK's own totals backfill the token counts genai-prices could not derive.
+
+    `extract` is stubbed to the zeroed usage it returns when the model is missing from the pricing
+    snapshot, leaving `prompt_tokens`/`completion_tokens` as the only source for the counts.
+    """
+    monkeypatch.setattr(xai_images.RequestUsage, 'extract', MagicMock(return_value=RequestUsage()))
+    mock_client = AsyncMock()
+    mock_client.image.sample.return_value = _xai_image_responses(b'first-image')[0]
+    model = XaiImageGenerationModel(
+        'grok-imagine-image',
+        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
+    )
+
+    result = await model.generate('tiny robot')
+
+    assert result.usage == RequestUsage(input_tokens=7, output_tokens=11)
+
+
+@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
 async def test_xai_image_generation_empty_response():
     mock_client = AsyncMock()
     mock_client.image.sample_batch.return_value = []
@@ -2131,63 +2127,24 @@ async def test_xai_image_generation_empty_response():
 
 
 @pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
-async def test_xai_image_generation_status_error():
-    class TestRpcError(grpc.RpcError):
-        def code(self) -> grpc.StatusCode:
-            return grpc.StatusCode.RESOURCE_EXHAUSTED
-
-        def details(self) -> str:
-            return 'rate limit exceeded'
-
-    mock_client = AsyncMock()
-    mock_client.image.sample.side_effect = TestRpcError()
-    model = XaiImageGenerationModel(
-        'grok-imagine-image',
-        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
-    )
-
-    with pytest.raises(ModelHTTPError) as exc_info:
-        await model.generate('tiny robot')
-
-    assert exc_info.value.status_code == 429
-    assert exc_info.value.body == 'rate limit exceeded'
-
-
-@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
-async def test_xai_image_generation_unknown_status_error():
-    class TestRpcError(grpc.RpcError):
-        def code(self) -> grpc.StatusCode:
-            return grpc.StatusCode.CANCELLED
-
-        def details(self) -> str:
-            return 'request cancelled'
-
-    mock_client = AsyncMock()
-    mock_client.image.sample.side_effect = TestRpcError()
-    model = XaiImageGenerationModel(
-        'grok-imagine-image',
-        provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
-    )
-
-    with pytest.raises(ModelAPIError, match='request cancelled'):
-        await model.generate('tiny robot')
-
-
-@pytest.mark.skipif(not xai_imports_successful(), reason='xAI SDK not installed')
 @pytest.mark.parametrize(
     'status_name,expected_http',
     [
         ('INVALID_ARGUMENT', 400),
         ('UNAUTHENTICATED', 401),
         ('PERMISSION_DENIED', 403),
+        ('RESOURCE_EXHAUSTED', 429),
+        ('CANCELLED', None),
     ],
 )
-async def test_xai_image_generation_maps_grpc_status_to_http(status_name: str, expected_http: int):
-    """gRPC status codes map to their HTTP-equivalent `ModelHTTPError`.
+async def test_xai_image_generation_maps_grpc_status_to_http(status_name: str, expected_http: int | None):
+    """gRPC status codes map to their HTTP-equivalent `ModelHTTPError`, or to `ModelAPIError` when unmapped.
 
     xAI's image path is gRPC, so provider errors arrive as `grpc.StatusCode`, not HTTP codes. A bad
     request (`INVALID_ARGUMENT`) must surface as 400 rather than the generic `ModelAPIError`, and the
-    already-mapped auth codes (`UNAUTHENTICATED`/`PERMISSION_DENIED`) are pinned here too.
+    auth (`UNAUTHENTICATED`/`PERMISSION_DENIED`) and rate-limit (`RESOURCE_EXHAUSTED`) codes are pinned
+    here too. A status with no HTTP equivalent (`expected_http=None`) keeps the generic `ModelAPIError`,
+    still carrying the provider's own detail string.
     Parametrized by enum name because `grpc` is an optional import: enum values in the decorator would
     `NameError` at collection time in environments without the xAI extras.
 
@@ -2208,6 +2165,11 @@ async def test_xai_image_generation_maps_grpc_status_to_http(status_name: str, e
         'grok-imagine-image',
         provider=XaiProvider(xai_client=cast(XaiAsyncClient, mock_client)),
     )
+
+    if expected_http is None:
+        with pytest.raises(ModelAPIError, match='boom'):
+            await model.generate('tiny robot')
+        return
 
     with pytest.raises(ModelHTTPError) as exc_info:
         await model.generate('tiny robot')
@@ -2318,11 +2280,17 @@ def test_openai_image_generation_model_infers_string_provider(monkeypatch: pytes
     infer_provider.assert_called_once_with('openai')
 
 
-@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_response_mapping():
+@pytest.fixture
+def openai_mock_client() -> AsyncMock:
+    """An `AsyncOpenAI` stand-in carrying the `base_url` the adapter reports as `provider_url`."""
     mock_client = AsyncMock()
     mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+    return mock_client
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_image_generation_response_mapping(openai_mock_client: AsyncMock):
+    openai_mock_client.images.generate.return_value = ImagesResponse.model_construct(
         created=123,
         background='opaque',
         data=[
@@ -2339,7 +2307,7 @@ async def test_openai_image_generation_response_mapping():
             output_tokens_details=UsageOutputTokensDetails.model_construct(text_tokens=0, image_tokens=5),
         ),
     )
-    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
 
     settings = OpenAIImageGenerationSettings(
@@ -2388,12 +2356,12 @@ async def test_openai_image_generation_response_mapping():
             provider_url='https://api.openai.com/v1/',
         )
     )
-    assert 'response_format' not in mock_client.images.generate.await_args.kwargs
-    assert mock_client.images.generate.await_args.kwargs['size'] == 'auto'
-    assert mock_client.images.generate.await_args.kwargs['background'] == 'opaque'
-    assert mock_client.images.generate.await_args.kwargs['moderation'] == 'low'
-    assert mock_client.images.generate.await_args.kwargs['quality'] == 'low'
-    assert mock_client.images.generate.await_args.kwargs['output_compression'] == 80
+    assert 'response_format' not in openai_mock_client.images.generate.await_args.kwargs
+    assert openai_mock_client.images.generate.await_args.kwargs['size'] == 'auto'
+    assert openai_mock_client.images.generate.await_args.kwargs['background'] == 'opaque'
+    assert openai_mock_client.images.generate.await_args.kwargs['moderation'] == 'low'
+    assert openai_mock_client.images.generate.await_args.kwargs['quality'] == 'low'
+    assert openai_mock_client.images.generate.await_args.kwargs['output_compression'] == 80
 
     with pytest.warns(UserWarning, match=r'ignored unsupported settings: `input_fidelity`'):
         await model.generate(
@@ -2416,28 +2384,26 @@ async def test_openai_image_generation_response_mapping():
         'valid transparent background',
         settings=OpenAIImageGenerationSettings(openai_background='transparent', openai_output_format='webp'),
     )
-    assert mock_client.images.generate.await_args.kwargs['background'] == 'transparent'
-    assert mock_client.images.generate.await_args.kwargs['output_format'] == 'webp'
+    assert openai_mock_client.images.generate.await_args.kwargs['background'] == 'transparent'
+    assert openai_mock_client.images.generate.await_args.kwargs['output_format'] == 'webp'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 @pytest.mark.parametrize('openai_n', [0, True])
-async def test_openai_image_generation_rejects_invalid_count(openai_n: int):
+async def test_openai_image_generation_rejects_invalid_count(openai_n: int, openai_mock_client: AsyncMock):
     """Only counts the request cannot express are rejected; OpenAI owns its own upper bound.
 
     `openai_n=0` would otherwise be omitted from the request, silently ignoring what was asked for.
     """
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
     model = OpenAIImageGenerationModel(
         'gpt-image-1',
-        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
     with pytest.raises(UserError, match='count must be a positive integer'):
         await model.generate('tiny robot', settings=OpenAIImageGenerationSettings(openai_n=openai_n))
 
-    mock_client.images.generate.assert_not_awaited()
+    openai_mock_client.images.generate.assert_not_awaited()
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -2459,24 +2425,25 @@ async def test_openai_image_generation_rejects_invalid_count(openai_n: int):
     ],
 )
 async def test_openai_image_generation_rejects_unmappable_aspect_ratio(
-    model_name: str, aspect_ratio: ImageGenerationAspectRatio, expected_error: str
+    model_name: str,
+    aspect_ratio: ImageGenerationAspectRatio,
+    expected_error: str,
+    openai_mock_client: AsyncMock,
 ):
     """OpenAI takes a size rather than a ratio, so a ratio outside the family's table cannot be sent.
 
     Pydantic AI performs this mapping itself, so there is no provider left to judge the request:
     dropping the ratio would silently generate — and bill for — the model's default shape instead.
     """
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
     model = OpenAIImageGenerationModel(
         model_name,
-        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
     with pytest.raises(UserError, match=expected_error):
         await model.generate('unmappable ratio', settings={'aspect_ratio': aspect_ratio})
 
-    mock_client.images.generate.assert_not_awaited()
+    openai_mock_client.images.generate.assert_not_awaited()
 
 
 _JPEG_MAGIC_BYTES = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01' + b'\x00' * 8
@@ -2498,6 +2465,7 @@ async def test_openai_media_type_reflects_actual_bytes(
     echoed_output_format: str,
     expected_media_type: str,
     expected_output_format: str,
+    openai_mock_client: AsyncMock,
 ):
     """`media_type` and `output_format` come from the returned bytes, not the provider's echo.
 
@@ -2508,15 +2476,13 @@ async def test_openai_media_type_reflects_actual_bytes(
 
     https://github.com/openai/openai-node/issues/1850
     """
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+    openai_mock_client.images.generate.return_value = ImagesResponse.model_construct(
         data=[Image.model_construct(b64_json=base64.b64encode(image_bytes).decode())],
         output_format=echoed_output_format,
     )
     model = OpenAIImageGenerationModel(
         'gpt-image-2',
-        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
     result = await model.generate('a robot')
@@ -2528,10 +2494,10 @@ async def test_openai_media_type_reflects_actual_bytes(
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_usage_falls_back_to_sdk_totals(monkeypatch: pytest.MonkeyPatch):
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+async def test_openai_image_generation_usage_falls_back_to_sdk_totals(
+    monkeypatch: pytest.MonkeyPatch, openai_mock_client: AsyncMock
+):
+    openai_mock_client.images.generate.return_value = ImagesResponse.model_construct(
         data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())],
         usage=Usage.model_construct(
             input_tokens=3,
@@ -2544,16 +2510,12 @@ async def test_openai_image_generation_usage_falls_back_to_sdk_totals(monkeypatc
     monkeypatch.setattr(openai_images.RequestUsage, 'extract', MagicMock(return_value=RequestUsage()))
     model = OpenAIImageGenerationModel(
         'gpt-image-1',
-        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
     result = await model.generate('tiny robot')
 
-    assert result.usage == RequestUsage(
-        input_tokens=3,
-        output_tokens=5,
-        details={'input_text_tokens': 3, 'input_image_tokens': 0},
-    )
+    assert result.usage == RequestUsage(input_tokens=3, output_tokens=5)
 
     extracted_usage = RequestUsage(input_tokens=9, output_tokens=7)
     monkeypatch.setattr(openai_images.RequestUsage, 'extract', MagicMock(return_value=extracted_usage))
@@ -2563,46 +2525,49 @@ async def test_openai_image_generation_usage_falls_back_to_sdk_totals(monkeypatc
     assert extracted_result.usage == extracted_usage
 
 
-@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio():
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+def _openai_png_response() -> ImagesResponse:
+    """A minimal successful response: one PNG image, no usage or echoed settings."""
+    return ImagesResponse.model_construct(
         data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
     )
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+async def test_openai_gpt_image_2_resolves_dimensions_and_aspect_ratio(openai_mock_client: AsyncMock):
+    openai_mock_client.images.generate.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
         'gpt-image-2',
-        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
     await model.generate('wide image', settings={'dimensions': (2048, 1152)})
-    assert mock_client.images.generate.await_args.kwargs['size'] == '2048x1152'
+    assert openai_mock_client.images.generate.await_args.kwargs['size'] == '2048x1152'
 
     await model.generate('wide ratio', settings={'aspect_ratio': '16:9'})
-    assert mock_client.images.generate.await_args.kwargs['size'] == '1280x720'
+    assert openai_mock_client.images.generate.await_args.kwargs['size'] == '1280x720'
 
     await model.generate(
         'provider size',
         settings=OpenAIImageGenerationSettings(openai_size='2048x1152', aspect_ratio='16:9'),
     )
-    assert mock_client.images.generate.await_args.kwargs['size'] == '2048x1152'
+    assert openai_mock_client.images.generate.await_args.kwargs['size'] == '2048x1152'
 
-    mock_client.images.generate.reset_mock()
+    openai_mock_client.images.generate.reset_mock()
     with pytest.raises(UserError, match='height must be multiples of 16'):
         await model.generate('invalid dimensions', settings={'dimensions': (1920, 1080)})
-    mock_client.images.generate.assert_not_awaited()
+    openai_mock_client.images.generate.assert_not_awaited()
 
     with pytest.raises(UserError, match='height must be multiples of 16'):
         await model.generate(
             'invalid overridden dimensions',
             settings=OpenAIImageGenerationSettings(dimensions=(1920, 1080), openai_size='1920x1080'),
         )
-    mock_client.images.generate.assert_not_awaited()
+    openai_mock_client.images.generate.assert_not_awaited()
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 @pytest.mark.parametrize('model_name', ['gpt-image-1', 'gpt-image-1-mini', 'gpt-image-1.5'])
-async def test_openai_legacy_resolves_dimensions_and_aspect_ratio(model_name: str):
+async def test_openai_legacy_resolves_dimensions_and_aspect_ratio(model_name: str, openai_mock_client: AsyncMock):
     """Pins the GPT Image 1.x column of the matrix published in `docs/image-generation.md`.
 
     The legacy aspect-ratio table was reachable only through its miss path, where an unsupported
@@ -2610,14 +2575,10 @@ async def test_openai_legacy_resolves_dimensions_and_aspect_ratio(model_name: st
     every documented hit went unasserted. These go through `generate()` so the resolver, the adapter
     and the outgoing `size` are all on the hook.
     """
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(
-        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
-    )
+    openai_mock_client.images.generate.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
         model_name,
-        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
     ratio_cases: list[tuple[ImageGenerationAspectRatio, str]] = [
@@ -2628,19 +2589,19 @@ async def test_openai_legacy_resolves_dimensions_and_aspect_ratio(model_name: st
     for aspect_ratio, expected_size in ratio_cases:
         ratio_settings: ImageGenerationSettings = {'aspect_ratio': aspect_ratio}
         await model.generate('ratio', settings=ratio_settings)
-        assert mock_client.images.generate.await_args.kwargs['size'] == expected_size
+        assert openai_mock_client.images.generate.await_args.kwargs['size'] == expected_size
 
     await model.generate('exact', settings={'dimensions': (1024, 1024)})
-    assert mock_client.images.generate.await_args.kwargs['size'] == '1024x1024'
+    assert openai_mock_client.images.generate.await_args.kwargs['size'] == '1024x1024'
 
-    mock_client.images.generate.reset_mock()
+    openai_mock_client.images.generate.reset_mock()
     with pytest.raises(UserError, match='Supported exact dimensions'):
         await model.generate('unsupported', settings={'dimensions': (2048, 2048)})
-    mock_client.images.generate.assert_not_awaited()
+    openai_mock_client.images.generate.assert_not_awaited()
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_unknown_model_forwards_dimensions_but_cannot_map_aspect_ratio():
+async def test_openai_unknown_model_forwards_dimensions_but_cannot_map_aspect_ratio(openai_mock_client: AsyncMock):
     """A GPT Image release newer than the installed Pydantic AI keeps `dimensions`, but not `aspect_ratio`.
 
     `size` is a plain string on the wire, so an unrecognized model's exact shape is OpenAI's to accept
@@ -2648,27 +2609,23 @@ async def test_openai_unknown_model_forwards_dimensions_but_cannot_map_aspect_ra
     supports. A ratio has no wire field at all, so Pydantic AI would have to name a canonical size it
     has no table for, and the request cannot be built.
     """
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(
-        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
-    )
+    openai_mock_client.images.generate.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
         'gpt-image-3',
-        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
     await model.generate('future model', settings={'dimensions': (1280, 720)})
-    assert mock_client.images.generate.await_args.kwargs['size'] == '1280x720'
+    assert openai_mock_client.images.generate.await_args.kwargs['size'] == '1280x720'
 
-    mock_client.images.generate.reset_mock()
+    openai_mock_client.images.generate.reset_mock()
     with pytest.raises(
         UserError,
         match=r"Pydantic AI has no `aspect_ratio` mapping for OpenAI model 'gpt-image-3'\. "
         r'Use `openai_size` or `dimensions` to set the output geometry\.',
     ):
         await model.generate('future model', settings={'aspect_ratio': '16:9'})
-    mock_client.images.generate.assert_not_awaited()
+    openai_mock_client.images.generate.assert_not_awaited()
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -2687,7 +2644,7 @@ def test_openai_image_generation_rejects_dalle_models(model_name: str):
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
 @pytest.mark.parametrize('model_name', ['gpt-image-2', 'gpt-image-2-2026-04-21'])
-async def test_openai_forwards_unvalidated_transparent_background(model_name: str):
+async def test_openai_forwards_unvalidated_transparent_background(model_name: str, openai_mock_client: AsyncMock):
     """`openai_background` is forwarded verbatim even where OpenAI documents it as unsupported.
 
     OpenAI's image-generation guide states GPT Image 2 does not support transparent backgrounds.
@@ -2696,32 +2653,23 @@ async def test_openai_forwards_unvalidated_transparent_background(model_name: st
     it currently supports. This pins the passthrough, NOT a claim that the request succeeds — the
     mock returns success, so a real 400 would not be caught here.
     """
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(
-        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())],
-        output_format='png',
-    )
+    openai_mock_client.images.generate.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
         model_name,
-        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
     await model.generate('transparent image', settings=OpenAIImageGenerationSettings(openai_background='transparent'))
 
-    assert mock_client.images.generate.await_args.kwargs['background'] == 'transparent'
+    assert openai_mock_client.images.generate.await_args.kwargs['background'] == 'transparent'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_gpt_image_2_forwards_input_fidelity_on_edit():
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.edit.return_value = ImagesResponse.model_construct(
-        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
-    )
+async def test_openai_gpt_image_2_forwards_input_fidelity_on_edit(openai_mock_client: AsyncMock):
+    openai_mock_client.images.edit.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
         'gpt-image-2',
-        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
     await model.generate(
@@ -2730,12 +2678,12 @@ async def test_openai_gpt_image_2_forwards_input_fidelity_on_edit():
         settings=OpenAIImageGenerationSettings(openai_input_fidelity='high'),
     )
 
-    mock_client.images.edit.assert_awaited_once()
-    assert mock_client.images.edit.await_args.kwargs['input_fidelity'] == 'high'
+    openai_mock_client.images.edit.assert_awaited_once()
+    assert openai_mock_client.images.edit.await_args.kwargs['input_fidelity'] == 'high'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_forwards_unvalidated_transparent_background_with_jpeg_edit():
+async def test_openai_forwards_unvalidated_transparent_background_with_jpeg_edit(openai_mock_client: AsyncMock):
     """Both halves of a documented-incompatible combination are forwarded unmodified.
 
     OpenAI's API reference states `background='transparent'` requires an output format that
@@ -2743,15 +2691,10 @@ async def test_openai_forwards_unvalidated_transparent_background_with_jpeg_edit
     As above, this pins that we forward the user's provider-prefixed settings and let the API
     reject them, not that the combination is accepted.
     """
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.edit.return_value = ImagesResponse.model_construct(
-        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())],
-        output_format='png',
-    )
+    openai_mock_client.images.edit.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
         'gpt-image-1.5',
-        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client)),
+        provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client)),
     )
 
     await model.generate(
@@ -2760,8 +2703,8 @@ async def test_openai_forwards_unvalidated_transparent_background_with_jpeg_edit
         settings=OpenAIImageGenerationSettings(openai_background='transparent', openai_output_format='jpeg'),
     )
 
-    assert mock_client.images.edit.await_args.kwargs['background'] == 'transparent'
-    assert mock_client.images.edit.await_args.kwargs['output_format'] == 'jpeg'
+    assert openai_mock_client.images.edit.await_args.kwargs['background'] == 'transparent'
+    assert openai_mock_client.images.edit.await_args.kwargs['output_format'] == 'jpeg'
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -2868,23 +2811,21 @@ async def test_openai_gpt_image_2_webp_generation_vcr(openai_api_key: str):
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_response_without_image_data():
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+async def test_openai_response_without_image_data(openai_mock_client: AsyncMock):
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
 
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(created=123, data=[])
+    openai_mock_client.images.generate.return_value = ImagesResponse.model_construct(created=123, data=[])
     with pytest.raises(UnexpectedModelBehavior, match='did not contain any images'):
         await model.generate('tiny robot')
 
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+    openai_mock_client.images.generate.return_value = ImagesResponse.model_construct(
         created=123, data=[Image.model_construct(url='https://example.com/a.png')]
     )
     with pytest.raises(UnexpectedModelBehavior, match='base64 image data'):
         await model.generate('tiny robot')
 
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+    openai_mock_client.images.generate.return_value = ImagesResponse.model_construct(
         created=123, data=[Image.model_construct(b64_json='!!!!')]
     )
     with pytest.raises(UnexpectedModelBehavior, match='valid base64 image data') as exc_info:
@@ -2896,7 +2837,7 @@ async def test_openai_response_without_image_data():
     assert '"created": 123' in exc_info.value.body
 
     unrecognized_b64 = base64.b64encode(b'not an image').decode()
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(
+    openai_mock_client.images.generate.return_value = ImagesResponse.model_construct(
         created=123, data=[Image.model_construct(b64_json=unrecognized_b64)]
     )
     with pytest.raises(UnexpectedModelBehavior, match='recognized image format') as exc_info:
@@ -2907,17 +2848,15 @@ async def test_openai_response_without_image_data():
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_edit_request():
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.edit.return_value = ImagesResponse.model_construct(
+async def test_openai_image_edit_request(openai_mock_client: AsyncMock):
+    openai_mock_client.images.edit.return_value = ImagesResponse.model_construct(
         created=456,
         data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())],
         output_format='webp',
         quality='high',
         size='1024x1024',
     )
-    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
 
     settings = OpenAIImageGenerationSettings(
@@ -2943,9 +2882,9 @@ async def test_openai_image_edit_request():
             settings=settings,
         )
 
-    mock_client.images.generate.assert_not_awaited()
-    mock_client.images.edit.assert_awaited_once()
-    kwargs = mock_client.images.edit.await_args.kwargs
+    openai_mock_client.images.generate.assert_not_awaited()
+    openai_mock_client.images.edit.assert_awaited_once()
+    kwargs = openai_mock_client.images.edit.await_args.kwargs
     assert kwargs['image'] == [
         ('image-0.png', TINY_PNG, 'image/png'),
         ('image-1.jpg', _JPEG_MAGIC_BYTES, 'image/jpeg'),
@@ -3063,23 +3002,19 @@ async def test_openai_image_edit_vcr(openai_api_key: str, assets_path: Path):
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_edit_downloads_image_url(monkeypatch: pytest.MonkeyPatch):
+async def test_openai_image_edit_downloads_image_url(monkeypatch: pytest.MonkeyPatch, openai_mock_client: AsyncMock):
     download_mock = AsyncMock(return_value={'data': b'downloaded', 'data_type': 'image/webp'})
     monkeypatch.setattr(openai_images, 'download_item', download_mock)
 
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.edit.return_value = ImagesResponse.model_construct(
-        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
-    )
-    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    openai_mock_client.images.edit.return_value = _openai_png_response()
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
     image_url = ImageUrl('https://example.com/reference.png')
 
     await model.generate('edit this image', images=[image_url])
 
     download_mock.assert_awaited_once_with(image_url, data_format='bytes')
-    assert mock_client.images.edit.await_args.kwargs['image'] == [('image-0.webp', b'downloaded', 'image/webp')]
+    assert openai_mock_client.images.edit.await_args.kwargs['image'] == [('image-0.webp', b'downloaded', 'image/webp')]
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -3096,42 +3031,38 @@ async def test_openai_image_edit_downloads_image_url(monkeypatch: pytest.MonkeyP
         ),
     ],
 )
-async def test_openai_image_edit_rejects_uploaded_file(uploaded_file: UploadedFile, error_message: str):
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+async def test_openai_image_edit_rejects_uploaded_file(
+    uploaded_file: UploadedFile, error_message: str, openai_mock_client: AsyncMock
+):
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
 
     with pytest.raises(UserError, match=error_message):
         await model.generate('edit this image', images=[uploaded_file])
 
-    mock_client.images.generate.assert_not_awaited()
-    mock_client.images.edit.assert_not_awaited()
+    openai_mock_client.images.generate.assert_not_awaited()
+    openai_mock_client.images.edit.assert_not_awaited()
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_edit_rejects_unsupported_image_format():
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+async def test_openai_image_edit_rejects_unsupported_image_format(openai_mock_client: AsyncMock):
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
 
     with pytest.raises(UserError, match=r'only supports PNG, JPEG, or WebP.*image/gif'):
         await model.generate('edit this image', images=[BinaryImage(data=b'gif', media_type='image/gif')])
 
-    mock_client.images.edit.assert_not_awaited()
+    openai_mock_client.images.edit.assert_not_awaited()
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_edit_status_error():
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.edit.side_effect = APIStatusError(
+async def test_openai_image_edit_status_error(openai_mock_client: AsyncMock):
+    openai_mock_client.images.edit.side_effect = APIStatusError(
         'test error',
         response=httpx.Response(status_code=500, request=httpx.Request('POST', 'https://example.com/v1/images/edits')),
         body={'error': 'test error'},
     )
-    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
 
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -3142,13 +3073,11 @@ async def test_openai_image_edit_status_error():
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_connection_error():
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.generate.side_effect = APIConnectionError(
+async def test_openai_image_generation_connection_error(openai_mock_client: AsyncMock):
+    openai_mock_client.images.generate.side_effect = APIConnectionError(
         message='connection failed', request=httpx.Request('POST', 'https://example.com/v1/images/generations')
     )
-    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
 
     with pytest.raises(ModelAPIError, match='connection failed'):
@@ -3156,7 +3085,7 @@ async def test_openai_image_generation_connection_error():
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_rate_limited():
+async def test_openai_image_generation_rate_limited(openai_mock_client: AsyncMock):
     """A 429 rate-limit surfaces as `ModelHTTPError` with the status and body preserved.
 
     Image models are rate-limited by images/min and images/day, and a Tier-1 org (~5 images/min) can hit
@@ -3164,10 +3093,8 @@ async def test_openai_image_generation_rate_limited():
 
     See https://platform.openai.com/docs/guides/rate-limits.
     """
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
     rate_limit_body = {'error': {'code': 'rate_limit_exceeded', 'type': 'requests', 'message': 'Rate limit reached'}}
-    mock_client.images.generate.side_effect = APIStatusError(
+    openai_mock_client.images.generate.side_effect = APIStatusError(
         'Rate limit reached',
         response=httpx.Response(
             status_code=429,
@@ -3177,7 +3104,7 @@ async def test_openai_image_generation_rate_limited():
         body=rate_limit_body,
     )
     model = OpenAIImageGenerationModel(
-        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     )
 
     with pytest.raises(ModelHTTPError) as exc_info:
@@ -3186,11 +3113,11 @@ async def test_openai_image_generation_rate_limited():
     assert exc_info.value.status_code == 429
     assert exc_info.value.body == rate_limit_body
     assert exc_info.value.retry_after == 30
-    mock_client.images.generate.assert_awaited_once()
+    openai_mock_client.images.generate.assert_awaited_once()
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_moderation_blocked():
+async def test_openai_image_generation_moderation_blocked(openai_mock_client: AsyncMock):
     """A `moderation_blocked` 400 keeps its structured body and is never auto-retried.
 
     OpenAI returns HTTP 400 with `error.code == 'moderation_blocked'` and a `moderation_details` object
@@ -3200,8 +3127,6 @@ async def test_openai_image_generation_moderation_blocked():
 
     See https://developers.openai.com/api/docs/guides/image-generation#content-moderation.
     """
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
     moderation_body = {
         'error': {
             'code': 'moderation_blocked',
@@ -3210,7 +3135,7 @@ async def test_openai_image_generation_moderation_blocked():
             'moderation_details': {'moderation_stage': 'input', 'categories': ['violence', 'self-harm']},
         }
     }
-    mock_client.images.generate.side_effect = APIStatusError(
+    openai_mock_client.images.generate.side_effect = APIStatusError(
         'moderation_blocked',
         response=httpx.Response(
             status_code=400, request=httpx.Request('POST', 'https://example.com/v1/images/generations')
@@ -3218,7 +3143,7 @@ async def test_openai_image_generation_moderation_blocked():
         body=moderation_body,
     )
     model = OpenAIImageGenerationModel(
-        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     )
 
     with pytest.raises(ContentFilterError) as exc_info:
@@ -3234,11 +3159,11 @@ async def test_openai_image_generation_moderation_blocked():
             }
         }
     )
-    mock_client.images.generate.assert_awaited_once()
+    openai_mock_client.images.generate.assert_awaited_once()
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_does_not_override_timeout():
+async def test_openai_image_generation_does_not_override_timeout(openai_mock_client: AsyncMock):
     """The adapter never smuggles its own request timeout into the OpenAI SDK call.
 
     Generations run 30-130s against a ~180s infra ceiling, and users configure timeouts on the client they
@@ -3247,23 +3172,17 @@ async def test_openai_image_generation_does_not_override_timeout():
 
     See https://developers.openai.com/api/docs/api-reference/images/create.
     """
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(
-        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
-    )
-    mock_client.images.edit.return_value = ImagesResponse.model_construct(
-        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
-    )
+    openai_mock_client.images.generate.return_value = _openai_png_response()
+    openai_mock_client.images.edit.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
-        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     )
 
     await model.generate('a robot')
-    assert 'timeout' not in mock_client.images.generate.await_args.kwargs
+    assert 'timeout' not in openai_mock_client.images.generate.await_args.kwargs
 
     await model.generate('edit this', images=[BinaryImage(data=TINY_PNG, media_type='image/png')])
-    assert 'timeout' not in mock_client.images.edit.await_args.kwargs
+    assert 'timeout' not in openai_mock_client.images.edit.await_args.kwargs
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
@@ -3302,20 +3221,16 @@ async def test_openai_image_generation_tolerates_unknown_response_fields():
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_supported_settings_emit_no_warning():
+async def test_openai_image_generation_supported_settings_emit_no_warning(openai_mock_client: AsyncMock):
     """A fully-supported settings combination emits no warning.
 
     Over-warning erodes the signal of the warning channel; warnings are reserved for settings a request
     genuinely ignores or overrides. Every setting here is supported by `gpt-image-1` generation, so the call
     must be silent.
     """
-    mock_client = AsyncMock()
-    mock_client.base_url = 'https://api.openai.com/v1/'
-    mock_client.images.generate.return_value = ImagesResponse.model_construct(
-        data=[Image.model_construct(b64_json=base64.b64encode(TINY_PNG).decode())], output_format='png'
-    )
+    openai_mock_client.images.generate.return_value = _openai_png_response()
     model = OpenAIImageGenerationModel(
-        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, mock_client))
+        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
     )
     settings = OpenAIImageGenerationSettings(
         openai_n=1,

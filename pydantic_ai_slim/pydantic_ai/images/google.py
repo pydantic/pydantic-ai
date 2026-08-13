@@ -17,7 +17,6 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import BinaryImage, ImageUrl, UploadedFile
 from pydantic_ai.models import check_allow_model_requests, download_item
 from pydantic_ai.providers import Provider, infer_provider
-from pydantic_ai.usage import RequestUsage
 
 from ._google_geometry import resolve_google_geometry
 from ._media_type import image_media_type_from_bytes
@@ -39,6 +38,8 @@ try:
         ImageConfigDict,
         PartDict,
     )
+
+    from pydantic_ai.models.google import _metadata_as_usage  # pyright: ignore[reportPrivateUsage]
 except ImportError as _import_error:
     raise ImportError(
         'Please install `google-genai` to use the Google image generation model, '
@@ -196,11 +197,7 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         if isinstance(image, BinaryImage):
             part = PartDict(inline_data=BlobDict(data=image.data, mime_type=image.media_type))
         elif isinstance(image, UploadedFile):
-            if image.provider_name != self.system:
-                raise UserError(
-                    f'UploadedFile with `provider_name={image.provider_name!r}` cannot be used with '
-                    f'{type(self).__name__}. Expected `provider_name` to be `{self.system!r}`.'
-                )
+            self._validate_uploaded_file_provider(image)
             if not image.file_id.startswith('https://'):
                 raise UserError(
                     'Google image generation requires `UploadedFile.file_id` to be a Google Files API URI '
@@ -286,7 +283,7 @@ class GoogleImageGenerationModel(ImageGenerationModel):
         return ImageGenerationResult(
             images=images,
             prompt=prompt,
-            usage=_map_usage(response, self.system, self.base_url),
+            usage=_metadata_as_usage(response, self.system, self.base_url),
             model_name=response.model_version or self.model_name,
             provider_name=self.system,
             provider_url=self.base_url,
@@ -361,38 +358,3 @@ def _response_provider_details(response: GenerateContentResponse) -> dict[str, o
         provider_details['traffic_type'] = response.usage_metadata.traffic_type.value
 
     return provider_details
-
-
-def _map_usage(response: GenerateContentResponse, provider: str, provider_url: str) -> RequestUsage:
-    metadata = response.usage_metadata
-    if metadata is None:
-        return RequestUsage()
-
-    details: dict[str, int] = {}
-    if metadata.cached_content_token_count:
-        details['cached_content_tokens'] = metadata.cached_content_token_count
-    if metadata.thoughts_token_count:
-        details['thoughts_tokens'] = metadata.thoughts_token_count
-    if metadata.tool_use_prompt_token_count:
-        details['tool_use_prompt_tokens'] = metadata.tool_use_prompt_token_count
-
-    for prefix, metadata_details in (
-        ('prompt', metadata.prompt_tokens_details),
-        ('cache', metadata.cache_tokens_details),
-        ('candidates', metadata.candidates_tokens_details),
-        ('tool_use_prompt', metadata.tool_use_prompt_tokens_details),
-    ):
-        if not metadata_details:
-            continue
-        for detail in metadata_details:
-            if not detail.modality or not detail.token_count:
-                continue
-            details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
-
-    return RequestUsage.extract(
-        response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
-        provider=provider,
-        provider_url=provider_url,
-        provider_fallback='google',
-        details=details,
-    )

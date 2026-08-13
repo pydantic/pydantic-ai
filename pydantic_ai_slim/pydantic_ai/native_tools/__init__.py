@@ -22,6 +22,7 @@ __all__ = (
     'ImageGenerationModelName',
     'ImageGenerationTool',
     'ImageAspectRatio',
+    'ImageSize',
     'MemoryTool',
     'MCPServerTool',
     'FileSearchTool',
@@ -40,6 +41,9 @@ This dict is populated automatically via `__init_subclass__` when tool classes a
 
 ImageAspectRatio = Literal['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5']
 """Supported aspect ratios for image generation tools."""
+
+ImageSize = Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K']
+"""Supported sizes for image generation tools."""
 
 ImageGenerationModelName = Literal['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'] | str
 """Known OpenAI image generation model names, or another OpenAI image model ID."""
@@ -511,7 +515,7 @@ class ImageGenerationTool(AbstractNativeTool):
     * OpenAI Responses
     """
 
-    size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None
+    size: ImageSize | None = None
     """The size of the generated image.
 
     * OpenAI Responses: 'auto' (default: model selects the size based on the prompt), '1024x1024', '1024x1536', '1536x1024'

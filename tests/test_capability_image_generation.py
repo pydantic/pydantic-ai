@@ -55,18 +55,6 @@ with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
 
-class _MultipleImageGenerationModel(TestImageGenerationModel):
-    async def generate(
-        self,
-        prompt: str,
-        *,
-        images: Sequence[ImageGenerationInput] | None = None,
-        settings: ImageGenerationSettings | None = None,
-    ) -> ImageGenerationResult:
-        result = await super().generate(prompt, images=images, settings=settings)
-        return replace(result, images=[*result.images, *result.images])
-
-
 class TestImageGenerationCapability:
     def test_image_gen_init_params_cover_builtin_tool_and_direct_geometry(self):
         """ImageGeneration adds direct geometry without dropping existing native-tool fields."""
@@ -327,13 +315,24 @@ class TestImageGenerationCapability:
     async def test_image_generation_direct_fallback_rejects_multiple_images(self, allow_model_requests: None):
         """The single-image capability contract never silently discards direct API outputs."""
 
+        class MultipleImageGenerationModel(TestImageGenerationModel):
+            async def generate(
+                self,
+                prompt: str,
+                *,
+                images: Sequence[ImageGenerationInput] | None = None,
+                settings: ImageGenerationSettings | None = None,
+            ) -> ImageGenerationResult:
+                result = await super().generate(prompt, images=images, settings=settings)
+                return replace(result, images=[*result.images, *result.images])
+
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'})])
 
         outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
         agent = Agent(
             outer_model,
-            capabilities=[ImageGeneration(native=False, local=_MultipleImageGenerationModel())],
+            capabilities=[ImageGeneration(native=False, local=MultipleImageGenerationModel())],
             retries=0,
         )
 

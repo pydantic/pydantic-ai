@@ -13,6 +13,6 @@ def image_media_type_from_bytes(data: bytes) -> str | None:
         return 'image/png'
     if data.startswith(b'\xff\xd8\xff'):
         return 'image/jpeg'
-    if len(data) >= 12 and data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
         return 'image/webp'
     return None

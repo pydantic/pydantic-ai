@@ -39,8 +39,16 @@ def warn_image_generation_settings(
     *,
     ignored: Sequence[str] = (),
     conflicts: Sequence[str] = (),
+    stacklevel: int = 2,
 ) -> None:
-    """Emit one warning for settings ignored or overridden by a provider adapter."""
+    """Emit one warning for settings ignored or overridden by a provider adapter.
+
+    `stacklevel` selects the frame the warning points at. The default `2` is the adapter's own
+    `generate()` call (adapter → `warn`), deliberately chosen over the user's call site: the
+    distance from `generate()` to user code is unbounded, because `ImageGenerator` and any number
+    of [`WrapperImageGenerationModel`][pydantic_ai.images.WrapperImageGenerationModel] layers can
+    sit in between, so the adapter that resolved the settings is the only frame always worth naming.
+    """
     warning_parts: list[str] = []
     if ignored:
         names = ', '.join(f'`{name}`' for name in dict.fromkeys(ignored))
@@ -49,4 +57,4 @@ def warn_image_generation_settings(
         names = ', '.join(f'`{name}`' for name in dict.fromkeys(conflicts))
         warning_parts.append(f'used provider-specific settings instead of: {names}')
     if warning_parts:
-        warnings.warn(f'{provider} image generation {"; ".join(warning_parts)}', UserWarning, stacklevel=3)
+        warnings.warn(f'{provider} image generation {"; ".join(warning_parts)}', UserWarning, stacklevel=stacklevel)

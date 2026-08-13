@@ -4,16 +4,15 @@ import json
 from collections.abc import Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
 
 from genai_prices.types import PriceCalculation
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai._cost import best_effort_price
 from pydantic_ai._instrumentation import (
-    ANY_ADAPTER,
     GEN_AI_PROVIDER_NAME_ATTRIBUTE,
     GEN_AI_REQUEST_MODEL_ATTRIBUTE,
+    serialize_any,
     server_attributes,
 )
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -92,7 +91,7 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
                 key: value for key, value in settings.items() if key not in ('extra_headers', 'extra_body')
             }
             if recorded_settings:
-                attributes['image_generation_settings'] = json.dumps(self.serialize_any(recorded_settings))
+                attributes['image_generation_settings'] = json.dumps(serialize_any(recorded_settings))
 
         if self.instrumentation_settings.include_content:
             attributes['prompt'] = prompt
@@ -210,13 +209,3 @@ class InstrumentedImageGenerationModel(WrapperImageGenerationModel):
             GEN_AI_REQUEST_MODEL_ATTRIBUTE: model.model_name,
             **server_attributes(model.base_url),
         }
-
-    @staticmethod
-    def serialize_any(value: Any) -> str:
-        try:
-            return ANY_ADAPTER.dump_python(value, mode='json')
-        except Exception:  # pragma: no cover
-            try:
-                return str(value)
-            except Exception as e:
-                return f'Unable to serialize: {e}'

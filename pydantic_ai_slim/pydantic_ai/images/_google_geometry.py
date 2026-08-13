@@ -2,7 +2,6 @@ from dataclasses import dataclass
 
 from pydantic_ai.exceptions import UserError
 
-from ._validation import validate_image_dimensions
 from .settings import (
     ImageDimensions,
     ImageGenerationAspectRatio,
@@ -144,7 +143,6 @@ def resolve_google_dimensions(
     model_name: str, dimensions: ImageDimensions
 ) -> tuple[ImageGenerationAspectRatio, str | None]:
     """Map exact dimensions to Google-native aspect-ratio and image-size fields."""
-    validate_image_dimensions(dimensions)
     profile = _google_image_geometry_profile(model_name)
     if profile is not None:
         for aspect_ratio, sizes in profile.dimensions.items():

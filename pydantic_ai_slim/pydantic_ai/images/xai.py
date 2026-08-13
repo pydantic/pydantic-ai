@@ -36,6 +36,10 @@ try:
         ImageResolution,
     )
 
+    from pydantic_ai.models.xai import (
+        _GRPC_STATUS_TO_HTTP as _CHAT_GRPC_STATUS_TO_HTTP,  # pyright: ignore[reportPrivateUsage]
+    )
+
     from ._xai_geometry import resolve_xai_geometry
 except ImportError as _import_error:
     raise ImportError(
@@ -207,44 +211,39 @@ class XaiImageGenerationModel(ImageGenerationModel):
 
         image_references: list[str] = []
         file_ids: list[str] = []
-        input_kinds: list[Literal['reference', 'file_id']] = []
+        seen_reference = False
+        order_violated = False
 
         for image in images:
             if isinstance(image, UploadedFile):
-                if image.provider_name != self.system:
-                    raise UserError(
-                        f'UploadedFile with `provider_name={image.provider_name!r}` cannot be used with '
-                        f'{type(self).__name__}. Expected `provider_name` to be `{self.system!r}`.'
-                    )
+                self._validate_uploaded_file_provider(image)
+                if seen_reference:
+                    order_violated = True
                 file_ids.append(image.file_id)
-                input_kinds.append('file_id')
             elif isinstance(image, BinaryImage):
-                image_references.append(_binary_image_data_url(image.data, image.media_type))
-                input_kinds.append('reference')
+                image_references.append(image.data_uri)
+                seen_reference = True
             elif isinstance(image, ImageUrl):
                 if image.force_download:
-                    downloaded_image = await download_item(image, data_format='bytes')
-                    image_references.append(
-                        _binary_image_data_url(downloaded_image['data'], downloaded_image['data_type'])
-                    )
+                    downloaded_image = await download_item(image, data_format='base64_uri')
+                    image_references.append(downloaded_image['data'])
                 else:
                     image_references.append(image.url)
-                input_kinds.append('reference')
+                seen_reference = True
             else:
                 assert_never(image)
 
-        if len(input_kinds) == 1:
-            if input_kinds[0] == 'file_id':
+        if len(images) == 1:
+            if file_ids:
                 return None, file_ids[0], None, None
             return image_references[0], None, None, None
 
-        if 'file_id' in input_kinds and 'reference' in input_kinds:
-            provider_order = sorted(input_kinds, key=lambda kind: kind == 'reference')
-            if input_kinds != provider_order:
-                raise UserError(
-                    'xAI sends file-ID image inputs before URL or binary inputs. '
-                    'Place all `UploadedFile` inputs first to preserve reference-image order.'
-                )
+        # Reported after the loop so a per-image validation error takes precedence over the ordering.
+        if order_violated:
+            raise UserError(
+                'xAI sends file-ID image inputs before URL or binary inputs. '
+                'Place all `UploadedFile` inputs first to preserve reference-image order.'
+            )
 
         return None, None, image_references or None, file_ids or None
 
@@ -299,12 +298,12 @@ class XaiImageGenerationModel(ImageGenerationModel):
         )
 
 
-def _binary_image_data_url(data: bytes, media_type: str) -> str:
-    encoded = base64.b64encode(data).decode()
-    return f'data:{media_type};base64,{encoded}'
-
-
 def _decode_data_url(value: str) -> BinaryImage:
+    """Decode a base64 image data URL into a `BinaryImage`.
+
+    Stricter than `BinaryContent.from_data_uri`, which decodes without `validate=True`: a malformed
+    payload must raise here rather than silently decode to truncated image bytes.
+    """
     header, encoded = value.split(',', maxsplit=1)
     if not header.startswith('data:image/') or not header.endswith(';base64'):
         raise ValueError('Not a base64 image data URL')
@@ -378,14 +377,14 @@ def _map_usage(
         provider_fallback='x-ai',
         details=details,
     )
-    if extracted_usage.input_tokens or extracted_usage.output_tokens:
-        return extracted_usage
+    # Backfill only the counts genai-prices failed to derive, so the typed fields it did populate
+    # (notably `cache_read_tokens`) survive.
+    if extracted_usage.input_tokens == 0 and usage.prompt_tokens:
+        extracted_usage.input_tokens = usage.prompt_tokens
+    if extracted_usage.output_tokens == 0 and usage.completion_tokens:
+        extracted_usage.output_tokens = usage.completion_tokens
 
-    return RequestUsage(
-        input_tokens=usage.prompt_tokens,
-        output_tokens=usage.completion_tokens,
-        details=details,
-    )
+    return extracted_usage
 
 
 def _response_provider_details(response: ImageResponse) -> dict[str, object]:
@@ -410,13 +409,8 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise ModelAPIError(model_name=model_name, message=details) from e
 
 
+# The image path additionally maps `INVALID_ARGUMENT` to 400, which the chat table leaves unmapped.
 _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
+    **_CHAT_GRPC_STATUS_TO_HTTP,
     grpc.StatusCode.INVALID_ARGUMENT: 400,
-    grpc.StatusCode.UNAUTHENTICATED: 401,
-    grpc.StatusCode.PERMISSION_DENIED: 403,
-    grpc.StatusCode.NOT_FOUND: 404,
-    grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
-    grpc.StatusCode.INTERNAL: 500,
-    grpc.StatusCode.UNAVAILABLE: 503,
-    grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }

@@ -187,6 +187,7 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         openai_settings = cast(OpenAIImageGenerationSettings, settings)
         resolved = _resolve_openai_settings(openai_settings, is_edit=bool(images), model_name=self.model_name)
         warn_image_generation_settings(self.system, ignored=resolved.ignored, conflicts=resolved.conflicts)
+        output_compression = openai_settings.get('openai_output_compression')
 
         try:
             if images:
@@ -197,12 +198,10 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                     n=openai_settings.get('openai_n') or OMIT,
                     size=resolved.size or OMIT,
                     output_format=openai_settings.get('openai_output_format') or OMIT,
-                    quality=resolved.quality or OMIT,
-                    background=resolved.background or OMIT,
-                    input_fidelity=resolved.input_fidelity or OMIT,
-                    output_compression=(
-                        resolved.output_compression if resolved.output_compression is not None else OMIT
-                    ),
+                    quality=openai_settings.get('openai_quality') or OMIT,
+                    background=openai_settings.get('openai_background') or OMIT,
+                    input_fidelity=openai_settings.get('openai_input_fidelity') or OMIT,
+                    output_compression=output_compression if output_compression is not None else OMIT,
                     user=openai_settings.get('openai_user') or OMIT,
                     extra_headers=openai_settings.get('extra_headers'),
                     extra_body=openai_settings.get('extra_body'),
@@ -214,12 +213,10 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
                     n=openai_settings.get('openai_n') or OMIT,
                     size=resolved.size or OMIT,
                     output_format=openai_settings.get('openai_output_format') or OMIT,
-                    quality=resolved.quality or OMIT,
-                    background=resolved.background or OMIT,
-                    moderation=resolved.moderation or OMIT,
-                    output_compression=(
-                        resolved.output_compression if resolved.output_compression is not None else OMIT
-                    ),
+                    quality=openai_settings.get('openai_quality') or OMIT,
+                    background=openai_settings.get('openai_background') or OMIT,
+                    moderation=openai_settings.get('openai_moderation') or OMIT,
+                    output_compression=output_compression if output_compression is not None else OMIT,
                     user=openai_settings.get('openai_user') or OMIT,
                     extra_headers=openai_settings.get('extra_headers'),
                     extra_body=openai_settings.get('extra_body'),
@@ -250,11 +247,7 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
         mapped_images: list[tuple[str, bytes, str]] = []
         for index, image in enumerate(images):
             if isinstance(image, UploadedFile):
-                if image.provider_name != self.system:
-                    raise UserError(
-                        f'UploadedFile with `provider_name={image.provider_name!r}` cannot be used with '
-                        f'{type(self).__name__}. Expected `provider_name` to be `{self.system!r}`.'
-                    )
+                self._validate_uploaded_file_provider(image)
                 raise UserError(
                     'OpenAI image editing requires file content and does not accept `UploadedFile.file_id`; '
                     'use `BinaryImage` or `ImageUrl` instead'
@@ -344,11 +337,6 @@ def _openai_input_extension(media_type: str) -> str:
 @dataclass
 class _OpenAIResolvedSettings:
     size: str | None
-    quality: Literal['low', 'medium', 'high', 'auto'] | None
-    background: Literal['transparent', 'opaque', 'auto'] | None
-    input_fidelity: Literal['high', 'low'] | None
-    moderation: Literal['auto', 'low'] | None
-    output_compression: int | None
     ignored: list[str]
     conflicts: list[str]
 
@@ -359,30 +347,16 @@ def _resolve_openai_settings(
     ignored: list[str] = []
 
     validate_image_count('OpenAI', settings.get('openai_n'))
-    quality = settings.get('openai_quality')
-    background = settings.get('openai_background')
-    input_fidelity = settings.get('openai_input_fidelity')
-    moderation = settings.get('openai_moderation')
-    output_compression = settings.get('openai_output_compression')
 
     if is_edit:
-        if moderation is not None:
+        if settings.get('openai_moderation') is not None:
             ignored.append('moderation')
-    elif input_fidelity is not None:
+    elif settings.get('openai_input_fidelity') is not None:
         ignored.append('input_fidelity')
 
     geometry = resolve_openai_geometry(model_name, settings, provider_size=settings.get('openai_size'))
 
-    return _OpenAIResolvedSettings(
-        size=geometry.size,
-        quality=quality,
-        background=background,
-        input_fidelity=input_fidelity,
-        moderation=moderation,
-        output_compression=output_compression,
-        ignored=ignored,
-        conflicts=geometry.conflicts,
-    )
+    return _OpenAIResolvedSettings(size=geometry.size, ignored=ignored, conflicts=geometry.conflicts)
 
 
 def _response_body(response: ImagesResponse) -> str:
@@ -428,7 +402,11 @@ def _map_usage(
         api_flavor='images',
         details=details,
     )
-    if extracted_usage.input_tokens or extracted_usage.output_tokens:
-        return extracted_usage
+    # Backfill only the counts genai-prices failed to derive, so the typed fields it did populate
+    # survive.
+    if extracted_usage.input_tokens == 0 and usage.input_tokens:
+        extracted_usage.input_tokens = usage.input_tokens
+    if extracted_usage.output_tokens == 0 and usage.output_tokens:
+        extracted_usage.output_tokens = usage.output_tokens
 
-    return RequestUsage(input_tokens=usage.input_tokens, output_tokens=usage.output_tokens, details=details)
+    return extracted_usage

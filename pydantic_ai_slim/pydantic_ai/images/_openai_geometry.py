@@ -3,7 +3,6 @@ from fractions import Fraction
 
 from pydantic_ai.exceptions import UserError
 
-from ._validation import validate_image_dimensions
 from .settings import (
     ImageDimensions,
     ImageGenerationAspectRatio,
@@ -95,11 +94,10 @@ def resolve_openai_geometry(
 def resolve_openai_dimensions(model_name: str | None, dimensions: ImageDimensions) -> str:
     """Validate exact dimensions for an OpenAI image model and return its native size.
 
-    A model outside the known families is forwarded after structural validation only: `size` is a
-    plain string on the wire, so OpenAI can judge a shape a newly released model supports, where a
-    frozen table would reject it until Pydantic AI catches up.
+    A model outside the known families is forwarded unchecked: `size` is a plain string on the wire,
+    so OpenAI can judge a shape a newly released model supports, where a frozen table would reject it
+    until Pydantic AI catches up.
     """
-    validate_image_dimensions(dimensions)
     width, height = dimensions
     size = f'{width}x{height}'
 
