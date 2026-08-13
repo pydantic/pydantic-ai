@@ -126,8 +126,8 @@ class XaiProvider(Provider[AsyncClient]):
                 will be used if available.
             api_host: The API host to use for the xAI SDK client.
             timeout: The client-level default timeout for the xAI SDK client, in seconds, applied to all requests
-                made through it. This is distinct from `ModelSettings.timeout`, which overrides the timeout for an
-                individual request.
+                made through it. The xAI SDK does not support per-request timeouts, so `ModelSettings.timeout` is
+                not supported and has no effect.
             metadata: gRPC metadata to attach to every request the xAI SDK client makes, forwarded to
                 [`xai_sdk.AsyncClient`][xai_sdk.AsyncClient]. This is client-scoped, not per-request, so it applies
                 to every request made through the provider. The canonical use is xAI prompt-cache sticky routing via
@@ -159,7 +159,7 @@ class XaiProvider(Provider[AsyncClient]):
                 )
             self._api_key = api_key
             self._api_host = api_host
-            client_kwargs: dict[str, Any] = {'api_key': api_key}
+            client_kwargs: dict[str, str | float | tuple[tuple[str, str], ...]] = {'api_key': api_key}
             if api_host is not None:
                 client_kwargs['api_host'] = api_host
             if timeout is not None:
