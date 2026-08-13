@@ -84,6 +84,19 @@ class ModelSettings(TypedDict, total=False):
     Includes only settings which apply to multiple models / model providers,
     though not all of these settings are supported by all models.
 
+    Each field's `Supported by:` list names the model classes that put the setting on the wire. A bare
+    name covers every interface that model serves, so `OpenAI` means both
+    [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]; a name qualified with an
+    interface, like `OpenAI Chat Completions`, covers only that one, because the Responses API does
+    not accept the setting at all.
+
+    Being listed means Pydantic AI sends the setting, not that the service honors it: the
+    OpenAI-compatible model classes forward whatever the OpenAI schema accepts, and an individual
+    provider behind one of them may ignore a field its own API doesn't define, or reject it. Where we
+    know of such a case it is noted on the entry, but the provider's own API reference is the
+    authority.
+
     All types must be serializable using Pydantic.
     """
 
@@ -153,14 +166,14 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic
     * Google
     * Groq
-    * Cohere
-    * Mistral
+    * Cohere (a named subset is honored by filtering the tool list, not sent as a parameter)
+    * Mistral (a named subset is honored by filtering the tool list, not sent as a parameter)
     * Bedrock
     * xAI
     * HuggingFace
     * Cerebras
     * Crusoe
-    * Ollama
+    * Ollama (sent, but Ollama documents `tool_choice` as unsupported)
     * OpenRouter
     * Snowflake
     * Z.AI
@@ -245,14 +258,14 @@ class ModelSettings(TypedDict, total=False):
     * Anthropic (`'required'` and specific tools not supported with thinking enabled)
     * Google
     * Groq
-    * Cohere
-    * Mistral
+    * Cohere (a named subset is honored by filtering the tool list, not sent as a parameter)
+    * Mistral (a named subset is honored by filtering the tool list, not sent as a parameter)
     * Bedrock
     * xAI
     * HuggingFace
     * Cerebras
     * Crusoe
-    * Ollama
+    * Ollama (sent, but Ollama documents `tool_choice` as unsupported)
     * OpenRouter
     * Snowflake
     * Z.AI
@@ -329,7 +342,7 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * HuggingFace
     * Crusoe
-    * Ollama
+    * Ollama (sent, but Ollama documents `logit_bias` as unsupported)
     * OpenRouter
     * Snowflake
     * Z.AI
@@ -392,6 +405,10 @@ class ModelSettings(TypedDict, total=False):
     Provider-specific thinking settings (e.g., `anthropic_thinking`,
     `openai_reasoning_effort`) take precedence over this unified field.
 
+    Listed below are the model classes that translate this field onto the request. A model that always
+    reasons and takes no thinking parameter (Cohere, Mistral's `magistral`) is not listed, because
+    there is nothing for the setting to change.
+
     Supported by:
 
     * OpenAI
@@ -401,8 +418,9 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * Bedrock
     * xAI
-    * Cerebras (only `False`, sent as a `reasoning_effort` of `none`; Cerebras models reason by default
-      and ignore the effort levels)
+    * Cerebras (only `False` is forwarded, as `reasoning_effort='none'`; the enable levels are not
+      sent because Cerebras models reason by default, and `gpt-oss` ignores the disable too)
+    * Crusoe
     * Ollama
     * OpenRouter (as `extra_body['reasoning']`)
     * Snowflake (as `extra_body['reasoning']` on Claude models, otherwise as `reasoning_effort`)
@@ -427,9 +445,12 @@ class ModelSettings(TypedDict, total=False):
     * Crusoe
     * Ollama
     * OpenRouter
-    * Snowflake
+    * Snowflake (sent, but Snowflake Cortex rejects `service_tier` with an error)
     * Z.AI
     * Bedrock Mantle
+
+    The OpenAI-derived model classes send the OpenAI value unchanged, so the OpenAI column of the
+    mapping table applies to them.
     """
 
     extra_body: object

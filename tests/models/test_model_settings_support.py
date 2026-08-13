@@ -13,23 +13,39 @@ than hunting for the value survives wire renames (`stop_sequences` -> `stop`), u
 distinguishing value of their own (`parallel_tool_calls`), and the `extra_body` merges the
 OpenAI-derived models perform.
 
-`tool_choice` and `thinking` are excluded and stay hand-maintained: `Model.prepare_request` moves
-both onto `ModelRequestParameters`, from where they reach every adapter whether it honors them or
-not, so a payload diff cannot tell support from indifference.
+`tool_choice` and `thinking` are excluded and stay hand-maintained, for different reasons:
+
+- `tool_choice` reaches every adapter through `resolve_tool_choice`, and the adapters that cannot
+  express a named subset honor it by *filtering the tool list* instead (Cohere, Mistral). A payload
+  diff therefore cannot tell "sent `tool_choice`" from "dropped tools", and no single probe value
+  stands in for a field whose value space spans a scalar, a list of names, and `ToolOrOutput`.
+- `thinking` is gated per model *name*, not per model class: `Model.prepare_request` only forwards it
+  when the resolved profile sets `supports_thinking`, and a `thinking_always_enabled` model (Cohere,
+  Mistral's magistral) supports it while sending nothing at all. "Payload unchanged" is therefore not
+  evidence of non-support, which is exactly what this harness reads it as.
+
+That per-model-name gating bounds this file generally: each class is probed at ONE representative
+model, chosen to exercise the class's full capability, so an entry whose support varies by model
+carries a parenthetical caveat in the docstring (`Bedrock (Anthropic and Amazon Nova models only)`).
+`_parse_bullets` strips those caveats, which is what keeps the equality assertion meaningful.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib
+import inspect
 import json
-from collections.abc import Callable
+import pkgutil
+import textwrap
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, cast
 
 import httpx
 import pytest
 
+from pydantic_ai import models
 from pydantic_ai.direct import model_request
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import Model, ModelRequestParameters
@@ -86,11 +102,15 @@ with try_import() as huggingface_available:
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
+    from .test_huggingface import MockHuggingFace
+
 with try_import() as xai_available:
     from xai_sdk import AsyncClient as AsyncXaiClient
 
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.providers.xai import XaiProvider
+
+    from .mock_xai import MockXai
 
 with try_import() as mcp_available:
     from mcp import ServerSession
@@ -103,7 +123,7 @@ pytestmark = pytest.mark.anyio
 HAND_MAINTAINED = frozenset({'tool_choice', 'thinking'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
-PROBE_VALUES: dict[str, tuple[Any, ...]] = {
+PROBE_VALUES: dict[str, tuple[object, ...]] = {
     'max_tokens': (1234567,),
     'temperature': (0.123456,),
     'top_p': (0.234567,),
@@ -140,12 +160,8 @@ def parse_supported_by_lists() -> dict[str, list[str]]:
     Parses the source because a `TypedDict` field's docstring is a bare string expression that Python
     discards at import time, leaving nothing to introspect at runtime.
     """
-    module_path = Path(__file__).parents[2] / 'pydantic_ai_slim' / 'pydantic_ai' / 'settings.py'
-    class_def = next(
-        node
-        for node in ast.parse(module_path.read_text(encoding='utf-8')).body
-        if isinstance(node, ast.ClassDef) and node.name == 'ModelSettings'
-    )
+    class_def = ast.parse(textwrap.dedent(inspect.getsource(ModelSettings))).body[0]
+    assert isinstance(class_def, ast.ClassDef)
 
     lists: dict[str, list[str]] = {}
     field_name: str | None = None
@@ -182,14 +198,19 @@ class ProbeAborted(Exception):
     """Raised once the payload is recorded, to stop short of an actual request."""
 
 
+def canonical(payload: dict[str, object]) -> str:
+    """One order-independent string per request, so baseline and probe compare by value."""
+    return json.dumps(payload, sort_keys=True, default=repr)
+
+
 @dataclass
 class Recorder:
     """Collects one canonical string per outgoing request, for baseline-vs-probe comparison."""
 
     payloads: list[str] = field(default_factory=list[str])
 
-    def record(self, payload: dict[str, Any]) -> None:
-        self.payloads.append(json.dumps(payload, sort_keys=True, default=repr))
+    def record(self, payload: dict[str, object]) -> None:
+        self.payloads.append(canonical(payload))
 
     @property
     def first(self) -> str | None:
@@ -221,8 +242,8 @@ BEDROCK_VOLATILE = HTTP_VOLATILE | {
     'amz-sdk-request',
 }
 
-Probe = Callable[[ModelSettings], Any]
-"""Takes the settings to probe with, returns an awaitable of the canonical payload (or `None`)."""
+Probe = Callable[[ModelSettings], Awaitable[str | None]]
+"""Takes the settings to probe with, returns the canonical payload the model sent (or `None`)."""
 
 
 def http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
@@ -282,38 +303,21 @@ async def bedrock_probe(settings: ModelSettings) -> str | None:
 
 async def huggingface_probe(settings: ModelSettings) -> str | None:
     """Probe HuggingFace at the SDK call — its provider rejects `http_client` outright."""
-    recorder = Recorder()
-
-    async def create(**kwargs: Any) -> Any:
-        recorder.record(kwargs)
-        raise ProbeAborted
-
-    class _Client:
-        model = 'probe'
-        chat = type('Chat', (), {'completions': type('Completions', (), {'create': staticmethod(create)})})
-
+    recorder = MockHuggingFace(completions=[ProbeAborted()])
     model = HuggingFaceModel(
         'probe-model',
-        provider=HuggingFaceProvider(api_key=PROBE_KEY, hf_client=cast(AsyncInferenceClient, _Client())),
+        provider=HuggingFaceProvider(api_key=PROBE_KEY, hf_client=cast(AsyncInferenceClient, recorder)),
     )
     await run_probe_request(model, settings)
-    return recorder.first
+    return canonical(recorder.chat_completion_kwargs[0]) if recorder.chat_completion_kwargs else None
 
 
 async def xai_probe(settings: ModelSettings) -> str | None:
     """Probe xAI at the SDK call — its transport is gRPC, so there is no HTTP request to read."""
-    recorder = Recorder()
-
-    def create(**kwargs: Any) -> Any:
-        recorder.record(kwargs)
-        raise ProbeAborted
-
-    class _Client:
-        chat = type('Chat', (), {'create': staticmethod(create)})
-
-    model = XaiModel('grok-4', provider=XaiProvider(xai_client=cast(AsyncXaiClient, _Client())))
+    recorder = MockXai(responses=[ProbeAborted()])
+    model = XaiModel('grok-4', provider=XaiProvider(xai_client=cast(AsyncXaiClient, recorder)))
     await run_probe_request(model, settings)
-    return recorder.first
+    return canonical(recorder.chat_create_kwargs[0]) if recorder.chat_create_kwargs else None
 
 
 async def mcp_sampling_probe(settings: ModelSettings) -> str | None:
@@ -328,6 +332,16 @@ async def mcp_sampling_probe(settings: ModelSettings) -> str | None:
     model = MCPSamplingModel(session=cast(ServerSession, _Session()))
     await run_probe_request(model, settings)
     return recorder.first
+
+
+def _needs(available: Callable[[], bool], package: str) -> tuple[pytest.MarkDecorator, ...]:
+    """Skip a case when its optional SDK isn't installed.
+
+    `try_import` yields a callable, so the flag must be *called*: `not available` would be
+    `not <function>`, i.e. always `False`, leaving the case to fail with a `NameError` on the CI
+    matrix jobs that don't install the SDK instead of skipping.
+    """
+    return (pytest.mark.skipif(not available(), reason=f'{package} not installed'),)
 
 
 @dataclass(frozen=True)
@@ -413,69 +427,40 @@ def _google(client: httpx.AsyncClient) -> Model:
 
 
 CASES = [
-    Case('OpenAIChatModel', ('OpenAI', 'OpenAI Chat Completions'), http_probe(_openai_chat)),
-    Case('OpenAIResponsesModel', ('OpenAI',), http_probe(_openai_responses)),
-    Case('CerebrasModel', ('Cerebras',), http_probe(_cerebras)),
-    Case('CrusoeModel', ('Crusoe',), http_probe(_crusoe)),
-    Case('OllamaModel', ('Ollama',), http_probe(_ollama)),
-    Case('OpenRouterModel', ('OpenRouter',), http_probe(_openrouter)),
-    Case('SnowflakeModel', ('Snowflake',), http_probe(_snowflake)),
-    Case('ZaiModel', ('Z.AI',), http_probe(_zai)),
+    Case(
+        'OpenAIChatModel',
+        ('OpenAI', 'OpenAI Chat Completions'),
+        http_probe(_openai_chat),
+        _needs(openai_available, 'openai'),
+    ),
+    Case('OpenAIResponsesModel', ('OpenAI',), http_probe(_openai_responses), _needs(openai_available, 'openai')),
+    Case('CerebrasModel', ('Cerebras',), http_probe(_cerebras), _needs(openai_available, 'openai')),
+    Case('CrusoeModel', ('Crusoe',), http_probe(_crusoe), _needs(openai_available, 'openai')),
+    Case('OllamaModel', ('Ollama',), http_probe(_ollama), _needs(openai_available, 'openai')),
+    Case('OpenRouterModel', ('OpenRouter',), http_probe(_openrouter), _needs(openai_available, 'openai')),
+    Case('SnowflakeModel', ('Snowflake',), http_probe(_snowflake), _needs(openai_available, 'openai')),
+    Case('ZaiModel', ('Z.AI',), http_probe(_zai), _needs(openai_available, 'openai')),
     Case(
         'BedrockMantleChatModel',
         ('Bedrock Mantle', 'Bedrock Mantle Chat Completions'),
         http_probe(_bedrock_mantle_chat),
-    ),
-    Case('BedrockMantleResponsesModel', ('Bedrock Mantle',), http_probe(_bedrock_mantle_responses)),
-    Case(
-        'AnthropicModel',
-        ('Anthropic',),
-        http_probe(_anthropic),
-        (pytest.mark.skipif(not anthropic_available, reason='anthropic not installed'),),
+        _needs(openai_available, 'openai'),
     ),
     Case(
-        'GroqModel',
-        ('Groq',),
-        http_probe(_groq),
-        (pytest.mark.skipif(not groq_available, reason='groq not installed'),),
+        'BedrockMantleResponsesModel',
+        ('Bedrock Mantle',),
+        http_probe(_bedrock_mantle_responses),
+        _needs(openai_available, 'openai'),
     ),
-    Case(
-        'MistralModel',
-        ('Mistral',),
-        http_probe(_mistral),
-        (pytest.mark.skipif(not mistral_available, reason='mistral not installed'),),
-    ),
-    Case(
-        'CohereModel',
-        ('Cohere',),
-        http_probe(_cohere),
-        (pytest.mark.skipif(not cohere_available, reason='cohere not installed'),),
-    ),
-    Case(
-        'GoogleModel',
-        ('Google',),
-        http_probe(_google),
-        (pytest.mark.skipif(not google_available, reason='google not installed'),),
-    ),
-    Case(
-        'BedrockConverseModel',
-        ('Bedrock',),
-        bedrock_probe,
-        (pytest.mark.skipif(not bedrock_available, reason='bedrock not installed'),),
-    ),
-    Case(
-        'HuggingFaceModel',
-        ('HuggingFace',),
-        huggingface_probe,
-        (pytest.mark.skipif(not huggingface_available, reason='huggingface not installed'),),
-    ),
-    Case('XaiModel', ('xAI',), xai_probe, (pytest.mark.skipif(not xai_available, reason='xai not installed'),)),
-    Case(
-        'MCPSamplingModel',
-        ('MCP Sampling',),
-        mcp_sampling_probe,
-        (pytest.mark.skipif(not mcp_available, reason='mcp not installed'),),
-    ),
+    Case('AnthropicModel', ('Anthropic',), http_probe(_anthropic), _needs(anthropic_available, 'anthropic')),
+    Case('GroqModel', ('Groq',), http_probe(_groq), _needs(groq_available, 'groq')),
+    Case('MistralModel', ('Mistral',), http_probe(_mistral), _needs(mistral_available, 'mistral')),
+    Case('CohereModel', ('Cohere',), http_probe(_cohere), _needs(cohere_available, 'cohere')),
+    Case('GoogleModel', ('Google',), http_probe(_google), _needs(google_available, 'google')),
+    Case('BedrockConverseModel', ('Bedrock',), bedrock_probe, _needs(bedrock_available, 'bedrock')),
+    Case('HuggingFaceModel', ('HuggingFace',), huggingface_probe, _needs(huggingface_available, 'huggingface')),
+    Case('XaiModel', ('xAI',), xai_probe, _needs(xai_available, 'xai')),
+    Case('MCPSamplingModel', ('MCP Sampling',), mcp_sampling_probe, _needs(mcp_available, 'mcp')),
 ]
 
 
@@ -493,7 +478,10 @@ async def _forwarded_fields(case: Case, baseline: str) -> set[str]:
         for value in values:
             settings: ModelSettings = {field_name: value}  # pyright: ignore[reportAssignmentType]
             payload = await case.probe(settings)
-            if payload is not None and payload != baseline:
+            # A probe that recorded nothing means the request died before the recorder ran; scoring
+            # that as "not forwarded" would let a harness failure quietly agree with a stale list.
+            assert payload is not None, f'{case.id} sent no request while probing {field_name}'
+            if payload != baseline:
                 forwarded.add(field_name)
                 break
     return forwarded
@@ -525,3 +513,32 @@ def test_every_documented_name_is_probed():
     assert DOCUMENTED_NAMES <= PROBED_NAMES, (
         f'named in `Supported by:` lists but never probed: {sorted(DOCUMENTED_NAMES - PROBED_NAMES)}'
     )
+
+
+_NOT_API_BACKED = frozenset(
+    {'WrapperModel', 'InstrumentedModel', 'ConcurrencyLimitedModel', 'FallbackModel', 'FunctionModel', 'TestModel'}
+)
+"""Model classes that wrap or stand in for another model, so they have no wire of their own to probe."""
+
+
+def test_every_api_backed_model_class_is_probed():
+    """A new `Model` class has to join `CASES`, so it cannot be added and left out of every list.
+
+    Derived from the package rather than a hardcoded list because the hardcoded list is the failure
+    this file exists to prevent: `CrusoeModel`, `SnowflakeModel` and the Bedrock Mantle models drifted
+    out of the `Supported by:` lists exactly by being added and never enumerated anywhere.
+    """
+    discovered: set[str] = set()
+    for module_info in pkgutil.iter_modules(models.__path__, f'{models.__name__}.'):
+        try:
+            module = importlib.import_module(module_info.name)
+        except ImportError:  # pragma: lax no cover
+            continue  # an optional provider SDK isn't installed; its classes can't be probed either
+        discovered.update(
+            name
+            for name, obj in vars(module).items()
+            if isinstance(obj, type) and issubclass(obj, Model) and obj.__module__ == module_info.name
+        )
+
+    unprobed = discovered - _NOT_API_BACKED - {case.id for case in CASES}
+    assert not unprobed, f'model classes with no probe case, so no `Supported by:` list covers them: {sorted(unprobed)}'
