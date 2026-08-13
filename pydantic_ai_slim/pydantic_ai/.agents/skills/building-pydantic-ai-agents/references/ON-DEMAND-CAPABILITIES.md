@@ -116,15 +116,15 @@ When `load_capability` succeeds:
 
 - the call is typed as a capability-load message part
 - the return may include resolved capability instructions and owned toolset instructions
-- the capability id is added to `ctx.available_capability_ids`
-- tools owned by the loaded capability become visible on later steps
+- the capability id appears in `ctx.available_capability_ids` from the *next* step onwards, not within the step that loaded it — both sets are derived from message history before each model request
+- tools owned by the loaded capability become visible, and callable, on later steps
 - `load_capability` remains visible so the tool set stays stable
 
 Use `ctx.is_tool_available(tool_def)` when a wrapping toolset needs to decide whether a definition it holds is currently visible. The definition form remains reliable inside `get_tools`; the name form looks in the current resolved `ctx.tools` snapshot and is intended for model-request hooks and tool execution.
 
 Message history matters. Loaded capability state is reconstructed from matching `LoadCapabilityCallPart` and `LoadCapabilityReturnPart` pairs, while revealed function-tool state is reconstructed from `ToolAvailabilityDeltaPart` entries. A history processor must preserve the deltas or the complete capability-load pairs from which Pydantic AI can reconstruct them. If it removes both representations, those tools become hidden again.
 
-A `CompactionPart` resets both forms of derived state at its exact position. Capability tools loaded before the boundary become hidden until the capability is loaded again; the tools remain callable if the model emits a valid call.
+A `CompactionPart` resets both forms of derived state at its exact position. Capability tools loaded before the boundary become hidden, and are not callable, until the capability is loaded again; a call to one is refused with a "not available yet" retry naming the capability to load.
 
 ## Dynamic Descriptions and Instructions
 

@@ -141,7 +141,10 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     Every [`CompactionPart`][pydantic_ai.messages.CompactionPart] resets the derived
     state at its exact position in a response. This is deliberately provider-agnostic:
     over-counting can expose tools whose load evidence is no longer visible, while
-    under-counting only permits a redundant, idempotent load.
+    under-counting once only permitted a redundant, idempotent load. Now that availability
+    gates execution, an under-count also *refuses* the call — see
+    [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] for when that
+    is wrong and what is tracked to fix it.
 
     Only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] is scanned —
     the one definition of the boundary — so only pairs entirely after the boundary count.

@@ -1795,7 +1795,12 @@ class ToolAvailabilityDeltaPart:
     tools_added: Annotated[
         list[str], pydantic.Field(validation_alias=pydantic.AliasChoices('tools_added', 'added'))
     ] = field(default_factory=lambda: [])
-    """Names of tools that became available."""
+    """Names of tools this point in history reveals.
+
+    A reveal is what the model has been *shown*; whether the tool is callable is the broader
+    availability question, which for a capability-owned tool also asks whether its owning
+    capability is loaded.
+    """
 
     tool_call_id: str | None = None
     """The tool call associated with the change, if any."""
@@ -2771,9 +2776,18 @@ def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessag
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] failover and mid-run model
     switches — at parse time there is no "current" provider to resolve against, so the boundary
     has to be the conservative intersection: a compaction part another provider would skip on the
-    wire still counts. The asymmetry makes that safe: treating too little as visible only permits
-    a redundant, idempotent re-disclosure; treating too much as visible hides state the model can
-    no longer see.
+    wire still counts.
+
+    That intersection is not free. It was once purely benign — treating too little as visible only
+    permitted a redundant, idempotent re-disclosure, while treating too much hid state the model
+    could no longer see. Now that availability gates execution, under-counting also *refuses* a
+    call, and it does so wrongly whenever the wire did not honor the boundary this window counted:
+    a foreign-provider part (the trim is same-provider only), an OpenAI part without
+    `encrypted_content`, or a content-less Anthropic part. The model can still see the schema in
+    those cases, so the refusal costs it a turn before the retry regenerates the evidence.
+    Re-anchoring the gating window to the serving response's own provenance is tracked separately;
+    re-disclosure and instruction building should stay conservative and provider-agnostic, since
+    they feed future requests whose provider is genuinely unknowable here.
     """
     for message_index in range(len(messages) - 1, -1, -1):
         message = messages[message_index]
