@@ -14486,6 +14486,7 @@ async def test_openai_responses_done_without_deltas_preserves_text_phase_and_cit
                 index=0,
                 part=TextPart(
                     content='Paris.',
+                    id='msg_001',
                     provider_name='openai',
                     provider_details={'phase': 'final_answer'},
                     citations=[
@@ -14501,6 +14502,7 @@ async def test_openai_responses_done_without_deltas_preserves_text_phase_and_cit
                 index=0,
                 part=TextPart(
                     content='Paris.',
+                    id='msg_001',
                     provider_name='openai',
                     provider_details={'phase': 'final_answer'},
                     citations=[
