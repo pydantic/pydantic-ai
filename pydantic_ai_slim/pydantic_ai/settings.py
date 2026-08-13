@@ -431,7 +431,8 @@ class ModelSettings(TypedDict, total=False):
     * OpenRouter (as `extra_body['reasoning']`)
     * Snowflake (as `extra_body['reasoning']` on Claude models, otherwise as `reasoning_effort`)
     * Z.AI (as `extra_body['thinking']`)
-    * Bedrock Mantle
+    * Bedrock Mantle (the Responses interface only; the Chat Completions interface serves only the
+      `gpt-oss-safeguard` models, which take no thinking parameter)
     """
 
     service_tier: ServiceTier
