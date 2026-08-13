@@ -141,7 +141,8 @@ class HostValidationMiddleware:
             'The web chat UI only answers requests whose `Host` header is an IP address or '
             '`localhost`, so that a website cannot reach it on your machine by pointing a hostname '
             'it controls at you (DNS rebinding).\n\n'
-            'To serve the UI under a hostname, pass it in `allowed_hosts`.\n',
+            'To serve the UI under a hostname, pass it in `allowed_hosts`, or run `clai web` with '
+            '`--allowed-host`.\n',
             status_code=421,
             # The message quotes the client's own `Host` header back at it. `text/plain` is enough
             # to keep a browser from rendering that as markup, as long as it isn't sniffed.

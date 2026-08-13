@@ -119,7 +119,11 @@ Or with the CLI:
 clai web -m openai:gpt-5.2 --allowed-host ui.example.com
 ```
 
-Pass `allowed_hosts=['*']` to answer to any host, but only if something in front of the app already authenticates requests.
+`clai web --host <name>` adds that name for you, so the URL it prints always works.
+
+Every route is checked, including `/api/health`. A health check or container probe that sends a DNS name in its `Host` header gets the same `421`, and monitoring systems often record only the status code or swap in their own error page, so the explanation may never reach you — point probes at the bound IP address or `localhost`, or add their hostname here.
+
+Pass `allowed_hosts=['*']` to answer to any host, but only if something in front of the app already authenticates requests. Only list domains whose subdomains you control: a wildcard for a domain where anyone can obtain a subdomain re-opens the problem.
 
 ## Reserved Routes
 

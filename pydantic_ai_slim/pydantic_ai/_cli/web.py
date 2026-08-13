@@ -69,7 +69,10 @@ def run_web_command(
         native_tools=tool_instances,
         instructions=instructions,
         html_source=html_source,
-        allowed_hosts=allowed_hosts,
+        # `--host` is both where we bind and the URL printed below, so answering to it is implied —
+        # making the user repeat it in `--allowed-host` would have the CLI advertise a URL it then
+        # refuses. Only meaningful when binding to a name; an IP address is always allowed anyway.
+        allowed_hosts=[*allowed_hosts, host],
     )
 
     agent_desc = agent_path or 'generic agent'
