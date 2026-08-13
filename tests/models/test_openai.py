@@ -4047,7 +4047,7 @@ async def test_openai_chat_stream_citation_after_text_transformation_is_not_anch
         text_chunk('[1] extra'),
         chunk(
             [
-                ChoiceDelta(
+                ChoiceDelta.model_construct(
                     role='assistant',
                     annotations=[annotation.model_dump()],
                 )
