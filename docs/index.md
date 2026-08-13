@@ -362,14 +362,12 @@ Two formats are available:
 As of today, these files are not automatically leveraged by IDEs or coding agents, but they will use it if you provide a link or the full text.
 
 
-## Next Steps
+## Next steps
 
-To try Pydantic AI for yourself, [install it](install.md) and follow the instructions [in the examples](examples/setup.md).
+**Run something right now.** `uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent` puts a complete coding agent in your terminal — or [install Pydantic AI](install.md), pick a [model](models/overview.md), and run the [examples](examples/setup.md) on your own machine.
 
-Read the [docs](agent.md) to learn more about building applications with Pydantic AI.
+**See what your agent did.** [Instrument it](logfire.md) — one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: Logfire is the easiest way to look, any OTLP backend works.
 
-Read the [API Reference](api/agent.md) to understand Pydantic AI's interface.
+**Go deeper.** The [Agents guide](agent.md) is the core walkthrough; the [API Reference](api/agent.md) covers the full interface; the [Harness](https://pydantic.dev/docs/ai/harness/) has the batteries.
 
-Give your agent its batteries with [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/).
-
-Join [Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [:simple-github: GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.
+**Get help.** Join [Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [:simple-github: GitHub](https://github.com/pydantic/pydantic-ai/issues).
