@@ -201,6 +201,18 @@ except ImportError as _import_error:
     ) from _import_error
 
 
+def _preload_openai_sdk_resource_modules(model: OpenAIChatModel | OpenAIResponsesModel, client: AsyncOpenAI) -> None:
+    """Load deferred OpenAI SDK modules before request handling.
+
+    The provider client only triggers process-wide module loading; it need not be the exact client later used by
+    an OpenAI-compatible model subclass.
+    """
+    if isinstance(model, OpenAIChatModel):
+        _ = client.chat.completions
+    else:
+        _ = client.responses
+
+
 @contextmanager
 def _map_api_errors(model_name: str) -> Generator[None]:
     try:
@@ -944,6 +956,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         super().__init__(settings=settings, profile=profile)
 
         validate_openai_profile(self.profile)
+
+        _preload_openai_sdk_resource_modules(self, self._provider.client)
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -1953,6 +1967,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         self._provider = provider
 
         super().__init__(settings=settings, profile=profile)
+
+        _preload_openai_sdk_resource_modules(self, self._provider.client)
 
     @property
     def client(self) -> AsyncOpenAI:
