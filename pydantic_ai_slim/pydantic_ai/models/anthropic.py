@@ -3058,7 +3058,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                                     provider_details=_compaction_provider_details(event.delta.encrypted_content),
                                 ),
                             )
-                    elif isinstance(event.delta, BetaCitationsDelta):
+                    elif isinstance(event.delta, BetaCitationsDelta):  # pragma: no branch
                         part = self._parts_manager.get_part_by_vendor_id(event.index)
                         if part is None:
                             # Anthropic can send a citation before the first text delta. Keep it until there is

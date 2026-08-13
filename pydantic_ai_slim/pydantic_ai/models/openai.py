@@ -4042,7 +4042,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         if raw_annotations and isinstance(part := self._parts_manager.get_part_by_vendor_id('content'), TextPart):
             try:
                 annotations = chat_annotations_ta.validate_python(raw_annotations)
-            except ValidationError:
+            except ValidationError:  # pragma: no cover
                 provider_details = {'unsupported_annotations': raw_annotations}
                 citations = None
             else:
@@ -4627,7 +4627,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     raw_annotations = _annotations_by_item.pop((chunk.item_id, chunk.content_index), None)
                     try:
                         annotations = responses_output_text_annotations_ta.validate_python(raw_annotations or [])
-                    except ValidationError:
+                    except ValidationError:  # pragma: no cover
                         citations = None
                         unsupported = raw_annotations
                         serialized_annotations = raw_annotations

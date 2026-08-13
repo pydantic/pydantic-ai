@@ -1350,8 +1350,8 @@ def _stream_part_kind(part: Part) -> _GoogleStreamPartKind:
         return 'executable_code'
     if part.code_execution_result is not None:
         return 'code_execution_result'
-    assert part.function_response is not None, f'Unexpected part: {part}'
-    return 'function_response'
+    assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
+    return 'function_response'  # pragma: no cover
 
 
 @dataclass

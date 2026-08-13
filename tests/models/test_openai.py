@@ -4073,6 +4073,38 @@ async def test_openai_chat_stream_citation_after_text_transformation_is_not_anch
     ]
 
 
+async def test_openai_chat_stream_citation_with_raw_annotations(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=7, end_index=10
+        ),
+    )
+    stream = [
+        text_chunk('Answer [1]'),
+        chunk(
+            [ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])],
+            finish_reason='stop',
+        ),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with Agent(model).run_stream(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    ) as result:
+        await result.get_output()
+
+    [part] = result.all_messages()[1].parts
+    assert isinstance(part, TextPart)
+    assert part.citations == [
+        Citation(
+            sources=[WebCitationSource(url='https://example.com', title='Example')],
+            anchor=CitationAnchor(start=7, end=10, kind='marker'),
+        )
+    ]
+    assert part.provider_details == {'annotations': [annotation.model_dump()]}
+
+
 def test_openai_chat_citation_with_thinking_is_preserved():
     annotation = chat.chat_completion_message.Annotation(
         type='url_citation',

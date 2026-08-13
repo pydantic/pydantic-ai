@@ -103,6 +103,7 @@ with try_import() as imports_successful:
         GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
         GroundingChunk,
+        GroundingChunkRetrievedContext,
         GroundingChunkWeb,
         GroundingMetadata,
         GroundingSupport,
@@ -5399,6 +5400,38 @@ def test_google_grounding_ignores_offset_inside_character():
     )
 
     assert _map_grounding_citations([Part(text='🙂')], metadata) == {}
+
+
+def test_google_grounding_mapping_edge_cases():
+    parts = [Part(text='first'), Part(text='unique second')]
+    retrieved = GroundingChunk(
+        retrieved_context=GroundingChunkRetrievedContext(
+            document_name='documents/1', title='Document', uri='https://example.com/document'
+        )
+    )
+    empty_retrieved = GroundingChunk(retrieved_context=GroundingChunkRetrievedContext())
+    unsupported = GroundingChunk()
+    metadata = GroundingMetadata(
+        grounding_chunks=[retrieved, empty_retrieved, unsupported],
+        grounding_supports=[
+            GroundingSupport(grounding_chunk_indices=[0], segment=Segment(part_index=0, end_index=5)),
+            GroundingSupport(
+                grounding_chunk_indices=[0], segment=Segment(part_index=0, text='unique', start_index=0, end_index=6)
+            ),
+            GroundingSupport(grounding_chunk_indices=[0], segment=None),
+            GroundingSupport(grounding_chunk_indices=[0], segment=Segment(part_index=9, end_index=1)),
+            GroundingSupport(grounding_chunk_indices=[0], segment=Segment(part_index=9, text='i', end_index=1)),
+            GroundingSupport(grounding_chunk_indices=[1], segment=Segment(part_index=0, end_index=1)),
+            GroundingSupport(grounding_chunk_indices=[2], segment=Segment(part_index=0, end_index=1)),
+            GroundingSupport(grounding_chunk_indices=[0], segment=Segment(part_index=0, end_index=99)),
+        ],
+    )
+
+    citations = _map_grounding_citations(parts, metadata)
+
+    assert set(citations) == {0, 1}
+    assert isinstance(citations[0][0].sources[0], DocumentCitationSource)
+    assert citations[0][0].sources[0].provider_details == {'uri': 'https://example.com/document'}
 
 
 async def test_google_unsupported_citation_metadata_is_not_exposed(

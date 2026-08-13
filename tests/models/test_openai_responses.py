@@ -163,6 +163,36 @@ def test_openai_unsupported_annotation_is_preserved():
     assert part.provider_details == {'unsupported_annotations': [annotation.model_dump()]}
 
 
+def test_openai_invalid_url_citation_range_is_preserved():
+    annotation = AnnotationURLCitation(
+        type='url_citation',
+        start_index=20,
+        end_index=30,
+        title='Example',
+        url='https://example.com',
+    )
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='message-1',
+                content=[ResponseOutputText(text='answer', type='output_text', annotations=[annotation])],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='not-used'))
+
+    result = model._process_response(  # pyright: ignore[reportPrivateUsage]
+        response, OpenAIResponsesModelSettings(), ModelRequestParameters()
+    )
+
+    [part] = result.parts
+    assert isinstance(part, TextPart)
+    assert part.provider_details == {'unsupported_annotations': [annotation.model_dump()]}
+
+
 async def test_openai_response_with_null_text_and_citation(allow_model_requests: None):
     output_text = ResponseOutputText.model_construct(
         text=None,
