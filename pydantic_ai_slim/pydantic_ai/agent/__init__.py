@@ -104,6 +104,7 @@ from ..toolsets._dynamic import (
     ToolsetFunc,
 )
 from ..toolsets._tool_search import parse_discovered_tools
+from ..toolsets.abstract import AGENT_TOOLSET_ID
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
@@ -3981,7 +3982,7 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
 
     @property
     def id(self) -> str:
-        return '<agent>'
+        return AGENT_TOOLSET_ID
 
     @property
     def label(self) -> str:

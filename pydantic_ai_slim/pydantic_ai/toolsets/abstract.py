@@ -23,6 +23,22 @@ if TYPE_CHECKING:
     from .set_metadata import SetMetadataToolset
 
 
+AGENT_TOOLSET_ID = '<agent>'
+"""The [`id`][pydantic_ai.toolsets.AbstractToolset.id] of the function toolset an agent builds for its own tools."""
+
+OUTPUT_TOOLSET_ID = '<output>'
+"""The [`id`][pydantic_ai.toolsets.AbstractToolset.id] of the toolset an agent builds for its output tools."""
+
+FRAMEWORK_TOOLSET_IDS = frozenset({AGENT_TOOLSET_ID, OUTPUT_TOOLSET_ID})
+"""Every [`id`][pydantic_ai.toolsets.AbstractToolset.id] the framework assigns on the user's behalf.
+
+Membership, not the angle-bracket shape, is what exempts a toolset from the uniqueness rule: the
+brackets are a convention that keeps these out of the space of names a user would pick, and treating
+any bracketed string as framework-owned would let a toolset opt itself out of the rule by being
+named `'<custom>'`.
+"""
+
+
 class SchemaValidatorProt(Protocol):
     """Protocol for a Pydantic Core `SchemaValidator` or `PluggableSchemaValidator` (which is private but API-compatible)."""
 
@@ -96,8 +112,9 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
         IDs wrapped in angle brackets (`'<agent>'` for an agent's own function toolset, `'<output>'` for
         its output tools) are reserved for toolsets the framework creates on the user's behalf. They name
-        a fixed role rather than a registered toolset, so uniqueness is not enforced for them and an
-        override cannot address them. Don't return one from your own toolset.
+        a fixed role rather than a registered toolset, so uniqueness is not enforced for them. Don't
+        return one from your own toolset: the exemption covers those two ids specifically, so a
+        bracketed id of your own is held to the uniqueness rule like any other.
         """
         raise NotImplementedError()
 

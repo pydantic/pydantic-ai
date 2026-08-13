@@ -12,7 +12,7 @@ from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
 from ..exceptions import UserError
 from ..messages import InstructionPart
-from .abstract import AbstractToolset, ToolsetTool
+from .abstract import FRAMEWORK_TOOLSET_IDS, AbstractToolset, ToolsetTool
 from .wrapper import WrapperToolset
 
 
@@ -52,16 +52,15 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                 toolset = toolset.wrapped
             if (toolset_id := toolset.id) is None:
                 continue
-            # `<...>` marks an id the framework assigns rather than the user (`<agent>` for an
-            # agent's own function toolset, `<output>` for its output toolset). One of those can
-            # legitimately appear twice in one agent: `durable_exec` reads `agent.toolsets` (which
-            # includes the function toolset), wraps each member, and feeds the result back through
-            # `override(toolsets=..., tools=[])`, while `_build_toolset_list` always prepends a
-            # function toolset for the overridden `tools`. Both stand for the same logical toolset,
-            # so neither `toolset:<id>` addressing nor `ToolDefinition.toolset_id` is made ambiguous
-            # by the pair. Uniqueness is a rule about ids a user chose, which is also all an
-            # override can address.
-            if toolset_id.startswith('<') and toolset_id.endswith('>'):
+            # An id the framework assigns on the user's behalf can legitimately appear twice in one
+            # agent: `durable_exec` reads `agent.toolsets` (which includes the function toolset),
+            # wraps each member, and feeds the result back through `override(toolsets=..., tools=[])`,
+            # while `_build_toolset_list` always prepends a function toolset for the overridden
+            # `tools`. Both stand for the same logical toolset, so neither `toolset:<id>` addressing
+            # nor `ToolDefinition.toolset_id` is made ambiguous by the pair. Uniqueness is a rule
+            # about ids a user chose, which is also all an override can address -- so the exemption
+            # is by membership rather than by the angle-bracket shape, which a user could adopt.
+            if toolset_id in FRAMEWORK_TOOLSET_IDS:
                 continue
             validate_instruction_id_segment(toolset_id, kind='Toolset id')
             if (existing := seen.get(toolset_id)) is not None and existing is not toolset:

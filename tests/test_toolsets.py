@@ -1788,6 +1788,18 @@ def test_toolset_ids_must_be_unique_when_combined():
     Agent(toolsets=[shared, shared])
 
 
+def test_toolset_ids_in_angle_brackets_are_not_self_exempting():
+    """Only the ids the framework assigns skip the uniqueness rule, not everything shaped like one.
+
+    `<agent>` and `<output>` are exempt because one agent can legitimately hold two toolsets standing
+    for the same framework role. Exempting on the bracket *shape* instead would let a toolset opt
+    itself out of the rule by picking a name, and two `'<custom>'` toolsets would then contribute two
+    instruction blocks under one `toolset:<custom>` key.
+    """
+    with pytest.raises(UserError, match=r"Two toolsets have the same `id` '<custom>'"):
+        Agent(toolsets=[FunctionToolset(id='<custom>'), FunctionToolset(id='<custom>')])
+
+
 def test_toolset_ids_must_be_unique_behind_a_wrapper():
     """A wrapper reports no `id` of its own, but the id it hides is still what keys its blocks.
 
