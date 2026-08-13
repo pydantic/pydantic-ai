@@ -15,15 +15,18 @@ from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 
-from .openai import _OpenAICompatibleProvider, _OpenAIHTTPClient  # pyright: ignore[reportPrivateUsage]
-
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Vercel provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import (
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        OpenAIHTTPClient as _OpenAIHTTPClient,
+    )
 
 
 class VercelProvider(_OpenAICompatibleProvider):
@@ -101,8 +104,5 @@ class VercelProvider(_OpenAICompatibleProvider):
             self._client = openai_client
         else:
             self._client = self._create_openai_client(
-                base_url=self.base_url,
-                api_key=api_key,
-                http_client=http_client,
-                default_headers=default_headers,
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
             )

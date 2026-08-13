@@ -25,6 +25,7 @@ from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
+from .._cost import preload_pricing_data
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -428,6 +429,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         self._settings = settings
         self._profile = profile
+        preload_pricing_data()
 
     @property
     def provider(self) -> Provider[InterfaceClient] | None:

@@ -159,7 +159,9 @@ jobs:
 
       - run: make typecheck-mypy
 
-  docs:
+  # The unified-docs repository renders and validates published documentation.
+  # Keep this source-repository check for assets that live alongside Pydantic AI docs.
+  docs-assets:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -169,21 +171,9 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: true
-          cache-suffix: docs
+          cache-suffix: docs-assets
 
-      - run: uv sync --group docs
-
-      - run: make docs
-
-      - run: tree -sh site
-
-      - name: Store docs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: site
-          path: site
-
-      # check all docs images are tinified, You'll need an API key from https://tinify.com/ to fix this if it fails
+      # Check all documentation images are tinified. You will need a Tinify API key to fix failures.
       - run: uvx tinicly docs --check
 
   test:
@@ -556,7 +546,7 @@ jobs:
     needs:
       - lint
       - mypy
-      - docs
+      - docs-assets
       - test
       - test-lowest-versions
       - test-temporal-latest

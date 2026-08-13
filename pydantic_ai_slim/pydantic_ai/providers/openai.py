@@ -1,74 +1,28 @@
 from __future__ import annotations as _annotations
 
 import os
-from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, overload
 
-import httpx2
-
 from pydantic_ai import ModelProfile
-from pydantic_ai._http import create_httpx2_client, warn_if_legacy_httpx_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile, openai_realtime_model_profile
-from pydantic_ai.providers import Provider, missing_api_key_error
+from pydantic_ai.providers import missing_api_key_error
 
 if TYPE_CHECKING:
-    import httpx
-
     from pydantic_ai.realtime import RealtimeModelProfile
-
-    _OpenAIHTTPClient = httpx.AsyncClient | httpx2.AsyncClient
-else:
-    _OpenAIHTTPClient = httpx2.AsyncClient
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the OpenAI provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
-
-class _OpenAICompatibleProvider(Provider[AsyncOpenAI]):
-    """Shared HTTP client lifecycle for providers backed by the OpenAI SDK."""
-
-    _own_http_client: _OpenAIHTTPClient | None = None
-    _http_client_factory: Callable[[], _OpenAIHTTPClient] | None = None
-
-    def _get_http_client(
-        self, http_client: _OpenAIHTTPClient | None, *, warning_stacklevel: int = 3
-    ) -> _OpenAIHTTPClient:
-        if http_client is None:
-            http_client = create_httpx2_client()
-            self._own_http_client = http_client  # pyright: ignore[reportIncompatibleVariableOverride]
-            self._http_client_factory = create_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
-        else:
-            warn_if_legacy_httpx_client(
-                http_client, consumer='OpenAI-compatible providers', stacklevel=warning_stacklevel
-            )
-        return http_client
-
-    def _create_openai_client(
-        self,
-        *,
-        base_url: str | None,
-        api_key: str | None,
-        http_client: _OpenAIHTTPClient | None,
-        default_headers: Mapping[str, str] | None = None,
-    ) -> AsyncOpenAI:
-        http_client = self._get_http_client(http_client, warning_stacklevel=4)
-        # OpenAI 3 keeps legacy HTTPX as a runtime-only escape hatch, outside its public type annotations.
-        return AsyncOpenAI(
-            base_url=base_url,
-            api_key=api_key,
-            http_client=http_client,  # pyright: ignore[reportArgumentType]
-            default_headers=default_headers,
-        )
-
-    # The generic Provider currently only knows the legacy HTTPX client type.
-    def _set_http_client(self, http_client: _OpenAIHTTPClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+from ._openai_compatible import (
+    OpenAICompatibleProvider as _OpenAICompatibleProvider,
+    OpenAIHTTPClient as _OpenAIHTTPClient,
+)
 
 
 class OpenAIProvider(_OpenAICompatibleProvider):

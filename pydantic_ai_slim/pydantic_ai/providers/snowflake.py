@@ -14,15 +14,18 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 
-from .openai import _OpenAICompatibleProvider, _OpenAIHTTPClient  # pyright: ignore[reportPrivateUsage]
-
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Snowflake provider, '
         'you can use the `snowflake` optional group — `pip install "pydantic-ai-slim[snowflake]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import (
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        OpenAIHTTPClient as _OpenAIHTTPClient,
+    )
 
 
 class SnowflakeModelProfile(OpenAIModelProfile, total=False):

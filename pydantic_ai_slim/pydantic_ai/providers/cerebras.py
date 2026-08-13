@@ -12,15 +12,18 @@ from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModel
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
 
-from .openai import _OpenAICompatibleProvider, _OpenAIHTTPClient  # pyright: ignore[reportPrivateUsage]
-
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Cerebras provider, '
         'you can use the `cerebras` optional group — `pip install "pydantic-ai-slim[cerebras]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import (
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        OpenAIHTTPClient as _OpenAIHTTPClient,
+    )
 
 
 class CerebrasProvider(_OpenAICompatibleProvider):

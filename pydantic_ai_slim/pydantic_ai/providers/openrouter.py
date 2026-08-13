@@ -3,8 +3,6 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-from openai import AsyncOpenAI
-
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
@@ -22,15 +20,18 @@ from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
-from .openai import _OpenAICompatibleProvider, _OpenAIHTTPClient  # pyright: ignore[reportPrivateUsage]
-
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the OpenRouter provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import (
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        OpenAIHTTPClient as _OpenAIHTTPClient,
+    )
 
 
 class OpenRouterModelProfile(OpenAIModelProfile, total=False):
@@ -276,8 +277,5 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
             self._client = openai_client
         else:
             self._client = self._create_openai_client(
-                base_url=self.base_url,
-                api_key=api_key,
-                http_client=http_client,
-                default_headers=attribution_headers,
+                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=attribution_headers
             )

@@ -17,9 +17,8 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, cast, get_args, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args, overload
 
-from httpx import Timeout
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
@@ -123,6 +122,14 @@ from . import (
 )
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
+if TYPE_CHECKING:
+    from httpx import Timeout
+else:
+    try:
+        from httpx import Timeout
+    except ImportError:
+        Timeout = HTTPX2Timeout
+
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 
 try:
@@ -206,6 +213,18 @@ def _normalize_openai_timeout(timeout: float | Timeout | NotGiven) -> float | HT
     if isinstance(timeout, Timeout):
         return HTTPX2Timeout(connect=timeout.connect, read=timeout.read, write=timeout.write, pool=timeout.pool)
     return timeout
+
+
+def _preload_openai_sdk_resource_modules(model: OpenAIChatModel | OpenAIResponsesModel, client: AsyncOpenAI) -> None:
+    """Load deferred OpenAI SDK modules before request handling.
+
+    The provider client only triggers process-wide module loading; it need not be the exact client later used by
+    an OpenAI-compatible model subclass.
+    """
+    if isinstance(model, OpenAIChatModel):
+        _ = client.chat.completions
+    else:
+        _ = client.responses
 
 
 @contextmanager
@@ -951,6 +970,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         super().__init__(settings=settings, profile=profile)
 
         validate_openai_profile(self.profile)
+
+        _preload_openai_sdk_resource_modules(self, self._provider.client)
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -1960,6 +1981,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         self._provider = provider
 
         super().__init__(settings=settings, profile=profile)
+
+        _preload_openai_sdk_resource_modules(self, self._provider.client)
 
     @property
     def client(self) -> AsyncOpenAI:

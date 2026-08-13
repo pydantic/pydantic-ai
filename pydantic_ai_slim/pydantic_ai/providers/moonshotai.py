@@ -3,8 +3,6 @@ from __future__ import annotations as _annotations
 import os
 from typing import Literal, overload
 
-from openai import AsyncOpenAI
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
@@ -14,7 +12,18 @@ from pydantic_ai.profiles.openai import (
     OpenAIModelProfile,
 )
 
-from .openai import _OpenAICompatibleProvider, _OpenAIHTTPClient  # pyright: ignore[reportPrivateUsage]
+try:
+    from openai import AsyncOpenAI
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install the `openai` package to use the MoonshotAI provider, '
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+    ) from _import_error
+else:
+    from ._openai_compatible import (
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        OpenAIHTTPClient as _OpenAIHTTPClient,
+    )
 
 MoonshotAIModelName = Literal[
     'moonshot-v1-8k',

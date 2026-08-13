@@ -11,15 +11,18 @@ from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
-from .openai import _OpenAICompatibleProvider, _OpenAIHTTPClient  # pyright: ignore[reportPrivateUsage]
-
 try:
     from openai import AsyncBedrockOpenAI, AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the Bedrock Mantle dependencies to use the Bedrock Mantle provider, '
         'you can use the `bedrock-mantle` optional group — `pip install "pydantic-ai-slim[bedrock-mantle]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import (
+        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        OpenAIHTTPClient as _OpenAIHTTPClient,
+    )
 
 BedrockMantleInterface = Literal['chat', 'responses', 'openai-responses']
 """The OpenAI-compatible endpoint family a Bedrock Mantle model is served on.
