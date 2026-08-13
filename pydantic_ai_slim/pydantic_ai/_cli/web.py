@@ -18,6 +18,7 @@ def run_web_command(
     instructions: str | None = None,
     default_model: str = 'openai-chat:gpt-5',
     html_source: str | None = None,
+    allowed_hosts: list[str] = [],
 ) -> int:
     """Run the web command to serve an agent via web UI.
 
@@ -33,6 +34,7 @@ def run_web_command(
         instructions: System instructions passed as extra instructions to each agent run.
         default_model: Default model to use when no agent or models are specified.
         html_source: URL or file path for the chat UI HTML.
+        allowed_hosts: Hostnames to answer to in addition to IP addresses and localhost.
     """
     console = Console()
 
@@ -67,6 +69,7 @@ def run_web_command(
         native_tools=tool_instances,
         instructions=instructions,
         html_source=html_source,
+        allowed_hosts=allowed_hosts,
     )
 
     agent_desc = agent_path or 'generic agent'

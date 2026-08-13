@@ -12,10 +12,12 @@ from pydantic_ai import Agent
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.settings import ModelSettings
 
+from ._hosts import HostValidationMiddleware
 from .api import ModelsParam, create_api_app
 
 try:
     from starlette.applications import Starlette
+    from starlette.middleware import Middleware
     from starlette.requests import Request
     from starlette.responses import HTMLResponse, Response
     from starlette.routing import Mount
@@ -115,6 +117,7 @@ def create_web_app(
     model_settings: ModelSettings | None = None,
     instructions: str | None = None,
     html_source: str | Path | None = None,
+    allowed_hosts: Sequence[str] | None = None,
     **_deprecated_kwargs: object,
 ) -> Starlette:
     """Create a Starlette app that serves a web chat UI for the given agent.
@@ -140,6 +143,12 @@ def create_web_app(
             - A Path instance: Reads from the local file
             - A URL string (http:// or https://): Fetches from the URL
             - A file path string: Reads from the local file
+        allowed_hosts: Additional hostnames to answer to, e.g. `['ui.example.com']` or
+            `['*.example.com']` (subdomains only, so list the apex separately if you serve it).
+            IP addresses and `localhost` are always allowed; any other `Host` header is refused
+            with a `421`, so that a website cannot reach the UI on your machine by pointing a
+            hostname it controls at you (DNS rebinding). Pass `['*']` to answer to any host, only
+            if something in front of the app already authenticates requests.
 
     Returns:
         A configured Starlette application ready to be served
@@ -159,7 +168,11 @@ def create_web_app(
     )
 
     routes = [Mount('/api', app=api_app)]
-    app = Starlette(routes=routes)
+    # Applied to the whole app rather than just `/api/chat`: a request that reaches us under a
+    # hostname we don't answer to is misdirected whatever it asks for, and guarding every route
+    # means a route added later is covered without anyone having to remember to opt it in.
+    middleware = [Middleware(HostValidationMiddleware, allowed_hosts=allowed_hosts or ())]
+    app = Starlette(routes=routes, middleware=middleware)
 
     async def index(request: Request) -> Response:
         """Serve the chat UI from filesystem cache or CDN."""

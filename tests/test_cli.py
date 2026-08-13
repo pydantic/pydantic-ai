@@ -425,6 +425,7 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
         instructions=None,
         default_model='openai-chat:gpt-5',
         html_source=None,
+        allowed_hosts=[],
     )
 
 
@@ -447,6 +448,7 @@ def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..
         instructions=None,
         default_model='openai-chat:gpt-5',
         html_source=None,
+        allowed_hosts=[],
     )
 
 
@@ -484,6 +486,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
         instructions=None,
         default_model='openai-chat:gpt-5',
         html_source=None,
+        allowed_hosts=[],
     )
 
 
@@ -512,6 +515,7 @@ def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable
         instructions=None,
         default_model='openai-chat:gpt-5',
         html_source=None,
+        allowed_hosts=[],
     )
 
 
@@ -532,6 +536,7 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
         instructions='You are a helpful coding assistant',
         default_model='openai-chat:gpt-5',
         html_source=None,
+        allowed_hosts=[],
     )
 
 
@@ -558,6 +563,7 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
         instructions=None,
         default_model='openai-chat:gpt-5',
         html_source=None,
+        allowed_hosts=[],
     )
 
 
@@ -780,4 +786,26 @@ def test_clai_web_with_html_source(mocker: MockerFixture, env: TestEnv):
         instructions=None,
         default_model='openai-chat:gpt-5',
         html_source=custom_url,
+        allowed_hosts=[],
+    )
+
+
+def test_clai_web_with_allowed_hosts(mocker: MockerFixture, env: TestEnv):
+    """`--allowed-host` is repeatable, for serving the UI under a name behind a proxy or a tunnel."""
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    args = ['web', '-m', 'openai:gpt-5', '--allowed-host', 'ui.example.com', '--allowed-host', '*.corp.example']
+    assert cli(args, prog_name='clai') == 0
+
+    mock_run_web.assert_called_once_with(
+        agent_path=None,
+        host='127.0.0.1',
+        port=7932,
+        models=['openai:gpt-5'],
+        tools=[],
+        instructions=None,
+        default_model='openai-chat:gpt-5',
+        html_source=None,
+        allowed_hosts=['ui.example.com', '*.corp.example'],
     )
