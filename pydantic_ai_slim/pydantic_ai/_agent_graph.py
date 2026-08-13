@@ -6,7 +6,7 @@ import inspect
 import time
 from asyncio import Task
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -34,16 +34,22 @@ from pydantic_ai.models import (
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.toolsets._tool_search import parse_discovered_tools
+from pydantic_ai.toolsets._tool_search import (
+    _discovered_tool_names_in_order,  # pyright: ignore[reportPrivateUsage]
+    parse_discovered_tools,
+)
 from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from ._cancel import RunCancellation
 from ._cost import best_effort_price, fill_response_cost
-from ._deferred_capabilities import parse_loaded_capabilities
+from ._deferred_capabilities import (
+    _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
+    parse_loaded_capabilities,
+)
 from ._instructions import normalize_toolset_instructions
-from ._run_context import set_current_run_context
+from ._run_context import AnchoredEvidence, set_current_run_context
 from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
@@ -406,9 +412,11 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     # Invariant: these two sets are shared by reference into every `RunContext` this run (their
     # identity survives `replace(ctx, ...)`, which shallow-copies) and are only ever mutated in
-    # place — never reassigned. The per-step refresh and the `load_capability` tool body rely on
-    # that shared identity. Reassigning either (here, or by passing it to a `replace(ctx, ...=...)`)
-    # would silently break in-step capability loads / tool reveals.
+    # place — never reassigned. The per-step refresh relies on that shared identity for both, and
+    # `discovered_tool_names` additionally on the in-step reveals written by tool execution.
+    # `loaded_capability_ids` is refreshed from history only: a capability loaded during a step
+    # lands from the next one, so nothing writes it mid-step. Reassigning either (here, or by
+    # passing it to a `replace(ctx, ...=...)`) would silently break in-step tool reveals.
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
 
@@ -808,11 +816,23 @@ async def _prepare_request_parameters(
         # path in `Model.prepare_request`.
         native_tools = [t for t in native_tools if not (isinstance(t, ToolSearchTool) and t.optional)]
 
+    deferred_capability_ids = {
+        capability_id
+        for capability_id, capability in run_context.capabilities.items()
+        if capability.defer_loading is True
+    }
+
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
+        deferred_capability_ids=deferred_capability_ids,
         # Preserve discovered names that aren't in the current definitions.
-        revealed_tool_names=run_context.discovered_tool_names,
+        revealed_tool_names=_revealed_tool_names(
+            run_context.discovered_tool_names,
+            function_tools,
+            deferred_capability_ids=deferred_capability_ids,
+            loaded_capability_ids=run_context.loaded_capability_ids,
+        ),
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_schema.object_def,
@@ -2049,15 +2069,41 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
+        # Re-derive reveals now that the response is in history: a provider-side tool search
+        # reveals a tool *inside* the response that goes on to call it, and the model saw that
+        # schema before emitting the call. The step-start refresh ran before the response existed.
+        # A `load_capability` call in the same response is deliberately *not* covered — it has not
+        # executed yet, so its capability stays unavailable and its tools stay uncallable until the
+        # next request carries the capability's instructions.
+        _refresh_discovered_tool_names(ctx)
+
         run_context = build_run_context(ctx)
+        evidence_window = _messages._post_compaction_window_for_response(  # pyright: ignore[reportPrivateUsage]
+            ctx.state.message_history, self.model_response
+        )
+        # Held in a local because it lands in two places below.
+        anchored_evidence = AnchoredEvidence(
+            discovered_tool_names=frozenset(_discovered_tool_names_in_order(evidence_window))
+            - ctx.deps.discovered_tool_names,
+            loaded_capability_ids=frozenset(_parse_loaded_capabilities(evidence_window))
+            - ctx.deps.loaded_capability_ids,
+        )
         run_context = replace(
             run_context,
             retry=ctx.state.output_retries_used,
             max_retries=ctx.deps.tool_manager.default_max_retries,
+            _anchored_evidence=anchored_evidence,
         )
 
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+        # The manager was already prepared for this same run step before the model request, so
+        # `for_run_step` deliberately returns it unchanged, keeping the retries it accumulated —
+        # which is why the evidence lands field by field rather than by swapping in `run_context`.
+        # Only the retrospective evidence is carried: replacing the prospective shared sets would
+        # affect the next request's reveal pruning and search ranking.
+        assert ctx.deps.tool_manager.ctx is not None
+        ctx.deps.tool_manager.ctx._anchored_evidence = anchored_evidence  # pyright: ignore[reportPrivateUsage]
 
         # Under `end_strategy='early'`, `response_output` holds the response's `(text, files)`. If it carries a
         # valid non-tool output (schema-validated text, or an image) and every co-emitted tool call is a plain
@@ -2365,17 +2411,62 @@ def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAg
     ctx.deps.discovered_tool_names.update(discovered_tool_names)
 
 
+def _revealed_tool_names(
+    discovered: Iterable[str],
+    function_tools: Iterable[ToolDefinition],
+    *,
+    deferred_capability_ids: set[str],
+    loaded_capability_ids: set[str],
+) -> set[str]:
+    """Drop reveals whose owning capability is not available yet.
+
+    The ordering a run holds to is load, then reveal, then call: a capability's instructions and
+    hooks come as a bundle, and its tools should not reach the model ahead of the runbook for using
+    them. A reveal says a schema *may* be shown; it cannot stand in for the load.
+
+    Not a trust boundary, and not trying to be one. Any history the model could plausibly have
+    produced is honoured — fabricating a coherent `load_capability` exchange is equivalent to the
+    model having called it, and history integrity is the deployment's job. What is rejected is a
+    history no legitimate run could have produced: a capability tool revealed with no load behind it
+    describes a world that never existed, and honouring it would put the run in a state its own
+    rules forbid — including advertising a tool `ToolManager` will refuse to run.
+
+    Only *deferred* capabilities gate their tools this way. An always-on capability's search-gated
+    tool is revealed by discovery alone, which is why this needs `deferred_capability_ids` read from
+    the capability instances rather than a guess from the tool definitions.
+    """
+    owner_by_name = {
+        tool_def.name: tool_def.capability_id for tool_def in function_tools if tool_def.capability_id is not None
+    }
+    # The complement of `RunContext.available_capability_ids` over the run's capabilities: available
+    # is "not deferred, or loaded", so unavailable is "deferred and not loaded". Spelled from the
+    # two history-derived sets because this also runs against a bare message list, with no
+    # `RunContext` to ask — but it must keep answering exactly what `is_tool_available` answers.
+    unavailable_capability_ids = deferred_capability_ids - loaded_capability_ids
+    return {name for name in discovered if owner_by_name.get(name) not in unavailable_capability_ids}
+
+
 def _with_outgoing_reveal_state(
     parameters: models.ModelRequestParameters, messages: list[_messages.ModelMessage]
 ) -> models.ModelRequestParameters:
     """Make per-request reveal state match the history that will be sent to the model.
 
-    Deliberately not gated on capability-load markers from the same history: history is the trust
-    boundary (whoever can fabricate a reveal can fabricate the load exchange too), and eager
-    capabilities' search-gated tools are revealed with no load marker ever appearing —
-    `test_delta_in_history_reveals_a_capability_tool_without_a_load` pins the decision.
+    Gated on the same availability rule as the run-level state: a reveal naming a tool whose
+    deferred capability this history does not show as loaded is dropped, so the model is never
+    offered a tool it has not been properly given — and never one `ToolManager` would refuse to
+    run. An always-on capability's search-gated tools are unaffected: they carry no load marker by
+    design, and `deferred_capability_ids` is read from the capability instances, so they are not
+    in it.
     """
-    return replace(parameters, revealed_tool_names=parse_discovered_tools(messages))
+    return replace(
+        parameters,
+        revealed_tool_names=_revealed_tool_names(
+            parse_discovered_tools(messages),
+            parameters.function_tools,
+            deferred_capability_ids=parameters.deferred_capability_ids,
+            loaded_capability_ids=parse_loaded_capabilities(messages),
+        ),
+    )
 
 
 def build_validation_context(

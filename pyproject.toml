@@ -221,6 +221,8 @@ dev = [
     # The MCP SDK v2 wire types as a standalone pure-Pydantic distribution, so the tests can check
     # the compat readers' field-name pairs against the real v2 models while running against v1.
     "mcp-types>=2.0.0",
+    # BlockBuster minor releases may add breaking detection rules; keep this test detector on 1.5.x.
+    "blockbuster>=1.5.26,<1.6",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.408", "ruff>=0.14.14"]
 [tool.hatch.build.targets.wheel]

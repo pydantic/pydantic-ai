@@ -410,7 +410,8 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 | [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]`(function_tools=['...'])` | Restrict function tools while auto-including all output tools. |
 
 Tools hidden by [deferred loading](#tool-search) interact with `tool_choice`: a tool that is still
-hidden names are ignored when forcing by name, and an explicit choice raises only when every requested tool is hidden. `'required'` raises when every function
+hidden is ignored when forcing by name, and an explicit choice raises only when every requested
+tool is hidden. `'required'` raises when every function
 tool is hidden. A tool *declared* with its schema deferred can be forced. On providers that carry
 revealed definitions outside the `tools` list (OpenAI Responses `additional_tools`), a revealed
 tool can't be forced by name either, since by-name forcing can only target declared tools.

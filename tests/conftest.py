@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequen
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
-from functools import cached_property
+from functools import cache, cached_property
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
@@ -89,6 +89,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 if TYPE_CHECKING:
+    from blockbuster import BlockBuster
     from pluggy import Result
     from vcr.cassette import Cassette
 
@@ -337,6 +338,116 @@ def env() -> Iterator[TestEnv]:
 @pytest.fixture(scope='session')
 def anyio_backend():
     return 'asyncio'
+
+
+# Calls that are allowed to block in the event loop, as (blockbuster function, file, functions).
+# Each entry should say why the blocking call is acceptable; anything not listed here should be
+# fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
+BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
+    # coverage reads Python source files while collecting coverage data. Remove these once
+    # https://github.com/cbornet/blockbuster/pull/63 is released in a compatible version.
+    ('os.stat', 'coverage/python.py', 'get_python_source'),
+    ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source'),
+    # `load_mcp_toolsets` is a sync config-file loader; reading the file is its documented job.
+    ('os.stat', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
+    ('io.BufferedReader.read', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
+    # fastmcp's transport inference stats candidate paths when the client is constructed.
+    ('os.stat', 'pydantic_ai/mcp.py', '__init__'),
+    # boto3/botocore read AWS config files and service models during sync, setup-time client construction.
+    ('os.stat', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    ('os.listdir', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    ('io.BufferedReader.read', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    # google-genai's sync client constructor has google-auth read mTLS/credential config files.
+    ('os.stat', 'pydantic_ai/providers/google_cloud.py', '__init__'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/providers/google_cloud.py', '__init__'),
+    ('io.BufferedReader.read', 'pydantic_ai/providers/google_cloud.py', '__init__'),
+    # Anthropic's async Bedrock clients synchronously resolve/sign AWS credentials
+    # (https://github.com/anthropics/anthropic-sdk-python/issues/1770); remove after upstream
+    # covers both auth paths.
+    ('os.stat', 'anthropic/lib/bedrock/_auth.py', 'get_auth_headers'),
+    ('io.TextIOWrapper.read', 'anthropic/lib/bedrock/_auth.py', 'get_auth_headers'),
+    ('io.BufferedReader.read', 'anthropic/lib/bedrock/_auth.py', 'get_auth_headers'),
+    ('os.stat', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    ('io.TextIOWrapper.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    ('io.BufferedReader.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    # pydantic extracts field docstrings from source (`inspect`/`linecache`) the first time a
+    # tool schema is built, which can happen during an agent run.
+    ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/_function_schema.py', 'function_schema'),
+    # logfire resolves the current working directory while classifying user stack frames.
+    ('os.getcwd', 'logfire/_internal/stack_info.py', 'is_user_code'),
+    # `Dataset.to_file`/`from_file` and schema saving are sync serialization APIs; file I/O is
+    # their documented job, even when called from async user code.
+    ('os.stat', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.TextIOWrapper.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.TextIOWrapper.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.BufferedReader.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.BufferedWriter.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+]
+
+
+def _configure_blockbuster(
+    exemptions: Sequence[tuple[str, str, str | tuple[str, ...]]] = BLOCKBUSTER_EXEMPTIONS,
+    excluded_modules: tuple[str, ...] = (),
+) -> BlockBuster:
+    # BlockBuster imports ForbiddenFruit, which mutates builtins during import. Disabled CI lanes
+    # must remain unaffected by that instrumentation.
+    from blockbuster import BlockBuster
+
+    bb = BlockBuster(
+        ['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai'],
+        excluded_modules=excluded_modules or None,
+    )
+    for func, filename, functions in exemptions:
+        bb.functions[func].can_block_in(filename, functions)
+    return bb
+
+
+@cache
+def _configured_blockbuster(excluded_modules: tuple[str, ...]) -> BlockBuster:
+    """Create one configured detector for each module-exclusion set in a pytest worker."""
+    return _configure_blockbuster(excluded_modules=excluded_modules)
+
+
+@pytest.fixture
+def blockbuster_excluded_modules() -> tuple[str, ...]:
+    return ()
+
+
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    return True
+
+
+@contextmanager
+def _activated_blockbuster(blockbuster: BlockBuster) -> Generator[BlockBuster]:
+    try:
+        blockbuster.activate()
+        yield blockbuster
+    finally:
+        blockbuster.deactivate()
+
+
+@pytest.fixture(autouse=True)
+def blockbuster(
+    blockbuster_enabled: bool,
+    blockbuster_excluded_modules: tuple[str, ...],
+) -> Iterator[BlockBuster | None]:
+    """Raise `BlockingError` when library code makes a blocking call inside the event loop.
+
+    Scanned modules are the shipped packages only, so test-only and third-party stacks (e.g. VCR
+    reading cassettes) are ignored. Calls from user callbacks and tools remain covered when a
+    scanned library frame is below them. CI enables the detector on one complete Python-version
+    lane to avoid multiplying its stack-inspection overhead across the version matrix.
+    """
+    if os.getenv('BLOCKBUSTER_ENABLED') == 'false' or not blockbuster_enabled:
+        yield None
+        return
+
+    bb = _configured_blockbuster(blockbuster_excluded_modules)
+    with _activated_blockbuster(bb):
+        yield bb
 
 
 @pytest.fixture

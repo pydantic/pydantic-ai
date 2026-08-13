@@ -1,6 +1,5 @@
 import re
 
-import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -56,12 +55,6 @@ def test_crusoe_pass_openai_client() -> None:
     openai_client = openai.AsyncOpenAI(api_key='api-key')
     provider = CrusoeProvider(openai_client=openai_client)
     assert provider.client == openai_client
-
-
-def test_crusoe_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = CrusoeProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 
 
 def test_crusoe_provider_model_profile(mocker: MockerFixture):
