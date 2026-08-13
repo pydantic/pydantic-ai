@@ -650,7 +650,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # The agent's own literal instructions are one addressable block; instruction functions are
         # only addressable if `@agent.instructions(id=...)` declares an id for them.
-        self._instructions = _instructions.source_agent_instructions(_instructions.normalize_instructions(instructions))
+        self._instructions = [
+            _instructions.SourcedInstruction(
+                instruction,
+                id=_instructions.resolve_declared_id(
+                    _instructions.AGENT_INSTRUCTION_ID,
+                    instruction.id if isinstance(instruction, _messages.InstructionPart) else None,
+                )
+                if isinstance(instruction, (str, _messages.InstructionPart))
+                else None,
+            )
+            for instruction in _instructions.normalize_instructions(instructions)
+        ]
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -2997,7 +3008,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if override_instructions:
             # Override replaces all instructions, including capability contributions, so what it
             # provides takes the place of (and the id of) the agent's own instructions.
-            instructions = _instructions.source_agent_instructions(override_instructions.value)
+            instructions = [
+                _instructions.SourcedInstruction(
+                    instruction,
+                    id=_instructions.resolve_declared_id(
+                        _instructions.AGENT_INSTRUCTION_ID,
+                        instruction.id if isinstance(instruction, _messages.InstructionPart) else None,
+                    )
+                    if isinstance(instruction, (str, _messages.InstructionPart))
+                    else None,
+                )
+                for instruction in override_instructions.value
+            ]
         else:
             instructions = [*self._instructions]
             instructions.extend(cap_instructions if cap_instructions is not None else self._cap_instructions)
@@ -3005,9 +3027,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # Instructions passed to a specific run are already the caller's to change, and
                 # aren't part of the agent's own configured block.
                 instructions.extend(
-                    _instructions.source_instructions(
-                        _instructions.normalize_instructions(additional_instructions), None
-                    )
+                    _instructions.SourcedInstruction(instruction)
+                    for instruction in _instructions.normalize_instructions(additional_instructions)
                 )
 
         return instructions

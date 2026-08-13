@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from pydantic_ai._deferred_capabilities import LoadCapabilityArgs, LoadCapabilityReturn
-from pydantic_ai._instructions import resolve_instructions
+from pydantic_ai._instructions import resolve_sourced_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import InstructionPart, ToolReturn
@@ -84,11 +84,10 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         # capability were eager. `InstructionPart.join` below flattens the ids away today, because
         # a load delivers its instructions as tool-return text rather than as request parts — but
         # the identity is assigned in one place for both paths instead of two that can drift.
-        parts = [
-            InstructionPart(content=content, dynamic=True, id=sourced.id)
-            for sourced in capability._collect_instructions()  # pyright: ignore[reportPrivateUsage]
-            for content in await resolve_instructions(sourced.instruction, ctx)
-        ]
+        parts = await resolve_sourced_instructions(
+            capability._collect_instructions(),  # pyright: ignore[reportPrivateUsage]
+            ctx,
+        )
 
         parts.extend(await self._collect_owned_toolset_instructions(capability_id, ctx))
 

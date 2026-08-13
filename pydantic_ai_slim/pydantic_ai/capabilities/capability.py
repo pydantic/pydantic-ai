@@ -12,11 +12,11 @@ from pydantic_ai._instructions import (
     capability_instruction_id,
     normalize_instructions,
     resolve_declared_id,
-    source_instructions,
     validate_instruction_id_segment,
 )
 from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityDescription
+from pydantic_ai.messages import InstructionPart
 from pydantic_ai.tools import (
     ArgsValidatorFunc,
     DocstringFormat,
@@ -110,7 +110,15 @@ class Capability(AbstractCapability[AgentDepsT]):
         # `docs/capabilities/`). User-provided `toolsets=` keep their own ids and are never overwritten.
         self._function_toolset = FunctionToolset[AgentDepsT](tools, id=id)
         instruction_source_id = capability_instruction_id(id) if id is not None else None
-        self._instructions = source_instructions(normalize_instructions(instructions), instruction_source_id)
+        self._instructions = [
+            SourcedInstruction(
+                instruction,
+                id=resolve_declared_id(
+                    instruction_source_id, instruction.id if isinstance(instruction, InstructionPart) else None
+                ),
+            )
+            for instruction in normalize_instructions(instructions)
+        ]
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
