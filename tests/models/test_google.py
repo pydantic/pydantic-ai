@@ -103,8 +103,6 @@ with try_import() as imports_successful:
         GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
         GroundingChunk,
-        GroundingChunkImage,
-        GroundingChunkMaps,
         GroundingChunkWeb,
         GroundingMetadata,
         GroundingSupport,
@@ -129,7 +127,6 @@ with try_import() as imports_successful:
         GoogleCloudServiceTier,
         GoogleModel,
         GoogleModelSettings,
-        _citation_provider_details,  # pyright: ignore[reportPrivateUsage]
         _content_model_response,  # pyright: ignore[reportPrivateUsage]
         _map_grounding_citations,  # pyright: ignore[reportPrivateUsage]
         _metadata_as_usage,  # pyright: ignore[reportPrivateUsage]
@@ -4205,10 +4202,7 @@ Based on your location in **San Francisco**, here is the weather forecast for to
 **Note:** While it is currently comfortable in the city due to the marine layer (fog), meteorologists are tracking a heatwave expected to arrive later this week, which could bring much higher temperatures to the Bay Area by the weekend. For today, however, you can expect typical mild San Francisco summer weather.\
 """,
                         provider_name='google-cloud',
-                        provider_details={
-                            'thought_signature': IsStr(),
-                            'unsupported_grounding_metadata': IsInstance(dict),
-                        },
+                        provider_details={'thought_signature': IsStr()},
                         citations=IsCitationList(),
                     ),
                 ],
@@ -5407,7 +5401,7 @@ def test_google_grounding_ignores_offset_inside_character():
     assert _map_grounding_citations([Part(text='🙂')], metadata) == {}
 
 
-async def test_google_citation_metadata_is_preserved(
+async def test_google_unsupported_citation_metadata_is_not_exposed(
     allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
 ):
     """Gemini does not reliably emit direct citation metadata, so use a constructed provider response."""
@@ -5442,91 +5436,7 @@ async def test_google_citation_metadata_is_preserved(
 
     result = await Agent(model).run('Cite this')
 
-    assert result.all_messages()[1].parts == [
-        TextPart(
-            '🙂 café',
-            provider_name='google',
-            provider_details={
-                'citation_metadata': {
-                    'citations': [
-                        {
-                            'start_index': 5,
-                            'end_index': 10,
-                            'title': 'Café',
-                            'uri': 'https://example.com/cafe',
-                            'license': 'CC-BY',
-                        },
-                        {
-                            'start_index': 20,
-                            'end_index': 30,
-                            'title': 'Unmatched',
-                            'uri': 'https://example.com/unmatched',
-                        },
-                    ]
-                }
-            },
-        )
-    ]
-
-
-def test_google_unsupported_grounding_sources_are_preserved():
-    metadata = GroundingMetadata(
-        grounding_chunks=[
-            GroundingChunk(maps=GroundingChunkMaps(uri='https://maps.example/place', place_id='places/123')),
-            GroundingChunk(
-                image=GroundingChunkImage(
-                    source_uri='https://example.com/image-page', image_uri='https://example.com/image.jpg'
-                )
-            ),
-        ]
-    )
-
-    assert _citation_provider_details(metadata, None, {}) == {
-        'unsupported_grounding_metadata': {
-            'grounding_chunks': [
-                {'maps': {'place_id': 'places/123', 'uri': 'https://maps.example/place'}},
-                {
-                    'image': {
-                        'source_uri': 'https://example.com/image-page',
-                        'image_uri': 'https://example.com/image.jpg',
-                    }
-                },
-            ]
-        }
-    }
-
-
-def test_google_invalid_grounding_range_is_preserved():
-    metadata = GroundingMetadata(
-        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri='https://example.com'))],
-        grounding_supports=[
-            GroundingSupport(grounding_chunk_indices=[0], segment=Segment(start_index=10, end_index=20))
-        ],
-    )
-    mapped = _map_grounding_citations([Part(text='answer')], metadata)
-
-    assert mapped == {}
-    assert _citation_provider_details(metadata, None, mapped) == {
-        'unsupported_grounding_metadata': metadata.model_dump(mode='json', exclude_none=True)
-    }
-
-
-def test_google_partially_mapped_grounding_sources_are_preserved():
-    metadata = GroundingMetadata(
-        grounding_chunks=[
-            GroundingChunk(web=GroundingChunkWeb(uri='https://example.com')),
-            GroundingChunk(web=GroundingChunkWeb(title='Missing URL')),
-        ],
-        grounding_supports=[
-            GroundingSupport(grounding_chunk_indices=[0, 1], segment=Segment(start_index=0, end_index=6, text='answer'))
-        ],
-    )
-    mapped = _map_grounding_citations([Part(text='answer')], metadata)
-
-    assert len(mapped[0][0].sources) == 1
-    assert _citation_provider_details(metadata, None, mapped) == {
-        'unsupported_grounding_metadata': metadata.model_dump(mode='json', exclude_none=True)
-    }
+    assert result.all_messages()[1].parts == [TextPart('🙂 café')]
 
 
 async def test_google_stream_citations_follow_provider_part_index_on_metadata_only_chunk():
@@ -5565,10 +5475,6 @@ async def test_google_stream_citations_follow_provider_part_index_on_metadata_on
         TextPart('first'),
         TextPart(
             'second',
-            provider_name='google',
-            provider_details={
-                'unsupported_grounding_metadata': grounding_metadata.model_dump(mode='json', exclude_none=True)
-            },
             citations=[
                 Citation(
                     sources=[WebCitationSource(url='https://example.com', title='Example')],

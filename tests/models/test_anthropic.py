@@ -196,7 +196,7 @@ pytestmark = [
 ]
 
 
-def test_anthropic_supported_and_unsupported_citations():
+def test_anthropic_unsupported_citations_are_ignored():
     web = BetaCitationsWebSearchResultLocation(
         type='web_search_result_location',
         url='https://example.com',
@@ -212,9 +212,7 @@ def test_anthropic_supported_and_unsupported_citations():
         end_char_index=16,
         type='char_location',
     )
-    citations, provider_details = _map_citations([web, document])
-
-    assert citations == [
+    assert _map_citations([web, document]) == [
         Citation(
             sources=[
                 WebCitationSource(
@@ -225,7 +223,6 @@ def test_anthropic_supported_and_unsupported_citations():
             ]
         )
     ]
-    assert provider_details == {'citations': [document.model_dump()]}
 
 
 async def test_anthropic_stream_citations(allow_model_requests: None):
@@ -303,8 +300,6 @@ async def test_anthropic_stream_citations(allow_model_requests: None):
     assert response.parts == [
         TextPart(
             'answer',
-            provider_name='anthropic',
-            provider_details={'citations': [citation.model_dump() for citation in unsupported]},
             citations=[
                 Citation(
                     sources=[

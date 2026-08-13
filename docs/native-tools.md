@@ -1162,8 +1162,8 @@ A citation can reference one or more web or document sources. Its optional
 `kind='marker'` identifies a citation marker already present in the model output. An absent anchor means the provider
 did not supply a text range that Pydantic AI could safely normalize.
 
-Other provider-specific citation data remains available in `provider_details`. Treat citation URLs and titles as
-untrusted data when rendering them.
+Provider-specific data associated with a normalized source or citation remains available in its `provider_details`.
+Unsupported citation shapes are ignored. Treat citation URLs and titles as untrusted data when rendering them.
 
 ## API Reference
 

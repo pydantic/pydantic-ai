@@ -78,7 +78,6 @@ try:
     from google.genai import Client, errors
     from google.genai.types import (
         BlobDict,
-        CitationMetadata,
         CodeExecutionResult,
         CodeExecutionResultDict,
         ContentDict,
@@ -1029,7 +1028,6 @@ class GoogleModel(Model[Client]):
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
         grounding_metadata = candidate.grounding_metadata if candidate else None
-        citation_metadata = candidate.citation_metadata if candidate else None
         url_context_metadata = candidate.url_context_metadata if candidate else None
 
         return _process_response_from_parts(
@@ -1040,7 +1038,6 @@ class GoogleModel(Model[Client]):
             self._provider.base_url,
             usage,
             provider_response_id=provider_response_id,
-            citation_metadata=citation_metadata,
             provider_details=provider_details or None,
             finish_reason=finish_reason,
             url_context_metadata=url_context_metadata,
@@ -1592,7 +1589,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 if parts:
                     del self._active_parts[len(parts) :]
 
-                if candidate.grounding_metadata or candidate.citation_metadata:
+                if candidate.grounding_metadata:
                     if candidate.grounding_metadata and candidate.grounding_metadata.grounding_chunks:
                         self._grounding_chunks.extend(candidate.grounding_metadata.grounding_chunks)
                     google_parts = [Part() for _ in self._part_ids]
@@ -1623,31 +1620,6 @@ class GeminiStreamedResponse(StreamedResponse):
                                 citations=new_citations,
                             ):
                                 yield event
-                    unsupported_metadata = _citation_provider_details(
-                        candidate.grounding_metadata,
-                        candidate.citation_metadata,
-                        grounding_citations,
-                        grounding_chunks=self._grounding_chunks,
-                    )
-                    last_text_part_id = next(
-                        (
-                            part_id
-                            for part_id in reversed(self._part_ids)
-                            if part_id and isinstance(self._parts_manager.get_part_by_vendor_id(part_id), TextPart)
-                        ),
-                        None,
-                    )
-                    if last_text_part_id and unsupported_metadata:
-                        for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id=last_text_part_id,
-                            content='',
-                            provider_name=self.provider_name,
-                            provider_details=unsupported_metadata,
-                        ):
-                            yield event
-                    elif unsupported_metadata:
-                        self.provider_details = {**(self.provider_details or {}), **unsupported_metadata}
-
                 # Grounding metadata is attached to the final text chunk, so
                 # we emit the `NativeToolReturnPart` after the text delta so
                 # that the delta is properly added to the same `TextPart` as earlier chunks
@@ -2076,38 +2048,6 @@ def _map_grounding_citations(
     return citations_by_part
 
 
-def _citation_provider_details(
-    grounding_metadata: GroundingMetadata | None,
-    citation_metadata: CitationMetadata | None,
-    grounding_citations: dict[int, list[Citation]],
-    *,
-    grounding_chunks: Sequence[GroundingChunk] | None = None,
-) -> dict[str, Any] | None:
-    details: dict[str, Any] = {}
-    grounding_supports = (grounding_metadata and grounding_metadata.grounding_supports) or []
-    grounding_chunks = (
-        grounding_chunks
-        if grounding_chunks is not None
-        else (grounding_metadata and grounding_metadata.grounding_chunks) or []
-    )
-    has_unmapped_source = any(
-        chunk_index < 0
-        or chunk_index >= len(grounding_chunks)
-        or _map_grounding_source(grounding_chunks[chunk_index]) is None
-        for support in grounding_supports
-        for chunk_index in support.grounding_chunk_indices or []
-    )
-    if grounding_metadata and (
-        any(chunk.maps or chunk.image for chunk in grounding_chunks)
-        or has_unmapped_source
-        or sum(map(len, grounding_citations.values())) < len(grounding_supports)
-    ):
-        details['unsupported_grounding_metadata'] = grounding_metadata.model_dump(mode='json', exclude_none=True)
-    if citation_metadata:
-        details['citation_metadata'] = citation_metadata.model_dump(mode='json', exclude_none=True)
-    return details or None
-
-
 def _process_response_from_parts(
     parts: list[Part],
     grounding_metadata: GroundingMetadata | None,
@@ -2116,7 +2056,6 @@ def _process_response_from_parts(
     provider_url: str,
     usage: usage.RequestUsage,
     provider_response_id: str | None,
-    citation_metadata: CitationMetadata | None = None,
     provider_details: dict[str, Any] | None = None,
     finish_reason: FinishReason | None = None,
     url_context_metadata: UrlContextMetadata | None = None,
@@ -2149,13 +2088,6 @@ def _process_response_from_parts(
             if isinstance(item, NativeToolReturnPart):
                 _fill_empty_file_search_return_content(item, grounding_metadata)
             items.append(item)
-
-    if unsupported_metadata := _citation_provider_details(grounding_metadata, citation_metadata, grounding_citations):
-        if text_item := next((item for item in reversed(items) if isinstance(item, TextPart)), None):
-            text_item.provider_name = provider_name
-            text_item.provider_details = {**(text_item.provider_details or {}), **unsupported_metadata}
-        else:
-            provider_details = {**(provider_details or {}), **unsupported_metadata}
 
     return ModelResponse(
         parts=items,
