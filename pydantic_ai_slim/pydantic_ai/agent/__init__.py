@@ -2199,7 +2199,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         def decorator(
             func_: SystemPromptFunc[AgentDepsT],
         ) -> SystemPromptFunc[AgentDepsT]:
-            self._instructions.append(_instructions.SourcedInstruction(func_, instruction_id))
+            self._instructions.append(_instructions.SourcedInstruction(func_, id=instruction_id))
             return func_
 
         return decorator if func is None else decorator(func)
@@ -3060,7 +3060,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # any other system prompt function.
                 functions.append(
                     _instructions.SourcedInstructionRunner(
-                        _system_prompt.SystemPromptRunner[AgentDepsT](instruction), sourced.id
+                        _system_prompt.SystemPromptRunner[AgentDepsT](instruction), id=sourced.id
                     )
                 )
         flush_group()

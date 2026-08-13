@@ -169,7 +169,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         ]
         return instructions or None
 
-    def __ordered_instruction_sources(self) -> list[AbstractCapability[AgentDepsT]]:
+    def _ordered_instruction_sources(self) -> list[AbstractCapability[AgentDepsT]]:
         """The composition view, in the order the ordering pass settled the leaves into.
 
         Instruction blocks have always followed `capabilities`, which `__normalize_capabilities`
@@ -196,7 +196,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         instructions: list[SourcedInstruction[AgentDepsT]] = []
-        for capability in self.__ordered_instruction_sources():
+        for capability in self._ordered_instruction_sources():
             if capability.defer_loading is True:
                 continue
             if (

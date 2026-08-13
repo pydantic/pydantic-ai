@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Generic
 
 from pydantic_ai._run_context import AgentDepsT, RunContext
+from pydantic_ai._utils import dataclasses_no_defaults_repr
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.template import TemplateStr
@@ -92,13 +93,16 @@ def resolve_declared_id(source_id: str | None, declared_id: str | None) -> str |
     return declared_instruction_id(source_id, declared_id)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class SourcedInstruction(Generic[AgentDepsT]):
     """An agent-level instruction along with the `InstructionPart.id` its content should be addressed by."""
 
-    instruction: str | InstructionPart | SystemPromptFunc[AgentDepsT]
+    instruction: AgentInstruction[AgentDepsT]
+
+    _: KW_ONLY
+
     id: str | None = None
-    source: object = field(default_factory=object)
+    source: object = field(default_factory=object, repr=False)
     """Identity of the source this came from, so blocks can be grouped by it rather than by `id`.
 
     Unidentified sources all have `id` `None`, and grouping on that alone would render an anonymous
@@ -107,8 +111,10 @@ class SourcedInstruction(Generic[AgentDepsT]):
     token, so an instruction only shares a source by being given one.
     """
 
+    __repr__ = dataclasses_no_defaults_repr
 
-@dataclass(frozen=True)
+
+@dataclass(frozen=True, repr=False)
 class DeclaredInstruction(Generic[AgentDepsT]):
     """An instruction with the id its author declared for it, relative to the source that holds it.
 
@@ -116,16 +122,26 @@ class DeclaredInstruction(Generic[AgentDepsT]):
     `id`) store this and combine the two halves then.
     """
 
-    instruction: str | InstructionPart | SystemPromptFunc[AgentDepsT]
+    instruction: AgentInstruction[AgentDepsT]
+
+    _: KW_ONLY
+
     declared_id: str | None = None
 
+    __repr__ = dataclasses_no_defaults_repr
 
-@dataclass(frozen=True)
+
+@dataclass(frozen=True, repr=False)
 class SourcedInstructionRunner(Generic[AgentDepsT]):
     """A prepared instruction function along with the `InstructionPart.id` its output should be addressed by."""
 
     runner: _system_prompt.SystemPromptRunner[AgentDepsT]
+
+    _: KW_ONLY
+
     id: str | None = None
+
+    __repr__ = dataclasses_no_defaults_repr
 
 
 def declared_id_of(instruction: AgentInstruction[AgentDepsT]) -> str | None:
@@ -149,7 +165,7 @@ def source_instructions(
     """
     source = object()
     return [
-        SourcedInstruction(instruction, resolve_declared_id(id, declared_id_of(instruction)), source)
+        SourcedInstruction(instruction, id=resolve_declared_id(id, declared_id_of(instruction)), source=source)
         for instruction in instructions
     ]
 
@@ -167,8 +183,8 @@ def source_declared_instructions(
     return [
         SourcedInstruction(
             declared.instruction,
-            resolve_declared_id(source_id, declared.declared_id or declared_id_of(declared.instruction)),
-            source,
+            id=resolve_declared_id(source_id, declared.declared_id or declared_id_of(declared.instruction)),
+            source=source,
         )
         for declared in instructions
     ]
@@ -187,10 +203,10 @@ def source_agent_instructions(
     return [
         SourcedInstruction(
             instruction,
-            resolve_declared_id(AGENT_INSTRUCTION_ID, declared_id_of(instruction))
+            id=resolve_declared_id(AGENT_INSTRUCTION_ID, declared_id_of(instruction))
             if isinstance(instruction, (str, InstructionPart))
             else None,
-            source,
+            source=source,
         )
         for instruction in instructions
     ]

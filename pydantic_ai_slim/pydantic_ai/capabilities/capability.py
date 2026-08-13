@@ -355,7 +355,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         def decorator(
             func_: SystemPromptFunc[AgentDepsT],
         ) -> SystemPromptFunc[AgentDepsT]:
-            self._instructions.append(DeclaredInstruction[AgentDepsT](func_, id))
+            self._instructions.append(DeclaredInstruction[AgentDepsT](func_, declared_id=id))
             return func_
 
         return decorator if func is None else decorator(func)
