@@ -2810,6 +2810,46 @@ async def test_prefect_durability_dynamic_capability_tool_runs_as_task() -> None
     assert task_run_names[0].startswith('Call Tool: dynamic_tool')
 
 
+async def test_prefect_durability_task_name_assembly_sequence() -> None:
+    task_names: list[str] = []
+
+    class RecordingTestModel(TestModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            task_run_context = TaskRunContext.get()
+            assert task_run_context is not None
+            task_names.append(task_run_context.task.name)
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    def function_tool() -> str:
+        task_run_context = TaskRunContext.get()
+        assert task_run_context is not None
+        task_names.append(task_run_context.task.name)
+        return 'function'
+
+    agent = Agent(
+        RecordingTestModel(),
+        name='prefect_name_sequence',
+        toolsets=[FunctionToolset(tools=[function_tool], id='functions')],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Call every tool')).output
+
+    assert await run_agent() == '{"function_tool":"function"}'
+    assert task_names == [
+        'Model Request: test',
+        'Call Tool: function_tool',
+        'Model Request: test',
+    ]
+
+
 def test_prefect_durability_dynamic_capability_requires_id() -> None:
     def factory(ctx: RunContext[Any]) -> Capability[Any]:
         # Construction raises before the factory can run.

@@ -76,9 +76,10 @@ DBOS_OPERATION_NAMES = {
 }
 
 
-class JournalDurability(BaseDurabilityCapability[None]):
+class JournalDurability(BaseDurabilityCapability[Any]):
     engine_name = 'Journal compatibility stub'
     _codec: ClassVar = JSON_CODEC
+    _unsupported_runtime_toolset_kinds: ClassVar = frozenset()
     _wrapped_toolset_kinds: ClassVar = frozenset({'function', 'mcp', 'dynamic'})
     _toolset_lifecycles: ClassVar[Mapping[ToolsetKind, Lifecycle]] = {
         'function': 'enter-always',
@@ -90,12 +91,53 @@ class JournalDurability(BaseDurabilityCapability[None]):
 
     @property
     def in_durable_context(self) -> bool:
-        return False
+        return True
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.recorded_names: list[str] = []
 
     async def run_durable_unit(
         self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
     ) -> Any:
+        self.recorded_names.append(name)
         return await fn()
+
+
+async def test_journal_operation_name_assembly_sequence() -> None:
+    async def function_tool() -> str:
+        return 'function'
+
+    async def dynamic_tool() -> str:
+        return 'dynamic'
+
+    function_toolset = FunctionToolset(tools=[function_tool], id='functions')
+    dynamic_toolset = DynamicToolset(lambda _: FunctionToolset(tools=[dynamic_tool]), id='dynamic')
+    agent = Agent(
+        TestModel(),
+        name='compat',
+        toolsets=[function_toolset, dynamic_toolset],
+        capabilities=[JournalDurability(event_stream_handler=_event_handler)],
+    )
+
+    result = await agent.run('Call every tool')
+
+    assert result.output == '{"function_tool":"function","dynamic_tool":"dynamic"}'
+    durability = JournalDurability.from_agent(agent)
+    assert durability is not None
+    assert durability.recorded_names == [
+        'compat__dynamic_toolset__dynamic.get_tools',
+        'compat__model.request_stream',
+        'compat__event_stream_handler',
+        'compat__event_stream_handler',
+        'compat__function_toolset__functions.call_tool:function_tool',
+        'compat__dynamic_toolset__dynamic.call_tool:dynamic_tool',
+        'compat__event_stream_handler',
+        'compat__event_stream_handler',
+        'compat__dynamic_toolset__dynamic.get_tools',
+        'compat__model.request_stream',
+    ]
+    assert set(durability.recorded_names) <= JOURNAL_OPERATION_NAMES
 
 
 def test_default_journal_operation_name_matrix() -> None:
