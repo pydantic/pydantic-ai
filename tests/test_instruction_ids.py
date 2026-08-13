@@ -774,6 +774,27 @@ async def test_an_unidentified_source_gets_a_part_per_block():
     ]
 
 
+async def test_a_callable_between_literals_does_not_split_the_agent_block():
+    """A key names one block, so an intervening callable must not turn `'agent'` into two parts.
+
+    `Agent(instructions=[...])` may mix literals and functions freely, and the literals are the
+    agent's base prompt however they're interleaved. Flushing the group at each callable would make
+    the identity of `'agent'` depend on where an unrelated function happens to sit in the list —
+    reordering the argument would silently change how many parts an application addressing `'agent'`
+    has to rewrite. The callable stays its own unidentified block, as any callable does.
+    """
+
+    def dynamic_instruction(ctx: RunContext[Any]) -> str:
+        return 'From a function.'
+
+    agent = Agent(instructions=['Literal one.', dynamic_instruction, 'Literal two.'])
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Literal one.\n\nLiteral two.', id='agent'),
+        InstructionPart(content='From a function.', dynamic=True),
+    ]
+
+
 async def test_resuming_does_not_stamp_instructions_onto_a_mock_request():
     """The rewrite lands on the message the echoed instructions came from, not on the trailing request.
 
