@@ -81,10 +81,16 @@ code_examples: dict[str, CodeExample] = {}
 
 
 @pytest.fixture(autouse=True)
-def blockbuster_enabled(example: CodeExample) -> bool:
-    """Skip the detector for pytest-examples' synchronous output-file reader."""
-    if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
-        return False
+def blockbuster_enabled(request: pytest.FixtureRequest) -> bool:
+    """Skip the detector for pytest-examples' synchronous output-file reader.
+
+    Not every test in this file is a parametrized example test, so the `example`
+    fixture is looked up dynamically rather than required.
+    """
+    if 'example' in request.fixturenames:
+        example = request.getfixturevalue('example')
+        if isinstance(example, CodeExample) and example.prefix_settings().get('title') == 'voyageai_embeddings.py':
+            return False
     return True
 
 
