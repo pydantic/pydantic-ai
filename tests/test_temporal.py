@@ -69,6 +69,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._run_context import AnchoredEvidence
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
@@ -4457,6 +4458,44 @@ def test_temporal_run_context_serializes_usage_limits():
 
     reconstructed = TemporalRunContext.deserialize_run_context(serialized, deps=None)
     assert reconstructed.usage_limits == ctx.usage_limits
+
+
+async def test_temporal_run_context_preserves_anchored_evidence():
+    """Provider-exact evidence is computed workflow-side and survives the untyped activity payload."""
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        _anchored_evidence=AnchoredEvidence(
+            discovered_tool_names=frozenset({'deferred_tool'}),
+            loaded_capability_ids=frozenset({'deferred_capability'}),
+        ),
+    )
+
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    reconstructed = TemporalRunContext.deserialize_run_context(wire, deps=None)
+
+    assert reconstructed._anchored_evidence == AnchoredEvidence(  # pyright: ignore[reportPrivateUsage]
+        discovered_tool_names=frozenset({'deferred_tool'}),
+        loaded_capability_ids=frozenset({'deferred_capability'}),
+    )
+
+
+async def test_temporal_run_context_without_anchored_evidence_still_answers_availability():
+    """A payload that predates the field keeps answering, with the history-derived window.
+
+    `serialize_run_context` is a documented override point, so a subclass written against an
+    earlier version returns a dict without it. Guarding it like the other omitted fields would
+    turn that into a `UserError` from a tool that only asked whether it may run.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    older_payload = {name: value for name, value in wire.items() if name != '_anchored_evidence'}
+
+    reconstructed = TemporalRunContext.deserialize_run_context(older_payload, deps=None)
+
+    assert reconstructed._anchored_evidence == AnchoredEvidence()  # pyright: ignore[reportPrivateUsage]
+    assert reconstructed.is_tool_available(ToolDefinition(name='hidden', defer_loading=True)) is False
 
 
 def test_temporal_run_context_serialization_is_exhaustive():

@@ -49,6 +49,171 @@ from .capability_models import (
 )
 from .conftest import iter_message_parts
 
+_INVALID_WIRE_BOUNDARIES = [
+    pytest.param(CompactionPart(content='foreign', provider_name='anthropic'), 'openai', id='foreign-provider'),
+    pytest.param(CompactionPart(provider_name='openai'), 'openai', id='openai-without-encrypted-content'),
+    pytest.param(CompactionPart(provider_name='anthropic'), 'anthropic', id='anthropic-without-content'),
+]
+
+
+def _provider_response(parts: list[Any], provider_name: str | None) -> ModelResponse:
+    """Build a response whose explicit provenance drives the retrospective evidence window."""
+    return ModelResponse(parts=parts, provider_name=provider_name)
+
+
+@pytest.mark.parametrize(('boundary', 'provider_name'), _INVALID_WIRE_BOUNDARIES)
+async def test_deferred_tool_call_uses_serving_providers_wire_window(boundary: CompactionPart, provider_name: str):
+    """A boundary the serving provider skipped cannot erase deferred-tool callability evidence.
+
+    The test explicitly stamps `ModelResponse.provider_name`; a bare `FunctionModel` would exercise
+    the missing-provenance fallback instead.
+    """
+    calls = 0
+    advertised: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        advertised.append([tool.name for tool in info.function_tools])
+        if any(
+            isinstance(part, ToolReturnPart) and part.tool_name == 'hidden' for msg in messages for part in msg.parts
+        ):
+            return _provider_response([make_text_response('done').parts[0]], provider_name)
+        return _provider_response([ToolCallPart(tool_name='hidden', args={}, tool_call_id='h1')], provider_name)
+
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(lambda: ToolReturn(return_value='ran', tools=['hidden']), name='hidden', defer_loading=True)
+    agent = Agent(FunctionModel(model_fn), toolsets=[toolset])
+    history = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden'])]),
+        ModelResponse(parts=[boundary]),
+    ]
+
+    result = await agent.run('go', message_history=history)
+
+    assert result.output == 'done'
+    assert calls == 2
+    # The retrospective supplement did not widen the shared prospective set: the tool was still
+    # absent from the serving request, its explicit re-disclosure survived pruning, and only the
+    # following request advertised it.
+    assert 'hidden' not in advertised[0]
+    assert 'hidden' in advertised[1]
+    assert any(
+        isinstance(part, ToolAvailabilityDeltaPart) and part.tools_added == ['hidden']
+        for message in result.all_messages()
+        for part in message.parts
+    )
+
+
+@pytest.mark.parametrize(('boundary', 'provider_name'), _INVALID_WIRE_BOUNDARIES)
+async def test_capability_tool_call_uses_serving_providers_wire_window(boundary: CompactionPart, provider_name: str):
+    """The provider-exact supplement covers capability load and tool discovery independently.
+
+    The test explicitly stamps `ModelResponse.provider_name`; a bare `FunctionModel` would exercise
+    the missing-provenance fallback instead.
+    """
+
+    def guarded_tool() -> str:
+        return 'ran'
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(
+            isinstance(part, ToolReturnPart) and part.tool_name == 'guarded_tool'
+            for msg in messages
+            for part in msg.parts
+        ):
+            return _provider_response([make_text_response('done').parts[0]], provider_name)
+        return _provider_response([ToolCallPart(tool_name='guarded_tool', args={}, tool_call_id='g1')], provider_name)
+
+    capability = Capability[Any](
+        id='guarded', description='Guarded.', toolsets=[FunctionToolset([guarded_tool])], defer_loading=True
+    )
+    agent = Agent(FunctionModel(model_fn), capabilities=[capability])
+    history = [
+        ModelResponse(
+            parts=[LoadCapabilityCallPart(args={'id': 'guarded'}, tool_call_id='load')], provider_name=provider_name
+        ),
+        ModelRequest(
+            parts=[
+                LoadCapabilityReturnPart(content={}, tool_call_id='load'),
+                ToolAvailabilityDeltaPart(tools_added=['guarded_tool']),
+            ]
+        ),
+        ModelResponse(parts=[boundary]),
+    ]
+
+    result = await agent.run('go', message_history=history)
+
+    assert result.output == 'done'
+
+
+async def test_compaction_inside_serving_response_does_not_reset_tool_evidence():
+    """Anthropic may compact mid-response; explicit provenance exercises the strict-before rule."""
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(lambda: 'ran', name='hidden', defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(
+            isinstance(part, ToolReturnPart) and part.tool_name == 'hidden' for msg in messages for part in msg.parts
+        ):
+            return _provider_response([make_text_response('done').parts[0]], 'anthropic')
+        return _provider_response(
+            [
+                CompactionPart(content='summary', provider_name='anthropic'),
+                ToolCallPart(tool_name='hidden', args={}, tool_call_id='h1'),
+            ],
+            'anthropic',
+        )
+
+    result = await Agent(FunctionModel(model_fn), toolsets=[toolset]).run(
+        'go', message_history=[ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden'])])]
+    )
+
+    assert result.output == 'done'
+
+
+async def test_missing_provider_name_uses_agnostic_window():
+    """An unstamped `FunctionModel` response has `provider_name=None`, so the agnostic cut wins."""
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(lambda: 'ran', name='hidden', defer_loading=True)
+    history = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden'])]),
+        ModelResponse(parts=[CompactionPart(content='summary', provider_name='anthropic')]),
+    ]
+
+    def call_hidden(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+            return make_text_response(str(part.content))
+        return ModelResponse(parts=[ToolCallPart(tool_name='hidden', args={}, tool_call_id='h1')])
+
+    result = await Agent(FunctionModel(call_hidden), toolsets=[toolset]).run('go', message_history=history)
+
+    assert 'is not available yet' in result.output
+
+
+async def test_boundary_the_serving_provider_honored_still_hides_evidence():
+    """Anchoring makes the window exact, not permissive.
+
+    The counterpart to the cases above: when the serving provider is the one that emitted the
+    boundary and the payload it renders is there, the request really did start over, so the
+    pre-boundary reveal is gone from the model's view and the call has to be refused.
+    """
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(lambda: 'ran', name='hidden', defer_loading=True)
+    history = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden'])]),
+        ModelResponse(parts=[CompactionPart(content='summary', provider_name='anthropic')], provider_name='anthropic'),
+    ]
+
+    def call_hidden(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+            return _provider_response([make_text_response(str(part.content)).parts[0]], 'anthropic')
+        return _provider_response([ToolCallPart(tool_name='hidden', args={}, tool_call_id='h1')], 'anthropic')
+
+    result = await Agent(FunctionModel(call_hidden), toolsets=[toolset]).run('go', message_history=history)
+
+    assert 'is not available yet' in result.output
+
 
 def secret_op() -> str:
     """A capability-owned tool an owner's `prepare_tools` filters out."""
@@ -121,9 +286,7 @@ class TestUnavailableCapabilityToolsAreNotCallable:
         result = await agent.run('hello')
 
         assert result.output == snapshot(
-            "BLOCKED: Tool 'secret_op' is not available yet: it belongs to capability 'guarded'. "
-            'Call `load_capability` for it first, then call the tool on a later turn, once the '
-            "capability's instructions are in view."
+            "BLOCKED: Tool 'secret_op' is not available yet: it belongs to capability 'guarded'. Call `load_capability` for it first, then call the tool again once you've read the capability's instructions."
         )
 
     async def test_capability_tool_is_refused_again_after_compaction(self):
@@ -153,8 +316,7 @@ class TestUnavailableCapabilityToolsAreNotCallable:
         result = await agent.run('hello')
 
         assert result.output == snapshot(
-            "BLOCKED: Tool 'secret_op' is not available yet: search for it first, then call it once "
-            'the search result has shown you its schema.'
+            "BLOCKED: Tool 'secret_op' is not available yet: search for it first, then call it again once you've seen its schema."
         )
 
     async def test_an_availability_refusal_leaves_room_to_act_on_it(self):
@@ -342,6 +504,56 @@ async def test_loaded_capability_tool_survives_a_stripped_reveal_marker() -> Non
             ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'guarded'}, tool_call_id='l1')]),
             ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='l1')]),
             ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['secret_op'])]),
+        ],
+    )
+
+    assert result.output == 'EXECUTED'
+    refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
+    assert refusals == []
+
+
+async def test_stripped_reveal_marker_survives_a_boundary_the_wire_skipped() -> None:
+    """The load-is-the-reveal shortcut has to read the anchored window, not just the agnostic one.
+
+    Where the two features meet, both halves of the evidence are hidden from the provider-agnostic
+    window: the boundary moves the load out of `loaded_capability_ids`, and history processing
+    removes the delta that would otherwise stand in for it. Only the anchored window still holds
+    the load, and only the shortcut can turn it into an answer, since nothing else discloses a
+    capability's own tools.
+    """
+    calls = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        returns = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.tool_name == 'secret_op']
+        if returns:
+            return _provider_response([make_text_response('EXECUTED').parts[0]], 'openai')
+        return _provider_response([ToolCallPart(tool_name='secret_op', args={}, tool_call_id=f'c{calls}')], 'openai')
+
+    def strip_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(message, parts=[p for p in message.parts if not isinstance(p, ToolAvailabilityDeltaPart)])
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages
+        ]
+
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(secret_op, defer_loading=True)
+    guarded = Capability[Any](id='guarded', description='Guarded tools.', toolsets=[toolset], defer_loading=True)
+    agent = Agent(FunctionModel(model_fn), capabilities=[guarded, ProcessHistory(strip_deltas)])
+
+    result = await agent.run(
+        'use the tool',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='load it')]),
+            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'guarded'}, tool_call_id='l1')]),
+            ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='l1')]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['secret_op'])]),
+            # Stamped by another provider, so the OpenAI request that carried this call replayed
+            # the whole history and the model saw the load exchange.
+            ModelResponse(parts=[CompactionPart(content='foreign', provider_name='anthropic')]),
         ],
     )
 

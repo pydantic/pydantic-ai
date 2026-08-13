@@ -124,7 +124,7 @@ Use `ctx.is_tool_available(tool_def)` when a wrapping toolset needs to decide wh
 
 Message history matters. Loaded capability state is reconstructed from matching `LoadCapabilityCallPart` and `LoadCapabilityReturnPart` pairs, while revealed function-tool state is reconstructed from `ToolAvailabilityDeltaPart` entries. A history processor must preserve the deltas or the complete capability-load pairs from which Pydantic AI can reconstruct them. If it removes both representations, those tools become hidden again.
 
-A `CompactionPart` resets both forms of derived state at its exact position. Capability tools loaded before the boundary become hidden, and are not callable, until the capability is loaded again; a call to one is refused with a "not available yet" retry naming the capability to load.
+A `CompactionPart` resets both forms of prospective derived state at its exact position, so future requests load and reveal capability tools again. For a call in the response currently being dispatched, pre-boundary evidence still counts when the serving provider did not honor that boundary on the request wire; otherwise a call without visible load evidence is refused with a "not available yet" retry naming the capability to load.
 
 ## Dynamic Descriptions and Instructions
 
