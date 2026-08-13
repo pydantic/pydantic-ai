@@ -155,7 +155,7 @@ As an alternative to the capability, you can pass the lower-level [`XSearchTool`
 
 ## File attachments
 
-When you include a document in a user prompt, xAI automatically uses its `attachment_search` server-side tool to search the document. Set [`XaiModelSettings.xai_include_attachment_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_attachment_search_output] to `True` to include the raw search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. See [document input](../input.md#document-input) for supported input forms.
+When you include a document in a user prompt, xAI automatically uses its `attachment_search` server-side tool to search the document. The resulting [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] have a `tool_name` of `'attachment_search'`. Set [`XaiModelSettings.xai_include_attachment_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_attachment_search_output] to `True` to include the raw search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. See [document input](../input.md#document-input) for supported input forms.
 
 Attachment search applies to files attached directly to a conversation. To search persistent xAI collections instead, use [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool].
 

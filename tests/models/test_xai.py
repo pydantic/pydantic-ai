@@ -6120,6 +6120,130 @@ async def test_xai_attachment_search_tool_call_round_trip(allow_model_requests: 
     )
 
 
+async def test_xai_attachment_search_tool_stream(allow_model_requests: None):
+    """Test that a streamed server-side attachment search call emits native tool call/return parts and events."""
+    attachment_search_tool_call = create_server_tool_call(
+        tool_name='attachment_search',
+        arguments={'query': 'my attachments'},
+        tool_call_id='attachment_001',
+        tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL,
+        status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
+    )
+
+    tool_output_json = json.dumps({'results': ['attachment content']})
+
+    stream: list[tuple[chat_types.Response, chat_types.Chunk]] = [
+        (
+            create_response(content='', tool_calls=[attachment_search_tool_call], finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, tool_calls=[attachment_search_tool_call]),
+        ),
+        (
+            create_response(content=tool_output_json, tool_calls=[attachment_search_tool_call], finish_reason='stop'),
+            create_stream_chunk(
+                role=chat_pb2.MessageRole.ROLE_TOOL, tool_calls=[attachment_search_tool_call], content=tool_output_json
+            ),
+        ),
+        (
+            create_response(content='Found your attachments.', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='Found your attachments.'),
+        ),
+    ]
+
+    mock_client = MockXai.create_mock_stream([stream])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=XaiModelSettings(xai_include_attachment_search_output=True))
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='Search my attachments') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Search my attachments', timestamp=IsDatetime())],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='attachment_search',
+                        args={'query': 'my attachments'},
+                        tool_call_id='attachment_001',
+                        provider_name='xai',
+                        provider_details={'function_name': 'attachment_search'},
+                    ),
+                    NativeToolReturnPart(
+                        tool_name='attachment_search',
+                        content={'results': ['attachment content']},
+                        tool_call_id='attachment_001',
+                        timestamp=IsDatetime(),
+                        provider_name='xai',
+                    ),
+                    TextPart(content='Found your attachments.'),
+                ],
+                usage=RequestUsage(cost=Decimal('0.00')),
+                model_name='grok-4-fast-non-reasoning',
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id='grok-123',
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=NativeToolCallPart(
+                    tool_name='attachment_search',
+                    args={'query': 'my attachments'},
+                    tool_call_id='attachment_001',
+                    provider_name='xai',
+                    provider_details={'function_name': 'attachment_search'},
+                ),
+            ),
+            PartEndEvent(
+                index=0,
+                part=NativeToolCallPart(
+                    tool_name='attachment_search',
+                    args={'query': 'my attachments'},
+                    tool_call_id='attachment_001',
+                    provider_name='xai',
+                    provider_details={'function_name': 'attachment_search'},
+                ),
+                next_part_kind='builtin-tool-return',
+            ),
+            PartStartEvent(
+                index=1,
+                part=NativeToolReturnPart(
+                    tool_name='attachment_search',
+                    content={'results': ['attachment content']},
+                    tool_call_id='attachment_001',
+                    timestamp=IsDatetime(),
+                    provider_name='xai',
+                ),
+                previous_part_kind='builtin-tool-call',
+            ),
+            PartStartEvent(
+                index=2, part=TextPart(content='Found your attachments.'), previous_part_kind='builtin-tool-return'
+            ),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=2, part=TextPart(content='Found your attachments.')),
+        ]
+    )
+
+
 async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: None):
     """Unknown server-side tool types should fall back to their function name."""
     unknown_tool_call = chat_pb2.ToolCall(

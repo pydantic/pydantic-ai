@@ -227,9 +227,9 @@ class XaiModelSettings(ModelSettings, total=False):
     """
 
     xai_include_attachment_search_output: bool
-    """Whether to include attachment search results in the response.
+    """Whether to include the attachment search results in the response.
 
-    Corresponds to the `attachment_search_call_output` option in the xAI `include` parameter.
+    Corresponds to the `attachment_search_call.outputs` value of the `include` parameter in the Responses API.
     """
 
     xai_reasoning_effort: GrokReasoningEffort
