@@ -23,41 +23,51 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai or anthropic not installed')
+
+def _build_model(model_id: str) -> Model:
+    """Build the adapter under test.
+
+    Called from inside the test rather than from `parametrize`, whose arguments are evaluated at
+    collection time — before `skipif` applies — so touching the optional imports there would raise
+    on the lanes that don't install them.
+    """
+    if model_id == 'openai-responses':
+        return OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    elif model_id == 'openai-chat':
+        return OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    else:
+        assert model_id == 'anthropic'
+        return AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test'))
 
 
-def _models() -> list[tuple[str, Model, CompactionMode | None]]:
-    openai_provider = OpenAIProvider(api_key='test')
-    return [
-        ('openai-responses', OpenAIResponsesModel('gpt-5.2', provider=openai_provider), 'encrypted'),
-        # Shares the same `OpenAIModelProfile` as the Responses adapter above, and must still be
-        # `None`: Chat Completions has no compaction surface to round-trip a `CompactionPart` to.
-        ('openai-chat', OpenAIChatModel('gpt-5.2', provider=openai_provider), None),
-        (
-            'anthropic',
-            AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test')),
-            'text',
-        ),
-        ('function', FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')])), None),
-    ]
-
-
-@pytest.mark.parametrize('label, model, expected', _models(), ids=lambda value: value if isinstance(value, str) else '')
-def test_compaction_mode_declared_per_adapter(label: str, model: Model, expected: CompactionMode | None):
-    assert model.compaction_mode == expected
+@pytest.mark.skipif(not imports_successful(), reason='openai or anthropic not installed')
+@pytest.mark.parametrize(
+    'model_id, expected',
+    [
+        ('openai-responses', 'encrypted'),
+        # Shares the same `OpenAIModelProfile` as the Responses adapter, and must still be `None`:
+        # Chat Completions has no compaction surface to round-trip a `CompactionPart` to.
+        ('openai-chat', None),
+        ('anthropic', 'text'),
+    ],
+)
+def test_compaction_mode_declared_per_adapter(model_id: str, expected: CompactionMode | None):
+    assert _build_model(model_id).compaction_mode == expected
 
 
 def test_no_compaction_mode_leaves_history_untouched():
     """An adapter that declares no mode never trims, even with a boundary in the history.
 
     Unreachable through a provider adapter — both that implement the trim declare a mode — so the
-    safe default for every other adapter is pinned directly.
+    safe default every other adapter inherits is pinned directly.
     """
 
     def return_text(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('ok')])  # pragma: no cover
 
     model = FunctionModel(return_text)
+    assert model.compaction_mode is None
+
     messages: list[ModelMessage] = [
         ModelRequest.user_text_prompt('before the boundary'),
         ModelResponse(parts=[CompactionPart(content='summary', provider_name='function')], provider_name='function'),
