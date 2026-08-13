@@ -4650,6 +4650,39 @@ async def test_tool_call_start_args_are_emitted_raw():
     )
 
 
+async def test_tool_call_delta_dict_args_are_serialized_compactly():
+    """Exercise the UI serialization boundary directly.
+
+    Current provider streams do not reliably produce non-JSON-native dictionary deltas such as
+    `datetime`, so a VCR test would not prove this failure mode.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=ToolCallPart(tool_name='search', args='', tool_call_id='call_1'))
+        yield PartDeltaEvent(
+            index=0,
+            delta=ToolCallPartDelta(
+                args_delta={
+                    'type': 'search',
+                    'query': 'weather',
+                    'when': datetime(2025, 1, 1, tzinfo=timezone.utc),
+                },
+                tool_call_id='call_1',
+            ),
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Search the weather'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    assert [event['delta'] for event in events if event['type'] == 'TOOL_CALL_ARGS'] == [
+        '{"type":"search","query":"weather","when":"2025-01-01T00:00:00Z"}'
+    ]
+
+
 async def test_dispatch_request():
     agent = Agent(model=TestModel())
     run_input = create_input(

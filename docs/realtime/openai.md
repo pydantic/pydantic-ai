@@ -18,9 +18,9 @@ Authentication and base URL come from `provider`, mirroring
 [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. The default `provider='openai'`
 reads the environment; pass an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] for a
 custom key or base URL. The realtime WebSocket opens separately, so a custom provider `httpx` client
-is not used for it. Sessions run over a server-side WebSocket; browser-direct WebRTC transport is
-coming in [#6676](https://github.com/pydantic/pydantic-ai/pull/6676) (see
-[Connecting a frontend](deployment.md)).
+is not used for it. Sessions run over a server-side WebSocket by default; for browser voice, the
+browser can exchange media directly over [WebRTC](#browser-webrtc) while your backend runs the agent
+(see [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)).
 
 ## Model names
 
@@ -75,6 +75,26 @@ disabled effort. The GA `gpt-realtime` ignores the setting.
 
 Reasoning traces are not surfaced as [`ThinkingPart`][pydantic_ai.messages.ThinkingPart]s; the API
 exposes effort as input only.
+
+## Browser WebRTC
+
+For browser voice agents, OpenAI recommends WebRTC: the audio flows browser ↔ OpenAI directly, while
+your backend attaches a control-plane **sideband** to run the agent.
+[`AgentRealtime`][pydantic_ai.agent.AgentRealtime] exposes two signaling helpers, both resolving and
+binding the agent's session configuration (instructions, tools, voice, VAD) server-side:
+
+- [`answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] — the **secure** path:
+  relay the browser's SDP offer to `POST /v1/realtime/calls`, returning the SDP answer and a
+  [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession] to attach a sideband to with
+  [`agent.realtime(model).session(provider_session=…)`][pydantic_ai.agent.AgentRealtime.session]. The browser
+  never sees a token.
+- [`create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] — mint a short-lived
+  [`RealtimeClientSecret`][pydantic_ai.realtime.RealtimeClientSecret] (ephemeral token) for a browser
+  that negotiates the WebRTC call itself, when you don't relay the SDP through your backend.
+
+See [Connecting a frontend](deployment.md#browser-webrtc-server-sideband) for the topology, the
+secure offer-relay flow, and the sideband trust model, and the
+[realtime WebRTC example](../examples/realtime-webrtc.md) for a runnable FastAPI and browser app.
 
 ## Feature support and limitations
 

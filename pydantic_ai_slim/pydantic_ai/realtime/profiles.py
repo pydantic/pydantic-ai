@@ -57,6 +57,13 @@ class RealtimeModelProfile(TypedDict, total=False):
     (TEXT) is not supported by the model`) or, worse, silently produce speech anyway (xAI)."""
     supports_session_seeding: bool
     """Whether the model can seed a session with prior conversation (`message_history`)."""
+    supports_webrtc: bool
+    """Whether the model supports browser WebRTC signaling, ephemeral client secrets, and a server-side
+    control-plane sideband via [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer],
+    [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret], and
+    [`connect_webrtc`][pydantic_ai.realtime.RealtimeModel.connect_webrtc].
+
+    Supported by OpenAI and Azure OpenAI. Gemini Live and xAI Grok Voice are WebSocket-only."""
     supports_seeding_images: bool
     """Whether prior images can be included when seeding a session with `message_history`."""
     supports_seeding_audio: bool
@@ -118,6 +125,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_output_truncation': False,
     'supports_text_output': True,
     'supports_session_seeding': False,
+    'supports_webrtc': False,
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
     'supports_async_tool_calls': False,

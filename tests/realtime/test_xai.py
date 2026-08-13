@@ -273,6 +273,7 @@ def test_profile() -> None:
         supports_output_truncation=False,
         supports_text_output=False,  # Grok Voice always speaks
         supports_session_seeding=True,
+        supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
         supports_thinking=True,
@@ -472,6 +473,40 @@ class FakeWebSocket:
     async def __aiter__(self) -> AsyncIterator[Any]:
         while self._incoming:
             yield self._incoming.pop(0)
+
+
+def test_xai_connection_restores_in_flight_state_on_reconnect() -> None:
+    # xAI resumes the conversation server-side, so the session keeps its in-flight state rather than
+    # settling it (unlike the OpenAI base this connection is cloned from).
+    conn = XaiRealtimeConnection(FakeWebSocket([]))  # type: ignore[arg-type]
+    assert conn.reconnect_restores_in_flight_state is True
+
+
+@pytest.mark.anyio
+async def test_reconnect_does_not_re_solicit_an_unstarted_response() -> None:
+    # xAI inherits the OpenAI `_attempt_reconnect`, but because it resumes in-flight state server-side
+    # a response solicited before the drop is resumed by the server — re-soliciting it would duplicate
+    # the turn, so the re-solicit is gated off for this connection.
+    replacement = FakeWebSocket([])
+    replacements = iter([replacement])
+
+    async def dial() -> Any:
+        try:
+            return next(replacements)
+        except StopIteration:
+            raise OSError('server is down')
+
+    conn = XaiRealtimeConnection(
+        _DropAfterFrames([]),  # type: ignore[arg-type]
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1},
+    )
+    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
+    conn._response_started = False  # pyright: ignore[reportPrivateUsage]
+
+    events = [e async for e in conn]
+    assert any(isinstance(e, RealtimeSessionReconnectEvent) for e in events)
+    assert not any(json.loads(s).get('type') == 'response.create' for s in replacement.sent)
 
 
 @pytest.mark.anyio

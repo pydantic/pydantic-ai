@@ -276,11 +276,13 @@ class FakeRealtimeConnection(RealtimeConnection):
         release: asyncio.Event | None = None,
         input_transcription_enabled: bool = True,
         model_name: str | None = None,
+        reconnect_restores_in_flight_state: bool = True,
     ) -> None:
         self._events = events
         self._release = release
         self._input_transcription_enabled = input_transcription_enabled
         self._model_name = model_name
+        self._reconnect_restores_in_flight_state = reconnect_restores_in_flight_state
         self.sent: list[RealtimeInput] = []
 
     @property
@@ -290,6 +292,10 @@ class FakeRealtimeConnection(RealtimeConnection):
     @property
     def input_transcription_enabled(self) -> bool:
         return self._input_transcription_enabled
+
+    @property
+    def reconnect_restores_in_flight_state(self) -> bool:
+        return self._reconnect_restores_in_flight_state
 
     async def send(self, content: RealtimeInput) -> None:
         self.sent.append(content)
@@ -3014,6 +3020,38 @@ async def test_image_input_guard() -> None:
     assert conn.sent == []
 
 
+async def test_owns_media_guard() -> None:
+    # A WebRTC sideband session (owns_media=False) doesn't own the audio transport, so the audio
+    # methods are unavailable up front — the browser streams audio to the provider directly.
+    conn = FakeRealtimeConnection([])
+    session = RealtimeSession(conn, _noop_runner, owns_media=False)
+    with pytest.raises(UserError, match='does not own the audio transport'):
+        await session.send_audio(b'\x00\x00')
+    with pytest.raises(UserError, match='does not own the audio transport'):
+        await session.commit_audio()
+    with pytest.raises(UserError, match='does not own the audio transport'):
+        await session.clear_audio()
+    # The routing through `send()` (audio input / audio bytes) is gated by the same guard.
+    with pytest.raises(UserError, match='does not own the audio transport'):
+        await session.send(BinaryAudio(data=b'\x00\x00', media_type='audio/pcm'))
+    with pytest.raises(UserError, match='does not own the audio transport'):
+        await session.send(BinaryContent(data=b'\x00\x00', media_type='audio/pcm'))
+    with pytest.raises(UserError, match='browser exchanges audio with the provider directly over WebRTC'):
+        await anext(session.stream_audio())
+    assert conn.sent == []  # nothing reached the connection
+
+
+async def test_owns_media_default_allows_audio() -> None:
+    # The default (owns_media=True) leaves both audio directions available.
+    conn = FakeRealtimeConnection([AudioDelta(data=b'\x01\x02')])
+    async with RealtimeSession(conn, _noop_runner, profile=_profile()) as session:
+        audio = asyncio.ensure_future(anext(session.stream_audio()))
+        await asyncio.sleep(0)
+        await session.send_audio(b'\x00\x00')
+        assert await audio == b'\x01\x02'
+    assert conn.sent == [BinaryAudio(data=b'\x00\x00', media_type='audio/pcm')]
+
+
 async def test_early_break_cancels_pump() -> None:
     # Breaking out early must cancel the background pump task so it doesn't leak, parked forever
     # awaiting an upstream event that never comes. A finite connection wouldn't test this — its pump
@@ -3349,28 +3387,31 @@ async def test_audio_only_user_turn_finalized_on_each_manual_commit() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ('state_restored', 'expected'),
+_SETTLED_IN_FLIGHT = snapshot(
     [
-        pytest.param(
-            False,
-            snapshot(
-                [
-                    ModelResponse(
-                        parts=[SpeechPart(speaker='assistant', transcript='before')],
-                        timestamp=IsDatetime(),
-                        state='interrupted',
-                    ),
-                    ModelResponse(
-                        parts=[SpeechPart(speaker='assistant', transcript='after')],
-                        timestamp=IsDatetime(),
-                        finish_reason='stop',
-                    ),
-                ]
-            ),
-            id='state-lost',
+        ModelResponse(
+            parts=[SpeechPart(speaker='assistant', transcript='before')],
+            timestamp=IsDatetime(),
+            state='interrupted',
         ),
+        ModelResponse(
+            parts=[SpeechPart(speaker='assistant', transcript='after')],
+            timestamp=IsDatetime(),
+            finish_reason='stop',
+        ),
+    ]
+)
+
+
+@pytest.mark.parametrize(
+    ('reconnect_restores_in_flight_state', 'state_restored', 'expected_state_restored', 'expected'),
+    [
+        # Native resumption (xAI; Gemini settles the cut turn in its own connection): the connection
+        # reports it restored the in-flight response, so the two transcript halves belong to one response
+        # and nothing is settled. This is the only path that keeps `state_restored=True`.
         pytest.param(
+            True,
+            True,
             True,
             snapshot(
                 [
@@ -3381,22 +3422,65 @@ async def test_audio_only_user_turn_finalized_on_each_manual_commit() -> None:
                     )
                 ]
             ),
-            id='state-restored',
+            id='native-resume-continues',
         ),
+        # Local replay (OpenAI, Azure OpenAI): the connection reports `state_restored=True` because it
+        # replayed the *finalized* history, but it does not restore in-flight state — the response the
+        # drop cut off is gone. The session settles it as an interrupted response and downgrades the
+        # user-facing flag to `False`, matching the fully-lost path so an app branches the same way.
+        pytest.param(False, True, False, _SETTLED_IN_FLIGHT, id='local-replay-settles-in-flight'),
+        # Nothing restored at all: same settlement, flag already `False`.
+        pytest.param(False, False, False, _SETTLED_IN_FLIGHT, id='state-lost-settles-in-flight'),
     ],
 )
-async def test_reconnect_response_state(state_restored: bool, expected: list[ModelMessage]) -> None:
+async def test_reconnect_response_state(
+    reconnect_restores_in_flight_state: bool,
+    state_restored: bool,
+    expected_state_restored: bool,
+    expected: list[ModelMessage],
+) -> None:
     conn = FakeRealtimeConnection(
         [
             OutputTranscript(text='before', is_final=False),
             RealtimeSessionReconnectEvent(state_restored=state_restored),
             OutputTranscript(text='after', is_final=True),
             ResponseDone(),
-        ]
+        ],
+        reconnect_restores_in_flight_state=reconnect_restores_in_flight_state,
     )
     session = RealtimeSession(conn)
-    await collect_events(session)
+    events = await collect_events(session)
+    # The flag the app sees reflects what actually survived, not just what the connection replayed.
+    assert [e.state_restored for e in events if isinstance(e, RealtimeSessionReconnectEvent)] == [
+        expected_state_restored
+    ]
     assert session.new_messages() == expected
+
+
+async def test_reconnect_while_idle_on_replay_provider_keeps_state_restored() -> None:
+    # A local-replay provider (OpenAI/Azure) that drops while Listening loses nothing: the replay
+    # restores the finalized call and there is no in-flight turn to settle. The connection's
+    # `state_restored=True` stands, so an app is not told a seamless renewal was a disruption.
+    conn = FakeRealtimeConnection(
+        [
+            RealtimeSessionReconnectEvent(state_restored=True),
+            OutputTranscript(text='after', is_final=True),
+            ResponseDone(),
+        ],
+        reconnect_restores_in_flight_state=False,
+    )
+    session = RealtimeSession(conn)
+    events = await collect_events(session)
+    assert [e.state_restored for e in events if isinstance(e, RealtimeSessionReconnectEvent)] == [True]
+    assert session.new_messages() == snapshot(
+        [
+            ModelResponse(
+                parts=[SpeechPart(speaker='assistant', transcript='after')],
+                timestamp=IsDatetime(),
+                finish_reason='stop',
+            )
+        ]
+    )
 
 
 async def test_session_offers_the_conversation_for_replay_when_seeding_is_supported() -> None:

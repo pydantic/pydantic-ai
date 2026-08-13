@@ -44,8 +44,11 @@ jobs:
           enable-cache: true
           cache-suffix: lint
 
+      # `--no-extra mcp-tasks` everywhere `--all-extras` appears: the extra lives in the
+      # FastMCP 4 / MCP SDK v2 lock fork, which `tool.uv.conflicts` bars from co-installing
+      # with the FastMCP 3 dev environment (the `test-fastmcp-4` job covers that universe).
       - name: Install dependencies
-        run: uv sync --all-extras --all-packages --group lint
+        run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
 
       # pyright typechecks the gh-aw shim (.github/scripts/pydantic_ai_gh_aw_shim),
       # which imports pydantic-ai-harness. The harness depends on pydantic-ai-slim,
@@ -135,6 +138,7 @@ jobs:
 
       - run: uv build --all-packages
       - run: ls -lh dist/
+      - run: uvx twine check --strict dist/*
 
   # mypy and lint are a bit slower than other jobs, so we run them separately
   mypy:
@@ -154,7 +158,9 @@ jobs:
 
       - run: make typecheck-mypy
 
-  docs:
+  # The unified-docs repository renders and validates published documentation.
+  # Keep this source-repository check for assets that live alongside Pydantic AI docs.
+  docs-assets:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -164,21 +170,9 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: true
-          cache-suffix: docs
+          cache-suffix: docs-assets
 
-      - run: uv sync --group docs
-
-      - run: make docs
-
-      - run: tree -sh site
-
-      - name: Store docs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: site
-          path: site
-
-      # check all docs images are tinified, You'll need an API key from https://tinify.com/ to fix this if it fails
+      # Check all documentation images are tinified. You will need a Tinify API key to fix failures.
       - run: uvx tinicly docs --check
 
   test:
@@ -212,7 +206,7 @@ jobs:
           - name: standard
             command: ""
           - name: all-extras
-            command: "--all-extras"
+            command: "--all-extras --no-extra mcp-tasks"
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
@@ -271,7 +265,7 @@ jobs:
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --all-extras python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
+            if uv run --all-extras --no-extra mcp-tasks python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."
@@ -364,7 +358,7 @@ jobs:
           restore-keys: |
             temporal-cli-${{ runner.os }}-${{ runner.arch }}-lowest-
 
-      - run: uv sync --all-extras --resolution lowest-direct
+      - run: uv sync --all-extras --no-extra mcp-tasks --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 
@@ -454,11 +448,63 @@ jobs:
           enable-cache: true
           cache-suffix: examples
 
-      - run: uv run --all-extras python tests/import_examples.py
+      - run: uv run --all-extras --no-extra mcp-tasks python tests/import_examples.py
+
+  test-fastmcp-4:
+    name: test FastMCP 4 compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: true
+      COVERAGE_PROCESS_START: ./pyproject.toml
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: fastmcp-4
+
+      - run: mkdir .coverage
+
+      # Keep the normal matrix locked to FastMCP 3 while `--with` gives these tests an isolated
+      # FastMCP 4 environment without mutating the project environment.
+      # TODO: Drop these package-specific cutoffs after 2026-08-14, when the pinned artifacts clear
+      # the workspace's seven-day cooldown. Unrelated dependencies remain subject to the cooldown.
+      # uv only opts direct requirements into prereleases, so the two beta distributions that
+      # FastMCP pins transitively must also be named as direct requirements.
+      - run: >-
+          uv run
+          --all-extras
+          --no-extra mcp-tasks
+          --all-packages
+          --with "fastmcp[tasks]==4.0.0b2"
+          --with "fastmcp-slim==4.0.0b2"
+          --with "fastmcp-tasks==4.0.0b2"
+          --exclude-newer-package "fastmcp=2026-08-08T00:00:00Z"
+          --exclude-newer-package "fastmcp-slim=2026-08-08T00:00:00Z"
+          --exclude-newer-package "fastmcp-tasks=2026-08-08T00:00:00Z"
+          --exclude-newer-package "mcp=2026-08-08T00:00:00Z"
+          --exclude-newer-package "mcp-types=2026-08-08T00:00:00Z"
+          coverage run -m pytest
+          tests/test_mcp.py
+          tests/models/test_mcp_sampling.py
+        env:
+          COVERAGE_FILE: .coverage/.coverage.fastmcp-4
+
+      - name: store coverage files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-fastmcp-4
+          path: .coverage
+          include-hidden-files: true
 
   coverage:
     runs-on: ubuntu-latest
-    needs: [test, test-lowest-versions]
+    needs: [test, test-lowest-versions, test-fastmcp-4]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -499,11 +545,12 @@ jobs:
     needs:
       - lint
       - mypy
-      - docs
+      - docs-assets
       - test
       - test-lowest-versions
       - test-temporal-latest
       - test-examples
+      - test-fastmcp-4
       - coverage
     runs-on: ubuntu-latest
 

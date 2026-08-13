@@ -1,6 +1,6 @@
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from dataclasses import asdict
 from datetime import timezone
 
@@ -124,6 +124,23 @@ def test_simple():
             ),
         ]
     )
+
+
+async def _sync_returning_coroutine_impl(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('coroutine awaited')])
+
+
+def sync_returning_coroutine(messages: list[ModelMessage], info: AgentInfo) -> Awaitable[ModelResponse]:
+    # A plain `def` that returns a coroutine: not detected by `iscoroutinefunction`, so it's run in the
+    # executor and its return value must still be awaited (via `await_maybe`) rather than asserted to be a
+    # `ModelResponse` directly.
+    return _sync_returning_coroutine_impl(messages, info)
+
+
+def test_sync_function_returning_coroutine():
+    agent = Agent(FunctionModel(sync_returning_coroutine))
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('coroutine awaited')
 
 
 async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover

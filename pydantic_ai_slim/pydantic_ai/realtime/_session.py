@@ -48,6 +48,8 @@ from ..messages import (
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
+    RealtimeOutputSpeechEndEvent,
+    RealtimeOutputSpeechStartEvent,
     RealtimeResponseInterruptedEvent,
     RealtimeSessionErrorEvent,
     RealtimeSessionReconnectEvent,
@@ -125,6 +127,8 @@ RealtimeEvent = TypeAliasType(
     | RealtimeInputSpeechStartEvent
     | RealtimeResponseInterruptedEvent
     | RealtimeInputSpeechEndEvent
+    | RealtimeOutputSpeechStartEvent
+    | RealtimeOutputSpeechEndEvent
     | RealtimeInputTranscriptionErrorEvent
     | RealtimeSessionReconnectEvent
     | RealtimeSessionErrorEvent,
@@ -249,6 +253,8 @@ _TranslatableEvent: TypeAlias = (
     | RealtimeInputSpeechStartEvent
     | RealtimeResponseInterruptedEvent
     | RealtimeInputSpeechEndEvent
+    | RealtimeOutputSpeechStartEvent
+    | RealtimeOutputSpeechEndEvent
     | RealtimeInputTranscriptionErrorEvent
     | RealtimeSessionReconnectEvent
     | PartStartEvent
@@ -530,6 +536,7 @@ class RealtimeSession:
         retain_images_max: int | None = 100,
         message_history: Sequence[ModelMessage] | None = None,
         profile: RealtimeModelProfile | None = None,
+        owns_media: bool = True,
         conversation_id: str | None = None,
         run_id: str | None = None,
         instructions: str | None = None,
@@ -546,6 +553,11 @@ class RealtimeSession:
         self._tool_manager_lock = Lock()
         self._instrumentation = instrumentation
         self._profile = profile if profile is not None else model.profile if model is not None else _FULL_PROFILE
+        # Whether this session owns the audio transport. `False` for a WebRTC sideband session: the
+        # browser exchanges audio with the provider directly, and this connection is only the control
+        # plane, so the audio methods are unavailable and no audio bytes flow over it (transcripts still
+        # build history). Set by the connect path when a `provider_session` is attached.
+        self._owns_media = owns_media
         self._model_name = model.model_name if model is not None else None
         self._provider_name = model.system if model is not None else None
         self._provider_url = model.base_url if model is not None else None
@@ -822,6 +834,9 @@ class RealtimeSession:
         # Any open `chat` span was closed by the settlement above (an open span counts as a response
         # in flight), with the error — if any — already recorded on it before settlement.
         error = self._closing_error or self._pump_error
+        # Closing mid-utterance is normal (the caller stopped listening), so the `speak` span is closed
+        # rather than left open; it isn't an error even when the session ended on one.
+        self._session_instrumentation.end_playback_span()
         # A session closed mid-sentence never learns how long that sentence was, so the pending onset
         # is dropped rather than turned into a span ending at teardown.
         self._user_speech_started_at = None
@@ -916,12 +931,15 @@ class RealtimeSession:
         """Stream model audio chunks ready for playback.
 
         The iterator contains only live model audio, in playback order. It never repeats retained
-        audio from finalized speech parts.
+        audio from finalized speech parts. On a WebRTC sideband the browser owns the audio path, so
+        this raises [`UserError`][pydantic_ai.exceptions.UserError]; consume the browser's remote media
+        track instead.
 
         Each iterator has a 32-chunk buffer. If its consumer falls behind, the oldest chunk is
         dropped so audio playback cannot stall tool execution, turn tracking, or the main event
         stream. Closing the session discards buffered chunks and ends the iterator cleanly.
         """
+        self._require_media_ownership('stream_audio')
         self._ensure_streamable()
         # The extra slot is reserved for the completion sentinel, so ending a full tap does not
         # discard one of its 32 data items or block the pump during teardown.
@@ -1120,6 +1138,7 @@ class RealtimeSession:
         first (24 kHz on the OpenAI-protocol providers, 16 kHz on Gemini):
         raw bytes carry no rate, so the wrong one is heard as a chipmunk rather than reported.
         """
+        self._require_media_ownership('send_audio')
         user_turn_was_active = self._user_turn_active
         if not user_turn_was_active:
             # Audio starting is the earliest sign of a user turn, and the only one on a provider that
@@ -1143,6 +1162,7 @@ class RealtimeSession:
 
     async def commit_audio(self) -> None:
         """Commit buffered input audio as a user turn (manual turn-taking / push-to-talk)."""
+        self._require_media_ownership('commit_audio')
         self._require_capability('supports_manual_turn_control', method='commit_audio', feature='manual turn-taking')
         await self._send_frame(CommitAudio())
         self._user_turn_active = True
@@ -1151,6 +1171,7 @@ class RealtimeSession:
 
     async def clear_audio(self) -> None:
         """Discard buffered, uncommitted input audio."""
+        self._require_media_ownership('clear_audio')
         self._require_capability('supports_manual_turn_control', method='clear_audio', feature='manual turn-taking')
         await self._send_frame(ClearAudio())
         # Drop the locally retained copy too (with `audio_retention='input_audio'`/`'all'`), or the discarded
@@ -1237,6 +1258,15 @@ class RealtimeSession:
         """Raise a clear `UserError` before sending when the profile doesn't report `capability`."""
         if not self._profile.get(capability, False):
             raise UserError(f'This realtime model does not support {feature}, so `session.{method}()` is unavailable.')
+
+    def _require_media_ownership(self, method: str) -> None:
+        """Raise a clear `UserError` when an audio-transport method is used on a session that doesn't own media."""
+        if not self._owns_media:
+            raise UserError(
+                f'This realtime session does not own the audio transport, so `session.{method}()` is unavailable. '
+                'The browser exchanges audio with the provider directly over WebRTC; this sideband session only '
+                'runs the control plane (instructions, tools, transcripts, history).'
+            )
 
     # --- history assembly -------------------------------------------------------------------------
 
@@ -1872,10 +1902,36 @@ class RealtimeSession:
         return not self._is_replayed_item(item_id, tool_call_id)
 
     def _handle_reconnected(self, event: RealtimeSessionReconnectEvent) -> list[RealtimeEvent]:
-        """Close state the provider lost before starting the reconnected turn."""
-        if event.state_restored:
+        """Settle any in-flight state the reconnect did not actually carry, and report restoration honestly.
+
+        A connection that resumes in-flight state (native resumption on xAI Grok Voice; Gemini Live,
+        which settles the cut turn in the connection itself) reports
+        [`reconnect_restores_in_flight_state`][pydantic_ai.realtime.codec.RealtimeConnection.reconnect_restores_in_flight_state],
+        so `state_restored=True` holds as reported and there is nothing more to settle. A connection we
+        reconnect by replaying local history (OpenAI, Azure OpenAI) only restores *finalized* turns: the
+        response and tool calls that were in flight when the socket dropped are gone, and the fresh
+        server-side conversation knows nothing of them. Settle them here exactly as for a fully lost
+        session — the partial reply as an interrupted response, running tool calls as cancelled returns —
+        so the local history stays coherent and the turn ends (flushing anything queued behind it).
+        Report `state_restored=False` whenever a response or tool call was actually in flight, so an app
+        can branch on the flag the same way on every provider; a drop with nothing in flight loses
+        nothing and stays `True`. Whether the settlement *emitted* events is not the test: an in-flight
+        response carried only by pending provider metadata is finalized into history without any.
+        """
+        if event.state_restored and self._connection.reconnect_restores_in_flight_state:
             return [event]
-        return [*self._finalize_lost_state(), event]
+        lost_in_flight = self._response_in_flight or bool(self._pending_tool_calls)
+        events = self._finalize_lost_state()
+        if lost_in_flight:
+            event = replace(event, state_restored=False)
+        if not event.state_restored:
+            # The reconnect cut whatever was playing: the in-flight response (if any) is settled as
+            # interrupted above, and even a finalized response's audio won't resume on the fresh
+            # connection. End the `speak` span so it measures only what was actually audible, rather
+            # than running until session close or being merged into the next utterance
+            # (`start_playback_span` no-ops while a span is already open). No-op off a sideband.
+            self._session_instrumentation.end_playback_span()
+        return [*events, event]
 
     def _finalize_lost_state(self) -> list[RealtimeEvent]:
         """Settle everything still open into history: user turns, an in-flight response, running tools.
@@ -1910,10 +1966,23 @@ class RealtimeSession:
         return events
 
     def _handle_control_event(
-        self, event: RealtimeInputSpeechStartEvent | RealtimeSessionReconnectEvent
+        self,
+        event: (
+            RealtimeInputSpeechStartEvent
+            | RealtimeSessionReconnectEvent
+            | RealtimeOutputSpeechStartEvent
+            | RealtimeOutputSpeechEndEvent
+        ),
     ) -> list[RealtimeEvent]:
         if isinstance(event, RealtimeSessionReconnectEvent):
             return self._handle_reconnected(event)
+        # The playback boundary brackets the `speak` span and is otherwise passed straight through.
+        if isinstance(event, RealtimeOutputSpeechStartEvent):
+            self._session_instrumentation.start_playback_span()
+            return [event]
+        if isinstance(event, RealtimeOutputSpeechEndEvent):
+            self._session_instrumentation.end_playback_span()
+            return [event]
         # A reported speech start is a turn boundary even mid-stream, so it re-anchors: with a continuously
         # open microphone the previous turn may not have finalized yet, leaving `_user_turn_active` set.
         self._open_user_turn_anchor()
@@ -1976,7 +2045,12 @@ class RealtimeSession:
         # any new non-pump `RealtimeEvent` variant that isn't handled here.
         if isinstance(
             event,
-            (RealtimeInputSpeechStartEvent, RealtimeSessionReconnectEvent),
+            (
+                RealtimeInputSpeechStartEvent,
+                RealtimeSessionReconnectEvent,
+                RealtimeOutputSpeechStartEvent,
+                RealtimeOutputSpeechEndEvent,
+            ),
         ):
             return self._handle_control_event(event)
         if isinstance(event, RealtimeSessionErrorEvent):
@@ -2519,7 +2593,7 @@ class RealtimeSession:
             stream = cast('AsyncIterable[RealtimeEvent]', self._wrap_event_stream(source))
         stream_iterator = aiter(stream)
         try:
-            async for event in stream_iterator:
+            async for event in stream_iterator:  # pragma: no branch
                 yield event
         finally:
             try:

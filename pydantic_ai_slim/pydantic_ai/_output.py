@@ -424,8 +424,9 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
         if self._is_async:
             function = cast(Callable[[Any], Awaitable[T]], self.function)
             return await function(*args)
-        function = cast(Callable[[Any], T], self.function)
-        return await _utils.run_in_executor(function, *args)
+        # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
+        function = cast(Callable[[Any], T | Awaitable[T]], self.function)
+        return await _utils.await_maybe(await _utils.run_in_executor(function, *args))
 
 
 @dataclass(kw_only=True)

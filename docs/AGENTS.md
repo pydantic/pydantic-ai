@@ -7,7 +7,7 @@
 <!-- rule:232 -->
 - Link all concepts, features, and API elements to their docs/reference pages using anchor fragments (`#section-name`) for specific sections — Improves discoverability and reduces user friction by providing direct navigation to relevant documentation context
 <!-- rule:66 -->
-- Use reference-style links for API elements: `[ElementName][module.path.ElementName]` — enables hover docs and navigation in mkdocs — Provides interactive documentation features like tooltips and jump-to-definition that plain backticks cannot support
+- Use reference-style links for API elements: `[ElementName][module.path.ElementName]` — enables hover docs and navigation on the published documentation site — Provides interactive documentation features like tooltips and jump-to-definition that plain backticks cannot support
 <!-- rule:714 -->
 - Omit deprecated features from user-facing docs — document only current approaches — Prevents users from learning outdated patterns and reduces confusion about the recommended way forward
 <!-- rule:82 -->
@@ -43,9 +43,9 @@
 <!-- rule:135 -->
 - Use actual, currently available model names in documentation examples — prevents user confusion and copy-paste errors with non-existent models — Ensures users can run documentation examples without modification and avoids frustration from referencing models that don't exist yet or are hypothetical
 <!-- rule:508 -->
-- Verify all doc links with `make docs-serve` before committing — catches broken internal/external references early — Prevents documentation drift and broken links from reaching users, especially after code refactoring
+- Verify rendered documentation through a unified-docs preview before merging — catches broken internal/external references early — Prevents documentation drift and broken links from reaching users, especially after code refactoring
 <!-- rule:283 -->
-- Use MkDocs admonitions (`!!! note`, `!!! warning`) for callouts, not blockquotes (`>`) or GitHub alerts (`> [!NOTE]`) — Ensures consistent rendering in MkDocs and prevents callouts from cluttering the table of contents
+- Use admonitions (`!!! note`, `!!! warning`) for callouts, not blockquotes (`>`) or GitHub alerts (`> [!NOTE]`) — Ensures consistent rendering and prevents callouts from cluttering the table of contents
 <!-- rule:618 -->
 - Nest subtopics, examples, and config details within parent sections — improves discoverability and reduces redundant context — Hierarchical organization makes documentation easier to navigate and understand by grouping related content together rather than scattering it across top-level sections or separate files.
 <!-- rule:298 -->

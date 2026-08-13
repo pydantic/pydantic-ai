@@ -124,6 +124,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'alibaba',
         'azure',
         'cerebras',
+        'crusoe',
         'deepseek',
         'fireworks',
         'github',
@@ -1061,7 +1062,7 @@ class StreamedResponse(ABC):
         return self._event_iterator
 
     async def cancel(self) -> None:
-        """Cancel the stream, stopping token generation.
+        """Cancel local stream consumption and request provider shutdown.
 
         Sets `self._cancelled = True` before delegating to `close_stream()`
         so the flag is visible to any iterator that observes the transport error
@@ -1089,12 +1090,12 @@ class StreamedResponse(ABC):
         return (httpx.StreamError, httpx.TransportError)
 
     async def close_stream(self) -> None:
-        """Close the underlying HTTP/gRPC connection.
+        """Close the provider stream and any exposed HTTP or gRPC transport.
 
-        Model classes must override this to stop token generation (and billing)
-        on the remote side. Integrations that cannot support cancellation should
-        leave the default implementation so `cancel()` fails clearly rather than
-        silently reporting successful cancellation while generation continues.
+        Model classes must override this to close the local stream and, where the
+        provider SDK exposes one, its transport. Integrations that cannot support
+        local cancellation should leave the default implementation so `cancel()`
+        fails clearly.
         """
         raise NotImplementedError(
             f'Stream cancellation is not implemented for {type(self).__name__}. '
@@ -1510,7 +1511,7 @@ def infer_model(  # noqa: C901
             return BedrockMantleChatModel(model_name, provider=provider)
         return BedrockMantleResponsesModel(model_name, provider=provider)
 
-    # OpenRouter, Cerebras, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
+    # OpenRouter, Cerebras, Crusoe, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
@@ -1520,6 +1521,10 @@ def infer_model(  # noqa: C901
         from .cerebras import CerebrasModel
 
         return CerebrasModel(model_name, provider=provider)
+    elif model_kind == 'crusoe':
+        from .crusoe import CrusoeModel
+
+        return CrusoeModel(model_name, provider=provider)
     elif model_kind == 'snowflake':
         from .snowflake import SnowflakeModel
 

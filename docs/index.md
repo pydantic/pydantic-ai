@@ -4,7 +4,40 @@ title: Pydantic AI
 
 # Pydantic AI {.hide}
 
---8<-- "docs/.partials/index-header.html"
+<div style="text-align: center">
+  <img class="off-glb only-dark" src="./img/pydantic-ai-dark.svg" alt="Pydantic AI" />
+</div>
+<div style="text-align: center">
+  <img class="off-glb only-light" src="./img/pydantic-ai-light.svg" alt="Pydantic AI" />
+</div>
+<p style="text-align: center">
+  <em>GenAI Agent Framework, the Pydantic way</em>
+</p>
+<p style="text-align: center">
+  <a href="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain">
+    <img src="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push" alt="CI" />
+  </a>
+  <a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai">
+    <img src="https://coverage-badge.samuelcolvin.workers.dev/pydantic/pydantic-ai.svg" alt="Coverage" />
+  </a>
+  <a href="https://pypi.python.org/pypi/pydantic-ai">
+    <img src="https://img.shields.io/pypi/v/pydantic-ai.svg" alt="PyPI" />
+  </a>
+  <a href="https://github.com/pydantic/pydantic-ai">
+    <img src="https://img.shields.io/pypi/pyversions/pydantic-ai.svg" alt="versions" />
+  </a>
+  <a href="https://github.com/pydantic/pydantic-ai/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/pydantic/pydantic-ai.svg" alt="license" />
+  </a>
+  <a href="https://logfire.pydantic.dev/docs/join-slack/">
+    <img src="https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack" alt="Join Slack" />
+  </a>
+</p>
+
+<p style="text-align: center; font-size: 1.15em">
+  Pydantic AI is a Python agent framework designed to help you
+  quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.
+</p>
 
 FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
 
@@ -20,7 +53,7 @@ Pydantic AI ships the agent loop, a composable [capabilities](capabilities/overv
 [Pydantic Validation](https://docs.pydantic.dev/latest/) is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. _Why use the derivative when you can go straight to the source?_ :smiley:
 
 2. **Model-agnostic**:
-Supports virtually every [model](models/overview.md) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Cloud, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, Alibaba Cloud, SambaNova, Snowflake Cortex, and Z.AI. If your favorite model or provider is not listed, you can easily implement a [custom model](models/overview.md#custom-models).
+Supports virtually every [model](models/overview.md) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Cloud, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Crusoe, Hugging Face, GitHub, Heroku, Vercel, Nebius, OVHcloud, Alibaba Cloud, SambaNova, Snowflake Cortex, and Z.AI. If your favorite model or provider is not listed, you can easily implement a [custom model](models/overview.md#custom-models).
 
 3. **Seamless Observability**:
 Tightly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior, tracing, and cost tracking. If you already have an observability platform that supports OTel, you can [use that too](logfire.md#alternative-observability-backends).
@@ -50,7 +83,7 @@ Provides the ability to [stream](output.md#streamed-results) structured output c
 Provides a powerful way to define [graphs](graph.md) using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
 
 12. **Realtime Voice**:
-Build [speech-to-speech agents](realtime/overview.md) on native realtime models (OpenAI Realtime, Gemini Live, and xAI Grok Voice) over a persistent bidirectional audio connection, with the same tools, capabilities, and observability as any other agent.
+Build [speech-to-speech agents](realtime/overview.md) on native realtime models (OpenAI Realtime, Azure OpenAI, Gemini Live, and xAI Grok Voice) over a persistent bidirectional audio connection — in the browser over WebRTC or bridged through your backend — with the same tools, capabilities, and observability as any other agent.
 
 Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
 
