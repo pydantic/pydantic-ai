@@ -116,6 +116,7 @@ class Capability(AbstractCapability[AgentDepsT]):
                 id=resolve_declared_id(
                     instruction_source_id, instruction.id if isinstance(instruction, InstructionPart) else None
                 ),
+                dynamic=not isinstance(instruction, (str, InstructionPart)),
             )
             for instruction in normalize_instructions(instructions)
         ]
@@ -361,7 +362,7 @@ class Capability(AbstractCapability[AgentDepsT]):
             func_: SystemPromptFunc[AgentDepsT],
         ) -> SystemPromptFunc[AgentDepsT]:
             source_id = capability_instruction_id(self.id) if self.id is not None else None
-            self._instructions.append(SourcedInstruction(func_, id=resolve_declared_id(source_id, id)))
+            self._instructions.append(SourcedInstruction(func_, id=resolve_declared_id(source_id, id), dynamic=True))
             return func_
 
         return decorator if func is None else decorator(func)

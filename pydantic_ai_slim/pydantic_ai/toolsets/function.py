@@ -135,8 +135,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         # A part is kept whole rather than reduced to its text, because it carries the block's
         # declared `id` and its `dynamic` flag -- the flag that decides whether the block falls inside
-        # the cacheable prefix. (`prepare_instructions` flattens a part, which is what the paths that
-        # render instructions as plain text want and the opposite of what a toolset wants.)
+        # the cacheable prefix, so toolset collection preserves the part rather than reducing it to text.
         self._instructions: list[str | InstructionPart | SystemPromptRunner[AgentDepsT]] = [
             instruction
             if isinstance(instruction, (str, InstructionPart))

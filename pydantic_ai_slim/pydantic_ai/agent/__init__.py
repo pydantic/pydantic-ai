@@ -659,6 +659,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
                 if isinstance(instruction, (str, _messages.InstructionPart))
                 else None,
+                dynamic=not isinstance(instruction, (str, _messages.InstructionPart)),
             )
             for instruction in _instructions.normalize_instructions(instructions)
         ]
@@ -2204,7 +2205,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         def decorator(
             func_: SystemPromptFunc[AgentDepsT],
         ) -> SystemPromptFunc[AgentDepsT]:
-            self._instructions.append(_instructions.SourcedInstruction(func_, id=instruction_id))
+            self._instructions.append(_instructions.SourcedInstruction(func_, id=instruction_id, dynamic=True))
             return func_
 
         return decorator if func is None else decorator(func)
@@ -3017,6 +3018,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     )
                     if isinstance(instruction, (str, _messages.InstructionPart))
                     else None,
+                    dynamic=not isinstance(instruction, (str, _messages.InstructionPart)),
                 )
                 for instruction in override_instructions.value
             ]
@@ -3027,7 +3029,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 # Instructions passed to a specific run are already the caller's to change, and
                 # aren't part of the agent's own configured block.
                 instructions.extend(
-                    _instructions.SourcedInstruction(instruction)
+                    _instructions.SourcedInstruction(
+                        instruction, dynamic=not isinstance(instruction, (str, _messages.InstructionPart))
+                    )
                     for instruction in _instructions.normalize_instructions(additional_instructions)
                 )
 
@@ -3419,7 +3423,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ).for_run_step(run_context)
             tool_defs = tool_manager.tool_defs
 
-            # Evaluate literal + dynamic instructions once, then fold in toolset-contributed
+            # Resolve authored instructions, then fold in toolset-contributed
             # instructions, mirroring the run/iter graph. Capability-contributed instructions come from
             # the resolved capabilities (like `iter`), not just the init-time snapshot.
             sourced_instructions = self._get_instructions(

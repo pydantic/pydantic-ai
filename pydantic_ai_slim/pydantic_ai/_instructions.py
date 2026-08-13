@@ -142,7 +142,7 @@ async def resolve_sourced_instructions(
             flush_group()
             group_key = None
             if content := await _system_prompt.SystemPromptRunner[AgentDepsT](instruction).run(run_context):
-                parts.append(InstructionPart(content=content, id=sourced.id, dynamic=True))
+                parts.append(InstructionPart(content=content, id=sourced.id, dynamic=sourced.dynamic))
     flush_group()
     return parts
 

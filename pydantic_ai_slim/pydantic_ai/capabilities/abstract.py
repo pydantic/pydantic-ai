@@ -367,6 +367,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
                 id=resolve_declared_id(
                     instruction_id, instruction.id if isinstance(instruction, InstructionPart) else None
                 ),
+                dynamic=not isinstance(instruction, (str, InstructionPart)),
             )
             for instruction in normalize_instructions(self.get_instructions())
         ]
