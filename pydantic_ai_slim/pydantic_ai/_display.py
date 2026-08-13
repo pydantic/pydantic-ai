@@ -61,7 +61,8 @@ def display_agent_banner(
         f'pydantic-ai v{__version__} • Python {platform.python_version()}\n'
         f'agent: {name or "(unnamed)"} • model: {model} • output: {output_name} • tools: {tools}\n'
         f'observability: not configured — {setup}. Free with a Logfire account —\n'
-        '  sign up: https://logfire.pydantic.dev (or use any OpenTelemetry backend)\n'
+        '  sign up: `uvx logfire auth` or https://logfire.pydantic.dev\n'
+        '  (or use any OpenTelemetry backend)\n'
         '  docs: https://pydantic.dev/docs/ai/logfire/ • hide this banner: PYDANTIC_AI_NO_BANNER=1',
         file=sys.stderr,
     )

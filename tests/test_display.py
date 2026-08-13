@@ -60,7 +60,8 @@ def test_display_banner_with_logfire(monkeypatch: pytest.MonkeyPatch, stderr: TT
         'agent: support_agent • model: openai:gpt-5.6-sol • output: str • tools: 2\n'
         'observability: not configured — set `instrument=True` and run `logfire.configure()` to see\n'
         '  this agent live: every model call, tool call, and cost. Free with a Logfire account —\n'
-        '  sign up: https://logfire.pydantic.dev (or use any OpenTelemetry backend)\n'
+        '  sign up: `uvx logfire auth` or https://logfire.pydantic.dev\n'
+        '  (or use any OpenTelemetry backend)\n'
         '  docs: https://pydantic.dev/docs/ai/logfire/ • hide this banner: PYDANTIC_AI_NO_BANNER=1\n'
     )
 
@@ -81,7 +82,8 @@ def test_display_banner_without_logfire(monkeypatch: pytest.MonkeyPatch, stderr:
         'observability: not configured — install `logfire` and set `instrument=True`.\n'
         '  Then run `logfire.configure()` to see this agent live:\n'
         '  Every model call, tool call, and cost. Free with a Logfire account —\n'
-        '  sign up: https://logfire.pydantic.dev (or use any OpenTelemetry backend)\n'
+        '  sign up: `uvx logfire auth` or https://logfire.pydantic.dev\n'
+        '  (or use any OpenTelemetry backend)\n'
         '  docs: https://pydantic.dev/docs/ai/logfire/ • hide this banner: PYDANTIC_AI_NO_BANNER=1\n'
     )
 
