@@ -15775,7 +15775,7 @@ async def test_openai_responses_replay_does_not_reorder_unsettled_or_native_resp
             )
         ]
     )
-    mock_client = MockOpenAIResponses.create_mock([response, response])
+    mock_client = MockOpenAIResponses.create_mock([response, response, response])
     model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
 
     await model.request(
@@ -15810,6 +15810,20 @@ async def test_openai_responses_replay_does_not_reorder_unsettled_or_native_resp
         None,
         ModelRequestParameters(),
     )
+    await model.request(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart('read', {'path': 'a'}, tool_call_id='call-read'),
+                    ThinkingPart(content='keep before the next response'),
+                ]
+            ),
+            ModelRequest.user_text_prompt('continue without a tool result'),
+            ModelResponse(parts=[TextPart(content='already continued')]),
+        ],
+        None,
+        ModelRequestParameters(),
+    )
 
     requests = get_mock_responses_kwargs(mock_client)
     assert requests[0]['input'] == snapshot(
@@ -15824,6 +15838,14 @@ async def test_openai_responses_replay_does_not_reorder_unsettled_or_native_resp
             {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-read', 'type': 'function_call'},
             {'role': 'assistant', 'content': '<think>\nkeep after the portable call\n</think>'},
             {'type': 'function_call_output', 'call_id': 'call-read', 'output': 'contents'},
+        ]
+    )
+    assert requests[2]['input'] == snapshot(
+        [
+            {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-read', 'type': 'function_call'},
+            {'role': 'assistant', 'content': '<think>\nkeep before the next response\n</think>'},
+            {'role': 'user', 'content': 'continue without a tool result'},
+            {'role': 'assistant', 'content': 'already continued'},
         ]
     )
 
