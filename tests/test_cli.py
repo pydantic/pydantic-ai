@@ -1041,3 +1041,19 @@ def test_clai_web_with_allowed_hosts(mocker: MockerFixture, env: TestEnv):
         html_source=None,
         allowed_hosts=['ui.example.com', '*.corp.example'],
     )
+
+
+def test_clai_web_answers_to_the_host_it_binds_to(mocker: MockerFixture, env: TestEnv):
+    """`--host <name>` implies answering to that name, so the URL the CLI prints actually works.
+
+    Without this the CLI contradicts itself: it prints `Open your browser at: http://devbox.example:7932`
+    and then rejects that exact `Host` with a `421`.
+    """
+    env.set('OPENAI_API_KEY', 'test')
+    mock_uvicorn = mocker.patch('uvicorn.run')
+    mock_create = mocker.patch('pydantic_ai._cli.web.create_web_app')
+
+    assert cli(['web', '-m', 'openai:gpt-5', '--host', 'devbox.example'], prog_name='clai') == 0
+
+    assert mock_create.call_args.kwargs['allowed_hosts'] == ['devbox.example']
+    assert mock_uvicorn.call_args.kwargs['host'] == 'devbox.example'
