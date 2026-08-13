@@ -227,8 +227,13 @@ def discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[st
     Scans only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window], so both the
     reveal set and the wire ordering derive from what the model can actually see.
     """
+    return _discovered_tool_names_in_order(post_compaction_window(messages))
+
+
+def _discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[str, ...]:
+    """Parse discovery evidence from an already-selected message window."""
     discovered: dict[str, None] = {}
-    for msg in post_compaction_window(messages):
+    for msg in messages:
         if isinstance(msg, ModelRequest):
             for part in msg.parts:
                 if isinstance(part, ToolAvailabilityDeltaPart):

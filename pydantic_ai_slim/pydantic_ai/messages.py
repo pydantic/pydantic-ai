@@ -2778,16 +2778,10 @@ def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessag
     has to be the conservative intersection: a compaction part another provider would skip on the
     wire still counts.
 
-    That intersection is not free. It was once purely benign — treating too little as visible only
-    permitted a redundant, idempotent re-disclosure, while treating too much hid state the model
-    could no longer see. Now that availability gates execution, under-counting also *refuses* a
-    call, and it does so wrongly whenever the wire did not honor the boundary this window counted:
-    a foreign-provider part (the trim is same-provider only), an OpenAI part without
-    `encrypted_content`, or a content-less Anthropic part. The model can still see the schema in
-    those cases, so the refusal costs it a turn before the retry regenerates the evidence.
-    Re-anchoring the gating window to the serving response's own provenance is tracked separately;
-    re-disclosure and instruction building should stay conservative and provider-agnostic, since
-    they feed future requests whose provider is genuinely unknowable here.
+    The execution-availability gate separately anchors its evidence to the provider that served the
+    response being dispatched. Re-disclosure, instruction building, search ranking, and catalogs
+    continue to use this conservative provider-agnostic window because they feed a future request
+    whose provider may differ.
     """
     for message_index in range(len(messages) - 1, -1, -1):
         message = messages[message_index]
@@ -2797,6 +2791,67 @@ def post_compaction_window(messages: Sequence[ModelMessage]) -> list[ModelMessag
                     # Indexed iteration rather than `messages[message_index + 1:]`: the runtime
                     # `Sequence` contract only requires integer `__getitem__`, so a minimal
                     # conforming implementation may reject slices. (`message.parts` is a list.)
+                    return [
+                        replace(message, parts=list(message.parts[part_index:])),
+                        *(messages[i] for i in range(message_index + 1, len(messages))),
+                    ]
+    return list(messages)
+
+
+def _compaction_part_is_wire_boundary(
+    part: CompactionPart, provider_name: str, *, requires_encrypted_content: bool = False
+) -> bool:
+    """Whether `provider_name` would honor `part` as a compaction boundary on the wire.
+
+    A part is only ever a boundary for the provider that produced it — compaction data round-trips
+    to its own provider — and only while it still carries the payload that provider renders. A part
+    carrying neither payload is a failed compaction, a documented no-op, and a boundary for nobody.
+
+    `requires_encrypted_content` is the caller's own render condition, not something derivable from
+    history: the OpenAI Responses adapter sends only the encrypted item, so a part holding just a
+    plaintext summary is unrenderable *for it* even though the same part is perfectly renderable for
+    a text-mode provider. Adapters pass it because they alone know what they will emit; trimming at
+    a part the request then declines to send would drop the history with no summary standing in for
+    it. It is a parameter rather than a lookup on `provider_name` because one adapter serves many
+    provider names — an Azure-backed `OpenAIResponsesModel` reports `'azure'` — so a name table
+    would silently mistreat every alias.
+
+    The default is the history-only reading used by the execution-availability gate, which has no
+    adapter to ask: any payload at all counts. The two can disagree for a part stamped with an
+    encrypted-mode provider that carries only plaintext, where the gate treats it as a boundary the
+    adapter would skip. That errs toward refusing a call rather than toward admitting an unseen
+    tool, and unifying the two properly wants a declared per-model compaction mode (see #7255).
+    """
+    if part.provider_name != provider_name:
+        return False
+    if part.provider_details and 'encrypted_content' in part.provider_details:
+        return True
+    return not requires_encrypted_content and part.content is not None
+
+
+def _post_compaction_window_for_response(  # pyright: ignore[reportUnusedFunction]
+    messages: Sequence[ModelMessage], serving_response: ModelResponse
+) -> list[ModelMessage]:
+    """The provider-exact evidence window for calls in `serving_response`.
+
+    Only boundaries strictly before the serving response are eligible: a provider can emit a
+    compaction part and continue generating a call in the same response, but that response was not
+    part of the request whose tools the model saw. A response without provider provenance falls
+    back to the provider-agnostic window.
+    """
+    if serving_response.provider_name is None:
+        return post_compaction_window(messages)
+
+    serving_index = next((i for i in range(len(messages) - 1, -1, -1) if messages[i] is serving_response), None)
+    assert serving_index is not None, '`serving_response` must be present in `messages`'
+    for message_index in range(serving_index - 1, -1, -1):
+        message = messages[message_index]
+        if isinstance(message, ModelResponse):
+            for part_index in range(len(message.parts) - 1, -1, -1):
+                part = message.parts[part_index]
+                if isinstance(part, CompactionPart) and _compaction_part_is_wire_boundary(
+                    part, serving_response.provider_name
+                ):
                     return [
                         replace(message, parts=list(message.parts[part_index:])),
                         *(messages[i] for i in range(message_index + 1, len(messages))),

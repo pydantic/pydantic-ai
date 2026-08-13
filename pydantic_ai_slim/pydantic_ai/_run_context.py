@@ -229,6 +229,12 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Managed by the framework: safe to read, but don't mutate it directly.
     """
 
+    _discovered_tool_names_supplement: set[str] = field(default_factory=set[str], repr=False)
+    """Private dispatch-only discovery evidence from the serving provider's exact wire window."""
+
+    _loaded_capability_ids_supplement: set[str] = field(default_factory=set[str], repr=False)
+    """Private dispatch-only capability evidence from the serving provider's exact wire window."""
+
     @property
     def realtime(self) -> bool:
         """Whether this run is a realtime session, i.e. `model` is the connected `RealtimeModel`.
@@ -332,7 +338,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # definition can be observed before tool search stamps `with_native='tool-search'` on it.
         if tool_def.with_native != ToolSearchTool.kind and not tool_def.defer_loading:
             return True
-        if tool_def.name not in self.discovered_tool_names:
+        if tool_def.name not in self.discovered_tool_names | self._discovered_tool_names_supplement:
             return False
         # A run holds to load, then reveal, then call. `discovered_tool_names` is raw history
         # evidence and only answers the middle step, so it can name a tool whose capability was
@@ -340,7 +346,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # written to be read first. Checking the owner here keeps this predicate in step with what
         # `ToolManager` will run, so "available" means one thing everywhere it is asked.
         capability_id = tool_def.capability_id
-        return capability_id is None or capability_id in self.available_capability_ids
+        return capability_id is None or capability_id in (
+            self.available_capability_ids | self._loaded_capability_ids_supplement
+        )
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:

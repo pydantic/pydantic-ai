@@ -4436,6 +4436,23 @@ def test_temporal_run_context_serializes_usage_limits():
     assert reconstructed.usage_limits == ctx.usage_limits
 
 
+async def test_temporal_run_context_preserves_dispatch_availability_supplements():
+    """Provider-exact evidence is computed workflow-side and survives the untyped activity payload."""
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        _discovered_tool_names_supplement={'deferred_tool'},
+        _loaded_capability_ids_supplement={'deferred_capability'},
+    )
+
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    reconstructed = TemporalRunContext.deserialize_run_context(wire, deps=None)
+
+    assert reconstructed._discovered_tool_names_supplement == {'deferred_tool'}
+    assert reconstructed._loaded_capability_ids_supplement == {'deferred_capability'}
+
+
 def test_temporal_run_context_serialization_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Temporal serialization.
 
