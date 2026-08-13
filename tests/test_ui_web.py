@@ -241,6 +241,20 @@ def test_chat_app_index_endpoint(isolated_ui_cache: None):
         assert len(response.content) > 0
 
 
+def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """`_get_cache_dir` derives its path from `XDG_CACHE_HOME` and creates the directory.
+
+    Every other test monkeypatches `_get_cache_dir` for isolation, so this is the only test that
+    exercises its real body.
+    """
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
+
+    cache_dir = app_module._get_cache_dir()  # pyright: ignore[reportPrivateUsage]
+
+    assert cache_dir == tmp_path / 'pydantic-ai' / 'web-ui'
+    assert cache_dir.is_dir()
+
+
 @pytest.mark.anyio
 async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html fetches from CDN when filesystem cache misses."""
