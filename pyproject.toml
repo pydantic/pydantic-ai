@@ -190,6 +190,8 @@ logfire = false
 logfire-api = false
 # OpenAI 3.0 removes the SDK's transitive legacy HTTPX dependency and directly requires HTTPX2.
 openai = false
+# Google Gen AI 2.18.0 is the first release that accepts an injected HTTPX2 client.
+google-genai = false
 # TODO: Remove after 2026-08-18 07:51 UTC. https://github.com/pydantic/pydantic-ai/issues/7376
 # This admits only the reviewed HTTPX2-compatible 2.9.2 artifacts; later Mistral artifacts remain quarantined.
 mistralai = "2026-08-11T07:51:18Z"

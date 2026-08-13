@@ -87,6 +87,36 @@ def test_gateway_google_sets_static_ws_bearer_auth():
     provider = gateway_provider('google', api_key='gw-key', base_url=GATEWAY_BASE_URL)
     headers = provider.client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
     assert headers is not None and headers['Authorization'] == 'Bearer gw-key'
+    assert isinstance(provider.client._api_client._async_httpx_client, httpx2.AsyncClient)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_gateway_google_preserves_caller_owned_httpx2_client():
+    async with httpx2.AsyncClient() as http_client:
+        provider = gateway_provider('google', http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL)
+
+        assert provider.client._api_client._async_httpx_client is http_client  # pyright: ignore[reportPrivateUsage]
+        async with provider:
+            pass
+        assert not http_client.is_closed
+
+
+async def test_gateway_google_recreates_owned_httpx2_client():
+    provider = gateway_provider('google', api_key='gw-key', base_url=GATEWAY_BASE_URL)
+    first_client = provider.client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(first_client, httpx2.AsyncClient)
+
+    async with provider:
+        pass
+    assert first_client.is_closed
+
+    async with provider:
+        second_client = provider.client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(second_client, httpx2.AsyncClient)
+        assert second_client is not first_client
+        request = httpx2.Request('GET', provider.base_url)
+        for hook in second_client.event_hooks['request']:
+            await hook(request)
+        assert request.headers['Authorization'] == 'Bearer gw-key'
 
 
 def test_gateway_google_ws_bearer_auth_skips_unusable_clients():
@@ -210,7 +240,8 @@ async def test_non_openai_gateway_provider_preserves_custom_http_client():
 async def test_non_openai_gateway_provider_rejects_httpx2_client():
     async with httpx2.AsyncClient() as http_client:
         with pytest.raises(
-            UserError, match=re.escape('`httpx2.AsyncClient` is only supported for OpenAI Gateway routes.')
+            UserError,
+            match=re.escape('`httpx2.AsyncClient` is only supported for OpenAI and Google Gateway routes.'),
         ):
             gateway_provider(  # pyright: ignore[reportCallIssue]
                 'groq',

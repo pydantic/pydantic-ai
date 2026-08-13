@@ -82,7 +82,7 @@ def gateway_provider(
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    http_client: httpx.AsyncClient | None = None,
+    http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None,
 ) -> Provider[GoogleClient]: ...
 
 
@@ -192,8 +192,11 @@ def gateway_provider(
         _gateway_providers.add(provider)
         return provider
 
+    if canonical == 'google-cloud':
+        return _google_gateway_provider(api_key=api_key, base_url=base_url, http_client=http_client)
+
     if isinstance(http_client, httpx2.AsyncClient):
-        raise UserError('`httpx2.AsyncClient` is only supported for OpenAI Gateway routes.')
+        raise UserError('`httpx2.AsyncClient` is only supported for OpenAI and Google Gateway routes.')
 
     own_http_client = http_client is None
     http_client = http_client or create_async_http_client()
@@ -225,17 +228,33 @@ def gateway_provider(
                 anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
             )
         )
-    elif canonical == 'google-cloud':
-        # `gateway/google` is a convenience alias for `gateway/google-cloud` — the Gateway
-        # server only exposes the Google Cloud (Vertex) route today, so both shorthands
-        # land here via `normalize_gateway_provider`.
-        from .google_cloud import GoogleCloudProvider
-
-        provider = GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=http_client)
-        _set_google_ws_gateway_auth(provider.client, api_key)
-        return _with_http_client(provider)
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
+
+
+def _google_gateway_provider(
+    *, api_key: str, base_url: str, http_client: httpx.AsyncClient | httpx2.AsyncClient | None
+) -> Provider[GoogleClient]:
+    # `gateway/google` is a convenience alias for `gateway/google-cloud` — the Gateway
+    # server only exposes the Google Cloud (Vertex) route today.
+    from .google_cloud import GoogleCloudProvider
+
+    own_http_client = http_client is None
+    google_http_client = http_client or create_httpx2_client()
+    _add_request_hook(google_http_client, _GatewayRequestHook(api_key))
+
+    def _google_http_client_factory() -> httpx2.AsyncClient:
+        client = create_httpx2_client()
+        _add_request_hook(client, _GatewayRequestHook(api_key))
+        return client
+
+    provider = GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=google_http_client)
+    _set_google_ws_gateway_auth(provider.client, api_key)
+    if own_http_client:
+        provider._own_http_client = google_http_client  # pyright: ignore[reportPrivateUsage]
+        provider._http_client_factory = _google_http_client_factory  # pyright: ignore[reportPrivateUsage]
+    _gateway_providers.add(provider)
+    return provider
 
 
 def is_gateway_provider(provider: Provider[Any]) -> bool:

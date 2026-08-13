@@ -6,7 +6,6 @@ import textwrap
 
 import httpx2
 import pytest
-from pydantic import ValidationError
 
 from .conftest import try_import
 
@@ -136,15 +135,11 @@ async def test_groq_still_rejects_httpx2_client() -> None:
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='google-genai not installed')
-async def test_google_still_rejects_httpx2_client() -> None:
+async def test_google_accepts_httpx2_client() -> None:
     async with httpx2.AsyncClient() as client:
-        with pytest.raises(ValidationError, match='httpx_async_client'):
-            GoogleClient(
-                api_key='test',
-                http_options=HttpOptions(
-                    httpx_async_client=client,  # pyright: ignore[reportArgumentType]
-                ),
-            )
+        google_client = GoogleClient(api_key='test', http_options=HttpOptions(httpx_async_client=client))
+
+        assert google_client._api_client._async_httpx_client is client  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.skipif(not mistral_imports_successful(), reason='mistral not installed')
