@@ -43,6 +43,7 @@ import importlib
 import inspect
 import json
 import pkgutil
+import re
 import textwrap
 import types
 from collections.abc import Awaitable, Callable
@@ -186,19 +187,57 @@ def parse_supported_by_lists() -> dict[str, list[str]]:
     return lists
 
 
+def parse_caveats() -> dict[str, list[str]]:
+    """Every parenthetical caveat in a `Supported by:` list, keyed by the field it sits on."""
+    caveats: dict[str, list[str]] = {}
+    for field_name, block in _supported_by_blocks().items():
+        caveats[field_name] = [
+            stripped[2:].split(' (', 1)[1]
+            for line in block.splitlines()
+            if (stripped := line.strip()).startswith('* ') and ' (' in stripped
+        ]
+    return caveats
+
+
 def _parse_bullets(docstring: str) -> list[str]:
     """Take the model names out of a `Supported by:` block, dropping any parenthetical caveat.
 
     Only the first paragraph after the heading is the list: a caveat long enough to wrap continues
     its bullet on the next line, and a blank line ends the list rather than a note that follows it.
     """
-    _, _, tail = docstring.partition('Supported by:')
-    block, _, _ = tail.strip('\n').partition('\n\n')
+    block = _supported_by_block(docstring)
     return [
         stripped[2:].split(' (')[0].strip()
         for line in block.splitlines()
         if (stripped := line.strip()).startswith('* ')
     ]
+
+
+def _supported_by_block(docstring: str) -> str:
+    """The bullet paragraph after the heading — a blank line ends it, so a trailing note is excluded."""
+    _, _, tail = docstring.partition('Supported by:')
+    block, _, _ = tail.strip('\n').partition('\n\n')
+    return block
+
+
+def _supported_by_blocks() -> dict[str, str]:
+    """Each field's bullet paragraph, parsed once from the `ModelSettings` source."""
+    class_def = ast.parse(textwrap.dedent(inspect.getsource(ModelSettings))).body[0]
+    assert isinstance(class_def, ast.ClassDef)
+    blocks: dict[str, str] = {}
+    field_name: str | None = None
+    for node in class_def.body:
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            field_name = node.target.id
+        elif (
+            field_name is not None
+            and isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            blocks[field_name] = _supported_by_block(node.value.value)
+            field_name = None
+    return blocks
 
 
 class ProbeAborted(Exception):
@@ -555,3 +594,21 @@ def test_every_api_backed_model_class_is_probed():
 
     unprobed = discovered - _NOT_API_BACKED - {case.id for case in CASES}
     assert not unprobed, f'model classes with no probe case, so no `Supported by:` list covers them: {sorted(unprobed)}'
+
+
+def test_no_caveat_describes_a_different_setting():
+    """A caveat naming a `ModelSettings` field must name the field it sits on.
+
+    `_parse_bullets` drops everything after the first `(` so the equality assertion stays about model
+    names, which leaves caveat text unchecked — and a bulk edit did once copy `tool_choice`'s caveats
+    onto `top_p`, where they read as confident nonsense. This closes that gap.
+    """
+    fields = set(SUPPORTED_BY_LISTS)
+    misplaced = {
+        f'{field_name}: {caveat}'
+        for field_name, caveats in parse_caveats().items()
+        for caveat in caveats
+        for referenced in re.findall(r'`([a-z_]+)`', caveat)
+        if referenced in fields and referenced != field_name
+    }
+    assert not misplaced, f'caveats describing another setting: {sorted(misplaced)}'
