@@ -1133,6 +1133,38 @@ async def main():
 asyncio.run(main())
 ```
 
+## Citations
+
+Pydantic AI normalizes web-search citations from OpenAI, Anthropic, and Google, plus file-search citations from OpenAI
+and Google. They are available on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations] without changing the
+model's text.
+
+```python
+from pydantic_ai import Agent, TextPart, WebCitationSource
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.native_tools import WebSearchTool
+
+agent = Agent('openai-responses:gpt-5.2', capabilities=[NativeTool(WebSearchTool())])
+result = agent.run_sync('What is the tallest mountain in Alberta?')
+
+for message in result.all_messages():
+    for part in message.parts:
+        if isinstance(part, TextPart):
+            for citation in part.citations or []:
+                for source in citation.sources:
+                    if isinstance(source, WebCitationSource):
+                        print(source.title, source.url)
+```
+
+A citation can reference one or more web or document sources. Its optional
+[`anchor`][pydantic_ai.messages.CitationAnchor] uses Python character offsets into the containing text:
+`part.content[anchor.start:anchor.end]`. An anchor with `kind='content'` identifies supported text, while
+`kind='marker'` identifies a citation marker already present in the model output. An absent anchor means the provider
+did not supply a text range that Pydantic AI could safely normalize.
+
+Other provider-specific citation data remains available in `provider_details`. Treat citation URLs and titles as
+untrusted data when rendering them.
+
 ## API Reference
 
 For complete API documentation, see the [API Reference](api/native_tools.md).

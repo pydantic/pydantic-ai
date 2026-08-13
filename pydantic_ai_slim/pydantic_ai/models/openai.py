@@ -45,7 +45,10 @@ from ..messages import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    Citation,
+    CitationAnchor,
     CompactionPart,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     FinishReason,
@@ -76,6 +79,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
     is_multi_modal_content,
 )
 from ..native_tools import (
@@ -859,10 +863,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     openai_include_raw_annotations: bool
     """Whether to include the raw annotations in `TextPart.provider_details`.
 
-    When enabled, any annotations (e.g., citations from web search) will be available
-    in the `provider_details['annotations']` field of text parts.
-    This is opt-in since there may be overlap with native annotation support once
-    added via https://github.com/pydantic/pydantic-ai/issues/3126.
+    Supported citations are always available as normalized `TextPart.citations`.
+    Enable this setting when the original OpenAI annotation payload is also needed in
+    `provider_details['annotations']`.
     """
 
     openai_context_management: list[ContextManagement]
@@ -1237,12 +1240,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             items.extend(thinking_parts)
 
         if choice.message.content:
-            items.extend(
-                (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
-                for part in split_content_into_text_and_thinking(
-                    choice.message.content, self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                )
-            )
+            items.extend(_map_chat_content(choice.message, self.profile, self.system))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 if isinstance(c, ChatCompletionMessageFunctionToolCall):
@@ -1920,6 +1918,86 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
 
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
+chat_annotations_ta = TypeAdapter(list[chat.chat_completion_message.Annotation])
+
+
+def _map_responses_citations(
+    annotations: Sequence[responses.response_output_text.Annotation],
+    text: str,
+) -> tuple[list[Citation] | None, list[dict[str, Any]] | None]:
+    citations: list[Citation] = []
+    unsupported: list[dict[str, Any]] = []
+    for annotation in annotations:
+        if isinstance(annotation, responses.response_output_text.AnnotationURLCitation):
+            start, end = annotation.start_index, annotation.end_index
+            if not 0 <= start <= end <= len(text):
+                unsupported.append(annotation.model_dump())
+                continue
+            citations.append(
+                Citation(
+                    sources=[WebCitationSource(url=annotation.url, title=annotation.title)],
+                    anchor=CitationAnchor(start=start, end=end, kind='marker'),
+                )
+            )
+        elif isinstance(annotation, responses.response_output_text.AnnotationFileCitation):
+            citations.append(
+                Citation(
+                    sources=[DocumentCitationSource(file_id=annotation.file_id, title=annotation.filename)],
+                    provider_details={'index': annotation.index},
+                )
+            )
+        else:
+            unsupported.append(annotation.model_dump())
+    return citations or None, unsupported or None
+
+
+def _map_chat_citations(
+    annotations: Sequence[BaseModel], text: str
+) -> tuple[list[Citation] | None, list[dict[str, Any]] | None]:
+    citations: list[Citation] = []
+    unsupported: list[dict[str, Any]] = []
+    for annotation in annotations:
+        if not isinstance(annotation, chat.chat_completion_message.Annotation):
+            unsupported.append(annotation.model_dump())
+            continue
+        start, end = annotation.url_citation.start_index, annotation.url_citation.end_index
+        if 0 <= start <= end <= len(text):
+            citations.append(
+                Citation(
+                    sources=[WebCitationSource(url=annotation.url_citation.url, title=annotation.url_citation.title)],
+                    anchor=CitationAnchor(start=start, end=end, kind='marker'),
+                )
+            )
+        else:
+            unsupported.append(annotation.model_dump())
+    return citations or None, unsupported or None
+
+
+def _map_chat_content(
+    message: chat.ChatCompletionMessage, profile: OpenAIModelProfile, provider_name: str
+) -> list[TextPart | ThinkingPart]:
+    content_parts = split_content_into_text_and_thinking(
+        message.content or '', profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
+    )
+    if message.annotations:
+        text_parts = [part for part in content_parts if isinstance(part, TextPart)]
+        if len(content_parts) == 1 and text_parts:
+            citations, unsupported = _map_chat_citations(message.annotations, text_parts[0].content)
+            text_parts[0].citations = citations
+        else:
+            # Annotation offsets address the unsplit provider text, so they are not safe to apply to one
+            # of the normalized parts after embedded thinking tags have been removed.
+            unsupported = [annotation.model_dump() for annotation in message.annotations]
+        if unsupported and text_parts:
+            text_parts[-1].provider_name = provider_name
+            text_parts[-1].provider_details = {
+                **(text_parts[-1].provider_details or {}),
+                'unsupported_annotations': unsupported,
+            }
+    return [
+        replace(part, id='content', provider_name=provider_name) if isinstance(part, ThinkingPart) else part
+        for part in content_parts
+    ]
 
 
 @dataclass(init=False)
@@ -2334,6 +2412,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     if isinstance(content, responses.ResponseOutputRefusal):
                         refusal_text = content.refusal
                     elif isinstance(content, responses.ResponseOutputText):  # pragma: no branch
+                        text = content.text or ''
+                        citations, unsupported = _map_responses_citations(content.annotations, text)
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
@@ -2342,6 +2422,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                             part_provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
                                 list(content.annotations), warnings=False
                             )
+                        if unsupported:
+                            part_provider_details = part_provider_details or {}
+                            part_provider_details['unsupported_annotations'] = unsupported
                         if item.phase is not None:
                             part_provider_details = part_provider_details or {}
                             part_provider_details['phase'] = item.phase
@@ -2349,10 +2432,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         # coalesce to '' so the part (and its ID) is preserved for round-tripping.
                         items.append(
                             TextPart(
-                                content.text or '',
+                                text,
                                 id=item.id,
                                 provider_name=self.system,
                                 provider_details=part_provider_details,
+                                citations=citations,
                             )
                         )
             elif isinstance(item, responses.ResponseFunctionToolCall):
@@ -3952,6 +4036,26 @@ class OpenAIStreamedResponse(StreamedResponse):
                     event.part.provider_name = self.provider_name
                 yield event
 
+        raw_annotations = (choice.delta.model_extra or {}).get('annotations')
+        if raw_annotations and isinstance(part := self._parts_manager.get_part_by_vendor_id('content'), TextPart):
+            try:
+                annotations = chat_annotations_ta.validate_python(raw_annotations)
+            except ValidationError:
+                provider_details = {'unsupported_annotations': raw_annotations}
+                citations = None
+            else:
+                citations, unsupported = _map_chat_citations(annotations, part.content)
+                provider_details = {'unsupported_annotations': unsupported} if unsupported else {}
+                if self._model_settings and self._model_settings.get('openai_include_raw_annotations'):
+                    provider_details['annotations'] = chat_annotations_ta.dump_python(annotations, warnings=False)
+            yield from self._parts_manager.handle_text_delta(
+                vendor_part_id='content',
+                content='',
+                provider_name=self.provider_name if provider_details else None,
+                provider_details=provider_details or None,
+                citations=citations,
+            )
+
     def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps tool call delta content to events.
 
@@ -4092,7 +4196,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name):
             # Track annotations by item_id and content_index
-            _annotations_by_item: dict[str, list[Any]] = {}
+            _annotations_by_item: dict[tuple[str, int], list[Any]] = {}
             # Track `phase` (commentary | final_answer) on assistant message items, captured
             # from the `output_item.added` event and merged into the corresponding
             # `TextPart.provider_details` on the first `output_text.delta` (so consumers can
@@ -4485,9 +4589,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     pass  # content already accumulated via delta events
 
                 elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
-                    # Collect annotations if the setting is enabled
-                    if self._model_settings.get('openai_include_raw_annotations'):
-                        _annotations_by_item.setdefault(chunk.item_id, []).append(chunk.annotation)
+                    _annotations_by_item.setdefault((chunk.item_id, chunk.content_index), []).append(chunk.annotation)
 
                 elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                     # Guard against delta=null from OpenAI-compatible gateways (e.g. Bifrost).
@@ -4498,7 +4600,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         if (phase := _phase_by_item.pop(chunk.item_id, None)) is not None:
                             delta_provider_details = {'phase': phase}
                         for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id=chunk.item_id,
+                            vendor_part_id=(chunk.item_id, chunk.content_index),
                             content=chunk.delta,
                             id=chunk.item_id,
                             provider_name=self.provider_name,
@@ -4509,21 +4611,33 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseTextDoneEvent):
                     # Add annotations to provider_details if available
                     provider_details: dict[str, Any] = {}
-                    annotations = _annotations_by_item.get(chunk.item_id)
-                    if annotations:
-                        provider_details['annotations'] = responses_output_text_annotations_ta.dump_python(
-                            list(annotations), warnings=False
+                    raw_annotations = _annotations_by_item.pop((chunk.item_id, chunk.content_index), None)
+                    try:
+                        annotations = responses_output_text_annotations_ta.validate_python(raw_annotations or [])
+                    except ValidationError:
+                        citations = None
+                        unsupported = raw_annotations
+                        serialized_annotations = raw_annotations
+                    else:
+                        citations, unsupported = _map_responses_citations(annotations, chunk.text)
+                        serialized_annotations = responses_output_text_annotations_ta.dump_python(
+                            annotations, warnings=False
                         )
+                    if unsupported:
+                        provider_details['unsupported_annotations'] = unsupported
+                    if raw_annotations and self._model_settings.get('openai_include_raw_annotations'):
+                        provider_details['annotations'] = serialized_annotations
                     if chunk.logprobs:
                         provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
                     if (phase := _phase_by_item.get(chunk.item_id)) is not None:
                         provider_details['phase'] = phase
-                    if provider_details:
+                    if provider_details or citations:
                         for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id=chunk.item_id,
+                            vendor_part_id=(chunk.item_id, chunk.content_index),
                             content='',
                             provider_name=self.provider_name,
-                            provider_details=provider_details,
+                            provider_details=provider_details or None,
+                            citations=citations,
                         ):
                             yield event
 

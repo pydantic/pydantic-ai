@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -23,6 +23,7 @@ from ..messages import (
     AudioUrl,
     BinaryContent,
     CachePoint,
+    Citation,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -50,6 +51,7 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    WebCitationSource,
     is_multi_modal_content,
 )
 from ..native_tools import (
@@ -107,6 +109,30 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
 }
 
 
+def _map_citations(citations: Sequence[BetaTextCitation] | None) -> tuple[list[Citation] | None, dict[str, Any] | None]:
+    mapped: list[Citation] = []
+    unsupported: list[dict[str, Any]] = []
+    for citation in citations or []:
+        if isinstance(citation, BetaCitationsWebSearchResultLocation):
+            mapped.append(
+                Citation(
+                    sources=[
+                        WebCitationSource(
+                            url=citation.url,
+                            title=citation.title,
+                            provider_details={
+                                'cited_text': citation.cited_text,
+                                'encrypted_index': citation.encrypted_index,
+                            },
+                        )
+                    ]
+                )
+            )
+        else:
+            unsupported.append(citation.model_dump())
+    return mapped or None, {'citations': unsupported} if unsupported else None
+
+
 def _revealed_deferred_tool_order(
     messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
 ) -> list[str]:
@@ -160,6 +186,7 @@ try:
         BetaCacheControlEphemeralParam,
         BetaCitationsConfigParam,
         BetaCitationsDelta,
+        BetaCitationsWebSearchResultLocation,
         BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionTool20260120Param,
         BetaCodeExecutionToolResultBlock,
@@ -211,6 +238,7 @@ try:
         BetaStopReason,
         BetaTextBlock,
         BetaTextBlockParam,
+        BetaTextCitation,
         BetaTextDelta,
         BetaTextEditorCodeExecutionToolResultBlock,
         BetaTextEditorCodeExecutionToolResultBlockParam,
@@ -1232,7 +1260,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         }
         for item in response.content:
             if isinstance(item, BetaTextBlock):
-                items.append(TextPart(content=item.text))
+                citations, provider_details = _map_citations(item.citations)
+                items.append(
+                    TextPart(
+                        content=item.text,
+                        provider_name=self.system if provider_details else None,
+                        provider_details=provider_details,
+                        citations=citations,
+                    )
+                )
             elif isinstance(item, BetaServerToolUseBlock):
                 if item.name not in enabled_server_tool_names and item.id not in server_tool_result_ids:
                     continue
@@ -2844,6 +2880,7 @@ class AnthropicStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name):
             current_block: BetaContentBlock | None = None
             ignored_server_tool_use_indices: set[int] = set()
+            pending_citations: dict[int, list[BetaTextCitation]] = {}
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
             async for event in self._response:
@@ -2989,8 +3026,13 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if event.index in ignored_server_tool_use_indices:
                         continue
                     if isinstance(event.delta, BetaTextDelta):
+                        citations, provider_details = _map_citations(pending_citations.pop(event.index, None))
                         for event_ in self._parts_manager.handle_text_delta(
-                            vendor_part_id=event.index, content=event.delta.text
+                            vendor_part_id=event.index,
+                            content=event.delta.text,
+                            provider_name=self.provider_name if provider_details else None,
+                            provider_details=provider_details,
+                            citations=citations,
                         ):
                             yield event_
                     elif isinstance(event.delta, BetaThinkingDelta):
@@ -3025,9 +3067,26 @@ class AnthropicStreamedResponse(StreamedResponse):
                                     provider_details=_compaction_provider_details(event.delta.encrypted_content),
                                 ),
                             )
-                    # TODO(Marcelo): We need to handle citations.
                     elif isinstance(event.delta, BetaCitationsDelta):
-                        pass
+                        part = self._parts_manager.get_part_by_vendor_id(event.index)
+                        if part is None:
+                            # Anthropic can send a citation before the first text delta. Keep it until there is
+                            # text to attach it to, avoiding an otherwise empty TextPart in the public stream.
+                            pending_citations.setdefault(event.index, []).append(event.delta.citation)
+                        else:
+                            citations, provider_details = _map_citations([event.delta.citation])
+                            if provider_details and isinstance(part, TextPart):
+                                existing = (part.provider_details or {}).get('citations')
+                                if isinstance(existing, list):
+                                    provider_details['citations'] = [*existing, *provider_details['citations']]
+                            for event_ in self._parts_manager.handle_text_delta(
+                                vendor_part_id=event.index,
+                                content='',
+                                provider_name=self.provider_name if provider_details else None,
+                                provider_details=provider_details,
+                                citations=citations,
+                            ):
+                                yield event_
 
                 elif isinstance(event, BetaRawMessageDeltaEvent):
                     self._usage = _map_usage(
@@ -3049,6 +3108,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         self.provider_details['container_id'] = event.delta.container.id
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
+                    pending_citations.pop(event.index, None)
                     if event.index in ignored_server_tool_use_indices:
                         ignored_server_tool_use_indices.remove(event.index)
                     elif isinstance(current_block, BetaMCPToolUseBlock):

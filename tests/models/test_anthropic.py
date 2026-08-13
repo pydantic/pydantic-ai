@@ -22,6 +22,7 @@ from pydantic_ai import (
     Agent,
     BinaryContent,
     CachePoint,
+    Citation,
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
@@ -52,6 +53,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UsageLimitExceeded,
     UserPromptPart,
+    WebCitationSource,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._utils import PeekableAsyncStream
@@ -97,6 +99,7 @@ from ..conftest import (
     try_import,
 )
 from ..parts_from_messages import part_types_from_messages
+from .citation_utils import IsCitationList, citations_from_messages
 from .conftest import AnthropicModelFactory, RequestCapture, cache_breakpoints, content_blocks, message_shape
 from .mock_async_stream import MockAsyncStream
 
@@ -121,6 +124,9 @@ with try_import() as imports_successful:
         BetaAdvisorResultBlock,
         BetaAdvisorToolResultBlock,
         BetaAdvisorToolResultError,
+        BetaCitationCharLocation,
+        BetaCitationsDelta,
+        BetaCitationsWebSearchResultLocation,
         BetaCodeExecutionResultBlock,
         BetaCodeExecutionToolResultBlock,
         BetaCompactionBlock,
@@ -166,6 +172,7 @@ with try_import() as imports_successful:
         AnthropicModel,
         AnthropicModelSettings,
         AnthropicStreamedResponse,
+        _map_citations,  # pyright: ignore[reportPrivateUsage]
         _map_usage,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -187,6 +194,131 @@ pytestmark = [
         "ignore:The model 'claude-sonnet-4-0' is deprecated and will reach end-of-life.*:DeprecationWarning"
     ),
 ]
+
+
+def test_anthropic_supported_and_unsupported_citations():
+    web = BetaCitationsWebSearchResultLocation(
+        type='web_search_result_location',
+        url='https://example.com',
+        title='Example',
+        cited_text='web excerpt',
+        encrypted_index='opaque-index',
+    )
+    document = BetaCitationCharLocation(
+        cited_text='document excerpt',
+        document_index=0,
+        document_title='Report',
+        start_char_index=0,
+        end_char_index=16,
+        type='char_location',
+    )
+    citations, provider_details = _map_citations([web, document])
+
+    assert citations == [
+        Citation(
+            sources=[
+                WebCitationSource(
+                    url='https://example.com',
+                    title='Example',
+                    provider_details={'cited_text': 'web excerpt', 'encrypted_index': 'opaque-index'},
+                )
+            ]
+        )
+    ]
+    assert provider_details == {'citations': [document.model_dump()]}
+
+
+async def test_anthropic_stream_citations(allow_model_requests: None):
+    unsupported = [
+        BetaCitationCharLocation(
+            cited_text='first',
+            document_index=0,
+            document_title='Report',
+            start_char_index=0,
+            end_char_index=5,
+            type='char_location',
+        ),
+        BetaCitationCharLocation(
+            cited_text='second',
+            document_index=0,
+            document_title='Report',
+            start_char_index=6,
+            end_char_index=12,
+            type='char_location',
+        ),
+    ]
+    stream = [
+        BetaRawMessageStartEvent(
+            type='message_start',
+            message=BetaMessage(
+                id='message-1',
+                model='claude-sonnet-4-5',
+                role='assistant',
+                type='message',
+                content=[],
+                stop_reason=None,
+                usage=BetaUsage(input_tokens=1, output_tokens=0),
+            ),
+        ),
+        BetaRawContentBlockStartEvent(
+            type='content_block_start', index=0, content_block=BetaTextBlock(type='text', text='answer')
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=0,
+            delta=BetaCitationsDelta(
+                type='citations_delta',
+                citation=BetaCitationsWebSearchResultLocation(
+                    type='web_search_result_location',
+                    url='https://example.com',
+                    title='Example',
+                    cited_text='web excerpt',
+                    encrypted_index='opaque-index',
+                ),
+            ),
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=0,
+            delta=BetaCitationsDelta(type='citations_delta', citation=unsupported[0]),
+        ),
+        BetaRawContentBlockDeltaEvent(
+            type='content_block_delta',
+            index=0,
+            delta=BetaCitationsDelta(type='citations_delta', citation=unsupported[1]),
+        ),
+        BetaRawMessageStopEvent(type='message_stop'),
+    ]
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        provider=AnthropicProvider(anthropic_client=MockAnthropic.create_stream_mock(stream)),
+    )
+
+    async with model.request_stream(
+        [ModelRequest.user_text_prompt('question')], {}, ModelRequestParameters()
+    ) as streamed:
+        _ = [event async for event in streamed]
+        response = streamed.get()
+
+    assert response.parts == [
+        TextPart(
+            'answer',
+            provider_name='anthropic',
+            provider_details={'citations': [citation.model_dump() for citation in unsupported]},
+            citations=[
+                Citation(
+                    sources=[
+                        WebCitationSource(
+                            url='https://example.com',
+                            title='Example',
+                            provider_details={'cited_text': 'web excerpt', 'encrypted_index': 'opaque-index'},
+                        )
+                    ]
+                )
+            ],
+        )
+    ]
+
 
 # Type variable for generic AsyncStream
 T = TypeVar('T')
@@ -5186,7 +5318,16 @@ async def test_anthropic_web_search_tool(
             None,
         )
     )
-    assert result.all_messages() == snapshot(
+    messages = result.all_messages()
+    citations = citations_from_messages(messages)
+    assert citations
+    assert all(isinstance(source, WebCitationSource) for citation in citations for source in citation.sources)
+    first_source = citations[0].sources[0]
+    assert isinstance(first_source, WebCitationSource)
+    assert first_source.url == 'https://www.accuweather.com/en/us/san-francisco/94103/weather-forecast/347629'
+    assert first_source.title == 'San Francisco, CA Weather Forecast | AccuWeather'
+    assert first_source.provider_details == {'cited_text': IsStr(), 'encrypted_index': IsStr()}
+    assert messages == snapshot(
         [
             ModelRequest(
                 parts=[UserPromptPart(content='What is the weather in San Francisco today?', timestamp=IsDatetime())],
@@ -5297,21 +5438,30 @@ Based on the search results, here's the weather information for San Francisco to
 - \
 """
                     ),
-                    TextPart(content='Temperature: 66°F with clear skies'),
+                    TextPart(
+                        content='Temperature: 66°F with clear skies',
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
 - \
 """
                     ),
-                    TextPart(content='Wind: W at 3 mph with gusts up to 5 mph'),
+                    TextPart(
+                        content='Wind: W at 3 mph with gusts up to 5 mph',
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
 - \
 """
                     ),
-                    TextPart(content='Air quality is poor and unhealthy for sensitive groups'),
+                    TextPart(
+                        content='Air quality is poor and unhealthy for sensitive groups',
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
@@ -5320,21 +5470,10 @@ Based on the search results, here's the weather information for San Francisco to
 - \
 """
                     ),
-                    TextPart(content='High: 78°F with partly cloudy skies'),
                     TextPart(
-                        content="""\
-
-- \
-"""
+                        content='High: 78°F with partly cloudy skies',
+                        citations=IsCitationList(),
                     ),
-                    TextPart(content='Winds W at 10 to 20 mph'),
-                    TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(content='8% chance of precipitation'),
                     TextPart(
                         content="""\
 
@@ -5342,7 +5481,28 @@ Based on the search results, here's the weather information for San Francisco to
 """
                     ),
                     TextPart(
-                        content='Some clouds in the morning will give way to mainly sunny skies for the afternoon'
+                        content='Winds W at 10 to 20 mph',
+                        citations=IsCitationList(),
+                    ),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(
+                        content='8% chance of precipitation',
+                        citations=IsCitationList(),
+                    ),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(
+                        content='Some clouds in the morning will give way to mainly sunny skies for the afternoon',
+                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
@@ -5352,14 +5512,20 @@ Based on the search results, here's the weather information for San Francisco to
 - \
 """
                     ),
-                    TextPart(content='Low: 57°F with clear to partly cloudy conditions'),
+                    TextPart(
+                        content='Low: 57°F with clear to partly cloudy conditions',
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
 - \
 """
                     ),
-                    TextPart(content='Winds W at 10 to 20 mph'),
+                    TextPart(
+                        content='Winds W at 10 to 20 mph',
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
@@ -5392,7 +5558,6 @@ Overall, it's a pleasant day in San Francisco with mild temperatures and mostly 
         ]
     )
 
-    messages = result.all_messages()
     result = await agent.run(user_prompt='how about Mexico City?', message_history=messages)
     assert result.new_messages() == snapshot(
         [
@@ -5506,21 +5671,30 @@ Based on the search results, here's the weather information for Mexico City toda
 - \
 """
                     ),
-                    TextPart(content='Temperature: 59°F (15°C) with clouds and sun'),
+                    TextPart(
+                        content='Temperature: 59°F (15°C) with clouds and sun',
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
 - \
 """
                     ),
-                    TextPart(content='Wind: NNE at 6 mph with gusts up to 6 mph'),
+                    TextPart(
+                        content='Wind: NNE at 6 mph with gusts up to 6 mph',
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
 - \
 """
                     ),
-                    TextPart(content='Air quality is poor and unhealthy for sensitive groups'),
+                    TextPart(
+                        content='Air quality is poor and unhealthy for sensitive groups',
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
@@ -5529,15 +5703,9 @@ Based on the search results, here's the weather information for Mexico City toda
 - \
 """
                     ),
-                    TextPart(content='High: 72°F (22°C) - mostly cloudy with a touch of rain this afternoon'),
                     TextPart(
-                        content="""\
-
-- \
-"""
-                    ),
-                    TextPart(
-                        content='High 73F with partly cloudy conditions early followed by scattered thunderstorms. Winds NNE at 10 to 15 mph, 70% chance of rain'
+                        content='High: 72°F (22°C) - mostly cloudy with a touch of rain this afternoon',
+                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
@@ -5546,7 +5714,18 @@ Based on the search results, here's the weather information for Mexico City toda
 """
                     ),
                     TextPart(
-                        content='Scattered thunderstorms developing during the afternoon. High near 75F with winds NNE at 10 to 15 mph and 70% chance of rain'
+                        content='High 73F with partly cloudy conditions early followed by scattered thunderstorms. Winds NNE at 10 to 15 mph, 70% chance of rain',
+                        citations=IsCitationList(),
+                    ),
+                    TextPart(
+                        content="""\
+
+- \
+"""
+                    ),
+                    TextPart(
+                        content='Scattered thunderstorms developing during the afternoon. High near 75F with winds NNE at 10 to 15 mph and 70% chance of rain',
+                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
@@ -5556,14 +5735,20 @@ Based on the search results, here's the weather information for Mexico City toda
 - \
 """
                     ),
-                    TextPart(content='Low: 58°F with cloudy conditions and a couple of showers'),
+                    TextPart(
+                        content='Low: 58°F with cloudy conditions and a couple of showers',
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
 - \
 """
                     ),
-                    TextPart(content='Cloudy overnight with low 57F and winds NNW at 10 to 15 mph'),
+                    TextPart(
+                        content='Cloudy overnight with low 57F and winds NNW at 10 to 15 mph',
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 
@@ -5831,7 +6016,10 @@ Based on the search results, I can provide you with information about San Franci
 According to AccuWeather's forecast, \
 """
                     ),
-                    TextPart(content='today (September 16) shows a high of 76°F and low of 59°F'),
+                    TextPart(
+                        content='today (September 16) shows a high of 76°F and low of 59°F',
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
  for San Francisco.
@@ -5839,7 +6027,10 @@ According to AccuWeather's forecast, \
 From the recent San Francisco Chronicle weather report, \
 """
                     ),
-                    TextPart(content='average mid-September highs in San Francisco are around 70 degrees'),
+                    TextPart(
+                        content='average mid-September highs in San Francisco are around 70 degrees',
+                        citations=IsCitationList(),
+                    ),
                     TextPart(
                         content="""\
 , so today's forecast of 76°F is slightly above the typical temperature for this time of year.
@@ -5849,7 +6040,8 @@ The general weather pattern for San Francisco in September includes:
 """
                     ),
                     TextPart(
-                        content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night'
+                        content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night',
+                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
@@ -5858,7 +6050,8 @@ The general weather pattern for San Francisco in September includes:
 """
                     ),
                     TextPart(
-                        content='There are normally 9 hours of bright sunshine each day in San Francisco in September'
+                        content='There are normally 9 hours of bright sunshine each day in San Francisco in September',
+                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
@@ -5867,7 +6060,8 @@ The general weather pattern for San Francisco in September includes:
 """
                     ),
                     TextPart(
-                        content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month'
+                        content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month',
+                        citations=IsCitationList(),
                     ),
                     TextPart(
                         content="""\
@@ -6282,12 +6476,18 @@ According to AccuWeather's forecast, \
             ),
             PartStartEvent(
                 index=7,
-                part=TextPart(content='today (September 16) shows a high of 76°F and low of 59°F'),
+                part=TextPart(
+                    content='today (September 16) shows a high of 76°F and low of 59°F',
+                    citations=IsCitationList(),
+                ),
                 previous_part_kind='text',
             ),
             PartEndEvent(
                 index=7,
-                part=TextPart(content='today (September 16) shows a high of 76°F and low of 59°F'),
+                part=TextPart(
+                    content='today (September 16) shows a high of 76°F and low of 59°F',
+                    citations=IsCitationList(),
+                ),
                 next_part_kind='text',
             ),
             PartStartEvent(
@@ -6315,12 +6515,18 @@ From the recent San Francisco Chronicle weather report, \
             ),
             PartStartEvent(
                 index=9,
-                part=TextPart(content='average mid-September highs in San Francisco are around 70 degrees'),
+                part=TextPart(
+                    content='average mid-September highs in San Francisco are around 70 degrees',
+                    citations=IsCitationList(),
+                ),
                 previous_part_kind='text',
             ),
             PartEndEvent(
                 index=9,
-                part=TextPart(content='average mid-September highs in San Francisco are around 70 degrees'),
+                part=TextPart(
+                    content='average mid-September highs in San Francisco are around 70 degrees',
+                    citations=IsCitationList(),
+                ),
                 next_part_kind='text',
             ),
             PartStartEvent(
@@ -6360,7 +6566,8 @@ The general weather pattern for San Francisco in September includes:
             PartStartEvent(
                 index=11,
                 part=TextPart(
-                    content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C'
+                    content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C',
+                    citations=IsCitationList(),
                 ),
                 previous_part_kind='text',
             ),
@@ -6368,7 +6575,8 @@ The general weather pattern for San Francisco in September includes:
             PartEndEvent(
                 index=11,
                 part=TextPart(
-                    content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night'
+                    content='Daytime temperatures usually reach 22°C (72°F) in San Francisco in September, falling to 13°C (55°F) at night',
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -6394,14 +6602,18 @@ The general weather pattern for San Francisco in September includes:
             ),
             PartStartEvent(
                 index=13,
-                part=TextPart(content='There are normally 9 hours of bright sunshine each day in San Francisco in'),
+                part=TextPart(
+                    content='There are normally 9 hours of bright sunshine each day in San Francisco in',
+                    citations=IsCitationList(),
+                ),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' September')),
             PartEndEvent(
                 index=13,
                 part=TextPart(
-                    content='There are normally 9 hours of bright sunshine each day in San Francisco in September'
+                    content='There are normally 9 hours of bright sunshine each day in San Francisco in September',
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -6428,7 +6640,8 @@ The general weather pattern for San Francisco in September includes:
             PartStartEvent(
                 index=15,
                 part=TextPart(
-                    content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm.'
+                    content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm.',
+                    citations=IsCitationList(),
                 ),
                 previous_part_kind='text',
             ),
@@ -6437,7 +6650,8 @@ The general weather pattern for San Francisco in September includes:
             PartEndEvent(
                 index=15,
                 part=TextPart(
-                    content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month'
+                    content='San Francisco experiences minimal rainfall in September, with an average precipitation of just 3mm. Typically, there are no rainy days during this month',
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -10937,7 +11151,8 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartStartEvent(
                 index=6,
                 part=TextPart(
-                    content='European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine'
+                    content='European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine',
+                    citations=IsCitationList(),
                 ),
                 previous_part_kind='text',
             ),
@@ -10948,7 +11163,8 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartEndEvent(
                 index=6,
                 part=TextPart(
-                    content="European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine's Volodymyr Zelenskyy and NATO's chief ahead of Friday's U.S.-Russia summit"
+                    content="European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine's Volodymyr Zelenskyy and NATO's chief ahead of Friday's U.S.-Russia summit",
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -10956,14 +11172,18 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartEndEvent(index=7, part=TextPart(content='. '), next_part_kind='text'),
             PartStartEvent(
                 index=8,
-                part=TextPart(content='The White House lowered its expectations surrounding'),
+                part=TextPart(
+                    content='The White House lowered its expectations surrounding',
+                    citations=IsCitationList(),
+                ),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(index=8, delta=TextPartDelta(content_delta=' the Trump-Putin summit on Friday')),
             PartEndEvent(
                 index=8,
                 part=TextPart(
-                    content='The White House lowered its expectations surrounding the Trump-Putin summit on Friday'
+                    content='The White House lowered its expectations surrounding the Trump-Putin summit on Friday',
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -10971,7 +11191,10 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartEndEvent(index=9, part=TextPart(content='. '), next_part_kind='text'),
             PartStartEvent(
                 index=10,
-                part=TextPart(content='In a surprise move just days before the Trump-Putin summit'),
+                part=TextPart(
+                    content='In a surprise move just days before the Trump-Putin summit',
+                    citations=IsCitationList(),
+                ),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=', the White House swapped out pro')),
@@ -10981,7 +11204,8 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartEndEvent(
                 index=10,
                 part=TextPart(
-                    content="In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president – a political ally who once opposed Ukraine's NATO and EU bids"
+                    content="In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president – a political ally who once opposed Ukraine's NATO and EU bids",
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -11012,7 +11236,8 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartStartEvent(
                 index=12,
                 part=TextPart(
-                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's tak"
+                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's tak",
+                    citations=IsCitationList(),
                 ),
                 previous_part_kind='text',
             ),
@@ -11021,7 +11246,8 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartEndEvent(
                 index=12,
                 part=TextPart(
-                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's takeover of the city's police entered its third night"
+                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's takeover of the city's police entered its third night",
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -11030,7 +11256,8 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartStartEvent(
                 index=14,
                 part=TextPart(
-                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment an"
+                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment an",
+                    citations=IsCitationList(),
                 ),
                 previous_part_kind='text',
             ),
@@ -11041,7 +11268,8 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartEndEvent(
                 index=14,
                 part=TextPart(
-                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment and federalization of local police to crack down on crime in the nation's capital"
+                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment and federalization of local police to crack down on crime in the nation's capital",
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -11049,14 +11277,18 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartEndEvent(index=15, part=TextPart(content='. '), next_part_kind='text'),
             PartStartEvent(
                 index=16,
-                part=TextPart(content='Over 100 arrests made as National Guard rolls into DC under'),
+                part=TextPart(
+                    content='Over 100 arrests made as National Guard rolls into DC under',
+                    citations=IsCitationList(),
+                ),
                 previous_part_kind='text',
             ),
             PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=" Trump's federal takeover")),
             PartEndEvent(
                 index=16,
                 part=TextPart(
-                    content="Over 100 arrests made as National Guard rolls into DC under Trump's federal takeover"
+                    content="Over 100 arrests made as National Guard rolls into DC under Trump's federal takeover",
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -11087,14 +11319,16 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartStartEvent(
                 index=18,
                 part=TextPart(
-                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend'
+                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend',
+                    citations=IsCitationList(),
                 ),
                 previous_part_kind='text',
             ),
             PartEndEvent(
                 index=18,
                 part=TextPart(
-                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend'
+                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend',
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),
@@ -11103,7 +11337,8 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartStartEvent(
                 index=20,
                 part=TextPart(
-                    content='Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations'
+                    content='Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations',
+                    citations=IsCitationList(),
                 ),
                 previous_part_kind='text',
             ),
@@ -11120,7 +11355,8 @@ Based on the search results, I can identify the top 3 major news stories from ar
             PartEndEvent(
                 index=20,
                 part=TextPart(
-                    content="Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations with a complete cessation of flights for the country's largest airline by Saturday as it faces a potential work stoppage by its flight attendants"
+                    content="Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations with a complete cessation of flights for the country's largest airline by Saturday as it faces a potential work stoppage by its flight attendants",
+                    citations=IsCitationList(),
                 ),
                 next_part_kind='text',
             ),

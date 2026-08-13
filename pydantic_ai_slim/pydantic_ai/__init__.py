@@ -63,9 +63,13 @@ from .messages import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    Citation,
+    CitationAnchor,
+    CitationSource,
     CompactionPart,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
+    DocumentCitationSource,
     DocumentFormat,
     DocumentMediaType,
     DocumentUrl,
@@ -122,6 +126,7 @@ from .messages import (
     VideoFormat,
     VideoMediaType,
     VideoUrl,
+    WebCitationSource,
 )
 from .models import AbstractModel, ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
@@ -241,6 +246,11 @@ __all__ = (
     'NativeToolCallPart',
     'NativeToolReturnPart',
     'CachePoint',
+    'Citation',
+    'CitationAnchor',
+    'CitationSource',
+    'DocumentCitationSource',
+    'WebCitationSource',
     'CompactionPart',
     'DocumentFormat',
     'DocumentMediaType',

@@ -25,6 +25,8 @@ from pydantic_ai import (
     Agent,
     AudioUrl,
     BinaryContent,
+    Citation,
+    CitationAnchor,
     DocumentUrl,
     ImageUrl,
     ModelAPIError,
@@ -45,6 +47,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
     UserPromptPart,
+    WebCitationSource,
 )
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai._utils import is_text_like_media_type as _is_text_like_media_type
@@ -105,6 +108,7 @@ with try_import() as imports_successful:
         OpenAIChatModelSettings,
         OpenAIResponsesModel,
         OpenAIResponsesModelSettings,
+        _map_chat_content,  # pyright: ignore[reportPrivateUsage]
         _resolve_openai_image_generation_size,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAISystemPromptRole
@@ -3976,6 +3980,82 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
         match=r"WebSearchTool is not supported with `OpenAIChatModel` and model 'gpt-4o'.*OpenAIResponsesModel",
     ):
         await agent.run('What day is today?')
+
+
+async def test_openai_chat_url_citation(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com',
+            title='Example',
+            start_index=7,
+            end_index=10,
+        ),
+    )
+    completion = completion_message(
+        chat.ChatCompletionMessage(role='assistant', content='Answer [1]', annotations=[annotation])
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    result = await Agent(model).run('Question')
+
+    assert result.all_messages()[1].parts == [
+        TextPart(
+            'Answer [1]',
+            citations=[
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com', title='Example')],
+                    anchor=CitationAnchor(start=7, end=10, kind='marker'),
+                )
+            ],
+        )
+    ]
+
+
+async def test_openai_chat_invalid_citation_range_is_preserved(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=20, end_index=30
+        ),
+    )
+    completion = completion_message(
+        chat.ChatCompletionMessage(role='assistant', content='Answer', annotations=[annotation])
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    result = await Agent(model).run('Question')
+
+    assert result.all_messages()[1].parts == [
+        TextPart(
+            'Answer',
+            provider_name='openai',
+            provider_details={'unsupported_annotations': [annotation.model_dump()]},
+        )
+    ]
+
+
+def test_openai_chat_citation_with_thinking_is_preserved():
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=31, end_index=34
+        ),
+    )
+    message = ChatCompletionMessage(
+        role='assistant', content='<think>reasoning</think>Answer [1]', annotations=[annotation]
+    )
+
+    parts = _map_chat_content(message, OpenAIModelProfile(thinking_tags=('<think>', '</think>')), 'openai')
+
+    assert parts == [
+        ThinkingPart('reasoning', id='content', provider_name='openai'),
+        TextPart(
+            'Answer [1]',
+            provider_name='openai',
+            provider_details={'unsupported_annotations': [annotation.model_dump()]},
+        ),
+    ]
 
 
 async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key: str):

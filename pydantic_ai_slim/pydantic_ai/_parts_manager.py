@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    Citation,
     ModelResponsePart,
     ModelResponseStreamEvent,
     NativeToolCallPart,
@@ -157,6 +158,7 @@ class ModelResponsePartsManager:
         id: str | None = None,
         provider_name: str | None = None,
         provider_details: dict[str, Any] | None = None,
+        citations: list[Citation] | None = None,
         thinking_tags: tuple[str, str] | None = None,
         ignore_leading_whitespace: bool = False,
     ) -> Iterator[ModelResponseStreamEvent]:
@@ -174,6 +176,7 @@ class ModelResponsePartsManager:
             id: An optional id for the text part.
             provider_name: An optional provider name for the text part.
             provider_details: An optional dictionary of provider-specific details for the text part.
+            citations: Citations to attach to the text part.
             thinking_tags: If provided, will handle content between the thinking tags as thinking parts.
             ignore_leading_whitespace: If True, will ignore leading whitespace in the content.
 
@@ -223,7 +226,13 @@ class ModelResponsePartsManager:
                 return
 
             # There is no existing text part that should be updated, so create a new one
-            part = TextPart(content=content, id=id, provider_name=provider_name, provider_details=provider_details)
+            part = TextPart(
+                content=content,
+                id=id,
+                provider_name=provider_name,
+                provider_details=provider_details,
+                citations=citations,
+            )
             new_part_index = self._append_part(part, vendor_part_id)
             yield PartStartEvent(index=new_part_index, part=part)
         else:
@@ -234,10 +243,12 @@ class ModelResponsePartsManager:
                 content_delta=content,
                 provider_name=self._resolve_provider_name(existing_text_part, provider_name),
                 provider_details=provider_details,
+                citations_delta=citations,
             )
             apply_metadata = (
                 part_delta.provider_name is not None
                 or part_delta.provider_details is not None
+                or part_delta.citations_delta is not None
                 or existing_text_part.provider_details == {}
             )
             updated_part = self._apply_metadata_or_copy_provider_details(
