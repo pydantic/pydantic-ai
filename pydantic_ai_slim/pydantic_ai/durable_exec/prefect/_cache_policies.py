@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import RunContext, ToolDefinition
 
 _NON_SERIALIZABLE = '<non-serializable>'
 
@@ -27,6 +27,10 @@ def _is_tuple(obj: Any) -> TypeGuard[tuple[Any, ...]]:
 
 def _is_toolset_tool(obj: Any) -> TypeGuard[ToolsetTool]:
     return isinstance(obj, ToolsetTool)
+
+
+def _is_tool_definition(obj: Any) -> TypeGuard[ToolDefinition]:
+    return isinstance(obj, ToolDefinition)
 
 
 def _is_run_context(obj: Any) -> TypeGuard[RunContext[object]]:
@@ -161,10 +165,10 @@ def _strip_cache_excluded_fields(
     return obj
 
 
-def _replace_toolset_tools(
+def _replace_tool_inputs(
     inputs: dict[str, Any],
 ) -> Any:
-    """Replace `ToolsetTool` objects with their JSON-native toolset ID and `ToolDefinition`.
+    """Project tool inputs onto their cacheable value identity.
 
     A `ToolsetTool` carries live objects — the toolset that produced it, the function to call, and
     an `args_validator` Prefect's JSON serializer can't handle — which pushes `hash_objects` onto
@@ -180,10 +184,15 @@ def _replace_toolset_tools(
     distinguishes two toolsets that expose an identically defined tool: every toolset's tool task is
     the same function, so `TASK_SOURCE` doesn't tell them apart, and a tool's name is only unique
     within its own toolset.
+
+    Dynamic tool tasks take a bare `ToolDefinition` rather than a `ToolsetTool`, so those definitions
+    also need `_cacheable_value` to replace non-serializable metadata with a stable sentinel.
     """
     return {
         key: {'toolset': value.toolset.id, 'tool_def': _cacheable_value(value.tool_def)}
         if _is_toolset_tool(value)
+        else _cacheable_value(value)
+        if _is_tool_definition(value)
         else value
         for key, value in inputs.items()
     }
@@ -207,8 +216,8 @@ class PrefectAgentInputs(CachePolicy):
         if not inputs:
             return None
 
-        inputs_without_toolset_tools = _replace_toolset_tools(inputs)
-        inputs_with_hashable_context = _replace_run_context(inputs_without_toolset_tools)
+        inputs_with_cacheable_tools = _replace_tool_inputs(inputs)
+        inputs_with_hashable_context = _replace_run_context(inputs_with_cacheable_tools)
         filtered_inputs = _strip_cache_excluded_fields(inputs_with_hashable_context)
 
         return INPUTS.compute_key(task_ctx, filtered_inputs, flow_parameters, **kwargs)

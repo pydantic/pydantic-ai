@@ -238,7 +238,11 @@ async def validate_tool_args(
 async def run_args_validator(tool: ToolsetTool[AgentDepsT], args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> None:
     """Run a tool's `args_validator` callable on already-validated args, mirroring `ToolManager`."""
     args_validator_func = tool.args_validator_func
-    assert args_validator_func is not None
+    if args_validator_func is None:
+        raise UserError(
+            f'Tool {tool.tool_def.name!r} has no `args_validator`. '
+            'The dynamic toolset function may have returned a different toolset than expected.'
+        )
     result = args_validator_func(ctx, **args)
     if inspect.isawaitable(result):
         await result

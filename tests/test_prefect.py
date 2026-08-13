@@ -60,6 +60,8 @@ from pydantic_ai.durable_exec._toolset import (
     DurableMCPToolset,
     DynamicToolInfo,
     DynamicToolsResult,
+    get_dynamic_tools,
+    validate_dynamic_tool_args,
 )
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -1628,6 +1630,33 @@ async def test_cache_policy_hashes_tools_by_value_not_object_identity():
     assert key_for(shared_name, tools['side_effect']) == key_for(deserialized_name, tools['side_effect'])
     # The tool definition still forks the key: a different tool is a different cache entry.
     assert key_for(shared_name, tools['side_effect']) != key_for(shared_name, tools['other_effect'])
+
+
+def test_cache_policy_hashes_bare_tool_definitions_by_value_not_object_identity():
+    """Dynamic tool tasks pass a bare `ToolDefinition`, which must also be value-addressed."""
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    tool_def = ToolDefinition(
+        name='side_effect',
+        metadata={
+            'prefect': TaskConfig(cache_policy=PrefectAgentInputs()),
+            'live_resource': threading.Lock(),
+        },
+    )
+
+    def key_for(tool_name: str) -> str | None:
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx,
+            inputs={'tool_name': tool_name, 'tool_args': {}, 'tool_def': tool_def},
+            flow_parameters={},
+        )
+
+    shared_name = tool_def.name
+    deserialized_name = ''.join(['side', '_', 'effect'])
+    assert deserialized_name == shared_name
+    assert deserialized_name is not shared_name
+
+    assert key_for(shared_name) == key_for(deserialized_name)
 
 
 async def test_cache_policy_forks_identically_defined_tools_from_different_toolsets():
@@ -4075,6 +4104,38 @@ async def test_prefect_dynamic_toolset_call_uses_flow_prepared_tool_def() -> Non
         part.content for message in messages for part in message.parts if isinstance(part, RetryPromptPart)
     ]
     assert retry_prompts == snapshot(['Timed out after 0.01 seconds.'])
+
+
+async def test_dynamic_toolset_args_validator_drift_raises_user_error() -> None:
+    """A dynamic tool losing its `args_validator` between discovery and validation is a user error."""
+    resolutions = 0
+
+    async def guarded(value: int) -> int:
+        return value  # pragma: no cover
+
+    def reject(ctx: RunContext[None], value: int) -> None:
+        raise AssertionError('the validator is never called')  # pragma: no cover
+
+    async def build_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+        nonlocal resolutions
+        resolutions += 1
+        return FunctionToolset(
+            tools=[Tool(guarded, args_validator=reject if resolutions == 1 else None)], id='guarded_tools'
+        )
+
+    toolset = DynamicToolset(build_toolset, id='drifting')
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    discovered = await get_dynamic_tools(toolset, ctx)
+    tool_def = discovered.tools['guarded'].tool_def
+
+    with pytest.raises(
+        UserError,
+        match=(
+            r"Tool 'guarded' has no `args_validator`\. "
+            r'The dynamic toolset function may have returned a different toolset than expected\.'
+        ),
+    ):
+        await validate_dynamic_tool_args(toolset, 'guarded', {'value': 1}, ctx, tool_def=tool_def)
 
 
 async def test_durable_dynamic_toolset_without_validation_unit_raises() -> None:
