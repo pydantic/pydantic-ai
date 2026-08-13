@@ -38,7 +38,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, try_import
+from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, TestEnv, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -1645,9 +1645,16 @@ class TestGoogle:
         assert model.system == 'google'
         assert urlparse(model.base_url).hostname == 'generativelanguage.googleapis.com'
 
-    async def test_infer_model_google_cloud(self):
-        with patch.dict(os.environ, {'GOOGLE_API_KEY': 'mock-api-key'}):
-            model = infer_embedding_model('google-cloud:gemini-embedding-001')
+    async def test_infer_model_google_cloud(self, env: TestEnv):
+        for name in {
+            'GOOGLE_APPLICATION_CREDENTIALS',
+            'GOOGLE_CLOUD_PROJECT',
+            'GOOGLE_CLOUD_LOCATION',
+            'GEMINI_API_KEY',
+        }:
+            env.remove(name)
+        env.set('GOOGLE_API_KEY', 'mock-api-key')
+        model = infer_embedding_model('google-cloud:gemini-embedding-001')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
         assert model.system == 'google-cloud'
@@ -2152,6 +2159,46 @@ async def test_instrument_all():
     assert get_model() is model
 
 
+class ExplicitPortEmbeddingModel(TestEmbeddingModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:8000/v1'
+
+
+class MalformedPortEmbeddingModel(TestEmbeddingModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:notaport/v1'
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize(
+    'model_type,expected_server_attributes',
+    [
+        pytest.param(
+            ExplicitPortEmbeddingModel,
+            snapshot({'server.address': 'example.com', 'server.port': 8000}),
+            id='explicit-port',
+        ),
+        pytest.param(MalformedPortEmbeddingModel, snapshot({}), id='malformed-port'),
+    ],
+)
+async def test_instrumented_embedding_model_server_attributes(
+    model_type: type[TestEmbeddingModel], expected_server_attributes: dict[str, str | int], capfire: CaptureLogfire
+):
+    """A `base_url` whose port isn't an integer omits the server attributes instead of failing the request.
+
+    `urlparse` accepts the URL and only raises when `hostname`/`port` are read, so this is a unit test:
+    no real provider produces a `base_url` that survives client construction and fails at attribute-building.
+    """
+    model = InstrumentedEmbeddingModel(model_type(), InstrumentationSettings())
+
+    await model.embed('Hello, world!', input_type='query')
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == expected_server_attributes
+
+
 def test_override():
     model = TestEmbeddingModel()
     embedder = Embedder(model)
@@ -2260,7 +2307,6 @@ async def test_limited_instrumentation(capfire: CaptureLogfire):
             }
         ]
     )
-
 
 @pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
 class TestGoogleUsageMapping:
