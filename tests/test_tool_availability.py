@@ -191,6 +191,30 @@ async def test_missing_provider_name_uses_agnostic_window():
     assert 'is not available yet' in result.output
 
 
+async def test_boundary_the_serving_provider_honored_still_hides_evidence():
+    """Anchoring makes the window exact, not permissive.
+
+    The counterpart to the cases above: when the serving provider is the one that emitted the
+    boundary and the payload it renders is there, the request really did start over, so the
+    pre-boundary reveal is gone from the model's view and the call has to be refused.
+    """
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(lambda: 'ran', name='hidden', defer_loading=True)
+    history = [
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['hidden'])]),
+        ModelResponse(parts=[CompactionPart(content='summary', provider_name='anthropic')], provider_name='anthropic'),
+    ]
+
+    def call_hidden(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        for part in iter_message_parts(messages, ModelRequest, RetryPromptPart):
+            return _provider_response([make_text_response(str(part.content)).parts[0]], 'anthropic')
+        return _provider_response([ToolCallPart(tool_name='hidden', args={}, tool_call_id='h1')], 'anthropic')
+
+    result = await Agent(FunctionModel(call_hidden), toolsets=[toolset]).run('go', message_history=history)
+
+    assert 'is not available yet' in result.output
+
+
 def secret_op() -> str:
     """A capability-owned tool an owner's `prepare_tools` filters out."""
     return 'SECRET EXECUTED'
