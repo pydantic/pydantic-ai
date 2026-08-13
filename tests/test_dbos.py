@@ -3616,23 +3616,30 @@ async def test_dbos_durability_mcp_toolset_wrapping(dbos: DBOS) -> None:
 async def test_dbos_durability_mcp_operations_run_in_steps(dbos: DBOS) -> None:
     seen_instructions: list[str] = []
 
+    async def local_tool() -> str:
+        return 'local result'
+
     def call_then_answer(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
         seen_instructions.extend(
             message.instructions for message in messages if isinstance(message, ModelRequest) and message.instructions
         )
-        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        tool_returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        if len(tool_returns) == 2:
             return ModelResponse(parts=[TextPart('done')])
-        return ModelResponse(parts=[ToolCallPart('celsius_to_fahrenheit', {'celsius': 0}, tool_call_id='call-1')])
+        if len(tool_returns) == 1:
+            return ModelResponse(parts=[ToolCallPart('celsius_to_fahrenheit', {'celsius': 0}, tool_call_id='call-2')])
+        return ModelResponse(parts=[ToolCallPart('local_tool', {}, tool_call_id='call-1')])
 
     agent = Agent(
         FunctionModel(call_then_answer),
         name='durability_mcp_operations',
         toolsets=[
+            FunctionToolset(tools=[local_tool], id='functions'),
             MCPToolset(
                 StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
                 include_instructions=True,
                 id='mcp',
-            )
+            ),
         ],
         capabilities=[DBOSDurability()],
     )
@@ -3647,9 +3654,16 @@ async def test_dbos_durability_mcp_operations_run_in_steps(dbos: DBOS) -> None:
 
     assert output == 'done'
     step_names = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
-    assert 'durability_mcp_operations__mcp_server__mcp.get_tools' in step_names
-    assert 'durability_mcp_operations__mcp_server__mcp.get_instructions' in step_names
-    assert 'durability_mcp_operations__mcp_server__mcp.call_tool' in step_names
+    assert step_names == [
+        'durability_mcp_operations__mcp_server__mcp.get_tools',
+        'durability_mcp_operations__mcp_server__mcp.get_instructions',
+        'durability_mcp_operations__model.request',
+        'durability_mcp_operations__mcp_server__mcp.get_instructions',
+        'durability_mcp_operations__model.request',
+        'durability_mcp_operations__mcp_server__mcp.call_tool',
+        'durability_mcp_operations__mcp_server__mcp.get_instructions',
+        'durability_mcp_operations__model.request',
+    ]
     # The instructions must actually reach the model, not just produce a step: they're captured
     # during `__aenter__`, and DBOS's `enter-never` lifecycle means the step itself has to connect
     # the server. Asserting only the step name let a silent `None` through.
