@@ -568,7 +568,13 @@ async def test_google_model_gla_labels_raises_value_error(allow_model_requests: 
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
 
     # Raises before any request is made.
-    with pytest.raises(ValueError, match=re.escape('labels parameter is not supported in Gemini API.')):
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            'labels parameter is only supported in Gemini Enterprise Agent Platform mode, '
+            'not in Gemini Developer API mode.'
+        ),
+    ):
         await agent.run('What is the capital of France?')
 
 
