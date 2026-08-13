@@ -304,11 +304,23 @@ def http_probe(build: Callable[[httpx.AsyncClient], Model]) -> Probe:
 
         def handle(request: httpx.Request) -> httpx.Response:
             request.read()
+            # `httpx.Timeout` rides in `extensions`, which is where `ModelSettings['timeout']` is
+            # observable at all. Pull only the four numbers out: the mapping can also hold objects whose
+            # `repr` carries a memory address, which would make every probe differ from the baseline and
+            # so make every field look forwarded.
+            extension = request.extensions.get('timeout')
+            timeout: str | None = (
+                f'{sorted(extension.items())}'  # pyright: ignore[reportUnknownArgumentType]
+                if isinstance(extension, dict)
+                else None
+            )
             recorder.record(
                 {
-                    'body': request.content.decode('utf8', 'replace'),
+                    # Parsed, so an SDK's key ordering can't read as a difference. Every model class
+                    # probed through this path posts JSON, so a decode error here is a real surprise.
+                    'body': json.loads(request.content),
                     'headers': sorted(f'{k}:{v}' for k, v in request.headers.items() if k not in HTTP_VOLATILE),
-                    'timeout': request.extensions.get('timeout'),
+                    'timeout': timeout,
                 }
             )
             return httpx.Response(400, json={'error': {'message': 'probe', 'type': 'probe'}})
@@ -538,6 +550,12 @@ async def test_supported_by_lists_match_the_wire(case: Case, allow_model_request
     """Every `Supported by:` list names exactly the models that send the field."""
     baseline = await case.probe({})
     assert baseline is not None, f'{case.id} sent nothing for the probe to record'
+    # Without this, a request that varies between identical calls makes every field differ from the
+    # baseline, and the whole matrix reads as "forwarded" instead of failing.
+    assert await case.probe({}) == baseline, (
+        f'{case.id} builds a different request for identical settings, so the probe cannot separate a '
+        f'forwarded field from noise'
+    )
 
     forwarded = await _forwarded_fields(case, baseline)
     documented = {name for name in PROBE_VALUES if set(SUPPORTED_BY_LISTS[name]) & set(case.names)}
