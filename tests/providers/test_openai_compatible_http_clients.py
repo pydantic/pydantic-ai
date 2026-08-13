@@ -5,32 +5,40 @@ from dataclasses import dataclass
 
 import httpx
 import pytest
-from openai import AsyncOpenAI
 
 from pydantic_ai.providers import Provider
-from pydantic_ai.providers.alibaba import AlibabaProvider
-from pydantic_ai.providers.azure import AzureProvider
-from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
-from pydantic_ai.providers.cerebras import CerebrasProvider
-from pydantic_ai.providers.crusoe import CrusoeProvider
-from pydantic_ai.providers.deepseek import DeepSeekProvider
-from pydantic_ai.providers.fireworks import FireworksProvider
-from pydantic_ai.providers.heroku import HerokuProvider
-from pydantic_ai.providers.litellm import LiteLLMProvider
-from pydantic_ai.providers.moonshotai import MoonshotAIProvider
-from pydantic_ai.providers.nebius import NebiusProvider
-from pydantic_ai.providers.ollama import OllamaProvider
-from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_ai.providers.openrouter import OpenRouterProvider
-from pydantic_ai.providers.ovhcloud import OVHcloudProvider
-from pydantic_ai.providers.sambanova import SambaNovaProvider
-from pydantic_ai.providers.snowflake import SnowflakeProvider
-from pydantic_ai.providers.together import TogetherProvider
-from pydantic_ai.providers.vercel import VercelProvider
-from pydantic_ai.providers.zai import ZaiProvider
 
-ProviderFactory = Callable[[], Provider[AsyncOpenAI]]
-ProviderWithHTTPClientFactory = Callable[[httpx.AsyncClient], Provider[AsyncOpenAI]]
+from ..conftest import try_import
+
+with try_import() as imports_successful:
+    from openai import AsyncOpenAI
+
+    from pydantic_ai.providers.alibaba import AlibabaProvider
+    from pydantic_ai.providers.azure import AzureProvider
+    from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
+    from pydantic_ai.providers.cerebras import CerebrasProvider
+    from pydantic_ai.providers.crusoe import CrusoeProvider
+    from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.fireworks import FireworksProvider
+    from pydantic_ai.providers.heroku import HerokuProvider
+    from pydantic_ai.providers.litellm import LiteLLMProvider
+    from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+    from pydantic_ai.providers.nebius import NebiusProvider
+    from pydantic_ai.providers.ollama import OllamaProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.ovhcloud import OVHcloudProvider
+    from pydantic_ai.providers.sambanova import SambaNovaProvider
+    from pydantic_ai.providers.snowflake import SnowflakeProvider
+    from pydantic_ai.providers.together import TogetherProvider
+    from pydantic_ai.providers.vercel import VercelProvider
+    from pydantic_ai.providers.zai import ZaiProvider
+
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
+
+ProviderFactory = Callable[[], Provider['AsyncOpenAI']]
+ProviderWithHTTPClientFactory = Callable[[httpx.AsyncClient], Provider['AsyncOpenAI']]
 
 
 @dataclass(frozen=True)

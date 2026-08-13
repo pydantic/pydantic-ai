@@ -11,8 +11,6 @@ from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.zai import zai_model_profile
 
-from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
-
 try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:  # pragma: no cover
@@ -20,6 +18,8 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the Z.AI provider, '
         'you can use the `zai` optional group — `pip install "pydantic-ai-slim[zai]"`'
     ) from _import_error
+
+from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 
 class ZaiProvider(_OpenAICompatibleProvider):
