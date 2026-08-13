@@ -178,21 +178,7 @@ async def test_deepseek_model_thinking_stream(
                         id='reasoning_content',
                         provider_name='deepseek',
                     ),
-                    TextPart(
-                        content="""\
-Here's how to cross the street safely:
-
-1. **Find a safe place** – Use a crosswalk, intersection, or traffic signal if available.
-2. **Stop at the curb/edge** – Don't step into the road until you're ready.
-3. **Look left, right, then left again** – Check for cars, bikes, and motorcycles in all directions.
-4. **Wait for the signal** – If there's a pedestrian light, wait for the "Walk" symbol. Always make sure traffic has actually stopped.
-5. **Make eye contact with drivers** – If possible, confirm they see you before stepping out.
-6. **Stay alert** – Don't use your phone or wear headphones. Keep looking as you cross.
-7. **Keep walking at a steady pace** – Don't run unless necessary, but don't linger.
-
-If there's no crosswalk, choose a spot with good visibility, wait for a gap in traffic, and cross straight across—not diagonally.\
-"""
-                    ),
+                    TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
                     input_tokens=90,
