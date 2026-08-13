@@ -49,7 +49,7 @@ from ._deferred_capabilities import (
     parse_loaded_capabilities,
 )
 from ._instructions import normalize_toolset_instructions
-from ._run_context import set_current_run_context
+from ._run_context import AnchoredEvidence, set_current_run_context
 from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
@@ -2081,16 +2081,18 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         evidence_window = _messages._post_compaction_window_for_response(  # pyright: ignore[reportPrivateUsage]
             ctx.state.message_history, self.model_response
         )
-        # Held in locals because they land in two places below, and a third supplement added later
-        # has to reach both or it silently won't apply on the same-step path.
-        discovered_supplement = set(_discovered_tool_names_in_order(evidence_window)) - ctx.deps.discovered_tool_names
-        loaded_supplement = _parse_loaded_capabilities(evidence_window) - ctx.deps.loaded_capability_ids
+        # Held in a local because it lands in two places below.
+        anchored_evidence = AnchoredEvidence(
+            discovered_tool_names=frozenset(_discovered_tool_names_in_order(evidence_window))
+            - ctx.deps.discovered_tool_names,
+            loaded_capability_ids=frozenset(_parse_loaded_capabilities(evidence_window))
+            - ctx.deps.loaded_capability_ids,
+        )
         run_context = replace(
             run_context,
             retry=ctx.state.output_retries_used,
             max_retries=ctx.deps.tool_manager.default_max_retries,
-            _discovered_tool_names_supplement=discovered_supplement,
-            _loaded_capability_ids_supplement=loaded_supplement,
+            _anchored_evidence=anchored_evidence,
         )
 
         # This will raise errors for any tool name conflicts
@@ -2101,8 +2103,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         # Only the retrospective evidence is carried: replacing the prospective shared sets would
         # affect the next request's reveal pruning and search ranking.
         assert ctx.deps.tool_manager.ctx is not None
-        ctx.deps.tool_manager.ctx._discovered_tool_names_supplement = discovered_supplement  # pyright: ignore[reportPrivateUsage]
-        ctx.deps.tool_manager.ctx._loaded_capability_ids_supplement = loaded_supplement  # pyright: ignore[reportPrivateUsage]
+        ctx.deps.tool_manager.ctx._anchored_evidence = anchored_evidence  # pyright: ignore[reportPrivateUsage]
 
         # Under `end_strategy='early'`, `response_output` holds the response's `(text, files)`. If it carries a
         # valid non-tool output (schema-validated text, or an image) and every co-emitted tool call is a plain

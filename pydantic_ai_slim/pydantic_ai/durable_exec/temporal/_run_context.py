@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
+from pydantic_ai._run_context import AnchoredEvidence
 from pydantic_ai.durable_exec._toolset import EnqueueGuard, enqueue_not_supported_message
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
@@ -34,8 +35,7 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
     ('available_tool_names', list, _str_set_ta),
     ('available_capability_ids', list, _str_set_ta),
     ('_deferred_capability_ids', list, _str_set_ta),
-    ('_discovered_tool_names_supplement', list, _str_set_ta),
-    ('_loaded_capability_ids_supplement', list, _str_set_ta),
+    ('_anchored_evidence', dict, TypeAdapter(AnchoredEvidence)),
 )
 
 # Fields that `serialize_run_context` doesn't carry but that are still readable inside an activity,
@@ -48,13 +48,12 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
 # already makes `None` mean "not available here".
 _NONE_UNLESS_ATTACHED = ('agent', 'root_capability', 'pending_messages', 'tool_manager', 'realtime_session')
 
-# Dispatch-only availability evidence, defaulted to empty when a payload doesn't carry it. Unlike
-# the guarded fields, the dataclass default can't be mistaken for real run state here: empty means
-# "no anchored evidence", which is exactly what `is_tool_available` reads when the serving response
-# has no provenance. A custom `serialize_run_context` written before these fields existed therefore
-# keeps answering — with the history-derived window — instead of raising for a field it never knew
-# to carry.
-_EMPTY_SET_UNLESS_CARRIED = ('_discovered_tool_names_supplement', '_loaded_capability_ids_supplement')
+# Defaulted rather than guarded when a payload doesn't carry it. Unlike the guarded fields, the
+# dataclass default can't be mistaken for real run state here: empty means "no anchored evidence",
+# which is exactly what `is_tool_available` reads when the serving response has no provenance. A
+# custom `serialize_run_context` written before this field existed therefore keeps answering — with
+# the history-derived window — instead of raising for a field it never knew to carry.
+_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (('_anchored_evidence', AnchoredEvidence()),)
 
 # Reading any other omitted field raises instead of returning the `RunContext` dataclass default,
 # which would silently pass for real run state (e.g. `instrumentation_version` reading as the
@@ -75,8 +74,8 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         self.__dict__ = {**kwargs, 'deps': deps}
         for name in _NONE_UNLESS_ATTACHED:
             self.__dict__.setdefault(name, None)
-        for name in _EMPTY_SET_UNLESS_CARRIED:
-            self.__dict__.setdefault(name, set[str]())
+        for name, default in _DEFAULTED_UNLESS_CARRIED:
+            self.__dict__.setdefault(name, default)
         for name, wire_type, adapter in _REHYDRATORS:
             if isinstance(value := self.__dict__.get(name), wire_type):
                 self.__dict__[name] = adapter.validate_python(value)
@@ -160,8 +159,10 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'usage_limits': ctx.usage_limits,
             'loaded_capability_ids': ctx.loaded_capability_ids,
             'discovered_tool_names': ctx.discovered_tool_names,
-            '_discovered_tool_names_supplement': ctx._discovered_tool_names_supplement,
-            '_loaded_capability_ids_supplement': ctx._loaded_capability_ids_supplement,
+            # The dispatch-time widening of the two sets above, which `is_tool_available` reads for
+            # a call the model has already made. Carried so a tool asking whether it may run gets
+            # the same answer inside an activity as it would in-process.
+            '_anchored_evidence': ctx._anchored_evidence,
             # A resolved snapshot: at dispatch time live tool state exists, so this carries the
             # always-visible tools that the in-activity `discovered_tool_names` fallback misses.
             'available_tool_names': ctx.available_tool_names,
