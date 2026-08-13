@@ -4648,11 +4648,20 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     content = chunk.text
                     if isinstance(existing_part, TextPart):
                         # The done event is authoritative when a compatible gateway omits some deltas.
-                        content = (
-                            chunk.text[len(existing_part.content) :]
-                            if chunk.text.startswith(existing_part.content)
-                            else ''
-                        )
+                        if not chunk.text.startswith(existing_part.content):
+                            part = replace(
+                                existing_part,
+                                content=chunk.text,
+                                provider_details={
+                                    **(existing_part.provider_details or {}),
+                                    **provider_details,
+                                }
+                                or None,
+                                citations=[*(existing_part.citations or []), *(citations or [])] or None,
+                            )
+                            yield self._parts_manager.handle_part(vendor_part_id=vendor_part_id, part=part)
+                            continue
+                        content = chunk.text[len(existing_part.content) :]
                     if content or provider_details or citations:
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=vendor_part_id,

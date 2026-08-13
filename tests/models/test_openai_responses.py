@@ -14389,9 +14389,9 @@ async def test_openai_responses_phase_streamed_on_part_start(allow_model_request
     assert delta_phases == snapshot({None})
 
 
-@pytest.mark.parametrize('partial_delta', [None, 'Par'])
-async def test_openai_responses_done_uses_complete_text(allow_model_requests: None, partial_delta: str | None):
-    """The done event is complete when a gateway omits some or all text deltas.
+@pytest.mark.parametrize('emitted_delta', [None, 'Par', 'Lyon.'])
+async def test_openai_responses_done_uses_complete_text(allow_model_requests: None, emitted_delta: str | None):
+    """The done event is authoritative when a gateway omits or contradicts text deltas.
 
     Not a VCR test: OpenAI itself always sends deltas — `test_openai_responses_phase_streamed_on_part_start`
     records them for every text part — so this fallback only ever runs against OpenAI-compatible gateways
@@ -14424,11 +14424,11 @@ async def test_openai_responses_done_uses_complete_text(allow_model_requests: No
             sequence_number=1,
         ),
     ]
-    if partial_delta is not None:
+    if emitted_delta is not None:
         stream.append(
             resp.ResponseTextDeltaEvent(
                 content_index=0,
-                delta=partial_delta,
+                delta=emitted_delta,
                 item_id='msg_001',
                 output_index=0,
                 type='response.output_text.delta',
@@ -14499,7 +14499,7 @@ async def test_openai_responses_done_uses_complete_text(allow_model_requests: No
                 # Only the model stream is under test.
                 break
 
-    [part_end] = [event for event in events if isinstance(event, PartEndEvent)]
+    part_end = next(event for event in reversed(events) if isinstance(event, PartEndEvent))
     assert part_end.part == TextPart(
         content='Paris.',
         id='msg_001',
