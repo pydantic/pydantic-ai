@@ -3210,8 +3210,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # parts may name the same revealed tool (duplicated deltas from a UI round-trip, a delta
         # plus a replayed search return), and one declaration per request is enough.
         rendered_additional_tools: set[str] = set()
+
         openai_messages: list[responses.ResponseInputItemParam] = []
-        for message in messages:
+        for message_index, message in enumerate(messages):
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if isinstance(part, SystemPromptPart):
@@ -3303,7 +3304,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
                 file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
-                for item in message.parts:
+                for item in _responses_replay_parts(messages, message_index, message):
                     from_same_provider = item.provider_name == self.system or (
                         item.provider_name is None and message.provider_name == self.system
                     )
@@ -5006,6 +5007,47 @@ def _map_provider_details(
         provider_details['finish_reason'] = raw_finish_reason
 
     return provider_details or None
+
+
+def _responses_replay_parts(
+    messages: list[ModelMessage], message_index: int, message: ModelResponse
+) -> Sequence[ModelResponsePart]:
+    """Group settled portable function calls after other response parts for Responses replay."""
+    parts = message.parts
+    first_tool_call_index = next((index for index, part in enumerate(parts) if isinstance(part, ToolCallPart)), None)
+    if (
+        first_tool_call_index is None
+        or not any(not isinstance(part, ToolCallPart) for part in parts[first_tool_call_index + 1 :])
+        or any(isinstance(part, NativeToolCallPart | NativeToolReturnPart) for part in parts)
+        # Provider item IDs describe the exact prior Responses output sequence, which must be
+        # replayed verbatim rather than normalized like portable cross-provider history.
+        or any(
+            (isinstance(part, TextPart | ThinkingPart) and part.id is not None)
+            or (
+                isinstance(part, ToolCallPart)
+                and (part.id is not None or _split_combined_tool_call_id(part.tool_call_id)[1] is not None)
+            )
+            for part in parts
+        )
+    ):
+        return parts
+
+    pending_call_ids = [part.tool_call_id for part in parts if isinstance(part, ToolCallPart)]
+    for next_index in range(message_index + 1, len(messages)):
+        following_message = messages[next_index]
+        if isinstance(following_message, ModelResponse):
+            break
+        for part in following_message.parts:
+            if (
+                isinstance(part, ToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+            ) and part.tool_call_id in pending_call_ids:
+                pending_call_ids.remove(part.tool_call_id)
+    if pending_call_ids:
+        return parts
+
+    # An assistant item after a function call starts a new output group for strict
+    # Responses-compatible providers. Stable sorting keeps relative order within both partitions.
+    return sorted(parts, key=lambda part: isinstance(part, ToolCallPart))
 
 
 def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:

@@ -4,6 +4,7 @@ import re
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -55,7 +56,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
-from pydantic_ai.messages import INVALID_JSON_KEY, sanitize_messages
+from pydantic_ai.messages import INVALID_JSON_KEY, ToolSearchCallPart, ToolSearchReturnPart, sanitize_messages
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -15687,6 +15688,256 @@ async def test_openai_responses_web_search_tool_external_web_access_default_omit
     response_kwargs = get_mock_responses_kwargs(mock_client)[0]
     assert len(response_kwargs['tools']) == 1
     assert response_kwargs['tools'] == snapshot([{'type': 'web_search', 'search_context_size': 'medium'}])
+
+
+async def test_openai_responses_replay_groups_settled_interleaved_function_calls(
+    allow_model_requests: None,
+) -> None:
+    """Portable calls are grouped on the wire after the assistant items they were interleaved with.
+
+    This is a direct wire-shape test rather than a VCR test because no real OpenAI response
+    produces this cross-provider persisted history, and a cassette would not match on `input`.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+    history = [
+        ModelResponse(
+            parts=[
+                ThinkingPart(content='inspect inputs'),
+                ToolCallPart('read', {'path': 'a'}, tool_call_id='call-read-a'),
+                ToolCallPart('read', {'path': 'b'}, tool_call_id='call-read-b'),
+                ThinkingPart(content='inspect views'),
+                ToolCallPart('view', {'path': 'c'}, tool_call_id='call-view-c'),
+                ToolCallPart('view', {'path': 'd'}, tool_call_id='call-view-d'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                RetryPromptPart('read failed', tool_name='read', tool_call_id='call-read-a'),
+                RetryPromptPart('read failed', tool_name='read', tool_call_id='call-read-b'),
+                ToolReturnPart('view', 'c contents', tool_call_id='call-view-c'),
+                ToolReturnPart('view', 'd contents', tool_call_id='call-view-d'),
+            ]
+        ),
+    ]
+    original_history = deepcopy(history)
+
+    await model.request(history, None, ModelRequestParameters())
+
+    assert history == original_history
+    assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
+        [
+            {'role': 'assistant', 'content': '<think>\ninspect inputs\n</think>'},
+            {'role': 'assistant', 'content': '<think>\ninspect views\n</think>'},
+            {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-read-a', 'type': 'function_call'},
+            {'name': 'read', 'arguments': '{"path":"b"}', 'call_id': 'call-read-b', 'type': 'function_call'},
+            {'name': 'view', 'arguments': '{"path":"c"}', 'call_id': 'call-view-c', 'type': 'function_call'},
+            {'name': 'view', 'arguments': '{"path":"d"}', 'call_id': 'call-view-d', 'type': 'function_call'},
+            {
+                'type': 'function_call_output',
+                'call_id': 'call-read-a',
+                'output': 'read failed\n\nFix the errors and try again.',
+            },
+            {
+                'type': 'function_call_output',
+                'call_id': 'call-read-b',
+                'output': 'read failed\n\nFix the errors and try again.',
+            },
+            {'type': 'function_call_output', 'call_id': 'call-view-c', 'output': 'c contents'},
+            {'type': 'function_call_output', 'call_id': 'call-view-d', 'output': 'd contents'},
+        ]
+    )
+
+
+async def test_openai_responses_replay_does_not_reorder_unsettled_or_native_responses(
+    allow_model_requests: None,
+) -> None:
+    """Live frontiers and responses containing native tool parts keep ordinary-part order."""
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock([response, response])
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart('read', {'path': 'a'}, tool_call_id='call-read'),
+                    ThinkingPart(content='keep after the unsettled call'),
+                ]
+            ),
+            ModelRequest.user_text_prompt('continue without a tool result'),
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+    await model.request(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart('read', {'path': 'a'}, tool_call_id='call-read'),
+                    ThinkingPart(content='keep after the portable call'),
+                    NativeToolCallPart(
+                        'web_search',
+                        {'query': 'pydantic ai'},
+                        tool_call_id='native-search',
+                        provider_name='other',
+                    ),
+                ]
+            ),
+            ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-read')]),
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert requests[0]['input'] == snapshot(
+        [
+            {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-read', 'type': 'function_call'},
+            {'role': 'assistant', 'content': '<think>\nkeep after the unsettled call\n</think>'},
+            {'role': 'user', 'content': 'continue without a tool result'},
+        ]
+    )
+    assert requests[1]['input'] == snapshot(
+        [
+            {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-read', 'type': 'function_call'},
+            {'role': 'assistant', 'content': '<think>\nkeep after the portable call\n</think>'},
+            {'type': 'function_call_output', 'call_id': 'call-read', 'output': 'contents'},
+        ]
+    )
+
+
+@pytest.mark.parametrize('legacy_combined_id', [False, True])
+async def test_openai_responses_replay_preserves_provider_item_id_order(
+    allow_model_requests: None, legacy_combined_id: bool
+) -> None:
+    """Provider-owned Responses items are replayed in their exact original order."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        'read',
+                        {'path': 'a'},
+                        tool_call_id='call-read|fc_read' if legacy_combined_id else 'call-read',
+                        id=None if legacy_combined_id else 'fc_read',
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(content='keep after the provider call'),
+                ],
+                provider_name='openai',
+            ),
+            ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-read')]),
+        ],
+        OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
+        [
+            {
+                'name': 'read',
+                'arguments': '{"path":"a"}',
+                'call_id': 'call-read',
+                'type': 'function_call',
+                'id': 'fc_read',
+            },
+            {'role': 'assistant', 'content': '<think>\nkeep after the provider call\n</think>'},
+            {'type': 'function_call_output', 'call_id': 'call-read', 'output': 'contents'},
+        ]
+    )
+
+
+async def test_openai_responses_replay_groups_settled_local_tool_search_call(
+    allow_model_requests: None,
+) -> None:
+    """Typed local tool-search calls follow ordinary function-call grouping."""
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        [
+            ModelResponse(
+                parts=[
+                    ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search-1'),
+                    ThinkingPart(content='search first'),
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    ToolSearchReturnPart(
+                        content={'discovered_tools': []},
+                        tool_call_id='search-1',
+                    )
+                ]
+            ),
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
+        [
+            {'role': 'assistant', 'content': '<think>\nsearch first\n</think>'},
+            {
+                'name': 'search_tools',
+                'arguments': '{"queries":["weather"]}',
+                'call_id': 'search-1',
+                'type': 'function_call',
+            },
+            {
+                'type': 'function_call_output',
+                'call_id': 'search-1',
+                'output': '{"discovered_tools":[]}',
+            },
+        ]
+    )
 
 
 async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_model_requests: None):
