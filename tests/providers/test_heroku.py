@@ -1,6 +1,5 @@
 import re
 
-import httpx
 import pytest
 
 from pydantic_ai.agent import Agent
@@ -57,12 +56,6 @@ def test_heroku_provider_need_api_key(env: TestEnv) -> None:
         HerokuProvider()
 
 
-def test_heroku_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = HerokuProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
-
-
 def test_heroku_pass_openai_client() -> None:
     openai_client = openai.AsyncOpenAI(api_key='api-key')
     provider = HerokuProvider(openai_client=openai_client)
@@ -103,6 +96,15 @@ def test_heroku_model_profile_routes_thinking_capable_families():
     assert fallback is not None
     assert fallback.get('json_schema_transformer') == OpenAIJsonSchemaTransformer
     assert fallback.get('supports_thinking') is None
+
+
+@pytest.mark.parametrize('model_name', ['kimi-k2-5', 'kimi-k2-thinking'])
+def test_heroku_kimi_reasoning_models_support_thinking(model_name: str):
+    provider = HerokuProvider(api_key='api-key')
+
+    profile = provider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_thinking') is True
 
 
 async def test_heroku_model_provider_claude_3_7_sonnet(allow_model_requests: None, heroku_inference_key: str):

@@ -7,6 +7,7 @@ and blocks 'required' and list[str] values before they reach the model-specific 
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -17,12 +18,14 @@ from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._tool_choice import resolve_tool_choice
 from pydantic_ai.native_tools import CodeExecutionTool, WebSearchTool
-from pydantic_ai.settings import ModelSettings, ToolChoice, ToolOrOutput
+from pydantic_ai.settings import ModelSettings, ThinkingLevel, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
 
 with try_import() as anthropic_available:
+    from anthropic.types.beta import BetaToolChoiceParam
+
     from pydantic_ai.models.anthropic import (
         AnthropicModel,
         AnthropicModelSettings,
@@ -62,8 +65,8 @@ skip_if_no_xai = pytest.mark.skipif(not xai_available(), reason='xai not install
 pytestmark = pytest.mark.anyio
 
 
-def make_tool(name: str) -> ToolDefinition:
-    return ToolDefinition(name=name)
+def make_tool(name: str, *, strict: bool | None = None) -> ToolDefinition:
+    return ToolDefinition(name=name, strict=strict)
 
 
 # =============================================================================
@@ -266,7 +269,105 @@ RAISES_CASES = [
         },
         match=r'Invalid tool names in `tool_choice`:.*Available function tools:',
     ),
+    dict(
+        id='single_withheld',
+        tool_choice=['hidden'],
+        params_kwargs={
+            'function_tools': [make_tool('hidden')],
+            'tool_visibility': {'hidden': 'withheld'},
+            'allow_text_output': True,
+        },
+        match=r"No tool in `tool_choice` is currently available: \['hidden'\]",
+    ),
+    dict(
+        # `required` with every function tool withheld would put `required` next to an empty
+        # `tools` list on the wire — fail loudly instead of letting the provider reject or
+        # silently degrade.
+        id='required_all_withheld',
+        tool_choice='required',
+        params_kwargs={
+            'function_tools': [
+                make_tool('hidden_a'),
+                make_tool('hidden_b'),
+            ],
+            'tool_visibility': {'hidden_a': 'withheld', 'hidden_b': 'withheld'},
+            'allow_text_output': True,
+        },
+        match=r'"required", but every function tool is hidden until revealed',
+    ),
 ]
+
+
+def test_resolve_tool_choice_allows_deferred_declaration() -> None:
+    params = ModelRequestParameters(
+        function_tools=[make_tool('corpus_tool')],
+        tool_visibility={'corpus_tool': 'deferred'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ['corpus_tool']}, params) == 'required'
+
+
+def test_resolve_tool_choice_filters_hidden_names_when_one_is_available() -> None:
+    params = ModelRequestParameters(
+        function_tools=[make_tool('visible'), make_tool('hidden')],
+        tool_visibility={'visible': 'visible', 'hidden': 'withheld'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ['visible', 'hidden']}, params) == ('required', {'visible'})
+
+
+def test_resolve_tool_choice_keeps_via_history_names() -> None:
+    """A `'via_history'` definition travels on the tool-addition channel and stays forcible
+    (live-verified against OpenAI Responses), so it must survive the hidden-name filter."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('visible'), make_tool('revealed')],
+        tool_visibility={'visible': 'visible', 'revealed': 'via_history'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ['revealed']}, params) == ('required', {'revealed'})
+
+
+def test_resolve_tool_choice_required_with_only_via_history_tools() -> None:
+    """`required` stays valid when every function tool travels via the tool-addition channel:
+    the definitions are on the wire in history items, and OpenAI accepts `required` with an
+    empty `tools` array in that shape (live-verified)."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('revealed_a'), make_tool('revealed_b')],
+        tool_visibility={'revealed_a': 'via_history', 'revealed_b': 'via_history'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': 'required'}, params) == 'required'
+
+
+def test_resolve_tool_choice_tool_or_output_degrades_to_output_tools_when_all_hidden() -> None:
+    """`ToolOrOutput` naming only hidden function tools keeps the run alive: with output tools
+    still usable, the choice degrades to those instead of raising."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('hidden')],
+        output_tools=[make_tool('final_result')],
+        tool_visibility={'hidden': 'withheld'},
+        allow_text_output=True,
+    )
+    assert resolve_tool_choice({'tool_choice': ToolOrOutput(function_tools=['hidden'])}, params) == (
+        'auto',
+        {'final_result'},
+    )
+
+
+def test_resolve_tool_choice_rejects_choice_reduced_to_unknown_names() -> None:
+    """`['hidden', 'typo']` must not reach the wire as `required` targeting only the typo:
+    the hidden name is filtered, the unknown one passes through by the dynamic-availability
+    rule, and a choice left with no available name fails loudly instead."""
+    params = ModelRequestParameters(
+        function_tools=[make_tool('hidden')],
+        tool_visibility={'hidden': 'withheld'},
+        allow_text_output=True,
+    )
+    with (
+        pytest.warns(UserWarning, match=r'not currently available and will be ignored'),
+        pytest.raises(UserError, match=r"No tool in `tool_choice` is currently available: \['hidden', 'typo'\]"),
+    ):
+        resolve_tool_choice({'tool_choice': ['hidden', 'typo']}, params)
 
 
 @pytest.mark.parametrize('case', RAISES_CASES, ids=lambda c: c['id'])
@@ -339,7 +440,7 @@ async def test_thinking_with_forced_tool_choice_raises(
             'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
             'tool_choice': tool_choice,
         }
-        match = 'Anthropic does not support .* with thinking mode'
+        match = 'Anthropic does not support .* with extended thinking'
     else:  # bedrock
         mock_client = MagicMock()
         provider = BedrockProvider(bedrock_client=mock_client)
@@ -424,39 +525,111 @@ def test_support_tool_forcing_implicit_resolution(provider_name: str, resolved_t
 
 @skip_if_no_anthropic
 @pytest.mark.parametrize(
-    'settings,expected',
+    'settings,params_thinking,expected',
     [
         pytest.param(
             {'anthropic_thinking': {'type': 'disabled'}},
+            None,
             True,
             id='disabled_thinking_allows_forcing',
         ),
         pytest.param(
             {'thinking': True},
+            None,
             False,
             id='unified_thinking_blocks_forcing',
         ),
         pytest.param(
             {'thinking': 'high'},
+            None,
             False,
             id='unified_thinking_effort_blocks_forcing',
         ),
         pytest.param(
             {'thinking': False},
+            None,
             True,
             id='unified_thinking_false_allows_forcing',
         ),
         pytest.param(
+            {'anthropic_thinking': {'type': 'adaptive'}},
+            None,
+            True,
+            id='provider_specific_adaptive_allows_forcing',
+        ),
+        pytest.param(
             {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024}, 'thinking': False},
+            None,
             False,
             id='provider_specific_takes_precedence',
         ),
+        pytest.param(
+            {'anthropic_thinking': {'type': 'disabled'}},
+            'high',
+            True,
+            id='provider_specific_disabled_takes_precedence_over_params_thinking',
+        ),
     ],
 )
-def test_support_tool_forcing_thinking_detection(settings: Any, expected: bool):
-    """Thinking detection checks anthropic_thinking, unified thinking field, and `params.thinking`."""
-    result = anthropic_support_tool_forcing(settings, ModelRequestParameters(), 'required')
+def test_support_tool_forcing_thinking_detection(settings: Any, params_thinking: ThinkingLevel | None, expected: bool):
+    """Thinking detection checks anthropic_thinking, unified thinking field, and `params.thinking`.
+
+    `anthropic_thinking` wins over both unified sources, matching `_translate_thinking`: with an
+    explicit `{'type': 'disabled'}` the wire payload really does disable thinking, so forcing stays
+    available even though `Model.prepare_request` moved a unified `thinking` into `params.thinking`.
+    """
+    result = anthropic_support_tool_forcing(settings, ModelRequestParameters(thinking=params_thinking), 'required')
     assert result is expected
+
+
+@skip_if_no_anthropic
+@pytest.mark.parametrize(
+    'supports_adaptive_thinking,expected',
+    [
+        pytest.param(True, True, id='adaptive_profile_unified_thinking_allows_forcing'),
+        pytest.param(False, False, id='non_adaptive_profile_unified_thinking_blocks_forcing'),
+    ],
+)
+def test_support_tool_forcing_adaptive_profile_mapping(supports_adaptive_thinking: bool, expected: bool):
+    """Unified thinking maps to adaptive (compatible with forcing) on adaptive-capable profiles and
+    to extended thinking (incompatible) otherwise."""
+    settings: AnthropicModelSettings = {'thinking': 'high'}
+    result = anthropic_support_tool_forcing(
+        settings, ModelRequestParameters(), 'required', supports_adaptive_thinking=supports_adaptive_thinking
+    )
+    assert result is expected
+
+
+@skip_if_no_anthropic
+def test_support_tool_forcing_suggests_adaptive_thinking_when_the_model_supports_it():
+    """On an adaptive-capable model, explicit extended thinking still blocks forcing — but the error
+    points at the mode that doesn't."""
+    settings: AnthropicModelSettings = {
+        'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 1024},
+        'tool_choice': 'required',
+    }
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Anthropic does not support forcing specific tools with extended thinking. Disable '
+            "thinking or use `tool_choice='auto'`. Alternatively, `anthropic_thinking={'type': "
+            "'adaptive'}` supports forcing."
+        ),
+    ):
+        anthropic_support_tool_forcing(settings, ModelRequestParameters(), 'required', supports_adaptive_thinking=True)
+
+
+@skip_if_no_anthropic
+def test_support_tool_forcing_rejects_unsupported_model_with_adaptive_thinking():
+    """Models with supports_forced_tool_choice=False reject explicit forcing even with adaptive thinking."""
+    settings: AnthropicModelSettings = {
+        'anthropic_thinking': {'type': 'adaptive'},
+        'tool_choice': 'required',
+    }
+    with pytest.raises(UserError, match='Anthropic does not support forcing specific tools for this model'):
+        anthropic_support_tool_forcing(
+            settings, ModelRequestParameters(), 'required', supports_forced_tool_choice=False
+        )
 
 
 @pytest.mark.parametrize(
@@ -615,6 +788,20 @@ def test_google_auto_tuple_filters_tool_defs():
     assert tool_config['function_calling_config']['mode'].name == 'AUTO'  # pyright: ignore[reportTypedDictNotRequiredAccess,reportOptionalMemberAccess,reportOptionalSubscript,reportUnknownMemberType]
 
 
+@skip_if_no_google
+def test_google_allowed_function_names_ignore_unavailable_tools():
+    m = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(client=MagicMock()))
+    params = ModelRequestParameters(function_tools=[make_tool('get_time')], allow_text_output=False)
+
+    with pytest.warns(UserWarning, match='not currently available'):
+        _, tool_config, _ = m._get_tool_config(params, {'tool_choice': ['get_time', 'missing']})  # pyright: ignore[reportPrivateUsage]
+
+    assert tool_config is not None
+    config = tool_config['function_calling_config']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+    assert config is not None
+    assert config['allowed_function_names'] == ['get_time']  # pyright: ignore[reportTypedDictNotRequiredAccess]
+
+
 NATIVE_TOOL_CONFIG_CASES = [
     dict(
         id='native-only-pre-gemini-3-omits-config',
@@ -632,7 +819,8 @@ NATIVE_TOOL_CONFIG_CASES = [
         id='function-tool-keeps-config',
         model='gemini-2.5-pro',
         request_parameters=ModelRequestParameters(function_tools=[make_tool('get_weather')]),
-        expected_tool_config={'function_calling_config': {'mode': 'AUTO'}},
+        # A plain `strict=None` tool on a strict-supporting model defaults to `VALIDATED`.
+        expected_tool_config={'function_calling_config': {'mode': 'VALIDATED'}},
     ),
     dict(
         id='code-execution-gemini-3-sets-server-side-flag',
@@ -642,7 +830,7 @@ NATIVE_TOOL_CONFIG_CASES = [
         ),
         expected_tool_config={
             'include_server_side_tool_invocations': True,
-            'function_calling_config': {'mode': 'AUTO'},
+            'function_calling_config': {'mode': 'VALIDATED'},
         },
     ),
 ]
@@ -712,6 +900,43 @@ async def test_anthropic_fallback_single_tool_with_thinking_filters_tool_defs(al
     assert tool_choice == {'type': 'auto'}
     tool_names = {t['name'] for t in tools if isinstance(t, dict) and 'name' in t}
     assert tool_names == {'tool_a'}
+
+
+@skip_if_no_anthropic
+@pytest.mark.parametrize(
+    'model_name,expected_tool_choice,expected_tool_names',
+    [
+        pytest.param(
+            'claude-opus-4-6',
+            {'type': 'tool', 'name': 'tool_a'},
+            {'tool_a', 'tool_b'},
+            id='adaptive_profile_keeps_forcing',
+        ),
+        pytest.param('claude-sonnet-4-5', {'type': 'auto'}, {'tool_a'}, id='non_adaptive_profile_falls_back'),
+    ],
+)
+async def test_anthropic_single_tool_forcing_under_unified_thinking(
+    allow_model_requests: None,
+    model_name: str,
+    expected_tool_choice: BetaToolChoiceParam,
+    expected_tool_names: set[str],
+):
+    """Unified thinking decides the single-tool branch through the profile's adaptive flag.
+
+    `Model.prepare_request` strips a unified `thinking` into `params.thinking` (simulated here). It
+    maps to adaptive thinking — which accepts forcing — on an adaptive-capable profile, and to
+    extended thinking on the rest, where the resolved choice softens to `auto` with filtered tools.
+    """
+    m = AnthropicModel(model_name, provider=AnthropicProvider(api_key='test-key'))
+    settings: AnthropicModelSettings = {'tool_choice': ToolOrOutput(function_tools=['tool_a'])}
+    params = ModelRequestParameters(
+        function_tools=[make_tool('tool_a'), make_tool('tool_b')], allow_text_output=False, thinking='high'
+    )
+
+    tools, tool_choice = m._prepare_tools_and_tool_choice(settings, params)  # pyright: ignore[reportPrivateUsage]
+    assert tool_choice == expected_tool_choice
+    tool_names = {t['name'] for t in tools if isinstance(t, dict) and 'name' in t}
+    assert tool_names == expected_tool_names
 
 
 # Models that reject a forced `tool_choice` outright, even without thinking (unlike other Anthropic models).

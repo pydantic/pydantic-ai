@@ -34,8 +34,10 @@ from ..messages import (
     ModelRequest,
     ModelResponse,
     SystemPromptPart,
+    ToolAvailabilityDeltaPart,
 )
 from ..settings import ModelSettings
+from ..usage import UsageBase
 from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
@@ -93,7 +95,12 @@ class InstrumentationSettings:
             meter_provider: The OpenTelemetry meter provider to use.
                 If not provided, the global meter provider is used.
                 Calling `logfire.configure()` sets the global meter provider, so most users don't need this.
-            include_binary_content: Whether to include binary content in the instrumentation events.
+            include_binary_content: Whether to include binary file data in the instrumentation events:
+                user prompts and model responses, tool returns, the agent's output and the arguments
+                its output function receives, and run and tool deferral metadata. The media type is
+                recorded either way. Binary content is found inside dictionaries, lists and
+                `ToolReturn`s, but not inside your own types: a `BinaryContent` held as a field of a
+                model or dataclass you define is still recorded in full.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
             include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on
@@ -190,7 +197,9 @@ class InstrumentationSettings:
         result: list[_otel_messages.ChatMessage] = []
         for message in messages:
             if isinstance(message, ModelRequest):
-                for is_system, group in itertools.groupby(message.parts, key=lambda p: isinstance(p, SystemPromptPart)):
+                for is_system, group in itertools.groupby(
+                    message.parts, key=lambda p: isinstance(p, SystemPromptPart | ToolAvailabilityDeltaPart)
+                ):
                     message_parts: list[_otel_messages.MessagePart] = []
                     for part in group:
                         if hasattr(part, 'otel_message_parts'):
@@ -281,6 +290,19 @@ class InstrumentationSettings:
             }
         return {}
 
+    def aggregated_usage_attributes(self, usage: UsageBase) -> dict[str, int]:
+        """Cumulative-usage OpenTelemetry attributes for a run/session span.
+
+        Remaps `gen_ai.usage.*` to `gen_ai.aggregated_usage.*` when `use_aggregated_usage_attribute_names`
+        is set, so a backend that sums span attributes doesn't double-count the run's cumulative usage
+        against the per-request `chat` spans' `gen_ai.usage.*`. Shared by the classic agent-run span (the
+        `Instrumentation` capability) and the realtime session span so the two can't drift.
+        """
+        attributes = usage.opentelemetry_attributes()
+        if not self.use_aggregated_usage_attribute_names:
+            return attributes
+        return {key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value for key, value in attributes.items()}
+
     def record_metrics(
         self,
         response: ModelResponse,
@@ -289,7 +311,7 @@ class InstrumentationSettings:
         time_to_first_chunk: float | None = None,
     ):
         for typ in ['input', 'output']:
-            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
+            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):
                 continue
             token_attributes = {**attributes, 'gen_ai.token.type': typ}
             self.tokens_histogram.record(tokens, token_attributes)
@@ -330,10 +352,13 @@ class InstrumentedModel(WrapperModel):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
-            response = await self.wrapped.request(
-                prepared_rc.messages, prepared_rc.model_settings, prepared_rc.model_request_parameters
-            )
+        # The span's prepared context is for its attributes only. The wrapped model prepares again
+        # itself, and `prepare_request` is not idempotent — a second pass appends the prompted-output
+        # instructions a second time and re-walks an already-transformed JSON schema — so it has to
+        # be handed the originals. `Instrumentation.wrap_model_request` and `FallbackModel.request`
+        # do the same.
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, _):
+            response = await self.wrapped.request(messages, model_settings, model_request_parameters)
             finish(response)
             return response
 
@@ -351,7 +376,9 @@ class InstrumentedModel(WrapperModel):
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
         )
-        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, prepared_rc):
+        # See `request()`: the prepared context is for span attributes only, and the wrapped model
+        # must be handed the originals because `prepare_request` is not idempotent.
+        with open_model_request_span(self.instrumentation_settings, request_context) as (finish, _):
             response_stream: StreamedResponse | None = None
             # Stamp the request-issue instant before the wrapped model opens the stream, so the
             # `time_to_first_chunk` delta spans from when we issue the request to when the first
@@ -359,9 +386,9 @@ class InstrumentedModel(WrapperModel):
             request_start = time.perf_counter()
             try:
                 async with self.wrapped.request_stream(
-                    prepared_rc.messages,
-                    prepared_rc.model_settings,
-                    prepared_rc.model_request_parameters,
+                    messages,
+                    model_settings,
+                    model_request_parameters,
                     run_context,
                 ) as response_stream:
                     yield response_stream

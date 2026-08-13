@@ -94,6 +94,8 @@ If a tool function always requires approval, you can pass the `requires_approval
 
 If whether a tool function requires approval depends on the tool call arguments or the agent [run context][pydantic_ai.tools.RunContext] (e.g. [dependencies](dependencies.md) or message history), you can raise the [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exception from the tool function. The [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] property will be `True` if the tool call has already been approved.
 
+You can also raise it from the tool's [`args_validator`](tools-advanced.md#args-validator), which runs before the tool function and lets you reject invalid arguments before asking a human to approve them.
+
 To require approval for calls to tools provided by a [toolset](toolsets.md) (like an [MCP server](mcp/client.md)), see the [`ApprovalRequiredToolset` documentation](toolsets.md#requiring-tool-approval).
 
 !!! warning "Approval is not an authorization boundary against an untrusted client"
@@ -216,7 +218,9 @@ print(result.all_messages())
                 tool_call_id='update_file_dotenv',
             ),
         ],
-        usage=RequestUsage(input_tokens=63, output_tokens=21),
+        usage=RequestUsage(
+            cost=Decimal('0.00040425'), input_tokens=63, output_tokens=21
+        ),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -267,7 +271,9 @@ print(result.all_messages())
                 tool_call_id='update_file_backup',
             )
         ],
-        usage=RequestUsage(input_tokens=86, output_tokens=31),
+        usage=RequestUsage(
+            cost=Decimal('0.0005845'), input_tokens=86, output_tokens=31
+        ),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -292,7 +298,9 @@ print(result.all_messages())
                 content="Here's what I've done:\n- Attempted to delete __init__.py, but deletion is not allowed.\n- Updated README.md with: Hello, world!\n- Cleared .env (set to empty).\n- Created a backup at README.md.bak containing: Hello, world!\n\nIf you want a different backup name or format (e.g., timestamped like README_2025-11-24.bak), let me know."
             )
         ],
-        usage=RequestUsage(input_tokens=93, output_tokens=89),
+        usage=RequestUsage(
+            cost=Decimal('0.00140875'), input_tokens=93, output_tokens=89
+        ),
         model_name='gpt-5.2',
         timestamp=datetime.datetime(...),
         run_id='...',
@@ -316,6 +324,8 @@ When the result of a tool call cannot be generated inside the same agent run in 
 Examples of external tools are client-side tools implemented by a web or app frontend, and slow tasks that are passed off to a background worker or external service instead of keeping the agent process running.
 
 If whether a tool call should be executed externally depends on the tool call arguments, the agent [run context][pydantic_ai.tools.RunContext] (e.g. [dependencies](dependencies.md) or message history), or how long the task is expected to take, you can define a tool function and conditionally raise the [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] exception. Before raising the exception, the tool function would typically schedule some background task and pass along the [`RunContext.tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] so that the result can be matched to the deferred tool call later.
+
+As with approval, the tool's [`args_validator`](tools-advanced.md#args-validator) can raise `CallDeferred` too, so only calls with valid arguments are handed off.
 
 If a tool is always executed externally and its definition is provided to your code along with a JSON schema for its arguments, you can use an [`ExternalToolset`](toolsets.md#external-toolset). If the external tools are known up front and you don't have the arguments JSON schema handy, you can also define a tool function with the appropriate signature that does nothing but raise the [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] exception.
 
@@ -429,7 +439,9 @@ async def main():
                     tool_call_id='pyd_ai_tool_call_id',
                 )
             ],
-            usage=RequestUsage(input_tokens=63, output_tokens=13),
+            usage=RequestUsage(
+                cost=Decimal('0.00029225'), input_tokens=63, output_tokens=13
+            ),
             model_name='gpt-5.2',
             timestamp=datetime.datetime(...),
             run_id='...',
@@ -454,7 +466,9 @@ async def main():
                     content='The answer to the ultimate question of life, the universe, and everything is 42.'
                 )
             ],
-            usage=RequestUsage(input_tokens=64, output_tokens=28),
+            usage=RequestUsage(
+                cost=Decimal('0.000504'), input_tokens=64, output_tokens=28
+            ),
             model_name='gpt-5.2',
             timestamp=datetime.datetime(...),
             run_id='...',

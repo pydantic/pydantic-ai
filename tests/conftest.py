@@ -9,10 +9,10 @@ import re
 import secrets
 import sys
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
-from functools import cached_property
+from functools import cache, cached_property
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
@@ -89,6 +89,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 if TYPE_CHECKING:
+    from blockbuster import BlockBuster
     from pluggy import Result
     from vcr.cassette import Cassette
 
@@ -339,6 +340,116 @@ def anyio_backend():
     return 'asyncio'
 
 
+# Calls that are allowed to block in the event loop, as (blockbuster function, file, functions).
+# Each entry should say why the blocking call is acceptable; anything not listed here should be
+# fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
+BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
+    # coverage reads Python source files while collecting coverage data. Remove these once
+    # https://github.com/cbornet/blockbuster/pull/63 is released in a compatible version.
+    ('os.stat', 'coverage/python.py', 'get_python_source'),
+    ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source'),
+    # `load_mcp_toolsets` is a sync config-file loader; reading the file is its documented job.
+    ('os.stat', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
+    ('io.BufferedReader.read', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
+    # fastmcp's transport inference stats candidate paths when the client is constructed.
+    ('os.stat', 'pydantic_ai/mcp.py', '__init__'),
+    # boto3/botocore read AWS config files and service models during sync, setup-time client construction.
+    ('os.stat', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    ('os.listdir', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    ('io.BufferedReader.read', 'pydantic_ai/providers/bedrock.py', '__init__'),
+    # google-genai's sync client constructor has google-auth read mTLS/credential config files.
+    ('os.stat', 'pydantic_ai/providers/google_cloud.py', '__init__'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/providers/google_cloud.py', '__init__'),
+    ('io.BufferedReader.read', 'pydantic_ai/providers/google_cloud.py', '__init__'),
+    # Anthropic's async Bedrock clients synchronously resolve/sign AWS credentials
+    # (https://github.com/anthropics/anthropic-sdk-python/issues/1770); remove after upstream
+    # covers both auth paths.
+    ('os.stat', 'anthropic/lib/bedrock/_auth.py', 'get_auth_headers'),
+    ('io.TextIOWrapper.read', 'anthropic/lib/bedrock/_auth.py', 'get_auth_headers'),
+    ('io.BufferedReader.read', 'anthropic/lib/bedrock/_auth.py', 'get_auth_headers'),
+    ('os.stat', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    ('io.TextIOWrapper.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    ('io.BufferedReader.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    # pydantic extracts field docstrings from source (`inspect`/`linecache`) the first time a
+    # tool schema is built, which can happen during an agent run.
+    ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/_function_schema.py', 'function_schema'),
+    # logfire resolves the current working directory while classifying user stack frames.
+    ('os.getcwd', 'logfire/_internal/stack_info.py', 'is_user_code'),
+    # `Dataset.to_file`/`from_file` and schema saving are sync serialization APIs; file I/O is
+    # their documented job, even when called from async user code.
+    ('os.stat', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.TextIOWrapper.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.TextIOWrapper.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.BufferedReader.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    ('io.BufferedWriter.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+]
+
+
+def _configure_blockbuster(
+    exemptions: Sequence[tuple[str, str, str | tuple[str, ...]]] = BLOCKBUSTER_EXEMPTIONS,
+    excluded_modules: tuple[str, ...] = (),
+) -> BlockBuster:
+    # BlockBuster imports ForbiddenFruit, which mutates builtins during import. Disabled CI lanes
+    # must remain unaffected by that instrumentation.
+    from blockbuster import BlockBuster
+
+    bb = BlockBuster(
+        ['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai'],
+        excluded_modules=excluded_modules or None,
+    )
+    for func, filename, functions in exemptions:
+        bb.functions[func].can_block_in(filename, functions)
+    return bb
+
+
+@cache
+def _configured_blockbuster(excluded_modules: tuple[str, ...]) -> BlockBuster:
+    """Create one configured detector for each module-exclusion set in a pytest worker."""
+    return _configure_blockbuster(excluded_modules=excluded_modules)
+
+
+@pytest.fixture
+def blockbuster_excluded_modules() -> tuple[str, ...]:
+    return ()
+
+
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    return True
+
+
+@contextmanager
+def _activated_blockbuster(blockbuster: BlockBuster) -> Generator[BlockBuster]:
+    try:
+        blockbuster.activate()
+        yield blockbuster
+    finally:
+        blockbuster.deactivate()
+
+
+@pytest.fixture(autouse=True)
+def blockbuster(
+    blockbuster_enabled: bool,
+    blockbuster_excluded_modules: tuple[str, ...],
+) -> Iterator[BlockBuster | None]:
+    """Raise `BlockingError` when library code makes a blocking call inside the event loop.
+
+    Scanned modules are the shipped packages only, so test-only and third-party stacks (e.g. VCR
+    reading cassettes) are ignored. Calls from user callbacks and tools remain covered when a
+    scanned library frame is below them. CI enables the detector on one complete Python-version
+    lane to avoid multiplying its stack-inspection overhead across the version matrix.
+    """
+    if os.getenv('BLOCKBUSTER_ENABLED') == 'false' or not blockbuster_enabled:
+        yield None
+        return
+
+    bb = _configured_blockbuster(blockbuster_excluded_modules)
+    with _activated_blockbuster(bb):
+        yield bb
+
+
 @pytest.fixture
 def allow_model_requests():
     with pydantic_ai.models.override_allow_model_requests(True):
@@ -412,6 +523,53 @@ def event_loop() -> Iterator[None]:
     asyncio.set_event_loop(new_loop)
     yield
     new_loop.close()
+
+
+class UndrivableEventLoop(asyncio.AbstractEventLoop):
+    """An event loop that inherits `AbstractEventLoop`'s unimplemented `run_until_complete()`.
+
+    This is how Temporal's workflow event loop behaves: it subclasses `asyncio.AbstractEventLoop` and never
+    implements `run_until_complete()`, so calling that raises a bare `NotImplementedError` from CPython.
+    """
+
+
+@contextmanager
+def undrivable_event_loop() -> Generator[None]:
+    """Make the current event loop one that can't be driven by the caller."""
+    previous = asyncio.get_event_loop()
+    asyncio.set_event_loop(UndrivableEventLoop())
+    try:
+        yield
+    finally:
+        asyncio.set_event_loop(previous)
+
+
+@pytest.fixture
+def closed_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    original_loop = asyncio.get_event_loop()
+    closed_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(closed_loop)
+    closed_loop.close()
+
+    try:
+        yield closed_loop
+    finally:
+        asyncio.get_event_loop().close()
+        asyncio.set_event_loop(original_loop)
+
+
+@pytest.fixture
+def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
+    """Empty the thread's event loop slot, yielding the loop that was installed before."""
+    original_loop = asyncio.get_event_loop()
+    asyncio.set_event_loop(None)
+
+    try:
+        yield original_loop
+    finally:
+        with suppress(RuntimeError):
+            asyncio.get_event_loop().close()
+        asyncio.set_event_loop(original_loop)
 
 
 @pytest.fixture(autouse=True)
@@ -893,8 +1051,23 @@ def zai_api_key() -> str:
     return os.getenv('ZAI_API_KEY', 'mock-api-key')
 
 
+@pytest.fixture(scope='session')
+def crusoe_api_key() -> str:
+    return os.getenv('CRUSOE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def snowflake_account() -> str:
+    return os.getenv('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
+
+
+@pytest.fixture(scope='session')
+def snowflake_token() -> str:
+    return os.getenv('SNOWFLAKE_TOKEN', 'mock-api-key')
+
+
 @pytest.fixture(scope='function')  # Needs to be function scoped to get the request node name
-def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]:
+async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvider | None]:
     """xAI provider fixture backed by protobuf cassettes.
 
     Mirrors the `bedrock_provider` pattern: yields a provider, and callers can use `provider.client`.
@@ -912,7 +1085,7 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]
 
     cassette_name = sanitize_filename(request.node.name, 240)
     test_module = cast(str, request.node.fspath.basename.replace('.py', ''))
-    cassette_path = Path(__file__).parent / 'models' / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
+    cassette_path = Path(request.node.fspath).parent / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
     record_mode: str | None
     try:
         # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
@@ -930,6 +1103,7 @@ def xai_provider(request: pytest.FixtureRequest) -> Iterator[XaiProvider | None]
         yield provider
     finally:
         session.dump_if_recording()
+        await session.aclose()
 
 
 @pytest.fixture(scope='session')

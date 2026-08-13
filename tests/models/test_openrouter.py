@@ -1,29 +1,37 @@
 import datetime
-from collections.abc import Sequence
+import json
+import os
+from collections.abc import AsyncIterable, Sequence
 from copy import deepcopy
+from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from vcr.cassette import Cassette
 
 from pydantic_ai import (
     Agent,
     BinaryContent,
     DocumentUrl,
+    ModelAPIError,
     ModelHTTPError,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     PartEndEvent,
     PartStartEvent,
+    RunContext,
     RunUsage,
+    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolDefinition,
     UnexpectedModelBehavior,
+    UserError,
     UserPromptPart,
     VideoUrl,
 )
@@ -35,14 +43,17 @@ from pydantic_ai.native_tools import AdvisorTool, WebSearchTool
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
 from ..conftest import IsDatetime, IsStr, message, try_import
+from .conftest import RequestCapture
 from .mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
-    from openai.types.chat import ChatCompletion
+    from openai.types.chat import ChatCompletion, ChatCompletionChunk
     from openai.types.chat.chat_completion import Choice
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from pydantic_ai.models.anthropic import AnthropicModelSettings
+    from pydantic_ai.models.fallback import FallbackModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.models.openrouter import (
         OpenRouterModel,
         OpenRouterModelSettings,
@@ -51,6 +62,8 @@ with try_import() as imports_successful:
         _OpenRouterChatCompletion,  # pyright: ignore[reportPrivateUsage]
         _OpenRouterChatCompletionChunk,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 pytestmark = [
@@ -522,7 +535,14 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
     result = await agent.run('Tell me about Venus')
 
     assert result.usage == snapshot(
-        RunUsage(input_tokens=17, output_tokens=1515, details={'reasoning_tokens': 704}, requests=1)
+        RunUsage(
+            input_tokens=17,
+            output_tokens=1515,
+            details={'reasoning_tokens': 704},
+            output_reasoning_tokens=704,
+            requests=1,
+            cost=Decimal('0.00303425'),
+        )
     )
 
     settings = OpenRouterModelSettings(openrouter_usage={'include': True})
@@ -534,7 +554,9 @@ async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: 
             input_tokens=17,
             output_tokens=2177,
             details={'is_byok': 0, 'reasoning_tokens': 960, 'image_tokens': 0},
+            output_reasoning_tokens=960,
             requests=1,
+            cost=Decimal('0.00435825'),
         )
     )
 
@@ -716,6 +738,87 @@ async def test_openrouter_streaming_reasoning(allow_model_requests: None, openro
                 TextPart(content='2 + 2 = 4'),
             ]
         )
+
+
+async def test_openrouter_streamed_reasoning_details_are_preserved(
+    allow_model_requests: None,
+) -> None:
+    """A streamed OpenRouter response keeps details with distinct indexes separate.
+
+    Mock-based rather than VCR — reasoning details spread across distinct indexes can't be reliably elicited
+    from a live provider, so the chunks are hand-built.
+    """
+
+    async def consume_events(_: RunContext[object], event_stream: AsyncIterable[Any]) -> None:
+        async for _event in event_stream:
+            pass
+
+    def reasoning_chunk(
+        reasoning_detail: dict[str, Any], *, content: str = '', finish_reason: str | None = None
+    ) -> ChatCompletionChunk:
+        return _OpenRouterChatCompletionChunk.model_validate(
+            {
+                'id': 'gen-123',
+                'choices': [
+                    {
+                        'index': 0,
+                        'delta': {'role': 'assistant', 'content': content, 'reasoning_details': [reasoning_detail]},
+                        'finish_reason': finish_reason,
+                    }
+                ],
+                'created': 1704067200,
+                'model': 'openai/gpt-5.6-luna',
+                'object': 'chat.completion.chunk',
+                'provider': 'OpenAI',
+            }
+        )
+
+    mock_client = MockOpenAI(
+        stream=[
+            reasoning_chunk(
+                {'type': 'reasoning.summary', 'summary': 'first summary', 'format': 'openai-responses-v1', 'index': 0}
+            ),
+            reasoning_chunk(
+                {
+                    'type': 'reasoning.encrypted',
+                    'id': 'rs_123',
+                    'data': 'encrypted reasoning',
+                    'format': 'openai-responses-v1',
+                    'index': 1,
+                }
+            ),
+            reasoning_chunk(
+                {'type': 'reasoning.summary', 'summary': 'second summary', 'format': 'openai-responses-v1', 'index': 2},
+                content='first answer',
+                finish_reason='stop',
+            ),
+        ],
+    )
+    model = OpenRouterModel('openai/gpt-5.6-luna', provider=OpenRouterProvider(openai_client=cast(Any, mock_client)))
+    agent = Agent(model)
+
+    result = await agent.run('first prompt', event_stream_handler=consume_events)
+
+    assert result.response.parts == [
+        ThinkingPart(
+            content='first summary',
+            provider_name='openrouter',
+            provider_details={'format': 'openai-responses-v1', 'index': 0, 'type': 'reasoning.summary'},
+        ),
+        ThinkingPart(
+            content='',
+            id='rs_123',
+            signature='encrypted reasoning',
+            provider_name='openrouter',
+            provider_details={'format': 'openai-responses-v1', 'index': 1, 'type': 'reasoning.encrypted'},
+        ),
+        ThinkingPart(
+            content='second summary',
+            provider_name='openrouter',
+            provider_details={'format': 'openai-responses-v1', 'index': 2, 'type': 'reasoning.summary'},
+        ),
+        TextPart(content='first answer'),
+    ]
 
 
 async def test_openrouter_no_openrouter_details(openrouter_api_key: str) -> None:
@@ -973,44 +1076,108 @@ async def test_openrouter_supported_native_tools() -> None:
     assert WebSearchTool in supported
 
 
-async def test_openrouter_web_search_prepare_request(openrouter_api_key: str) -> None:
-    """Test that prepare_request injects web search plugins when WebSearchTool is present."""
+async def test_openrouter_web_search_tool_request(allow_model_requests: None) -> None:
+    """`WebSearchTool` maps portable settings to an `openrouter:web_search` server tool.
 
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
-
-    model_request_parameters = ModelRequestParameters(
-        native_tools=[WebSearchTool(search_context_size='high')],
+    A mocked client pins the exact request-payload mapping, so this is a unit test rather than a
+    VCR test despite the module-level `vcr` mark; the provider-acceptance side is covered by the
+    VCR test.
+    """
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('openai/gpt-4.1', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                WebSearchTool(
+                    search_context_size='high',
+                    user_location={'city': 'London', 'country': 'GB', 'region': 'England', 'timezone': 'Europe/London'},
+                    allowed_domains=['pydantic.dev'],
+                    blocked_domains=['example.com'],
+                    max_uses=2,
+                    external_web_access=False,
+                )
+            )
+        ],
     )
 
-    new_settings, _ = model.prepare_request(None, model_request_parameters)
+    result = await agent.run('hello')
 
-    assert new_settings is not None
-    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
-    assert 'plugins' in extra_body
-    assert extra_body['plugins'] == [{'id': 'web'}]
-    assert 'web_search_options' in extra_body
-    assert extra_body['web_search_options'] == {'search_context_size': 'high'}
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tools'] == [
+        {
+            'type': 'openrouter:web_search',
+            'parameters': {
+                'search_context_size': 'high',
+                'user_location': {
+                    'type': 'approximate',
+                    'city': 'London',
+                    'country': 'GB',
+                    'region': 'England',
+                    'timezone': 'Europe/London',
+                },
+                'allowed_domains': ['pydantic.dev'],
+                'excluded_domains': ['example.com'],
+                'max_uses': 2,
+            },
+        }
+    ]
+    assert kwargs['extra_body'] == {}
 
 
-async def test_openrouter_no_web_search_without_tool(openrouter_api_key: str) -> None:
-    """Test that no plugins are added when WebSearchTool is not present."""
+async def test_openrouter_web_search_tool_is_after_tool_cache_and_advisor(allow_model_requests: None) -> None:
+    """Server tools follow the cached function definition so the cache breakpoint remains stable.
 
-    provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+    A mocked client pins the exact tool ordering and cache breakpoint, so this is a unit test
+    rather than a VCR test despite the module-level `vcr` mark; the provider-acceptance side is
+    covered by the VCR test.
+    """
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        model_settings=OpenRouterModelSettings(openrouter_cache_tool_definitions=True),
+        capabilities=[
+            NativeTool(AdvisorTool(model='anthropic/claude-opus-4.8')),
+            NativeTool(WebSearchTool()),
+        ],
+    )
 
-    model_request_parameters = ModelRequestParameters()
+    @agent.tool_plain
+    def get_weather() -> str:
+        return 'sunny'  # pragma: no cover
 
-    new_settings, _ = model.prepare_request(None, model_request_parameters)
+    result = await agent.run('hello')
 
-    assert new_settings is not None
-    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
-    assert 'plugins' not in extra_body
-    assert 'web_search_options' not in extra_body
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tools'] == snapshot(
+        [
+            {
+                'type': 'function',
+                'function': {
+                    'name': 'get_weather',
+                    'description': '',
+                    'parameters': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
+                },
+                'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+            },
+            {
+                'type': 'openrouter:advisor',
+                'parameters': {'model': 'anthropic/claude-opus-4.8', 'forward_transcript': False},
+            },
+            {'type': 'openrouter:web_search', 'parameters': {'search_context_size': 'medium'}},
+        ]
+    )
 
 
-async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
-    """Test _openrouter_settings_to_openai_settings when WebSearchTool is configured."""
+async def test_openrouter_settings_to_openai_settings_does_not_add_web_search() -> None:
+    """`WebSearchTool` is converted to a server tool after OpenAI settings are prepared.
+
+    This calls the private converter directly with no provider request, so it is a unit test
+    rather than a VCR test despite the module-level `vcr` mark.
+    """
     settings = OpenRouterModelSettings()
     model_request_parameters = ModelRequestParameters(
         native_tools=[WebSearchTool(search_context_size='high')],
@@ -1019,18 +1186,15 @@ async def test_openrouter_settings_to_openai_settings_with_web_search() -> None:
     result = _openrouter_settings_to_openai_settings(settings, model_request_parameters)
 
     extra_body = cast(dict[str, Any], result.get('extra_body', {}))
-    assert 'plugins' in extra_body
-    assert extra_body['plugins'] == [{'id': 'web'}]
-    assert 'web_search_options' in extra_body
-    assert extra_body['web_search_options'] == {'search_context_size': 'high'}
+    assert extra_body == {}
 
 
 async def test_openrouter_prepare_request_does_not_mutate_caller_settings() -> None:
-    """Repeated `prepare_request` calls must not mutate the caller's settings or duplicate plugins.
+    """Repeated `prepare_request` calls must not mutate the caller's settings.
 
     `merge_model_settings` can return the model's own `settings` by identity, so the converter's
-    `openrouter_` pops and `extra_body`/`plugins` appends would otherwise leak back onto the
-    caller's object across calls. This is an API-free preparation-path test (no provider request),
+    `openrouter_` pops and `extra_body` updates would otherwise leak back onto the caller's object
+    across calls. This is an API-free preparation-path test (no provider request),
     so it is a unit test rather than a VCR test despite the module-level `vcr` mark.
     """
     provider = OpenRouterProvider(api_key='mock-api-key')
@@ -1054,10 +1218,8 @@ async def test_openrouter_prepare_request_does_not_mutate_caller_settings() -> N
 
     first_extra_body = cast(dict[str, Any], first.get('extra_body', {}))
     second_extra_body = cast(dict[str, Any], second.get('extra_body', {}))
-    # Each prepared request appends exactly one web plugin beside the caller's own (no duplication),
-    # and the caller's `plugins` list itself is never appended to (covered by `settings == original`).
-    assert first_extra_body['plugins'] == [{'id': 'custom'}, {'id': 'web'}]
-    assert second_extra_body['plugins'] == [{'id': 'custom'}, {'id': 'web'}]
+    assert first_extra_body['plugins'] == [{'id': 'custom'}]
+    assert second_extra_body['plugins'] == [{'id': 'custom'}]
     # openrouter_* values are moved into extra_body without stripping the caller's originals.
     assert first_extra_body['models'] == ['vendor/model']
     assert first_extra_body['provider'] == {'only': ['provider']}
@@ -1080,6 +1242,48 @@ def _openrouter_completion(content: str) -> ChatCompletion:
     choice = Choice.model_construct(index=0, message=message, finish_reason='stop', native_finish_reason='stop')
     return ChatCompletion.model_construct(
         id='123', choices=[choice], created=1704067200, model='test', object='chat.completion', provider='test'
+    )
+
+
+async def test_openrouter_wraps_mid_conversation_system_prompt(allow_model_requests: None) -> None:
+    """OpenRouter gets the fallback while the same history stays native on OpenAI.
+
+    Mocked clients pin the rendered request bodies directly: OpenRouter accepts an inline `system`
+    message but silently transforms it, so a successful gateway response cannot prove native support.
+    """
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='You are helpful.'), UserPromptPart(content='Hello.')]),
+        ModelResponse(parts=[TextPart(content='Hi.')]),
+        ModelRequest(parts=[SystemPromptPart(content='Answer in one sentence.')]),
+    ]
+    openrouter_client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
+    openai_client = MockOpenAI.create_mock(_openrouter_completion('Done.'))
+
+    openrouter_model = OpenRouterModel('openai/gpt-5', provider=OpenRouterProvider(openai_client=openrouter_client))
+    openai_model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+
+    await Agent(openrouter_model).run('Continue.', message_history=history)
+    await Agent(openai_model).run('Continue.', message_history=history)
+
+    assert openrouter_model.profile.get('supports_inline_system_prompts') is False
+    assert openai_model.profile.get('supports_inline_system_prompts') is True
+    assert get_mock_chat_completion_kwargs(openrouter_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'You are helpful.'},
+            {'role': 'user', 'content': 'Hello.'},
+            {'role': 'assistant', 'content': 'Hi.'},
+            {'role': 'user', 'content': '<system>Answer in one sentence.</system>'},
+            {'role': 'user', 'content': 'Continue.'},
+        ]
+    )
+    assert get_mock_chat_completion_kwargs(openai_client)[0]['messages'] == snapshot(
+        [
+            {'role': 'system', 'content': 'You are helpful.'},
+            {'role': 'user', 'content': 'Hello.'},
+            {'role': 'assistant', 'content': 'Hi.'},
+            {'role': 'system', 'content': 'Answer in one sentence.'},
+            {'role': 'user', 'content': 'Continue.'},
+        ]
     )
 
 
@@ -1155,6 +1359,188 @@ async def test_openrouter_advisor_tool_unsupported_fields(
     ]
 
 
+_TOOL_FORCING_REQUEST_PARAMETERS = ModelRequestParameters(
+    function_tools=[
+        ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}}),
+    ],
+    output_tools=[
+        ToolDefinition(name='final_result', parameters_json_schema={'type': 'object', 'properties': {}}, kind='output'),
+    ],
+    output_mode='tool',
+    allow_text_output=False,
+)
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'settings', 'expected_tool_choice', 'expected_tool_names'),
+    [
+        # The headline case: structured output alone resolves to `tool_choice='required'` without the user
+        # asking for forcing at all, which would make OpenRouter drop `reasoning` for an Anthropic model.
+        # The inferred forcing falls back to `auto` so the reasoning request survives.
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': 'low'},
+            'auto',
+            ['get_weather', 'final_result'],
+            id='anthropic-thinking-inferred-required',
+        ),
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'openrouter_reasoning': {'effort': 'low'}},
+            'auto',
+            ['get_weather', 'final_result'],
+            id='anthropic-openrouter-reasoning-inferred-required',
+        ),
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': 'low', 'openrouter_reasoning': {'enabled': False}},
+            'required',
+            ['get_weather', 'final_result'],
+            id='anthropic-openrouter-reasoning-disabled-overrides-thinking',
+        ),
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': 'low', 'openrouter_reasoning': {'effort': 'none'}},
+            'required',
+            ['get_weather', 'final_result'],
+            id='anthropic-openrouter-reasoning-none-overrides-thinking',
+        ),
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': 'low', 'openrouter_reasoning': {}},
+            'required',
+            ['get_weather', 'final_result'],
+            id='anthropic-empty-openrouter-reasoning-overrides-thinking',
+        ),
+        # Without thinking there is no incompatibility, so forcing still goes on the wire.
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {},
+            'required',
+            ['get_weather', 'final_result'],
+            id='anthropic-no-thinking',
+        ),
+        # `thinking=False` maps to `reasoning.effort='none'`, which is not thinking either.
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': False},
+            'required',
+            ['get_weather', 'final_result'],
+            id='anthropic-thinking-disabled',
+        ),
+        # `tool_choice='none'` with an output tool and no direct output resolves to that single tool, so
+        # the fallback also has to filter the tools — `auto` alone wouldn't keep `get_weather` off limits.
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'thinking': 'low', 'tool_choice': 'none'},
+            'auto',
+            ['final_result'],
+            id='anthropic-thinking-inferred-named',
+        ),
+        pytest.param(
+            'anthropic/claude-sonnet-4.6',
+            {'tool_choice': 'none'},
+            {'type': 'function', 'function': {'name': 'final_result'}},
+            ['get_weather', 'final_result'],
+            id='anthropic-no-thinking-named',
+        ),
+        # Other downstream providers honor `reasoning` alongside a forced `tool_choice`, so nothing changes
+        # for them — including when the user asks for forcing explicitly.
+        pytest.param(
+            'google/gemini-2.5-flash',
+            {'thinking': 'low'},
+            'required',
+            ['get_weather', 'final_result'],
+            id='google-thinking-inferred-required',
+        ),
+        pytest.param(
+            'google/gemini-2.5-flash',
+            {'thinking': 'low', 'tool_choice': 'required'},
+            'required',
+            ['get_weather', 'final_result'],
+            id='google-thinking-explicit-required',
+        ),
+    ],
+)
+async def test_openrouter_forced_tool_choice_with_thinking(
+    allow_model_requests: None,
+    model_name: str,
+    settings: dict[str, Any],
+    expected_tool_choice: Any,
+    expected_tool_names: list[str],
+) -> None:
+    """OpenRouter drops `reasoning` when a forced `tool_choice` reaches an Anthropic downstream model.
+
+    Anthropic itself rejects that combination with an error, but the gateway swallows it and returns a
+    response with zero reasoning tokens, so an inferred forcing is downgraded to `auto` to keep thinking.
+
+    Unit test with a mocked client because our cassette matchers aren't sensitive to the request body, so
+    a VCR test would keep passing against a stale recording if `tool_choice` regressed.
+    """
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))
+
+    await model_request(
+        model,
+        [ModelRequest.user_text_prompt('hello')],
+        model_settings=cast(OpenRouterModelSettings, settings),
+        model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+    )
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs['tool_choice'] == expected_tool_choice
+    assert [tool['function']['name'] for tool in kwargs['tools']] == expected_tool_names
+    # The point of the fallback: the reasoning the user asked for still goes on the wire.
+    if 'openrouter_reasoning' in settings:
+        expected_reasoning = settings['openrouter_reasoning'] or None
+    elif 'thinking' not in settings:
+        expected_reasoning = None
+    elif settings['thinking']:
+        expected_reasoning = {'effort': 'low', 'enabled': True}
+    else:
+        expected_reasoning = {'effort': 'none'}
+    assert kwargs['extra_body'].get('reasoning') == expected_reasoning
+
+
+@pytest.mark.parametrize(
+    ('tool_choice', 'expected_error'),
+    [
+        pytest.param(
+            'required',
+            "OpenRouter does not support tool_choice='required' with thinking mode. Disable thinking or use "
+            "`tool_choice='auto'`; otherwise OpenRouter silently drops reasoning.",
+            id='required',
+        ),
+        pytest.param(
+            ['get_weather'],
+            'OpenRouter does not support forcing specific tools with thinking mode. Disable thinking or use '
+            "`tool_choice='auto'`; otherwise OpenRouter silently drops reasoning.",
+            id='list',
+        ),
+    ],
+)
+async def test_openrouter_explicit_forced_tool_choice_with_thinking_errors(
+    allow_model_requests: None, tool_choice: Any, expected_error: str
+) -> None:
+    """An explicitly forced `tool_choice` errors instead of silently losing either the forcing or thinking.
+
+    Mirrors `AnthropicModel`, which raises for explicit forcing under thinking and only falls back softly
+    for a forcing the `tool_choice` resolution logic inferred.
+    """
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(openai_client=mock_client))
+
+    with pytest.raises(UserError) as exc_info:
+        await model_request(
+            model,
+            [ModelRequest.user_text_prompt('hello')],
+            model_settings=cast(OpenRouterModelSettings, {'thinking': 'low', 'tool_choice': tool_choice}),
+            model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+        )
+
+    assert str(exc_info.value) == expected_error
+
+
 async def test_openrouter_advisor_tool(allow_model_requests: None, openrouter_api_key: str) -> None:
     """End-to-end advisor consult through OpenRouter, recorded live.
 
@@ -1202,28 +1588,104 @@ async def test_openrouter_advisor_tool_stream(allow_model_requests: None, openro
     assert stream.response.provider_details['server_tool_use'] == {'tool_calls_requested': 1, 'tool_calls_executed': 1}
 
 
-async def test_openrouter_prepare_request_loop_with_non_websearch_first(openrouter_api_key: str) -> None:
-    """Test prepare_request loop continuation when first tool is not WebSearchTool."""
-    from unittest.mock import Mock
-
+async def test_openrouter_web_search_tool_usage(
+    allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
+) -> None:
+    """A recorded OpenRouter web search exposes its request count in provider details."""
     provider = OpenRouterProvider(api_key=openrouter_api_key)
-    model = OpenRouterModel('openai/gpt-4.1', provider=provider)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
 
-    non_web_tool = Mock(spec=[])
-    web_tool = WebSearchTool(search_context_size='medium')
+    result = await agent.run("Use web search to find Pydantic AI's GitHub repository and answer with its URL only.")
 
-    model_request_parameters = ModelRequestParameters(
-        native_tools=[non_web_tool, web_tool],
+    assert result.output
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is not None
+    raw_response = json.loads(vcr.responses[0]['body']['string'])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    assert raw_response['usage']['server_tool_use_details'] == {'web_search_requests': 1}
+    assert response.provider_details['server_tool_use'] == {'web_search_requests': 1}
+
+
+_OPENROUTER_WEB_SEARCH_FULL_PARAMS_CASSETTE = (
+    Path(__file__).parent / 'cassettes' / 'test_openrouter' / 'test_openrouter_web_search_tool_full_params.yaml'
+)
+
+
+@pytest.mark.skipif(
+    not os.environ.get('OPENROUTER_API_KEY') and not _OPENROUTER_WEB_SEARCH_FULL_PARAMS_CASSETTE.is_file(),
+    reason=(
+        'verifies OpenRouter accepts the `user_location`, `allowed_domains`, and `blocked_domains` '
+        'web-search wire names with a real request; requires OPENROUTER_API_KEY to record '
+        '(run with --record-mode=rewrite) when the cassette is unavailable'
+    ),
+)
+async def test_openrouter_web_search_tool_full_params(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """Live provider-acceptance check for the web-search wire names.
+
+    Unlike `test_openrouter_web_search_tool_request` (which asserts the outgoing payload against a mock
+    client), this sends `user_location`, `allowed_domains`, and `blocked_domains` to OpenRouter so its
+    acceptance of those names is verified by a recorded response, not just request construction. When
+    the cassette is unavailable, record it with:
+    `uv run pytest tests/models/test_openrouter.py::test_openrouter_web_search_tool_full_params --record-mode=rewrite`.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel('google/gemini-3.6-flash', provider=provider)
+    agent = Agent(
+        model,
+        capabilities=[
+            NativeTool(
+                WebSearchTool(
+                    search_context_size='low',
+                    user_location={'city': 'London', 'country': 'GB', 'region': 'England', 'timezone': 'Europe/London'},
+                    allowed_domains=['pydantic.dev'],
+                    blocked_domains=['example.com'],
+                    max_uses=1,
+                )
+            )
+        ],
     )
 
-    with patch.object(model.__class__.__bases__[0], 'prepare_request', return_value=({}, model_request_parameters)):
-        new_settings, _ = model.prepare_request(None, model_request_parameters)
+    result = await agent.run('Reply with `ready`.')
 
-    assert new_settings is not None
-    extra_body = cast(dict[str, Any], new_settings.get('extra_body', {}))
-    assert 'plugins' in extra_body
-    assert extra_body['plugins'] == [{'id': 'web'}]
-    assert extra_body['web_search_options'] == {'search_context_size': 'medium'}
+    assert result.output
+    assert request_capture.body()['tools'] == snapshot(
+        [
+            {
+                'type': 'openrouter:web_search',
+                'parameters': {
+                    'search_context_size': 'low',
+                    'user_location': {
+                        'type': 'approximate',
+                        'city': 'London',
+                        'country': 'GB',
+                        'region': 'England',
+                        'timezone': 'Europe/London',
+                    },
+                    'allowed_domains': ['pydantic.dev'],
+                    'excluded_domains': ['example.com'],
+                    'max_uses': 1,
+                },
+            }
+        ]
+    )
+
+
+async def test_openrouter_web_search_tool_usage_stream(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """Streaming preserves the OpenRouter web-search request count from the final usage chunk."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
+
+    async with agent.run_stream(
+        "Use web search to find Pydantic AI's GitHub repository and answer with its URL only."
+    ) as stream:
+        assert await stream.get_output()
+
+    assert stream.response.provider_details is not None
+    assert stream.response.provider_details['server_tool_use'] == {'web_search_requests': 1}
 
 
 def test_openrouter_nested_provider_response() -> None:
@@ -1311,7 +1773,11 @@ def test_openrouter_nested_provider_null_name() -> None:
 
 
 def test_openrouter_provider_dict_without_choices_raises() -> None:
-    """Provider is a dict with no 'choices' key — no unwrap happens, validation fails."""
+    """Provider is a dict with no 'choices' key — no unwrap happens, validation fails.
+
+    Also pins the boundary the no-completion shape depends on: `_OpenRouterNoCompletionResponse.provider`
+    is typed `str | None`, so this body does not match it and stays fatal instead of becoming retryable.
+    """
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
 
@@ -1355,7 +1821,12 @@ def test_openrouter_error_with_null_fields() -> None:
 
 
 def test_openrouter_malformed_error_fallthrough() -> None:
-    """Malformed error data falls through to validation, surfacing as UnexpectedModelBehavior."""
+    """Malformed error data falls through to validation, surfacing as UnexpectedModelBehavior.
+
+    Also pins the second boundary the no-completion shape depends on: `_OpenRouterNoCompletionResponse.error`
+    is typed `Literal[None]`, so this body does not match it and stays fatal. Widening that annotation would
+    flip this test to a retryable `ModelAPIError`.
+    """
     provider = OpenRouterProvider(api_key='test-key')
     model = OpenRouterModel('openai/gpt-4.1-mini', provider=provider)
 
@@ -1372,6 +1843,183 @@ def test_openrouter_malformed_error_fallthrough() -> None:
 
     with pytest.raises(UnexpectedModelBehavior):
         model._process_response(completion)  # type: ignore[reportPrivateUsage]
+
+
+def _null_choices_completion(*, model: str | None = None, provider: str | None = None) -> ChatCompletion:
+    """The no-completion body: null `choices`, no error envelope."""
+    return ChatCompletion.model_construct(
+        id=None, choices=None, model=model, object=None, provider=provider, created=1234567890, usage=None
+    )
+
+
+async def test_openrouter_null_choices_without_error_envelope_raises_model_api_error(
+    allow_model_requests: None,
+) -> None:
+    """A null-`choices` body with no error envelope raises `ModelAPIError`, not a bare `ValidationError`.
+
+    OpenRouter intermittently returns `{"choices": null, ...}` with no error field at all (a provider
+    hiccup). A bare `ValidationError` surfaces as `UnexpectedModelBehavior`, which `FallbackModel`'s
+    default `fallback_on=(ModelAPIError,)` does not match, so the transient never reaches fallback.
+
+    Mock-based rather than VCR — and so are the null-`choices` tests below: the shape is an intermittent
+    downstream-provider fault with no provoking input, so `--record-mode=rewrite` cannot capture it, and a
+    hand-written cassette would give a synthesized body the provenance of a live recording.
+    """
+    mock_client = MockOpenAI.create_mock(_null_choices_completion())
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await Agent(model).run('hello')
+
+    assert not isinstance(exc_info.value, ModelHTTPError)  # not a faked HTTP status
+    assert str(exc_info.value) == snapshot('OpenRouter returned a response with null `choices` and no error envelope')
+    assert exc_info.value.model_name == snapshot('openai/gpt-4.1-mini')
+
+
+async def test_openrouter_null_choices_named_provider_reports_body_model(allow_model_requests: None) -> None:
+    """The realistic body names its downstream `provider`, and its `model` wins over the configured one.
+
+    `provider` as a name string is the accept-side of the `str | None` discriminator that keeps a
+    `provider` *dict* fatal, so it needs its own coverage.
+    """
+    completion = _null_choices_completion(model='google/gemini-2.5-flash', provider='Google')
+    mock_client = MockOpenAI.create_mock(completion)
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await Agent(model).run('hello')
+
+    assert exc_info.value.model_name == snapshot('google/gemini-2.5-flash')
+
+
+def _null_choices_chunk(provider: dict[str, str] | None = None) -> ChatCompletionChunk:
+    """The no-completion body as a streaming chunk: null `choices`, no error envelope."""
+    return ChatCompletionChunk.model_construct(
+        id='gen-123',
+        choices=None,
+        created=1234567890,
+        model=None,
+        object=None,
+        provider=provider,
+        usage=None,
+    )
+
+
+async def test_openrouter_null_choices_streaming_raises_model_api_error(allow_model_requests: None) -> None:
+    """Streaming parity: the same no-completion body is a mapped `ModelAPIError` on the stream too.
+
+    `_OpenRouterChatCompletionChunk.choices` is required and non-null, so this chunk is rejected in
+    `OpenRouterStreamedResponse._validate_response` before `OpenAIStreamedResponse` reaches its tolerant
+    `if not chunk.choices` guard. It already failed there; what this pins is that it now fails as
+    `ModelAPIError` rather than as the raw `ValidationError` this PR removes from the non-streamed path.
+
+    The error surfaces while entering `agent.run_stream` — the agent consumes the first event there — so
+    the block body never runs. Kept beside its non-streamed twin rather than moved to
+    `tests/test_streaming_errors.py`: this PR exists to make the two paths agree, and reading them
+    together is the point.
+    """
+    mock_client = MockOpenAI.create_mock_stream([_null_choices_chunk()])
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with agent.run_stream('hello'):
+            pass
+
+    assert not isinstance(exc_info.value, ModelHTTPError)  # not a faked HTTP status
+    assert str(exc_info.value) == snapshot('OpenRouter returned a response with null `choices` and no error envelope')
+    assert exc_info.value.model_name == snapshot('openai/gpt-4.1-mini')
+
+
+def _text_chunk(content: str, model: str) -> ChatCompletionChunk:
+    """A healthy content chunk, so the no-completion chunk that follows it lands mid-stream rather than first."""
+    return ChatCompletionChunk.model_validate(
+        {
+            'id': 'gen-123',
+            'choices': [{'index': 0, 'delta': {'role': 'assistant', 'content': content}, 'finish_reason': None}],
+            'created': 1234567890,
+            'model': model,
+            'object': 'chat.completion.chunk',
+            'provider': 'Google',
+        }
+    )
+
+
+async def test_openrouter_null_choices_mid_stream_reports_first_chunk_model(allow_model_requests: None) -> None:
+    """Arriving mid-stream rather than first, the same body still raises — and names the model differently.
+
+    The classification is position-independent, but the reported `model_name` is not: `OpenAIChatModel`
+    fixes `_model_name` from `first_chunk.model` when one is present, and the streamed call site passes
+    that, where the non-streamed one passes the configured name. So a stream opened by a chunk naming
+    `google/gemini-2.5-flash` reports that, not the configured `openai/gpt-4.1-mini` its first-chunk twin
+    above asserts. Pinned because the twin alone reads as if the configured name always wins.
+    """
+    mock_client = MockOpenAI.create_mock_stream(
+        [_text_chunk('hello ', model='google/gemini-2.5-flash'), _null_choices_chunk()]
+    )
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with agent.run_stream('hello') as result:
+            async for _ in result.stream_text(delta=True):
+                pass
+
+    assert str(exc_info.value) == snapshot('OpenRouter returned a response with null `choices` and no error envelope')
+    assert exc_info.value.model_name == snapshot('google/gemini-2.5-flash')
+
+
+async def test_openrouter_streaming_malformed_chunk_stays_fatal(allow_model_requests: None) -> None:
+    """A chunk that fails validation for some *other* reason keeps re-raising the original error.
+
+    Streaming twin of `test_openrouter_provider_dict_without_choices_raises`: a `provider` dict is not the
+    no-completion shape, so it must not be laundered into a retryable `ModelAPIError`. `match` pins the
+    `provider` rejection specifically — without it the test also passes when the chunk is rejected for one
+    of the reasons the no-completion shape shares (`choices`, `model`, `object`).
+    """
+    mock_client = MockOpenAI.create_mock_stream([_null_choices_chunk(provider={'some_key': 'some_value'})])
+    model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    with pytest.raises(ValidationError, match='provider'):
+        async with agent.run_stream('hello'):
+            pass
+
+
+async def test_openrouter_null_choices_triggers_fallback(allow_model_requests: None) -> None:
+    """The point of `ModelAPIError`: a no-completion body now reaches `FallbackModel`.
+
+    `fallback_on` defaults to `(ModelAPIError,)`, which a bare `ValidationError` never matched.
+
+    Non-streamed only, deliberately: `FallbackModel`'s window is `Model.request_stream`'s own
+    `__aenter__`, which returns before any chunk is validated, so the streamed twin raises instead of
+    falling back. That asymmetry is `FallbackModel`'s, not OpenRouter's, and the test below pins it.
+    """
+    mock_client = MockOpenAI.create_mock(_null_choices_completion())
+    openrouter_model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(FallbackModel(openrouter_model, TestModel(custom_output_text='fallback used')))
+
+    result = await agent.run('hello')
+    assert result.output == snapshot('fallback used')
+
+
+async def test_openrouter_null_choices_streaming_does_not_trigger_fallback(allow_model_requests: None) -> None:
+    """The streamed half of the same composition raises instead of falling back.
+
+    `FallbackModel.request_stream` only guards `__aenter__`; once it has yielded, its own docstring says
+    mid-stream failures propagate. `OpenAIChatModel._process_streamed_response` peeks the raw SDK chunk,
+    so OpenRouter's validation runs later, during iteration — after the guard has closed. Pinned because
+    this PR's first attempt at the test above asserted the streamed path *does* fall back, and failed.
+    """
+    mock_client = MockOpenAI.create_mock_stream([_null_choices_chunk()])
+    openrouter_model = OpenRouterModel('openai/gpt-4.1-mini', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(FallbackModel(openrouter_model, TestModel(custom_output_text='fallback used')))
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with agent.run_stream('hello'):
+            pass
+
+    assert str(exc_info.value) == snapshot('OpenRouter returned a response with null `choices` and no error envelope')
 
 
 def test_openrouter_error_with_metadata() -> None:

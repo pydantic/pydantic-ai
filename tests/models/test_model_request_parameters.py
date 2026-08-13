@@ -1,6 +1,11 @@
+import warnings
+from dataclasses import replace
+from typing import Literal
+
 import pytest
 from pydantic import TypeAdapter
 
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import (
     CodeExecutionTool,
@@ -32,6 +37,8 @@ def test_model_request_parameters_are_serializable():
         {
             'function_tools': [],
             'native_tools': [],
+            'tool_visibility': None,
+            'revealed_tool_names': set(),
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
@@ -142,6 +149,8 @@ def test_model_request_parameters_are_serializable():
                     'headers': None,
                 },
             ],
+            'tool_visibility': None,
+            'revealed_tool_names': set(),
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [
@@ -175,6 +184,58 @@ def test_model_request_parameters_are_serializable():
     assert ta.validate_python(dumped) == params
 
 
+def test_request_visibility_state_survives_serialization_but_stays_out_of_repr():
+    """Visibility state has to cross a durable-execution boundary, and stay out of the repr.
+
+    Temporal hands the model activity a `_RequestParams` carrying the whole
+    `ModelRequestParameters`, serialized by the pydantic data converter, and the adapters read both
+    sets on the far side — Anthropic decides there whether the corpus is capability-only. Excluding
+    them from serialization would deliver empty state to every durable run, which nothing that
+    stays inside one process would notice. `revealed_tool_names` stays out of the repr via
+    `repr=False`; `tool_visibility` relies on the no-defaults repr instead — omitted while `None`
+    (authored), visible once resolved — so object snapshots can see resolution state and never
+    mismatch invisibly.
+    """
+    params = ModelRequestParameters(revealed_tool_names={'deferred_tool'})
+
+    round_tripped = ta.validate_python(ta.dump_python(params, mode='json'))
+
+    assert round_tripped.revealed_tool_names == {'deferred_tool'}
+    assert repr(params) == snapshot('ModelRequestParameters(function_tools=[], native_tools=[], output_tools=[])')
+    assert repr(replace(params, tool_visibility={'t': 'visible'})) == snapshot(
+        "ModelRequestParameters(function_tools=[], native_tools=[], tool_visibility={'t': 'visible'}, output_tools=[])"
+    )
+
+
+@pytest.mark.parametrize('visibility', ['visible', 'deferred', 'withheld', 'via_history'])
+def test_tool_visibility_round_trip_and_equality(
+    visibility: Literal['visible', 'deferred', 'withheld', 'via_history'],
+):
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='t')], tool_visibility={'t': visibility})
+
+    dumped = ta.dump_python(params, mode='json')
+    round_tripped = ta.validate_python(dumped)
+    assert round_tripped.tool_visibility == {'t': visibility}
+
+    del dumped['tool_visibility']
+    old_payload = ta.validate_python(dumped)
+    assert old_payload.tool_visibility is None
+
+    assert ModelRequestParameters(tool_visibility={'t': visibility}) == ModelRequestParameters(
+        tool_visibility={'t': visibility}
+    )
+    assert ModelRequestParameters(tool_visibility={'t': visibility}) != ModelRequestParameters()
+
+
+def test_visibility_of_unresolved_parameters_uses_authored_deferral() -> None:
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='hidden', defer_loading=True), ToolDefinition(name='visible')]
+    )
+    assert params.visibility_of('hidden') == 'withheld'
+    assert params.visibility_of('visible') == 'visible'
+    assert params.visibility_of('unknown') == 'visible'
+
+
 @pytest.mark.parametrize(
     'output_mode, expected_allow_text',
     [
@@ -201,3 +262,63 @@ def test_with_default_output_mode_overrides_allow_text():
     resolved = params.with_default_output_mode('native')
     assert resolved.output_mode == 'native'
     assert resolved.allow_text_output is True
+
+
+def test_deferred_capability_ids_deprecated_property_derives_ownership():
+    """The removed field (shipped in v2.23) survives as a deprecated derivation.
+
+    Adapters used it for one thing — recognizing a tool as capability-owned — and that membership
+    test is fully derivable from the authored definitions, so the shim returns the real value for
+    every tool-bearing capability rather than lying with an empty set.
+    """
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='gated', defer_loading=True, capability_id='refunds'),
+            ToolDefinition(name='searchable', defer_loading=True),
+            ToolDefinition(name='plain', capability_id='eager_capability'),
+        ]
+    )
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`ModelRequestParameters\.deferred_capability_ids`'):
+        assert params.deferred_capability_ids == {'refunds'}
+
+
+def test_old_serialized_payload_with_deferred_capability_ids_still_validates():
+    """A v2.23-era Temporal payload carries the removed field; deserialization must not choke."""
+    dumped = ta.dump_python(ModelRequestParameters(), mode='json')
+    dumped['deferred_capability_ids'] = ['refunds']
+    ta.validate_python(dumped)
+
+
+def test_deferred_capability_ids_still_accepted_as_a_constructor_argument():
+    """v2.23 shipped the field, so passing it must warn, not raise `TypeError`.
+
+    The value itself is discarded: the framework only ever populated the field from the function
+    tools' own `capability_id`/`defer_loading`, which is what reads now derive from.
+    """
+    with pytest.warns(PydanticAIDeprecationWarning, match=r'`ModelRequestParameters\.deferred_capability_ids`'):
+        params = ModelRequestParameters(deferred_capability_ids={'refunds'})  # pyright: ignore[reportCallIssue]
+    with pytest.warns(PydanticAIDeprecationWarning):
+        assert params.deferred_capability_ids == set()
+
+    # The rejected `InitVar` spelling for the shim would leak both deprecation warnings out of
+    # every internal `replace()` call on Python 3.13+, which round-trips init-only variables
+    # through `getattr` — so silence here is part of the contract.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        replace(ModelRequestParameters(), output_mode='tool')
+
+
+def test_declared_tool_defs_never_drops_an_output_tool():
+    """The visibility filter applies to function tools only.
+
+    `tool_visibility` is keyed by name; a hidden function tool sharing a name with an output tool
+    must not shadow the output tool out of the provider's `tools` collection.
+    """
+    output_tool = ToolDefinition(name='final_result', kind='output')
+    params = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='final_result', defer_loading=True)],
+        output_tools=[output_tool],
+        tool_visibility={'final_result': 'withheld'},
+    )
+    assert params.declared_function_tools == []
+    assert params.declared_tool_defs == {'final_result': output_tool}

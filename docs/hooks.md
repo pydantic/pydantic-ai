@@ -116,6 +116,8 @@ Use on-demand hooks for optional behavior that only applies after the capability
 
 Run hooks fire once per agent run. `wrap_run` (registered via `hooks.on.run`) wraps the entire run and supports error recovery.
 
+A [realtime session](realtime/capabilities.md) is a run: the same four hooks fire once around the session, with `wrap_run` recovery and `after_run` result transformation applied when the session closes.
+
 ### Node hooks
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
@@ -127,8 +129,10 @@ Run hooks fire once per agent run. `wrap_run` (registered via `hooks.on.run`) wr
 
 Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.agent.UserPromptNode], [`ModelRequestNode`][pydantic_ai.agent.ModelRequestNode], [`CallToolsNode`][pydantic_ai.agent.CallToolsNode]).
 
+Node hooks fire no matter how the run is driven: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent_run.next()`][pydantic_ai.run.AgentRun.next], and `async for node in agent_run:` over [`agent.iter()`][pydantic_ai.agent.Agent.iter] all advance the run the same way.
+
 !!! note
-    `wrap_node_run` hooks are called automatically by [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent_run.next()`][pydantic_ai.run.AgentRun.next], but **not** when iterating with bare `async for node in agent_run:`.
+    [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] is the exception: it hands you the result as soon as the final output is found mid-stream, so the model request that produced it gets `before_node_run` but not `wrap_node_run` or `after_node_run`. The hooks fire in full for every other node, including the one that ends the run.
 
 ### Model request hooks
 
@@ -164,6 +168,8 @@ Validation hooks fire when the model's JSON arguments are parsed and validated. 
 
 To skip validation, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.SkipToolValidation] from `before_tool_validate` or `tool_validate` (wrap).
 
+A tool call can only be [deferred](deferred-tools.md) once its arguments have been validated, since whoever resolves the deferral is shown those arguments. So [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] can be raised from `after_tool_validate` (and from `tool_validate` after its `handler()` has returned), but raising them from `before_tool_validate`, from `tool_validate` before it calls `handler()`, or from `tool_validate_error` is a [`UserError`][pydantic_ai.exceptions.UserError]. To decide per tool rather than per capability, use the tool's [`args_validator`](tools-advanced.md#args-validator).
+
 ### Tool execution hooks
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
@@ -176,6 +182,8 @@ To skip validation, raise [`SkipToolValidation(args)`][pydantic_ai.exceptions.Sk
 Execution hooks fire when the tool function runs. `args` is always the validated `dict[str, Any]`.
 
 To skip execution, raise [`SkipToolExecution(result)`][pydantic_ai.exceptions.SkipToolExecution] from `before_tool_execute` or `tool_execute` (wrap).
+
+Every execution hook can [defer](deferred-tools.md) the call — the arguments are validated by this point — but raise `ApprovalRequired`/`CallDeferred` from `before_tool_execute` (or from `tool_execute` before it calls `handler()`). A deferral from `after_tool_execute`, or from `tool_execute` after `handler()` has returned, is accepted but happens too late to be useful: the tool function already ran, so its side effects happened and its result is discarded.
 
 ### Output validation hooks
 
@@ -254,7 +262,7 @@ For pure application-level handler registration without other hooks, the dedicat
 | `run_event_stream` | `run_event_stream=` | `wrap_run_event_stream` |
 | `event` | `event=` | _(per-event convenience)_ |
 
-`run_event_stream` wraps the full event stream as an async generator. `event` is a convenience — it fires for each individual event during a streamed run. Tool and model events flow through this stream, along with framework events such as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] when queued messages enter run history:
+`run_event_stream` wraps the full event stream as an async generator. `event` is a convenience — it fires for each individual event during a streamed run. Tool and model events flow through this stream, along with framework events such as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent] when queued messages enter run history. During a [realtime session](realtime/capabilities.md), both hooks also fire, and realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members flow through the same stream:
 
 ```python {title="hooks_event.py"}
 from pydantic_ai import Agent, AgentStreamEvent, RunContext
