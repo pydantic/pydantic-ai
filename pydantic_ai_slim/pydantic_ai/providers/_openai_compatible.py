@@ -1,16 +1,13 @@
 from collections.abc import Mapping
-from typing import TYPE_CHECKING
 
 import httpx
+from openai import AsyncOpenAI
 
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.providers import Provider
 
-if TYPE_CHECKING:
-    from openai import AsyncOpenAI
 
-
-class OpenAICompatibleProvider(Provider['AsyncOpenAI']):
+class OpenAICompatibleProvider(Provider[AsyncOpenAI]):
     """Shared HTTP client lifecycle for providers backed by the OpenAI SDK."""
 
     def _get_http_client(self, http_client: httpx.AsyncClient | None) -> httpx.AsyncClient:
@@ -27,9 +24,7 @@ class OpenAICompatibleProvider(Provider['AsyncOpenAI']):
         api_key: str | None,
         http_client: httpx.AsyncClient | None,
         default_headers: Mapping[str, str] | None = None,
-    ) -> 'AsyncOpenAI':
-        from openai import AsyncOpenAI
-
+    ) -> AsyncOpenAI:
         return AsyncOpenAI(
             base_url=base_url,
             api_key=api_key,
