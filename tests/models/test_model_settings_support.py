@@ -277,7 +277,18 @@ async def run_probe_request(model: Model, settings: ModelSettings) -> None:
 
 
 HTTP_VOLATILE = frozenset(
-    {'authorization', 'x-api-key', 'x-goog-api-key', 'content-length', 'user-agent', 'x-stainless-retry-count'}
+    {
+        'authorization',
+        'x-api-key',
+        'x-goog-api-key',
+        'content-length',
+        'user-agent',
+        'x-stainless-retry-count',
+        # W3C trace context carries a fresh trace and span id on every request, so leaving these in
+        # makes each probe differ from the baseline and every setting look forwarded.
+        'traceparent',
+        'tracestate',
+    }
 )
 BEDROCK_VOLATILE = HTTP_VOLATILE | {
     'x-amz-date',
