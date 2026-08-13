@@ -95,15 +95,59 @@ def resolve_declared_id(source_id: str | None, declared_id: str | None) -> str |
 
 @dataclass(frozen=True, repr=False)
 class SourcedInstruction(Generic[AgentDepsT]):
-    """An agent-level instruction along with the `InstructionPart.id` its content should be addressed by."""
+    """A lazy instruction recipe with the `InstructionPart.id` its content should be addressed by."""
 
     instruction: AgentInstruction[AgentDepsT]
 
     _: KW_ONLY
 
     id: str | None = None
+    dynamic: bool = False
 
     __repr__ = dataclasses_no_defaults_repr
+
+
+async def resolve_sourced_instructions(
+    instructions: Sequence[SourcedInstruction[AgentDepsT]], run_context: RunContext[AgentDepsT]
+) -> list[InstructionPart]:
+    """Resolve authored instructions into the parts sent to the model.
+
+    Literal strings with the same source key form one addressable block. An
+    [`InstructionPart`][pydantic_ai.messages.InstructionPart] always remains independent so its
+    cache treatment applies only to its own text, while callable instructions are resolved lazily
+    against the current `RunContext`.
+    """
+    parts: list[InstructionPart] = []
+    group: list[InstructionPart] = []
+    group_key: str | None = None
+
+    def flush_group() -> None:
+        if content := InstructionPart.join(group):
+            parts.append(InstructionPart(content=content, id=group[0].id))
+        group.clear()
+
+    for sourced in instructions:
+        instruction = sourced.instruction
+        if isinstance(instruction, InstructionPart):
+            if not (content := instruction.content.strip()):
+                continue
+            flush_group()
+            group_key = None
+            parts.append(replace(instruction, content=content, id=sourced.id))
+        elif isinstance(instruction, str):
+            if not (content := instruction.strip()):
+                continue
+            if group and (sourced.id is None or group_key != sourced.id):
+                flush_group()
+            group_key = sourced.id
+            group.append(InstructionPart(content=content, id=sourced.id))
+        else:
+            flush_group()
+            group_key = None
+            if content := await _system_prompt.SystemPromptRunner[AgentDepsT](instruction).run(run_context):
+                parts.append(InstructionPart(content=content, id=sourced.id, dynamic=True))
+    flush_group()
+    return parts
 
 
 @dataclass(frozen=True, repr=False)
