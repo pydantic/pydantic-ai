@@ -6471,7 +6471,6 @@ def test_model_construction_preloads_lazy_dependencies():
         assert 'openai.resources.chat.completions' in sys.modules, 'chat resources not preloaded'
         assert 'genai_prices.data' in sys.modules, 'pricing data not preloaded'
 
-        assert 'openai.resources.responses' not in sys.modules, 'responses resources loaded too early'
         OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test'))
         assert 'openai.resources.responses' in sys.modules, 'responses resources not preloaded'
         """

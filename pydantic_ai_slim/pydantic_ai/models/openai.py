@@ -201,6 +201,18 @@ except ImportError as _import_error:
     ) from _import_error
 
 
+def _preload_openai_sdk_resource_modules(client: AsyncOpenAI, interface: Literal['chat', 'responses']) -> None:
+    """Load deferred OpenAI SDK modules before request handling.
+
+    The client only triggers process-wide module loading; it need not be the exact client later used by
+    an OpenAI-compatible model subclass.
+    """
+    if interface == 'chat':
+        _ = client.chat.completions
+    else:
+        _ = client.responses
+
+
 @contextmanager
 def _map_api_errors(model_name: str) -> Generator[None]:
     try:
@@ -945,11 +957,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         validate_openai_profile(self.profile)
 
-        # The OpenAI SDK imports its resource modules on first attribute access; resolve them now
-        # so the first request doesn't pay ~0.5s of imports on the event loop (#7405). Via the
-        # provider, not `self.client`: subclasses override that property with state that doesn't
-        # exist yet during construction, and warming any client instance loads the modules.
-        _ = self._provider.client.chat.completions
+        _preload_openai_sdk_resource_modules(self._provider.client, 'chat')
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -1960,8 +1968,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         super().__init__(settings=settings, profile=profile)
 
-        # Resolve the SDK's lazily imported resources at construction time, as in `OpenAIChatModel`.
-        _ = self._provider.client.responses
+        _preload_openai_sdk_resource_modules(self._provider.client, 'responses')
 
     @property
     def client(self) -> AsyncOpenAI:

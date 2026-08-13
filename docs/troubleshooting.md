@@ -36,7 +36,7 @@ Synchronous methods like [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.ru
 
 ## Slow First Run After Process Start
 
-Some model SDK dependencies defer heavy imports and data loading until first use. Pydantic AI resolves these when a [`Model`][pydantic_ai.models.Model] is constructed, so the one-time cost is paid at startup rather than inline on the event loop during the first model request.
+Pydantic AI loads deferred pricing data when a [`Model`][pydantic_ai.models.Model] is constructed, and deferred OpenAI SDK resource modules when an OpenAI model is constructed. This moves the one-time work out of the first model request, where it would otherwise block the event loop.
 
 To keep this cost out of request handling entirely, construct your agent and model once at application startup — at module level or in your framework's startup/lifespan hook — instead of inside a request handler.
 
