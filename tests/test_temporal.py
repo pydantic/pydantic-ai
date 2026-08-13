@@ -4453,6 +4453,24 @@ async def test_temporal_run_context_preserves_dispatch_availability_supplements(
     assert reconstructed._loaded_capability_ids_supplement == {'deferred_capability'}  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_temporal_run_context_without_dispatch_supplements_still_answers_availability():
+    """A payload that predates the supplements keeps answering, with the history-derived window.
+
+    `serialize_run_context` is a documented override point, so a subclass written against an
+    earlier version returns a dict without these fields. Guarding them like the other omitted
+    fields would turn that into a `UserError` from a tool that only asked whether it may run.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    older_payload = {name: value for name, value in wire.items() if not name.endswith('_supplement')}
+
+    reconstructed = TemporalRunContext.deserialize_run_context(older_payload, deps=None)
+
+    assert reconstructed._discovered_tool_names_supplement == set()  # pyright: ignore[reportPrivateUsage]
+    assert reconstructed._loaded_capability_ids_supplement == set()  # pyright: ignore[reportPrivateUsage]
+    assert reconstructed.is_tool_available(ToolDefinition(name='hidden', defer_loading=True)) is False
+
+
 def test_temporal_run_context_serialization_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Temporal serialization.
 

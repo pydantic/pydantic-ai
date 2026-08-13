@@ -48,6 +48,14 @@ _REHYDRATORS: tuple[tuple[str, type[Any], TypeAdapter[Any]], ...] = (
 # already makes `None` mean "not available here".
 _NONE_UNLESS_ATTACHED = ('agent', 'root_capability', 'pending_messages', 'tool_manager', 'realtime_session')
 
+# Dispatch-only availability evidence, defaulted to empty when a payload doesn't carry it. Unlike
+# the guarded fields, the dataclass default can't be mistaken for real run state here: empty means
+# "no anchored evidence", which is exactly what `is_tool_available` reads when the serving response
+# has no provenance. A custom `serialize_run_context` written before these fields existed therefore
+# keeps answering — with the history-derived window — instead of raising for a field it never knew
+# to carry.
+_EMPTY_SET_UNLESS_CARRIED = ('_discovered_tool_names_supplement', '_loaded_capability_ids_supplement')
+
 # Reading any other omitted field raises instead of returning the `RunContext` dataclass default,
 # which would silently pass for real run state (e.g. `instrumentation_version` reading as the
 # default version rather than the run's, or `prompt` as `None` for a subclass that drops it).
@@ -67,6 +75,8 @@ class TemporalRunContext(RunContext[AgentDepsT]):
         self.__dict__ = {**kwargs, 'deps': deps}
         for name in _NONE_UNLESS_ATTACHED:
             self.__dict__.setdefault(name, None)
+        for name in _EMPTY_SET_UNLESS_CARRIED:
+            self.__dict__.setdefault(name, set[str]())
         for name, wire_type, adapter in _REHYDRATORS:
             if isinstance(value := self.__dict__.get(name), wire_type):
                 self.__dict__[name] = adapter.validate_python(value)
