@@ -355,44 +355,6 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
         assert signature.return_annotation == result_type
 
 
-async def test_temporal_backend_binds_existing_positional_activity() -> None:
-    pytest.importorskip('temporalio')
-    from temporalio.workflow import ActivityConfig
-
-    from pydantic_ai.durable_exec.temporal._operation_backend import (
-        TemporalOperationBackend,
-        TemporalOperationConfig,
-    )
-
-    model_config: ActivityConfig = {'summary': 'model'}
-    event_config: ActivityConfig = {'summary': 'event'}
-    tool_config: ActivityConfig = {'summary': 'tool'}
-    config = TemporalOperationConfig(model=model_config, event=event_config, tool=tool_config)
-    assert config.base(OperationConfigRole.TOOL_CALL, CallToolId('function', 'tools')) is tool_config
-    assert config.for_tool(OperationConfigRole.TOOL_CALL, CallToolId('function', 'tools'), None, 'tool') is tool_config
-
-    backend = TemporalOperationBackend(
-        agent_name='compat',
-        deps_type=int,
-        model_config=model_config,
-        event_config=event_config,
-        tool_config=tool_config,
-    )
-
-    async def existing_activity(params: str, deps: int | None = None) -> str:
-        return f'{params}:{deps}'
-
-    bound = backend.register_activity(
-        existing_activity,
-        operation_id=ModelRequestId(None, False, 'test'),
-        config_role=OperationConfigRole.MODEL,
-    )
-    assert bound.operation.operation_id == ModelRequestId(None, False, 'test')
-    assert await bound.operation.handler(('payload', 42)) == 'payload:42'
-    assert await bound(('payload', 42)) == 'payload:42'
-    assert backend.config_for_tool(bound.operation, None, 'tool') is tool_config
-
-
 async def test_temporal_backend_dispatches_cancel_with_legacy_contextless_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -417,6 +379,7 @@ async def test_temporal_backend_dispatches_cancel_with_legacy_contextless_payloa
     operations = durability._bound_model_operations  # pyright: ignore[reportPrivateUsage]
     assert operations is not None
     cancel_operation = operations[2]
+    assert cancel_operation.operation.operation_id == CancelSuspendedResponseId(None, 'test:test')
     response = ModelResponse(parts=[TextPart('cancel')])
     await cancel_operation(CancelSuspendedResponseOperationParams(None, response, None))
 

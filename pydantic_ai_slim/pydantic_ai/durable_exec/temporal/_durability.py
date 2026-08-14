@@ -56,7 +56,6 @@ from ._toolset import (
     resolve_tool_activity_config,
     temporalize_toolset as _default_temporalize_toolset,
     tool_result_payload_errors,
-    toolset_temporal_activities,
     validate_activity_config,
     with_non_retryable_errors,
 )
@@ -546,8 +545,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # --- Toolset wrapping ---
         self._register_toolsets(agent)
-        for wrapped in self._toolsets_by_id.values():
-            backend.adopt_registrations(toolset_temporal_activities(wrapped))
 
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         if isinstance(ts, FunctionToolset):
@@ -582,9 +579,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         backend = self._operation_backend
         assert backend is not None
         return backend
-
-    def _toolset_base_config(self, kind: ToolsetKind) -> ActivityConfig:
-        return self.activity_config
 
     def _toolset_operation_config(self, kind: ToolsetKind, toolset_id: str) -> ActivityConfig:
         config = self.activity_config.copy()
@@ -645,12 +639,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _mcp_call_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _MCPCallTransport:
         return _MCPCallTransport(self, toolset)
-
-    def _mcp_discovery_registrations(
-        self, get_tools: object, get_instructions: object | None
-    ) -> list[Callable[..., Any]]:
-        assert get_instructions is not None
-        return [cast(Any, get_instructions).registration, cast(Callable[..., Any], get_tools)]
 
     def _bound_operation_registrations(self, *operations: object) -> list[Callable[..., Any]]:
         return [cast(Any, operation).registration for operation in operations]

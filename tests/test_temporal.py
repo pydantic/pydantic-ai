@@ -87,6 +87,7 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.direct import model_request_stream
+from pydantic_ai.durable_exec._operation import CallToolId
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -8514,6 +8515,88 @@ def test_durability_tool_metadata_disables_activity():
     assert 'meta_toolset' in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_durability_resolves_supported_and_rejected_tool_activity_opt_outs():
+    """Capability-owned config preserves every legacy `metadata={'temporal': False}` outcome."""
+
+    async def async_tool() -> str:
+        return 'async'
+
+    def sync_tool() -> str:
+        return 'sync'
+
+    toolset = FunctionToolset[None](id='opt_out_tools')
+    toolset.add_function(async_tool, metadata={'temporal': False})
+    toolset.add_function(sync_tool, metadata={'temporal': False})
+    agent = Agent(
+        TestModel(),
+        name='opt_outs',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[TemporalDurability()],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tools = await toolset.get_tools(ctx)
+
+    assert (
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            CallToolId('function', 'opt_out_tools'), tools['async_tool'], 'async_tool'
+        )
+        is False
+    )
+    with pytest.raises(UserError, match='non-async tools are run in threads'):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            CallToolId('function', 'opt_out_tools'), tools['sync_tool'], 'sync_tool'
+        )
+
+    with pytest.raises(UserError, match='dynamic-toolset tools cannot run inside the workflow'):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            CallToolId('dynamic', 'dynamic_opt_out'), tools['async_tool'], 'async_tool'
+        )
+
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp_opt_out')
+    mcp_tool = ToolsetTool(
+        toolset=mcp_toolset,
+        tool_def=ToolDefinition(name='mcp_tool', metadata={'temporal': False}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    with pytest.raises(UserError, match='MCP tools require the use of IO'):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            CallToolId('mcp', 'mcp_opt_out'), mcp_tool, 'mcp_tool'
+        )
+
+
+async def test_durability_mcp_instructions_use_operation_activity_summary(monkeypatch: pytest.MonkeyPatch):
+    """The common MCP instructions operation retains Temporal's legacy activity summary."""
+    mcp_toolset = MCPToolset(
+        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        id='instructions_summary',
+        include_instructions=True,
+    )
+    agent = Agent(
+        TestModel(),
+        name='instructions_summary',
+        toolsets=[mcp_toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    wrapped = durability._toolsets_by_id['instructions_summary']  # pyright: ignore[reportPrivateUsage]
+    dispatched_summaries: list[str] = []
+
+    async def execute_activity(*args: Any, **config: Any) -> str:
+        dispatched_summaries.append(config['summary'])
+        return 'server instructions'
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._operation_backend.execute_activity', execute_activity)
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    with patch('pydantic_ai.durable_exec.temporal._durability.workflow.in_workflow', return_value=True):
+        assert await wrapped.get_instructions(ctx) == 'server instructions'
+    assert dispatched_summaries == ['get instructions: instructions_summary']
+
+
 def test_resolve_tool_activity_config_reads_metadata():
     """Tool metadata takes priority while defaults and caller-owned retry policies stay intact."""
     configured_retry_policy = RetryPolicy(maximum_attempts=3, non_retryable_error_types=['CustomError'])
@@ -11819,6 +11902,73 @@ async def test_durability_call_tool_activity_without_tool_def_re_prepares_tool()
 
     assert unwrap_tool_call_result(result) == 'legacy'
     assert prepare_run_steps == [3]
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "Tool 'missing' not found in toolset 'legacy_ts'. Removing or renaming tools during an agent run"
+        ),
+    ):
+        await call_tool_activity(
+            CallToolParams(
+                name='missing',
+                tool_args={},
+                serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+                tool_def=None,
+            ),
+            None,
+        )
+
+
+async def test_durability_common_call_activity_accepts_legacy_params_without_tool_def():
+    """The common operation activity keeps accepting payloads scheduled before `tool_def` existed."""
+
+    async def legacy_tool() -> str:
+        return 'legacy'
+
+    toolset = FunctionToolset[None]([legacy_tool], id='common_legacy_ts')
+    agent = Agent(
+        TestModel(),
+        name='common_legacy_params',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    registrations_by_name = {
+        ActivityDefinition.must_from_callable(registration).name: registration  # pyright: ignore[reportUnknownMemberType]
+        for registration in durability.temporal_activities
+    }
+    call_tool_activity = registrations_by_name['agent__common_legacy_params__toolset__common_legacy_ts__call_tool']
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123', run_step=3)
+
+    result = await call_tool_activity(
+        CallToolParams(
+            name='legacy_tool',
+            tool_args={},
+            serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+            tool_def=None,
+        ),
+        None,
+    )
+    assert unwrap_tool_call_result(result) == 'legacy'
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "Tool 'missing' not found in toolset 'common_legacy_ts'. Removing or renaming tools during an agent run"
+        ),
+    ):
+        await call_tool_activity(
+            CallToolParams(
+                name='missing',
+                tool_args={},
+                serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+                tool_def=None,
+            ),
+            None,
+        )
 
 
 _renamed_tool_names: list[list[str]] = []

@@ -999,9 +999,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _build_mcp_toolset(self, toolset: Any) -> DurableMCPToolset[AgentDepsT]:
         base_config = self._toolset_operation_config('mcp', cast(str, toolset.id))
+        get_tools_registration_source: object | None = None
 
         if self._journal_discovery:
             get_tools = self._bind_mcp_get_tools_operation(toolset)
+            get_tools_registration_source = get_tools
 
             async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
                 return await get_tools(_GetToolsParams(ctx), config=base_config)
@@ -1015,6 +1017,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             toolset,
             base_config=base_config,
             get_tools_operation=get_tools_operation,
+            get_tools=get_tools_registration_source,
             get_tools_registration=registrations,
         )
 
@@ -1040,6 +1043,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         *,
         base_config: Any,
         get_tools_operation: Callable[[RunContext[AgentDepsT]], Awaitable[dict[str, ToolDefinition]]],
+        get_tools: object | None,
         get_tools_registration: list[Callable[..., Any]],
     ) -> DurableMCPToolset[AgentDepsT]:
         get_instructions = self._bind_mcp_get_instructions_operation(toolset) if self._journal_discovery else None
@@ -1054,9 +1058,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             get_tools_operation=get_tools_operation,
             get_instructions_operation=get_instructions_operation,
             discovery_registrations=(
-                self._mcp_discovery_registrations(get_tools_registration[0], get_instructions)
-                if get_tools_registration
-                else []
+                self._mcp_discovery_registrations(get_tools, get_instructions) if get_tools_registration else []
             ),
         )
 

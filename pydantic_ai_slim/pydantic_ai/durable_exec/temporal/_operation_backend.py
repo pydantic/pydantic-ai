@@ -15,11 +15,8 @@ from pydantic_ai.durable_exec._operation import (
     EventStreamHandlerId,
     GetInstructionsId,
     GetToolsId,
-    IdentityParameterTransport,
     ModelRequestId,
-    NoCacheIdentity,
     OperationConfigRole,
-    TypedResultCodec,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
 from pydantic_ai.durable_exec._operation_names import TemporalOperationNamer
@@ -58,7 +55,7 @@ class TemporalOperationConfig:
         model: ActivityConfig,
         event: ActivityConfig,
         tool: ActivityConfig,
-        resolve_tool: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]] | None = None,
+        resolve_tool: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
     ) -> None:
         self._model = model
         self._event = event
@@ -79,8 +76,6 @@ class TemporalOperationConfig:
         tool: object | None,
         tool_name: str,
     ) -> ActivityConfig | Literal[False]:
-        if self._resolve_tool is None:
-            return self._tool
         return self._resolve_tool(operation_id, tool, tool_name)
 
 
@@ -90,13 +85,10 @@ class TemporalBoundOperation(Generic[P, W, R]):
         operation: DurableOperation[P, W, R],
         registration: Callable[..., Awaitable[R]],
         config: ActivityConfig,
-        *,
-        dispatch_activity: bool,
     ) -> None:
         self._operation = operation
         self.registration = registration
         self._config = config
-        self._dispatch_activity = dispatch_activity
 
     @property
     def operation(self) -> DurableOperation[P, W, R]:
@@ -104,8 +96,6 @@ class TemporalBoundOperation(Generic[P, W, R]):
 
     async def __call__(self, params: P, *, config: object | None = None) -> R:
         payload = self._operation.parameter_transport.dump(params)
-        if not self._dispatch_activity:
-            return await self.registration(*cast(Sequence[Any], payload))
         activity_config = cast(ActivityConfig, config or self._config).copy()
         operation_id = self._operation.operation_id
         model_name = ''
@@ -147,8 +137,7 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         model_config: ActivityConfig,
         event_config: ActivityConfig,
         tool_config: ActivityConfig,
-        resolve_tool_config: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]]
-        | None = None,
+        resolve_tool_config: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]],
         runtime: object | None = None,
     ) -> None:
         super().__init__(
@@ -159,42 +148,6 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         )
         self._deps_type = deps_type
         self._runtime = runtime
-        self._activity_to_register: Callable[..., Awaitable[Any]] | None = None
-
-    def register_activity(
-        self,
-        fn: Callable[..., Awaitable[Any]],
-        *,
-        operation_id: DurableOperationId,
-        config_role: OperationConfigRole,
-    ) -> TemporalBoundOperation[tuple[Any, ...], tuple[Any, ...], Any]:
-        """Register one existing activity body through the typed backend."""
-
-        async def handler(params: tuple[Any, ...]) -> Any:
-            return await fn(*params)
-
-        operation = DurableOperation(
-            operation_id=operation_id,
-            handler=handler,
-            parameter_transport=IdentityParameterTransport[tuple[Any, ...]](),
-            cache_identity=NoCacheIdentity[tuple[Any, ...]](),
-            result_codec=TypedResultCodec(Any, mode='identity'),
-            config_role=config_role,
-        )
-        self._activity_to_register = fn
-        try:
-            bound = self.bind(operation)
-        finally:
-            self._activity_to_register = None
-        assert isinstance(bound, TemporalBoundOperation)
-        return bound
-
-    def adopt_registrations(self, registrations: Sequence[Callable[..., object]]) -> None:
-        """Adopt already-decorated toolset activities without changing their identity."""
-        for registration in registrations:
-            if registration in self._registrations:
-                self._registrations.remove(registration)
-            self._registrations.append(registration)
 
     def move_registration_to_end(self, registration: Callable[..., object]) -> None:
         self._registrations.remove(registration)
@@ -207,16 +160,6 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         name: str,
         config: ActivityConfig,
     ) -> tuple[BoundDurableOperation[P, W, R], Sequence[Callable[..., object]]]:
-        fn = self._activity_to_register
-        if fn is not None:
-            # Step 8 compatibility path for Temporal toolsets, migrated in Step 10.
-            fn.__annotations__['deps'] = self._deps_type | None
-            registration = activity.defn(name=name)(fn)
-            bound = TemporalBoundOperation(
-                operation, cast(Callable[..., Awaitable[R]], registration), config, dispatch_activity=False
-            )
-            return bound, (registration,)
-
         transport = cast(TemporalParameterTransport[P, W], operation.parameter_transport)
 
         async def activity_handler(params: Any, deps: Any = None) -> R:
@@ -232,7 +175,5 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
             'return': transport.result_type,
         }
         registration = activity.defn(name=name)(activity_handler)
-        bound = TemporalBoundOperation(
-            operation, cast(Callable[..., Awaitable[R]], registration), config, dispatch_activity=True
-        )
+        bound = TemporalBoundOperation(operation, cast(Callable[..., Awaitable[R]], registration), config)
         return bound, (registration,)
