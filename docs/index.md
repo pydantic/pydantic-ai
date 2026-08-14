@@ -38,7 +38,7 @@ title: Pydantic AI
   Agents, realtime voice, embeddings, image generation — every model, every interface, typed end to end.
 </p>
 
-**Pydantic AI** is the Python agent framework: a typed agent loop, [every model](models/overview.md) behind one API, and every interface — terminal, [web](web.md), [your own frontend](ui/overview.md), even [voice](realtime/overview.md). **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** is its official capability library and harness: 50+ capabilities across core and Harness that you snap onto an agent — from [web search](capabilities/web-search.md) to a complete coding agent.
+**Pydantic AI** is the Python agent framework: a typed agent loop, [every model](models/overview.md) behind one API, and [every interface](interfaces.md) — terminal, [web](web.md), [your own frontend](ui/overview.md), even [voice](realtime/overview.md). **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** is its official capability library and harness — everything around the model that turns it into an agent: 50+ capabilities across core and Harness that you snap on, from [web search](capabilities/web-search.md) to a complete coding agent.
 
 Whatever you came to build — a one-off LLM call in a script, an AI feature inside your SaaS, a voice agent, or your own Claude-Code-style coding agent — this is the right place, and it's the same library at every step. Start small:
 
@@ -63,77 +63,49 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 _(This example is complete, it can be run "as is", assuming you've [installed the `pydantic_ai` package](install.md))_
 
-!!! tip "No API key yet?"
-    You don't need a provider API key to try Pydantic AI. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel), which runs entirely offline without calling an LLM:
+## What are you building?
 
-    ```python {title="hello_world_test.py"}
-    from pydantic_ai import Agent
-
-    agent = Agent('test')  # (1)!
-    result = agent.run_sync('Where does "hello world" come from?')
-    print(result.output)
-    #> success (no tool calls)
-    ```
-
-    1. [`TestModel`][pydantic_ai.models.test.TestModel] returns canned responses so you can exercise your agent, tools, and outputs without a key.
-
-    When you're ready to use a real model, see [Models and Providers](models/overview.md) to pick a provider and set its API key.
-
-And a complete coding agent in your terminal — sandboxed file access, allowlisted shell, repo orientation, planning, context management — is five lines with the [Harness](https://pydantic.dev/docs/ai/harness/):
-
-```python {test="skip" lint="skip"}
-from pydantic_ai import Agent
-from pydantic_ai_harness import Coder
-
-agent = Agent('anthropic:claude-fable-5', capabilities=[Coder()])
-agent.to_cli_sync()
-```
-
-Run that file and you're chatting with the agent in your terminal — or skip the file entirely:
-
-```bash
-uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent
-```
-
-Everything between those two is composition, not rewriting: add [tools](tools.md), [structured outputs](output.md), and [capabilities](capabilities/overview.md) one at a time — like [thinking](capabilities/thinking.md) and [web search](capabilities/web-search.md):
-
-```python {title="hello_world_capabilities.py"}
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import Thinking, WebSearch
-
-agent = Agent(
-    'anthropic:claude-fable-5',
-    instructions='Be concise, reply with one sentence.',
-    capabilities=[Thinking(), WebSearch(local='duckduckgo')],
-)
-
-result = agent.run_sync('What was the mass of the largest meteorite found this year?')
-print(result.output)
-"""
-The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.
-"""
-```
-
-## One library, every modality
-
-Text agents are the start — the same library, with the same typed API, does voice, embeddings, and image generation. No separate SDKs, no framework bloat: each one drops into a single function.
+Text agents are the start — the same library, with the same typed API, is a complete coding agent, a voice agent, embeddings, and image generation. No separate SDKs, no framework bloat: each one drops into a single function.
 
 === "Agents"
 
     ```python {test="skip" lint="skip"}
-    from pydantic import BaseModel
+    from typing import Literal
+
+    from pydantic import BaseModel, Field
     from pydantic_ai import Agent
 
     class Sentiment(BaseModel):
-        score: float
-        label: str
+        label: Literal['positive', 'negative', 'neutral']
+        score: float = Field(ge=-1, le=1)
 
     agent = Agent('openai:gpt-5.6-sol', output_type=Sentiment)
     result = agent.run_sync('The new release fixed everything I complained about!')
-    print(result.output)  # a validated, typed Sentiment
+    print(result.output)
+    #> label='positive' score=0.9
     ```
 
+    The result is validated against the model and typed as `Sentiment` — your IDE, type checker, and the LLM all agree on the shape.
+
     **Build this →** [Agents](agent.md) and [Structured Output](output.md)
+
+=== "Coding agent"
+
+    ```python {test="skip" lint="skip"}
+    from pydantic_ai import Agent
+    from pydantic_ai_harness import Coder
+
+    agent = Agent('anthropic:claude-fable-5', capabilities=[Coder()])
+    agent.to_cli_sync()
+    ```
+
+    Run that file and you're chatting with a complete coding agent in your terminal — workspace-rooted file access, allowlisted shell, repo orientation, planning, context management that survives long sessions. Or skip the file entirely:
+
+    ```bash
+    uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent
+    ```
+
+    **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
 
 === "Realtime voice"
 
@@ -156,7 +128,9 @@ Text agents are the start — the same library, with the same typed API, does vo
     from pydantic_ai import Embedder
 
     embedder = Embedder('openai:text-embedding-3-small')
-    result = await embedder.embed_query('What is machine learning?')
+    result = embedder.embed_query_sync('What is machine learning?')
+    print(len(result.embeddings[0]))
+    #> 1536
     ```
 
     Seven providers, one typed API, instrumented like everything else.
@@ -165,17 +139,50 @@ Text agents are the start — the same library, with the same typed API, does vo
 
 === "Image generation"
 
-    ```python {test="skip"}
-    from pydantic_ai import Agent
-    from pydantic_ai.capabilities import ImageGeneration
+    ```python {test="skip" lint="skip"}
+    from pathlib import Path
 
-    agent = Agent('openai-responses:gpt-5.4', capabilities=[ImageGeneration()])
+    from pydantic_ai import Agent, BinaryImage
+
+    agent = Agent('openai-responses:gpt-5.4', output_type=BinaryImage)
     result = agent.run_sync('Generate a minimalist logo for a coffee shop called Extract.')
+    Path('logo.png').write_bytes(result.output.data)
     ```
 
-    Provider-native where supported, with a fallback path everywhere else.
+    Provider-native where supported, with a fallback path everywhere else — and the image is the typed output of the run.
 
     **Build this →** [Image Generation](capabilities/image-generation.md)
+
+!!! tip "No API key yet?"
+    You don't need a provider API key to try any of this. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel) — `Agent('test')` — which runs entirely offline without calling an LLM, so you can exercise your agent, tools, and outputs first. When you're ready for a real model, see [Models and Providers](models/overview.md) to pick a provider and set its API key.
+
+Everything between these is composition, not rewriting: add [tools](tools.md), [structured outputs](output.md), and [capabilities](capabilities/overview.md) one at a time. Here's the three-liner grown a typed output and [web search](capabilities/web-search.md):
+
+```python {title="hello_world_capabilities.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import WebSearch
+
+
+class PythonRelease(BaseModel):
+    version: str
+    release_month: str
+    source_url: str
+
+
+agent = Agent(
+    'anthropic:claude-fable-5',
+    output_type=PythonRelease,
+    capabilities=[WebSearch(local='duckduckgo')],
+)
+
+result = agent.run_sync('When is the next Python feature release due?')
+print(result.output)
+"""
+version='3.15.0' release_month='October 2026' source_url='https://peps.python.org/pep-0790/'
+"""
+```
 
 ## Why Pydantic AI
 
@@ -185,33 +192,13 @@ Text agents are the start — the same library, with the same typed API, does vo
 
 - **Batteries, composably.** One primitive — the [capability](capabilities/overview.md) — bundles tools, instructions, hooks, and model settings into reusable units. Core ships the fundamentals; the [Harness](https://pydantic.dev/docs/ai/harness/) ships everything else — code execution, memory, sub-agents, guardrails, compaction — plus complete harnesses like `Coder` that are themselves just capabilities composed, so you can take them apart. Or skip code entirely with [YAML/JSON agent specs](agent-spec.md).
 
-- **Every interface.** One agent definition runs as a CLI, a [built-in web chat](web.md), [your own frontend](ui/overview.md) (AG-UI and Vercel AI protocols), an editor agent, or a [voice agent](realtime/overview.md).
+- **[Every interface](interfaces.md).** One agent definition runs as a CLI, a [built-in web chat](web.md), [your own frontend](ui/overview.md) (AG-UI and Vercel AI protocols), an editor agent, or a [voice agent](realtime/overview.md).
 
 - **Measured, not vibes.** OpenTelemetry-native [instrumentation](logfire.md) works with any OTel backend — one line lights up [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, tracing, and cost tracking — and [Pydantic Evals](evals.md) tests agent behavior the way pytest tests code.
 
 - **Durable by choice.** First-party, co-maintained [durable execution](durable_execution/overview.md) on Temporal, DBOS, or Prefect — agents that survive restarts and run for days, on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
 
 Built by the [Pydantic](https://docs.pydantic.dev) team: Pydantic Validation is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem — and the foundation FastAPI was built on. Pydantic AI brings that same feeling to agents.
-
-**Sign up for our newsletter, *The Pydantic Stack*, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:**
-
-  <form method="POST" action="https://eu.customerioforms.com/forms/submit_action?site_id=53d2086c3c4214eaecaa&form_id=14b22611745b458&success_url=https://ai.pydantic.dev/" class="md-typeset" style="display: flex; align-items: center; gap: 0.5rem; width: 100%;">
-      <input
-      type="email"
-      id="email_input"
-      name="email"
-      class="md-input md-input--stretch"
-      style="flex: 1; background: var(--md-default-bg-color); color: var(--md-default-fg-color);"
-      required
-      placeholder="Email"
-      data-1p-ignore
-      data-lpignore="true"
-      data-protonpass-ignore="true"
-      data-bwignore="true"
-      />
-      <input type="hidden" id="source_input" name="source" value="pydantic-ai" />
-      <button type="submit" class="md-button md-button--primary">Subscribe</button>
-  </form>
 
 ## Tools & Dependency Injection Example
 
@@ -227,52 +214,52 @@ from bank_database import DatabaseConn
 
 
 @dataclass
-class SupportDependencies:  # (3)!
+class SupportDependencies:
     customer_id: int
-    db: DatabaseConn  # (12)!
+    db: DatabaseConn
 
 
-class SupportOutput(BaseModel):  # (13)!
+class SupportOutput(BaseModel):
     support_advice: str = Field(description='Advice returned to the customer')
     block_card: bool = Field(description="Whether to block the customer's card")
     risk: int = Field(description='Risk level of query', ge=0, le=10)
 
 
-support_agent = Agent(  # (1)!
-    'openai:gpt-5.6-sol',  # (2)!
+support_agent = Agent(
+    'openai:gpt-5.6-sol',
     deps_type=SupportDependencies,
-    output_type=SupportOutput,  # (9)!
-    instructions=(  # (4)!
+    output_type=SupportOutput,
+    instructions=(
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query.'
     ),
 )
 
 
-@support_agent.instructions  # (5)!
+@support_agent.instructions
 async def add_customer_name(ctx: RunContext[SupportDependencies]) -> str:
     customer_name = await ctx.deps.db.customer_name(id=ctx.deps.customer_id)
     return f"The customer's name is {customer_name!r}"
 
 
-@support_agent.tool  # (6)!
+@support_agent.tool
 async def customer_balance(
     ctx: RunContext[SupportDependencies], include_pending: bool
 ) -> float:
-    """Returns the customer's current account balance."""  # (7)!
+    """Returns the customer's current account balance."""
     return await ctx.deps.db.customer_balance(
         id=ctx.deps.customer_id,
         include_pending=include_pending,
     )
 
 
-...  # (11)!
+...
 
 
 async def main():
     deps = SupportDependencies(customer_id=123, db=DatabaseConn())
-    result = await support_agent.run('What is my balance?', deps=deps)  # (8)!
-    print(result.output)  # (10)!
+    result = await support_agent.run('What is my balance?', deps=deps)
+    print(result.output)
     """
     support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
     """
@@ -284,19 +271,7 @@ async def main():
     """
 ```
 
-1. This [agent](agent.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
-2. Here we configure the agent to use [OpenAI's GPT-5.6 Sol model](api/models/openai.md), you can also set the model when running the agent.
-3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [instructions](agent.md#instructions) and [tool](tools.md) functions. Pydantic AI's system of dependency injection provides a [type-safe](agent.md#static-type-checking) way to customise the behavior of your agents, and can be especially useful when running [unit tests](testing.md) and evals.
-4. Static [instructions](agent.md#instructions) can be registered with the [`instructions` keyword argument][pydantic_ai.agent.Agent.__init__] to the agent.
-5. Dynamic [instructions](agent.md#instructions) can be registered with the [`@agent.instructions`][pydantic_ai.agent.Agent.instructions] decorator, and can make use of dependency injection. Dependencies are carried via the [`RunContext`][pydantic_ai.tools.RunContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
-6. The [`@agent.tool`](tools.md) decorator let you register functions which the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`][pydantic_ai.tools.RunContext], any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
-7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](tools.md#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
-8. [Run the agent](agent.md#running-agents) asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.
-9. The response from the agent will be guaranteed to be a `SupportOutput`. If validation fails [reflection](agent.md#reflection-and-self-correction), the agent is prompted to try again.
-10. The output will be validated with Pydantic to guarantee it is a `SupportOutput`, since the agent is generic, it'll also be typed as a `SupportOutput` to aid with static type checking.
-11. In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
-12. This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
-13. This [Pydantic](https://docs.pydantic.dev) model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
+The [dependencies](dependencies.md) dataclass carries the database connection into [instructions](agent.md#instructions) and [tools](tools.md) with full type safety — swap in a test double and the same agent runs in [unit tests](testing.md) and evals. The [`@support_agent.tool`](tools.md) function's signature and docstring become the tool schema the LLM sees, with arguments validated by Pydantic. And the run is guaranteed to return a `SupportOutput` — if validation fails, the agent is [prompted to try again](agent.md#reflection-and-self-correction).
 
 !!! tip "Complete `bank_support.py` example"
     The code included here is incomplete for the sake of brevity (the definition of `DatabaseConn` is missing); you can find the complete `bank_support.py` example [here](examples/bank-support.md).
@@ -371,3 +346,23 @@ As of today, these files are not automatically leveraged by IDEs or coding agent
 **Go deeper.** The [Agents guide](agent.md) is the core walkthrough; the [API Reference](api/agent.md) covers the full interface; the [Harness](https://pydantic.dev/docs/ai/harness/) has the batteries.
 
 **Get help.** Join [Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [:simple-github: GitHub](https://github.com/pydantic/pydantic-ai/issues).
+
+**Sign up for our newsletter, *The Pydantic Stack*, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:**
+
+  <form method="POST" action="https://eu.customerioforms.com/forms/submit_action?site_id=53d2086c3c4214eaecaa&form_id=14b22611745b458&success_url=https://ai.pydantic.dev/" class="md-typeset" style="display: flex; align-items: center; gap: 0.5rem; width: 100%;">
+      <input
+      type="email"
+      id="email_input"
+      name="email"
+      class="md-input md-input--stretch"
+      style="flex: 1; background: var(--md-default-bg-color); color: var(--md-default-fg-color);"
+      required
+      placeholder="Email"
+      data-1p-ignore
+      data-lpignore="true"
+      data-protonpass-ignore="true"
+      data-bwignore="true"
+      />
+      <input type="hidden" id="source_input" name="source" value="pydantic-ai" />
+      <button type="submit" class="md-button md-button--primary">Subscribe</button>
+  </form>
