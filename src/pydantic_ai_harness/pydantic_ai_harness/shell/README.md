@@ -68,10 +68,12 @@ denylist. Pass `denied_commands=[]` to disable command-name filtering.
 A denied or blocked command surfaces to the model as a `ModelRetry` (the model
 can retry with an allowed command) rather than aborting the run.
 
-> **These checks are best-effort, not a security boundary.** A sufficiently
-> motivated agent can defeat them (e.g. `bash -c '...'`, env-var indirection).
-> For hard guarantees, run the agent inside OS-level isolation -- a container or
-> sandbox.
+> **These checks are best-effort, not a security boundary.** `allowed_commands`
+> is a guardrail against accidents, not a security boundary. Validation checks
+> only the first token, and allowlisted commands such as `python`, `git`, `uv`,
+> and `make` can spawn arbitrary processes. A model that wants to work around
+> the allowlist can. For untrusted work, run the agent inside OS-level isolation
+> such as [`ModalSandbox`](https://pydantic.dev/docs/ai/harness/modal-sandbox/) or a container.
 
 ## Environment control
 
@@ -92,8 +94,7 @@ compose: when both are set, patterns also filter the explicit `env`. Leaving
 both unset preserves the inherit-everything default.
 
 ```python
-from pydantic_ai_harness import Shell
-from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
+from pydantic_ai_harness import LLM_API_KEY_ENV_PATTERNS, Shell
 
 # Strip provider credentials from the inherited environment.
 Shell(cwd='./repo', denied_env_patterns=LLM_API_KEY_ENV_PATTERNS)

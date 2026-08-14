@@ -13,14 +13,7 @@ stop the LocalStack Docker container for each run.
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/localstack/)
 
-> Import this capability from its submodule -- there is no top-level
-> `pydantic_ai_harness` re-export:
->
-> ```python
-> from pydantic_ai_harness.localstack import LocalStack
-> ```
->
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ## The problem
 
@@ -39,7 +32,7 @@ and credentials, and adds a health check for the emulated services.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.localstack import LocalStack
+from pydantic_ai_harness import LocalStack
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
@@ -97,7 +90,7 @@ container for each run and stops it when the run ends, so the agent always gets 
 fresh, isolated environment. Docker must be installed and running.
 
 ```python
-from pydantic_ai_harness.localstack import LocalStack
+from pydantic_ai_harness import LocalStack
 
 LocalStack(
     manage_container=True,
@@ -128,7 +121,7 @@ services expose ports outside the gateway (LocalStack reserves `4510-4559`).
 Enable those explicitly when a service you test requires them:
 
 ```python
-from pydantic_ai_harness.localstack import LocalStack
+from pydantic_ai_harness import LocalStack
 
 LocalStack(manage_container=True, service_port_range='4510-4559', mount_docker_socket=True)
 ```
@@ -156,7 +149,7 @@ asyncio.run(main())
 ## Configuration
 
 ```python
-from pydantic_ai_harness.localstack import LocalStack
+from pydantic_ai_harness import LocalStack
 
 LocalStack(
     endpoint_url='http://localhost.localstack.cloud:4566',  # edge endpoint (host port reused when managed)
@@ -202,7 +195,7 @@ capabilities:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.localstack import LocalStack
+from pydantic_ai_harness import LocalStack
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[LocalStack])
 ```

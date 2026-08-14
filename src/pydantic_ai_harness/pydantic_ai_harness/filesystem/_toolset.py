@@ -17,6 +17,11 @@ from pydantic_ai.toolsets import FunctionToolset
 
 _P = ParamSpec('_P')
 
+READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
+    {'read_file', 'list_directory', 'search_files', 'find_files', 'file_info'}
+)
+"""Names of filesystem tools that do not modify the workspace."""
+
 # Errors that mean "the model asked for something the tool couldn't do" -- a
 # missing file, a denied path, a stale edit. pyai only feeds `ModelRetry` back
 # to the model; any other exception aborts the whole run. `_recoverable`

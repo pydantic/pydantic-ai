@@ -35,7 +35,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
 
 from pydantic_ai_harness.experimental.acp._session import AcpSession
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset
 
 
 class _LocalFileWriter(Protocol):
@@ -129,6 +129,7 @@ def acp_filesystem(session: AcpSession) -> AcpFileSystemToolset[None] | None:
     if fs is None or not fs.read_text_file:
         return None
     local_writer = None if fs.write_text_file else FileSystem(root_dir=session.cwd).get_toolset()
+    assert local_writer is None or isinstance(local_writer, FileSystemToolset)
     return AcpFileSystemToolset[None](
         client=session.client, session_id=session.session_id, cwd=session.cwd, local_writer=local_writer
     )

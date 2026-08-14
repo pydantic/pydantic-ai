@@ -1,14 +1,5 @@
 # Tool Output Limits
 
-> [!NOTE]
-> Import this capability from its submodule -- there is no top-level `pydantic_ai_harness` re-export:
->
-> ```python
-> from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
-> ```
->
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
-
 A tool can return a payload large enough to dominate the context window. Tool returns
 persist in history as `ToolReturnPart`s, so an oversized one is re-sent on every later
 model request -- paying its token cost for the rest of the run. `ToolOutputLimits`
@@ -53,13 +44,8 @@ that fits wins; anything below the smallest threshold passes through.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.tool_output_limits import (
-    Band,
-    ToolOutputLimits,
-    Spill,
-    Summarize,
-    Truncate,
-)
+from pydantic_ai_harness import ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits import Band, Spill, Summarize, Truncate
 
 agent = Agent(
     'openai:gpt-4o',
@@ -96,12 +82,8 @@ spill -> truncate.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.tool_output_limits import (
-    Band,
-    ToolOutputLimits,
-    Truncate,
-    TruncationStrategy,
-)
+from pydantic_ai_harness import ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits import Band, Truncate, TruncationStrategy
 
 agent = Agent(
     'openai:gpt-4o',
@@ -161,7 +143,8 @@ agent that still wants to read a spill. To bound disk use, opt into age-based pr
 from datetime import timedelta
 
 from pydantic_ai import Agent
-from pydantic_ai_harness.tool_output_limits import LocalFileStore, ToolOutputLimits
+from pydantic_ai_harness import ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits import LocalFileStore
 
 store = LocalFileStore(cleanup_after=timedelta(hours=6))  # default: None = keep forever
 agent = Agent('openai:gpt-4o', capabilities=[ToolOutputLimits(store=store)])

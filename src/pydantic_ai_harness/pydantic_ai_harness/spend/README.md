@@ -3,7 +3,7 @@
 Track what an agent costs, and stop it when a budget is gone.
 
 > [!NOTE]
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/spend/)
 
@@ -21,7 +21,8 @@ Provider usage APIs do not close that gap. They are billing and observability pi
 from decimal import Decimal
 
 from pydantic_ai import Agent
-from pydantic_ai_harness.spend import Budget, SpendLimits
+from pydantic_ai_harness import SpendLimits
+from pydantic_ai_harness.spend import Budget
 
 agent = Agent(
     'openai:gpt-5.4',
@@ -38,7 +39,8 @@ A budget is a ceiling, a period, and optionally a partition. They compose, so se
 ```python
 from decimal import Decimal
 
-from pydantic_ai_harness.spend import Budget, SpendLimits
+from pydantic_ai_harness import SpendLimits
+from pydantic_ai_harness.spend import Budget
 
 SpendLimits(
     budgets=[
@@ -68,7 +70,8 @@ Budgets that share a `name`, `window`, and `scope` share one counter, which is h
 **A budget with no ceiling is a counter.** It accumulates and reports and never refuses anything, which is how per-tenant accounting with no cap is expressed:
 
 ```python
-from pydantic_ai_harness.spend import Budget, SpendLimits
+from pydantic_ai_harness import SpendLimits
+from pydantic_ai_harness.spend import Budget
 
 SpendLimits(budgets=[Budget(window='month', scope=lambda ctx: ctx.deps.tenant_id, name='chargeback')])
 ```
@@ -84,7 +87,8 @@ Not: that spend stays under the ceiling. The request that crosses the line compl
 ```python
 from decimal import Decimal
 
-from pydantic_ai_harness.spend import Budget, SpendLimits, SpendSnapshot
+from pydantic_ai_harness import SpendLimits
+from pydantic_ai_harness.spend import Budget, SpendSnapshot
 
 
 def show(snapshot: SpendSnapshot) -> None:
@@ -119,7 +123,8 @@ from decimal import Decimal
 
 from redis.asyncio import Redis
 
-from pydantic_ai_harness.spend import Budget, RedisSpendStore, SpendLimits
+from pydantic_ai_harness import SpendLimits
+from pydantic_ai_harness.spend import Budget, RedisSpendStore
 
 store = RedisSpendStore(Redis.from_url('redis://localhost'))
 limits = SpendLimits(budgets=[Budget(usd=Decimal('100'), window='day')], store=store)
@@ -148,7 +153,7 @@ A model the registry does not know -- a local deployment, a negotiated rate -- i
 ```python
 from decimal import Decimal
 
-from pydantic_ai_harness.spend import SpendLimits
+from pydantic_ai_harness import SpendLimits
 
 SpendLimits(price=lambda response: Decimal('0.002') if response.model_name == 'internal-7b' else None)
 ```

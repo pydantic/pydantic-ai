@@ -26,6 +26,8 @@ uv add "pydantic-ai-harness[logfire]"
     and whole-spec variables. Until then, `ManagedPrompt` is the supported path for backing an
     agent's instructions with a Logfire-managed prompt.
 
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+
 ## The problem it solves
 
 Prompts are critical to agent behavior, but iterating on them through the normal
@@ -54,7 +56,7 @@ your code always runs even before you create the prompt in Logfire.
 import logfire
 from pydantic_ai import Agent
 
-from pydantic_ai_harness.logfire import ManagedPrompt
+from pydantic_ai_harness import ManagedPrompt
 
 logfire.configure()
 
@@ -89,7 +91,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent
 
-from pydantic_ai_harness.logfire import ManagedPrompt
+from pydantic_ai_harness import ManagedPrompt
 
 
 @dataclass
@@ -133,7 +135,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent
 
-from pydantic_ai_harness.logfire import ManagedPrompt
+from pydantic_ai_harness import ManagedPrompt
 
 
 @dataclass
@@ -184,7 +186,7 @@ example a template variable, or one registered for `variables_push`:
 import logfire
 from pydantic_ai import Agent
 
-from pydantic_ai_harness.logfire import ManagedPrompt
+from pydantic_ai_harness import ManagedPrompt
 
 logfire.configure()
 

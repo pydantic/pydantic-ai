@@ -9,7 +9,7 @@ description: BM25-search the history StepPersistence already stores -- turns tha
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/conversation_search/)
 
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ## The problem
 
@@ -23,9 +23,9 @@ The shipped source, `SnapshotHistorySource`, reads the snapshots `StepPersistenc
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.compaction import SlidingWindowCompaction
-from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
-from pydantic_ai_harness.step_persistence import SqliteStepStore, StepPersistence
+from pydantic_ai_harness import ConversationSearch, SlidingWindowCompaction, StepPersistence
+from pydantic_ai_harness.conversation_search import SnapshotHistorySource
+from pydantic_ai_harness.step_persistence import SqliteStepStore
 
 store = SqliteStepStore(database='sessions.db')
 agent = Agent(

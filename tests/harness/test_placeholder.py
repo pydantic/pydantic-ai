@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 
 import pydantic_ai_harness
@@ -11,6 +12,34 @@ import pydantic_ai_harness
 def test_import():
     assert pydantic_ai_harness.__doc__ is not None
     assert isinstance(pydantic_ai_harness.__all__, list)
+
+
+@pytest.mark.parametrize(
+    'optional_dependency_error',
+    [
+        None,
+        ImportError("Install 'pydantic-ai-harness[example]'"),
+        UserError("Install 'pydantic-ai-slim[example]'"),
+    ],
+)
+def test_all_exports_are_importable(
+    monkeypatch: pytest.MonkeyPatch, optional_dependency_error: ImportError | UserError | None
+):
+    if optional_dependency_error is not None:
+        monkeypatch.setattr(pydantic_ai_harness, '__all__', ['optional_export'])
+
+        def raise_optional_dependency_error(name: str) -> None:
+            raise optional_dependency_error
+
+        monkeypatch.setattr(pydantic_ai_harness, '__getattr__', raise_optional_dependency_error)
+
+    for name in pydantic_ai_harness.__all__:
+        try:
+            export = getattr(pydantic_ai_harness, name)
+        except (ImportError, UserError) as exc:
+            assert 'pydantic-ai-harness[' in str(exc) or 'pydantic-ai-slim[' in str(exc)
+            continue
+        assert export is not None
 
 
 def test_lazy_import_filesystem():
@@ -25,6 +54,13 @@ def test_lazy_import_shell():
 
     assert inspect.isclass(Shell)
     assert hasattr(Shell, 'get_toolset')
+
+
+def test_lazy_import_presets():
+    from pydantic_ai_harness import Coder, Researcher
+
+    assert inspect.isclass(Coder)
+    assert inspect.isclass(Researcher)
 
 
 def test_lazy_import_llm_api_key_env_patterns():

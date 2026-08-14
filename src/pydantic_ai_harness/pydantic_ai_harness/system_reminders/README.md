@@ -1,13 +1,14 @@
 # System Reminders
 
 > [!NOTE]
-> Import this capability from its submodule -- there is no top-level `pydantic_ai_harness` re-export:
+> The `Reminder` helper is not re-exported at the top level -- import it from the submodule:
 >
 > ```python
-> from pydantic_ai_harness.system_reminders import SystemReminders, Reminder
+> from pydantic_ai_harness import SystemReminders
+> from pydantic_ai_harness.system_reminders import Reminder
 > ```
 >
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
 
 Re-inject behavioral guidance mid-run to counter instruction fade -- without invalidating the prompt cache.
 
@@ -28,7 +29,8 @@ Injecting into the system prompt (or any persisted part) instead would sit at th
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.system_reminders import SystemReminders, Reminder
+from pydantic_ai_harness import SystemReminders
+from pydantic_ai_harness.system_reminders import Reminder
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
@@ -65,7 +67,7 @@ The `tag` wrapping applies only to static `Reminder` content. Dynamic callables 
 A dynamic reminder is any callable `(RunContext) -> str | None` (sync or async), evaluated on every model request. Return a string to inject, or `None` to skip. This is the general seam for conditions that need run state -- token budget, post-compaction, mode switches -- without hardcoded detectors:
 
 ```python
-from pydantic_ai_harness.system_reminders import SystemReminders
+from pydantic_ai_harness import SystemReminders
 
 SystemReminders(
     dynamic_reminders=[
@@ -79,7 +81,8 @@ SystemReminders(
 `GoalReanchor` re-states the run's first user request as the anchor and asks the model to check its next action advances it. No model call, no dependencies:
 
 ```python
-from pydantic_ai_harness.system_reminders import SystemReminders, GoalReanchor
+from pydantic_ai_harness import SystemReminders
+from pydantic_ai_harness.system_reminders import GoalReanchor
 
 SystemReminders(dynamic_reminders=[GoalReanchor()])
 ```
@@ -89,7 +92,8 @@ SystemReminders(dynamic_reminders=[GoalReanchor()])
 `LLMReminder` has a model summarize a compact transcript (original goal + recent activity) into a short stay-on-task nudge. It requires an explicit `model` -- there is no default model id -- and falls back to `GoalReanchor` text on any error, so a failed generation never blocks the run:
 
 ```python
-from pydantic_ai_harness.system_reminders import SystemReminders, LLMReminder
+from pydantic_ai_harness import SystemReminders
+from pydantic_ai_harness.system_reminders import LLMReminder
 
 SystemReminders(dynamic_reminders=[LLMReminder(model='anthropic:claude-haiku-4-5')])
 ```
@@ -110,7 +114,8 @@ SystemReminders(dynamic_reminders=[every_tenth])
 ## Configuration
 
 ```python
-from pydantic_ai_harness.system_reminders import SystemReminders, Reminder
+from pydantic_ai_harness import SystemReminders
+from pydantic_ai_harness.system_reminders import Reminder
 
 SystemReminders(
     reminders=[Reminder('...', interval=5)],

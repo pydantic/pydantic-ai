@@ -49,7 +49,7 @@ name become underscores). The default keeps the agent working until a remote val
 import logfire
 from pydantic_ai import Agent
 
-from pydantic_ai_harness.logfire import ManagedPrompt
+from pydantic_ai_harness import ManagedPrompt
 
 logfire.configure()
 
@@ -80,7 +80,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent
 
-from pydantic_ai_harness.logfire import ManagedPrompt
+from pydantic_ai_harness import ManagedPrompt
 
 
 @dataclass
@@ -118,7 +118,7 @@ from dataclasses import dataclass
 
 from pydantic_ai import Agent
 
-from pydantic_ai_harness.logfire import ManagedPrompt
+from pydantic_ai_harness import ManagedPrompt
 
 
 @dataclass
@@ -169,7 +169,7 @@ for example a `template_var`, or one registered for `variables_push`:
 import logfire
 from pydantic_ai import Agent
 
-from pydantic_ai_harness.logfire import ManagedPrompt
+from pydantic_ai_harness import ManagedPrompt
 
 logfire.configure()
 

@@ -1,15 +1,14 @@
 # Step Persistence
 
 > [!NOTE]
-> Import `StepPersistence` and the `media` stores from their submodules -- there is no top-level
-> `pydantic_ai_harness` re-export:
+> The `media` stores are not re-exported at the top level -- import them from their submodule:
 >
 > ```python
-> from pydantic_ai_harness.step_persistence import StepPersistence
+> from pydantic_ai_harness import StepPersistence
 > from pydantic_ai_harness.media import S3MediaStore
 > ```
 >
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
 
 `StepPersistence` records what an agent did at each boundary, separate from
 whether the run can be safely resumed. It is the persistence substrate for
@@ -48,7 +47,8 @@ snapshots, and graph-node resume are out of scope and tracked separately
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.step_persistence import StepPersistence, InMemoryStepStore
+from pydantic_ai_harness import StepPersistence
+from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
 store = InMemoryStepStore()
 librarian = Agent(
@@ -451,8 +451,8 @@ markers.
 Override the destination by passing your own `MediaStore`:
 
 ```python
-from pydantic_ai_harness.step_persistence import FileStepStore
 from pydantic_ai_harness.media import S3MediaStore
+from pydantic_ai_harness.step_persistence import FileStepStore
 
 store = FileStepStore(
     'runs',

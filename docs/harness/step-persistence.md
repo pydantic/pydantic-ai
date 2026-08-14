@@ -11,7 +11,7 @@ It is not a full graph-state checkpoint. Capability-state restore, workspace sna
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/step_persistence/)
 
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ## What it gives you
 
@@ -26,7 +26,8 @@ It is not a full graph-state checkpoint. Capability-state restore, workspace sna
 import asyncio
 
 from pydantic_ai import Agent
-from pydantic_ai_harness.step_persistence import StepPersistence, InMemoryStepStore
+from pydantic_ai_harness import StepPersistence
+from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
 store = InMemoryStepStore()
 librarian = Agent(
@@ -56,7 +57,8 @@ The orchestrator pattern -- one logical agent serving many turns -- uses `conver
 import asyncio
 
 from pydantic_ai import Agent
-from pydantic_ai_harness.step_persistence import StepPersistence, InMemoryStepStore
+from pydantic_ai_harness import StepPersistence
+from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
 store = InMemoryStepStore()
 orchestrator = Agent(
@@ -107,11 +109,8 @@ pydantic_ai already has `message_history=` for "carry on with this prior context
 import asyncio
 
 from pydantic_ai import Agent
-from pydantic_ai_harness.step_persistence import (
-    StepPersistence,
-    InMemoryStepStore,
-    continue_run,
-)
+from pydantic_ai_harness import StepPersistence
+from pydantic_ai_harness.step_persistence import InMemoryStepStore, continue_run
 
 store = InMemoryStepStore()
 librarian = Agent(
@@ -165,7 +164,8 @@ It is auto-inferred for in-process delegation: when an orchestrator's tool synch
 import asyncio
 
 from pydantic_ai import Agent
-from pydantic_ai_harness.step_persistence import StepPersistence, InMemoryStepStore
+from pydantic_ai_harness import StepPersistence
+from pydantic_ai_harness.step_persistence import InMemoryStepStore
 
 store = InMemoryStepStore()
 orchestrator = Agent(
@@ -355,8 +355,8 @@ Text externalization is not Mongo-only and has no opt-out short of `media_store=
 Override the destination by passing your own `MediaStore`:
 
 ```python
-from pydantic_ai_harness.step_persistence import FileStepStore
 from pydantic_ai_harness.media import S3MediaStore
+from pydantic_ai_harness.step_persistence import FileStepStore
 
 store = FileStepStore(
     'runs',

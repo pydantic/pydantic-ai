@@ -1,14 +1,5 @@
 # Compaction
 
-> [!NOTE]
-> Import these capabilities from their submodule -- there is no top-level `pydantic_ai_harness` re-export:
->
-> ```python
-> from pydantic_ai_harness.compaction import TieredCompaction
-> ```
->
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
-
 A menu of strategies for keeping an agent's conversation history within a model's context
 window. Each is a Pydantic AI `Capability` that edits the message history just before each
 request goes out; edits **persist** into the run's message history, so a trim/clear/summary carries forward to later
@@ -16,6 +7,10 @@ steps (it is not recomputed from the full history every turn).
 
 All strategies preserve tool-call / tool-return **pairing** -- core does not validate this, and a
 provider rejects an orphaned pair. The zero-LLM strategies never call a model.
+
+On OpenAI and Anthropic, core also ships [provider-native compaction](https://pydantic.dev/docs/ai/capabilities/compaction/) --
+the provider summarizes history server-side. The strategies here are the model-agnostic
+alternative: they work with every model and keep the compaction logic (and its costs) under your control.
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/compaction/)
 
@@ -60,7 +55,7 @@ is correct everywhere:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.compaction import SummarizingCompaction
+from pydantic_ai_harness import SummarizingCompaction
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
@@ -97,7 +92,7 @@ model you know the size of:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.compaction import SummarizingCompaction
+from pydantic_ai_harness import SummarizingCompaction
 
 agent = Agent(
     'google-gla:gemini-2.5-pro',
@@ -142,7 +137,7 @@ applies only when resolution fails. Three cases:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.compaction import SummarizingCompaction
+from pydantic_ai_harness import SummarizingCompaction
 
 agent = Agent(
     'openai:gpt-4o',  # served by a local endpoint with a smaller window than the registry records
@@ -180,7 +175,7 @@ window, and only observes:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.compaction import ReportContextUsage, SummarizingCompaction
+from pydantic_ai_harness import ReportContextUsage, SummarizingCompaction
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
@@ -212,7 +207,8 @@ runs does not have -- and that is exactly when a user types `/compact`. `compact
 throwaway context so the same strategy the agent uses can be driven from a command handler:
 
 ```python {test="skip"}
-from pydantic_ai_harness.compaction import SummarizingCompaction, compact_now
+from pydantic_ai_harness import SummarizingCompaction
+from pydantic_ai_harness.compaction import compact_now
 
 strategy = SummarizingCompaction(max_fraction=0.9, keep_messages=20)
 history = await compact_now(
@@ -251,7 +247,7 @@ low-entropy repetition, so a head/tail slice loses little.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.compaction import ClampOversizedMessages
+from pydantic_ai_harness import ClampOversizedMessages
 
 agent = Agent(
     'openai:gpt-4o',
@@ -281,11 +277,7 @@ user input should not be silently rewritten, and oversized tool returns are the 
 Use it as the first tier of `TieredCompaction`, before `ClearToolResults`:
 
 ```python
-from pydantic_ai_harness.compaction import (
-    ClampOversizedMessages,
-    ClearToolResults,
-    TieredCompaction,
-)
+from pydantic_ai_harness import ClampOversizedMessages, ClearToolResults, TieredCompaction
 
 TieredCompaction(
     tiers=[
@@ -324,12 +316,7 @@ that is not enough -- which is exactly what `TieredCompaction` encodes:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.compaction import (
-    ClearToolResults,
-    DeduplicateFileReads,
-    SummarizingCompaction,
-    TieredCompaction,
-)
+from pydantic_ai_harness import ClearToolResults, DeduplicateFileReads, SummarizingCompaction, TieredCompaction
 
 agent = Agent(
     'openai:gpt-4o',

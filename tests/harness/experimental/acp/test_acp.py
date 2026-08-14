@@ -76,6 +76,7 @@ from pydantic_ai_harness.experimental.acp._serialize import (
     chunk_text,
 )
 from pydantic_ai_harness.experimental.acp._session import SessionState
+from pydantic_ai_harness.filesystem import FileSystemToolset
 from tests.experimental.acp._acp_clients import (  # pyright: ignore[reportMissingTypeStubs]
     RecordingClient,
     RecordingClientBase,
@@ -1943,7 +1944,9 @@ class TestDefaultCodingPresenter:
     def test_handler_names_match_the_filesystem_and_shell_tools(self) -> None:
         # Recognition couples to tool names, so a rename in those capabilities would silently
         # degrade rich rendering to generic JSON. This fails loudly instead.
-        fs_tools = set(FileSystem[None](root_dir='.').get_toolset().tools)
+        filesystem = FileSystem[None](root_dir='.').get_toolset()
+        assert isinstance(filesystem, FileSystemToolset)
+        fs_tools = set(filesystem.tools)
         shell_tools = set(Shell[None](cwd='.').get_toolset().tools)
         assert set(_HANDLERS) <= fs_tools | shell_tools
 

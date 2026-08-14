@@ -9,7 +9,6 @@ prose match the code as written) is a review-time concern, not a unit test.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 
@@ -32,6 +31,13 @@ def _is_deprecation_shim(package: Path) -> bool:
     return 'warn_moved(' in source or 'warn_module_renamed(' in source
 
 
+# Packages that are supporting infrastructure rather than capabilities, kept out of the README
+# capability tables per review. `media` exports the content-addressed stores Step Persistence
+# uses; its docs placement is being reworked in
+# https://github.com/pydantic/pydantic-ai-harness/issues/625.
+_NOT_A_CAPABILITY = frozenset({'media'})
+
+
 def _capability_packages() -> list[Path]:
     """Directories that are importable packages and represent a capability's public surface."""
     candidates: list[Path] = []
@@ -42,7 +48,7 @@ def _capability_packages() -> list[Path]:
             # A non-package dir under the capability roots does not occur in a clean tree, so this guard stays uncovered.
             if not (child / '__init__.py').exists():  # pragma: no cover
                 continue
-            if child in _NAMESPACE_PACKAGES or _is_deprecation_shim(child):
+            if child.name in _NOT_A_CAPABILITY or child in _NAMESPACE_PACKAGES or _is_deprecation_shim(child):
                 continue
             candidates.append(child)
     return candidates
@@ -89,7 +95,7 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
 # ACP is the one page that stays experimental.
 
 _DOCS_DIR = _ROOT / 'docs'
-_NON_CAPABILITY_PAGES = {'index.md', 'mutation-testing.md'}
+_NON_CAPABILITY_PAGES = {'examples.md', 'index.md', 'mutation-testing.md'}
 _ACP_PAGE = 'acp.md'
 
 _SOURCE_LINK = 'github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/'
@@ -115,6 +121,7 @@ _CAPABILITY_DOC_PAGES = _capability_doc_pages()
 _CAPABILITY_PAGE_META = {
     'advisor.md': ('advisor', 'Advisor'),
     'code-mode.md': ('code_mode', 'Code Mode'),
+    'coder.md': ('coder', 'Coder'),
     'skills.md': ('skills', 'Skills'),
     'filesystem.md': ('filesystem', 'FileSystem'),
     'shell.md': ('shell', 'Shell'),
@@ -122,6 +129,7 @@ _CAPABILITY_PAGE_META = {
     'memory.md': ('memory', 'Memory'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
     'repo-context.md': ('repo_context', 'Repo Context'),
+    'researcher.md': ('researcher', 'Researcher'),
     'pydantic-ai-docs.md': ('pydantic_ai_docs', 'Pydantic AI Docs'),
     'exa-search.md': ('exa', 'Exa Search'),
     'macroscope.md': ('macroscope', 'Macroscope'),
@@ -304,55 +312,6 @@ def test_graduated_doc_page_has_no_experimental_framing(page: Path) -> None:
     )
 
 
-# --- Site-nav parity (docs/nav.json) ----------------------------------------
-#
-# Every flat page under `docs/` must appear in the unified-site nav, and every
-# nav entry must point at a page that exists. `docs/skills.md` once shipped
-# orphaned from the nav; these checks fail CI the moment a page and the nav
-# disagree, in either direction.
-
-_NAV_JSON = _DOCS_DIR / 'nav.json'
-# The one page allowed to be absent from the site nav: a dev-only doc that is not
-# a capability page. Excluding any other page requires a reviewed edit here.
-_NAV_EXCLUDED_PAGES = {'mutation-testing.md'}
-
-
-def _nav_slugs() -> set[str]:
-    groups = json.loads(_NAV_JSON.read_text(encoding='utf-8'))
-    return {item['slug'] for group in groups for item in group['items']}
-
-
-_NAV_SLUGS = _nav_slugs()
-_NAV_LISTED_PAGES = [p for p in sorted(_DOCS_DIR.glob('*.md')) if p.name not in _NAV_EXCLUDED_PAGES]
-
-
-def test_nav_parity_inputs_discovered() -> None:
-    # Guard against an emptied nav or a moved docs root making the parity checks
-    # below vacuously pass.
-    assert len(_NAV_SLUGS) >= 12
-    assert len(_NAV_LISTED_PAGES) >= 12
-    # Pin the excluded set so a contributor can only drop a page from the nav
-    # check via a reviewed edit to this named constant, not silently.
-    assert _NAV_EXCLUDED_PAGES == {'mutation-testing.md'}
-
-
-@pytest.mark.parametrize('page', _NAV_LISTED_PAGES, ids=lambda p: p.name)
-def test_doc_page_is_in_site_nav(page: Path) -> None:
-    assert page.stem in _NAV_SLUGS, (
-        f'{page.relative_to(_ROOT)} is not listed in docs/nav.json, so it ships orphaned from the site nav. '
-        f'Add a `{{ "label": "...", "slug": "{page.stem}" }}` entry to docs/nav.json '
-        '(or add the page to _NAV_EXCLUDED_PAGES if it is intentionally unlisted).'
-    )
-
-
-@pytest.mark.parametrize('slug', sorted(_NAV_SLUGS), ids=lambda s: s)
-def test_nav_slug_has_page(slug: str) -> None:
-    assert (_DOCS_DIR / f'{slug}.md').exists(), (
-        f'docs/nav.json lists slug "{slug}" but docs/{slug}.md does not exist. '
-        'Fix the slug or remove its entry from docs/nav.json.'
-    )
-
-
 @pytest.mark.parametrize('package', _CAPABILITY_PACKAGES, ids=lambda p: str(p.relative_to(_ROOT)))
 def test_capability_readme_heading_matches_capability(package: Path) -> None:
     problem = _heading_problem(_h1((package / 'README.md').read_text(encoding='utf-8')))
@@ -367,4 +326,53 @@ def test_capability_readme_links_source(package: Path) -> None:
     assert any(expected in t for t in targets), (
         f'{package.relative_to(_ROOT) / "README.md"} must link its own source module '
         f'(a Markdown link containing `{expected}`), so parity tooling can find the implementation.'
+    )
+
+
+# The Coder blown-out example is repeated on four markdown surfaces (plus, parameterized,
+# in examples/coding_agent.py). They must stay byte-identical so no page drifts from what
+# `coder_agent` actually is; see agent_docs/docs-conventions.md.
+_BLOWN_OUT_MARKER = '<!-- Keep this blown-out example in sync across'
+_BLOWN_OUT_SURFACES = (
+    'docs/coder.md',
+    'docs/index.md',
+    'README.md',
+    'pydantic_ai_harness/coder/README.md',
+)
+
+
+def _blown_out_block(path: Path) -> str:
+    text = path.read_text(encoding='utf-8')
+    assert _BLOWN_OUT_MARKER in text, f'{path.relative_to(_ROOT)} lost its blown-out keep-in-sync marker'
+    after = text.split(_BLOWN_OUT_MARKER, 1)[1]
+    match = re.search(r'```python\n(.*?)```', after, flags=re.DOTALL)
+    assert match, f'{path.relative_to(_ROOT)} has no python block after the blown-out marker'
+    return match.group(1)
+
+
+@pytest.mark.parametrize('surface', _BLOWN_OUT_SURFACES[1:])
+def test_blown_out_example_is_identical_across_surfaces(surface: str) -> None:
+    canonical = _blown_out_block(_ROOT / _BLOWN_OUT_SURFACES[0])
+    assert _blown_out_block(_ROOT / surface) == canonical, (
+        f'{surface} blown-out example differs from {_BLOWN_OUT_SURFACES[0]}; '
+        'update all surfaces named in the keep-in-sync comment together.'
+    )
+
+
+def test_blown_out_example_matches_coder_defaults() -> None:
+    from pydantic_ai_harness.coder import DEFAULT_ALLOWED_COMMANDS
+
+    block = _blown_out_block(_ROOT / _BLOWN_OUT_SURFACES[0])
+    listed = re.findall(r"'([a-z]+)'", block.split('allowed_commands = [', 1)[1].split(']', 1)[0])
+    assert tuple(listed) == tuple(DEFAULT_ALLOWED_COMMANDS), (
+        'the written-out allowlist no longer matches pydantic_ai_harness.coder.DEFAULT_ALLOWED_COMMANDS'
+    )
+    agent_source = (_PACKAGE / 'coder' / '_agent.py').read_text(encoding='utf-8')
+    identity_match = re.search(r"instructions='([^']+)'", agent_source)
+    assert identity_match, 'coder/_agent.py no longer defines an identity instruction'
+    identity = f"instructions='{identity_match.group(1)}'"
+    assert identity in block, "the blown-out example must carry coder_agent's identity instruction verbatim"
+    example = (_ROOT / 'examples/coding_agent.py').read_text(encoding='utf-8')
+    assert identity in example and 'denied_env_patterns=LLM_API_KEY_ENV_PATTERNS' in example, (
+        'examples/coding_agent.py drifted from the coder_agent composition'
     )

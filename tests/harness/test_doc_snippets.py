@@ -80,8 +80,15 @@ def _snippet_problem(source: str) -> str | None:
             if _is_missing_harness_module(exc.name):
                 return f'imports `{module}`, which does not exist: {exc}'
             continue  # missing optional extra in this environment; the harness module exists
-        if name is not None and not hasattr(imported, name):
-            return f'imports `{name}` from `{module}`, but that name does not exist'
+        if name is not None:
+            try:
+                exists = hasattr(imported, name)
+            except ImportError:
+                # a lazy top-level export whose optional extra isn't installed in this environment;
+                # the name resolving far enough to demand the extra proves it exists
+                continue
+            if not exists:
+                return f'imports `{name}` from `{module}`, but that name does not exist'
     return None
 
 

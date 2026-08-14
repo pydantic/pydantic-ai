@@ -13,6 +13,8 @@ has -- this capability surfaces findings only.
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/macroscope/)
 
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+
 ## The problem
 
 Macroscope reviews the current branch's diff and streams findings, but it ships
@@ -23,7 +25,7 @@ give a Pydantic AI agent the same review-and-fix loop from your own code.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.macroscope import Macroscope
+from pydantic_ai_harness import Macroscope
 
 agent = Agent('anthropic:claude-sonnet-5', capabilities=[Macroscope()])
 
@@ -62,7 +64,7 @@ duplicates, and verify each fix.
 Every field of `Macroscope` with its default:
 
 ```python
-from pydantic_ai_harness.macroscope import Macroscope
+from pydantic_ai_harness import Macroscope
 
 Macroscope(
     base=None,             # git ref to diff against -- None lets the CLI auto-detect
@@ -102,7 +104,7 @@ capabilities:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.macroscope import Macroscope
+from pydantic_ai_harness import Macroscope
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Macroscope])
 ```

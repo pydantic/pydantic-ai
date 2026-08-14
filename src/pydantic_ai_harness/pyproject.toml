@@ -5,7 +5,7 @@ build-backend = 'hatchling.build'
 [project]
 name = 'pydantic-ai-harness'
 dynamic = ['version']
-description = 'The batteries for your Pydantic AI agent'
+description = 'The official capability library and harness for Pydantic AI'
 readme = 'README.md'
 requires-python = '>=3.10'
 license = 'MIT'
@@ -40,12 +40,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Provider/CLI pass-throughs so `uv add "pydantic-ai-harness[anthropic,cli]"` works standalone,
+# without separately naming pydantic-ai-slim. (No openai/google pass-throughs: browser-use pins
+# provider SDKs that conflict with slim's floors when the workspace resolves all extras together.)
+anthropic = [
+    "pydantic-ai-slim[anthropic]>=2.28.0",
+]
+cli = [
+    "pydantic-ai-slim[cli]>=2.28.0",
+]
 code-mode = [
+    "pydantic-ai-slim[duckduckgo]>=2.28.0",
     "pydantic-monty>=0.0.19",
 ]
 # Extras metadata has no native redirect syntax, so aliases are represented as duplicate extras.
 codemode = [
+    "pydantic-ai-slim[duckduckgo]>=2.28.0",
     "pydantic-monty>=0.0.19",
+]
+researcher = [
+    "pydantic-ai-slim[duckduckgo,web-fetch]>=2.28.0",
 ]
 temporal = [
     'pydantic-ai-slim[temporal]',
@@ -103,6 +117,8 @@ dev = [
     'logfire[httpx]>=4.31.0',
     'dirty-equals>=0.9.0',
     'inline-snapshot>=0.32.5',
+    "pydantic-ai-slim[anthropic]",
+    "pydantic-ai-slim[openai]",
     "pydantic-ai-slim[spec]>=2.18.0",
     "pytest-examples>=0.0.18",
     "pytest-recording>=0.13.4",
@@ -121,6 +137,9 @@ source = 'uv-dynamic-versioning'
 vcs = 'git'
 style = 'pep440'
 bump = true
+
+[tool.uv]
+override-dependencies = ['anthropic>=0.108.0', 'openai>=2.45.0']
 
 
 [tool.hatch.build.targets.wheel]

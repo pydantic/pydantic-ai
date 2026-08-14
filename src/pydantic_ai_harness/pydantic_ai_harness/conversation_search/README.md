@@ -1,14 +1,5 @@
 # Conversation Search
 
-> [!NOTE]
-> Import this capability from its submodule -- there is no top-level `pydantic_ai_harness` re-export:
->
-> ```python
-> from pydantic_ai_harness.conversation_search import ConversationSearch
-> ```
->
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
-
 Give the model a `search_conversation_history` tool that BM25-ranks the history a `StepPersistence` capability already persists -- earlier turns that compaction dropped from the live context, and past runs in the same store.
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/conversation_search/)
@@ -25,9 +16,9 @@ The shipped source, `SnapshotHistorySource`, reads the snapshots `StepPersistenc
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.compaction import SlidingWindowCompaction
-from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
-from pydantic_ai_harness.step_persistence import SqliteStepStore, StepPersistence
+from pydantic_ai_harness import ConversationSearch, SlidingWindowCompaction, StepPersistence
+from pydantic_ai_harness.conversation_search import SnapshotHistorySource
+from pydantic_ai_harness.step_persistence import SqliteStepStore
 
 store = SqliteStepStore(database='sessions.db')
 agent = Agent(

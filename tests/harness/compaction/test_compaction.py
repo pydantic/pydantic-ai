@@ -802,7 +802,7 @@ class TestExtractSystemPrompts:
 
 
 class TestExports:
-    def test_exposed_under_submodule_only(self):
+    def test_exposed_under_submodule_and_top_level(self):
         import pydantic_ai_harness
         import pydantic_ai_harness.compaction as compaction
 
@@ -815,10 +815,8 @@ class TestExports:
             'TieredCompaction',
         ]
         for name in names:
-            # Available from the capability submodule...
             assert hasattr(compaction, name)
-            # ...and deliberately NOT from the top-level namespace.
-            assert not hasattr(pydantic_ai_harness, name)
+            assert getattr(pydantic_ai_harness, name) is getattr(compaction, name)
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,8 @@ run gets a fresh sandbox created from a container image. The capability requests
 termination when the run ends. You can also attach an existing sandbox or reuse
 one across several runs.
 
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+
 ## Quick start
 
 Install the `modal` extra and authenticate with the Modal CLI. In CI, set
@@ -32,7 +34,7 @@ Add `ModalSandbox` to the agent:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.modal_sandbox import ModalSandbox
+from pydantic_ai_harness import ModalSandbox
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
@@ -74,7 +76,7 @@ model; it does not defer toolset lifecycle.
 Attach to a sandbox managed elsewhere by ID:
 
 ```python
-from pydantic_ai_harness.modal_sandbox import ModalSandbox
+from pydantic_ai_harness import ModalSandbox
 
 ModalSandbox(sandbox_id='sb-abc123')
 ```
@@ -84,7 +86,8 @@ To share a sandbox across runs while controlling its lifetime, create and enter 
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.modal_sandbox import ModalSandbox, ModalSandboxSession
+from pydantic_ai_harness import ModalSandbox
+from pydantic_ai_harness.modal_sandbox import ModalSandboxSession
 
 async with ModalSandboxSession(image='python:3.12-slim', sandbox_timeout=1800) as session:
     agent = Agent(
@@ -157,7 +160,7 @@ capability before composing it with another capability that uses the same names:
 ```python
 from pydantic_ai.capabilities import PrefixTools
 
-from pydantic_ai_harness.modal_sandbox import ModalSandbox
+from pydantic_ai_harness import ModalSandbox
 
 sandbox = PrefixTools(
     wrapped=ModalSandbox(
@@ -177,7 +180,7 @@ capability's default instructions, which name the unprefixed tools -- pass
 ## Configuration
 
 ```python
-from pydantic_ai_harness.modal_sandbox import ModalSandbox
+from pydantic_ai_harness import ModalSandbox
 
 ModalSandbox(
     image='python:3.12-slim',
@@ -230,7 +233,7 @@ capabilities:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.modal_sandbox import ModalSandbox
+from pydantic_ai_harness import ModalSandbox
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[ModalSandbox])
 ```
@@ -243,8 +246,6 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[ModalSandbox])
 - [Modal Sandbox source code](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/modal_sandbox/)
 - [Pydantic AI Harness version policy](index.md#version-policy)
 
-The API may change between releases while Pydantic AI Harness is on 0.x
-versions.
 
 ::: pydantic_ai_harness.modal_sandbox.ModalSandbox
 

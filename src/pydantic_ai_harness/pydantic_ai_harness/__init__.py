@@ -5,8 +5,25 @@ from typing import TYPE_CHECKING
 from ._warn import HarnessDeprecationWarning
 
 if TYPE_CHECKING:
+    from .advisor import Advisor
+    from .browser_use import BrowserUse
+    from .capability_creation import CapabilityCreation
     from .code_mode import CodeMode
-    from .filesystem import FileSystem
+    from .coder import DEFAULT_ALLOWED_COMMANDS, Coder
+    from .compaction import (
+        ClampOversizedMessages,
+        ClearToolResults,
+        DeduplicateFileReads,
+        ReportContextUsage,
+        SlidingWindowCompaction,
+        SummarizingCompaction,
+        TieredCompaction,
+        WarnNearLimits,
+    )
+    from .conversation_search import ConversationSearch
+    from .dynamic_workflow import DynamicWorkflow
+    from .exa import ExaAgent, ExaSearch
+    from .filesystem import READ_ONLY_TOOL_NAMES, FileSystem
     from .guardrails import (
         GuardrailError,
         GuardrailResult,
@@ -16,12 +33,42 @@ if TYPE_CHECKING:
         OutputBlocked,
         OutputGuardrail,
         OutputGuardrailFunc,
+        ToolGuardrail,
     )
+    from .localstack import LocalStack
     from .logfire import ManagedPrompt
+    from .macroscope import Macroscope
+    from .memory import Memory
+    from .modal_sandbox import ModalSandbox
+    from .planning import Planning
+    from .pydantic_ai_docs import PydanticAIDocs
+    from .repo_context import RepoContext
+    from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
+    from .skills import Skills
+    from .spend import SpendLimits
+    from .stackone import StackOne
+    from .step_persistence import StepPersistence
+    from .subagents import SubAgent, SubAgents
+    from .system_reminders import SystemReminders
+    from .tool_output_limits import ToolOutputLimits
+    from .warn_on_cache_busts import WarnOnCacheBusts
 
 __all__ = [
+    'Advisor',
+    'BrowserUse',
+    'CapabilityCreation',
+    'ClampOversizedMessages',
+    'ClearToolResults',
     'CodeMode',
+    'Coder',
+    'ConversationSearch',
+    'DEFAULT_ALLOWED_COMMANDS',
+    'DEFAULT_RESEARCHER_INSTRUCTIONS',
+    'DeduplicateFileReads',
+    'DynamicWorkflow',
+    'ExaAgent',
+    'ExaSearch',
     'FileSystem',
     'GuardrailError',
     'GuardrailResult',
@@ -30,12 +77,84 @@ __all__ = [
     'InputGuardrail',
     'InputGuardrailFunc',
     'LLM_API_KEY_ENV_PATTERNS',
+    'LocalStack',
+    'Macroscope',
     'ManagedPrompt',
+    'Memory',
+    'ModalSandbox',
     'OutputBlocked',
     'OutputGuardrail',
     'OutputGuardrailFunc',
+    'Planning',
+    'PydanticAIDocs',
+    'READ_ONLY_TOOL_NAMES',
+    'ReportContextUsage',
+    'RepoContext',
+    'Researcher',
     'Shell',
+    'Skills',
+    'SlidingWindowCompaction',
+    'SpendLimits',
+    'StackOne',
+    'StepPersistence',
+    'SubAgent',
+    'SubAgents',
+    'SummarizingCompaction',
+    'SystemReminders',
+    'TieredCompaction',
+    'ToolGuardrail',
+    'ToolOutputLimits',
+    'WarnNearLimits',
+    'WarnOnCacheBusts',
 ]
+
+_CAPABILITY_EXPORTS = {
+    'Advisor': 'advisor',
+    'BrowserUse': 'browser_use',
+    'CapabilityCreation': 'capability_creation',
+    'ClampOversizedMessages': 'compaction',
+    'ClearToolResults': 'compaction',
+    'CodeMode': 'code_mode',
+    'Coder': 'coder',
+    'ConversationSearch': 'conversation_search',
+    'DeduplicateFileReads': 'compaction',
+    'DynamicWorkflow': 'dynamic_workflow',
+    'ExaAgent': 'exa',
+    'ExaSearch': 'exa',
+    'FileSystem': 'filesystem',
+    'LocalStack': 'localstack',
+    'Macroscope': 'macroscope',
+    'ManagedPrompt': 'logfire',
+    'Memory': 'memory',
+    'ModalSandbox': 'modal_sandbox',
+    'Planning': 'planning',
+    'PydanticAIDocs': 'pydantic_ai_docs',
+    'ReportContextUsage': 'compaction',
+    'RepoContext': 'repo_context',
+    'Researcher': 'researcher',
+    'Shell': 'shell',
+    'Skills': 'skills',
+    'SlidingWindowCompaction': 'compaction',
+    'SpendLimits': 'spend',
+    'StackOne': 'stackone',
+    'StepPersistence': 'step_persistence',
+    'SubAgents': 'subagents',
+    'SummarizingCompaction': 'compaction',
+    'SystemReminders': 'system_reminders',
+    'TieredCompaction': 'compaction',
+    'ToolGuardrail': 'guardrails',
+    'ToolOutputLimits': 'tool_output_limits',
+    'WarnNearLimits': 'compaction',
+    'WarnOnCacheBusts': 'warn_on_cache_busts',
+}
+
+_CONSTANT_EXPORTS = {
+    'DEFAULT_ALLOWED_COMMANDS': 'coder',
+    'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
+    'LLM_API_KEY_ENV_PATTERNS': 'shell',
+    'READ_ONLY_TOOL_NAMES': 'filesystem',
+    'SubAgent': 'subagents',
+}
 
 _GUARDRAIL_EXPORTS = {
     'GuardrailError',
@@ -57,28 +176,14 @@ _GUARDRAIL_EXPORTS = {
 
 
 def __getattr__(name: str) -> object:
-    if name == 'CodeMode':
-        from .code_mode import CodeMode
+    module_name = _CAPABILITY_EXPORTS.get(name) or _CONSTANT_EXPORTS.get(name)
+    if module_name is not None:
+        from importlib import import_module
 
-        return CodeMode
+        module = import_module(f'.{module_name}', __name__)
+        return getattr(module, name)
     if name in _GUARDRAIL_EXPORTS:
         from . import guardrails
 
         return getattr(guardrails, name)
-    if name == 'FileSystem':
-        from .filesystem import FileSystem
-
-        return FileSystem
-    if name == 'ManagedPrompt':
-        from .logfire import ManagedPrompt
-
-        return ManagedPrompt
-    if name == 'Shell':
-        from .shell import Shell
-
-        return Shell
-    if name == 'LLM_API_KEY_ENV_PATTERNS':
-        from .shell import LLM_API_KEY_ENV_PATTERNS
-
-        return LLM_API_KEY_ENV_PATTERNS
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

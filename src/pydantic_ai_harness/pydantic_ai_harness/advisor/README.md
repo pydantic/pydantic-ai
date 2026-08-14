@@ -4,7 +4,7 @@ Give an executor model a way to consult a separate advisor model before it answe
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/advisor/)
 
-> The API may change between releases. Breaking changes ship deprecation warnings where practical.
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
 
 ## Usage
 
@@ -12,7 +12,7 @@ Pass the advisor model as the first argument. The model can be any model name or
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.advisor import Advisor
+from pydantic_ai_harness import Advisor
 
 agent = Agent(
     'openai:gpt-5.4',
@@ -43,7 +43,7 @@ The executor decides when to consult. Ask it explicitly in the user prompt or th
 In the default `auto` mode, native selection is conservative. The capability only reuses an explicit provider-qualified model name when the executor and advisor share a provider, so it does not guess how an Anthropic model ID maps to an OpenRouter catalog slug. For example:
 
 ```python
-from pydantic_ai_harness.advisor import Advisor
+from pydantic_ai_harness import Advisor
 
 # Native for an Anthropic executor; local for OpenAI, Google, and other executors.
 anthropic_advisor = Advisor('anthropic:claude-opus-4-8')

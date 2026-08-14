@@ -44,11 +44,18 @@ The `experimental` tier is retired. ACP is the sole remaining experimental
 capability (`pydantic_ai_harness/experimental/acp/`); do not add new capabilities
 there.
 
-New capabilities land as a top-level submodule `pydantic_ai_harness/<name>/`.
-They are not re-exported from the root `pydantic_ai_harness/__init__.py`: each
-capability keeps its own optional dependencies, so importing the root package
-must not pull in a capability's extras. Users import a capability from its
-submodule (`from pydantic_ai_harness.<name> import ...`).
+New capabilities land as a top-level submodule `pydantic_ai_harness/<name>/`
+AND are re-exported **lazily** from the root `pydantic_ai_harness/__init__.py` —
+top-level importability is the norm (ruled 8/13): every public capability class
+(and public constants like `DEFAULT_ALLOWED_COMMANDS`) is added to `__all__`,
+to the `TYPE_CHECKING` import block, and to the `__getattr__` dispatch. The lazy
+`__getattr__` pattern is what makes this safe with optional dependencies:
+importing the root package pulls in nothing, and accessing an extra-gated name
+without its extra installed raises the standard install-hint `ImportError`.
+`tests/test_placeholder.py::test_all_exports_are_importable` enforces the
+contract — a new-capability PR that skips the root export fails it. The sole
+exception is `experimental` (ACP), which stays submodule-only. Docs and examples
+prefer the top-level import (`from pydantic_ai_harness import <Name>`).
 
 ### Naming Capabilities
 

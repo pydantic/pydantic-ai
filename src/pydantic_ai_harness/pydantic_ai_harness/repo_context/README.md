@@ -1,14 +1,5 @@
 # Repo Context
 
-> [!NOTE]
-> Import this capability from its submodule -- there is no top-level `pydantic_ai_harness` re-export:
->
-> ```python
-> from pydantic_ai_harness.repo_context import RepoContext
-> ```
->
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
-
 Discover and load a repo's accumulated coding-assistant context engineering (CE).
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/repo_context/)
@@ -29,7 +20,7 @@ idea the rest of the setup exists, so it can neither honor it nor translate it.
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai_harness.repo_context import RepoContext
+from pydantic_ai_harness import RepoContext
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
@@ -69,8 +60,7 @@ opt-in and configurable:
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai_harness import FileSystem
-from pydantic_ai_harness.repo_context import RepoContext
+from pydantic_ai_harness import FileSystem, RepoContext
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',

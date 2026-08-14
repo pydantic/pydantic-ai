@@ -3,7 +3,7 @@
 Validate the user prompt before it reaches the model, the tool calls the model makes along the way, and the output before it reaches the caller.
 
 > [!NOTE]
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/guardrails/)
 
@@ -148,7 +148,7 @@ A tool result guard receives `ToolResultInfo`, not just a value. Use
 `ToolReturn.return_value` string:
 
 ```python
-from pydantic_ai_harness.guardrails import ToolGuardrail
+from pydantic_ai_harness import ToolGuardrail
 from pydantic_ai_harness.guardrails.detectors import for_tool_result_text, redact_secrets
 
 ToolGuardrail(result_guard=for_tool_result_text(redact_secrets))
@@ -250,7 +250,8 @@ from pathlib import Path
 
 import httpx
 from pydantic_ai import Agent
-from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGuardrail, ToolResultInfo
+from pydantic_ai_harness import GuardrailResult, ToolGuardrail
+from pydantic_ai_harness.guardrails import ToolCallInfo, ToolResultInfo
 
 WORKSPACE = Path('/workspace')
 
@@ -310,7 +311,8 @@ Pydantic AI already owns the approval round trip: a call raising `ApprovalRequir
 
 ```python
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, ToolDenied
-from pydantic_ai_harness.guardrails import GuardrailResult, ToolCallInfo, ToolGuardrail
+from pydantic_ai_harness import GuardrailResult, ToolGuardrail
+from pydantic_ai_harness.guardrails import ToolCallInfo
 
 
 def confirm_production(call: ToolCallInfo) -> GuardrailResult:

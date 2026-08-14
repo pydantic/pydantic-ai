@@ -12,6 +12,8 @@ background processes automatically when the agent run ends.
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/shell/)
 
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+
 ## The problem
 
 Agents frequently need to run a build, a test suite, a linter, or a quick
@@ -95,10 +97,11 @@ A denied command surfaces to the model as a
 the run continues and the model can pick an allowed command instead.
 
 !!! warning "Best-effort, not a security boundary"
-    These command checks are best-effort. A sufficiently motivated agent can
-    defeat them (e.g. `bash -c '...'`, env-var indirection). For hard
-    guarantees, run the agent inside OS-level isolation -- a container or
-    sandbox.
+    `allowed_commands` is a guardrail against accidents, not a security boundary.
+    Validation checks only the first token, and allowlisted commands such as
+    `python`, `git`, `uv`, and `make` can spawn arbitrary processes. A model that
+    wants to work around the allowlist can. For untrusted work, run the agent
+    inside OS-level isolation such as [`ModalSandbox`](modal-sandbox.md) or a container.
 
 ## Environment control
 
@@ -121,8 +124,7 @@ both unset preserves the inherit-everything default.
 ```python
 import os
 
-from pydantic_ai_harness import Shell
-from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
+from pydantic_ai_harness import LLM_API_KEY_ENV_PATTERNS, Shell
 
 # Strip provider credentials from the inherited environment.
 Shell(cwd='./repo', denied_env_patterns=LLM_API_KEY_ENV_PATTERNS)

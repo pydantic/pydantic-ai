@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import pydantic_ai.models
 import pytest
@@ -17,15 +17,17 @@ from pydantic_ai.models.test import TestModel
 # `from tests.conftest import IsStr, IsDatetime, ...` instead of importing
 # from `dirty_equals` directly.
 if TYPE_CHECKING:
+    MatcherT = TypeVar('MatcherT')
 
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
+    def IsInstance(expected_type: type[MatcherT], **kwargs: Any) -> MatcherT: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
     def IsPartialDict(*args: Any, **kwargs: Any) -> dict[Any, Any]: ...
 else:
-    from dirty_equals import IsDatetime, IsNow, IsPartialDict, IsStr
+    from dirty_equals import IsDatetime, IsInstance, IsNow, IsPartialDict, IsStr
 
-__all__ = ('IsDatetime', 'IsNow', 'IsPartialDict', 'IsStr')
+__all__ = ('IsDatetime', 'IsInstance', 'IsNow', 'IsPartialDict', 'IsStr')
 
 # Prevent accidental real model requests during tests.
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False

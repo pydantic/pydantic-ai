@@ -1,14 +1,5 @@
 # Subagents
 
-> [!NOTE]
-> Import this capability from its submodule -- there is no top-level `pydantic_ai_harness` re-export:
->
-> ```python
-> from pydantic_ai_harness.subagents import SubAgent, SubAgents
-> ```
->
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
-
 Let an agent delegate self-contained tasks to named child agents.
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/subagents/)
@@ -23,7 +14,7 @@ A single agent that does everything accumulates a large tool set and a long cont
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness import SubAgent, SubAgents
 
 researcher = Agent('anthropic:claude-sonnet-4-6', name='researcher', description='Researches a topic and reports findings')
 writer = Agent('anthropic:claude-sonnet-4-6', name='writer', description='Turns notes into polished prose')
@@ -65,7 +56,7 @@ Each `SubAgent` carries its own budgets, so one delegate's controls do not touch
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness import SubAgent, SubAgents
 
 reproducer = Agent('anthropic:claude-sonnet-4-6', instructions='Reproduce the reported bug from a minimal script.')
 librarian = Agent('anthropic:claude-sonnet-4-6', instructions='Find relevant docs, issues, and prior art.')
@@ -99,7 +90,8 @@ The orchestrator knows how hard a task is at the moment it writes the brief, so 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents
+from pydantic_ai_harness import SubAgent, SubAgents
+from pydantic_ai_harness.subagents import ModelOption
 
 reviewer = Agent('anthropic:claude-sonnet-4-6', name='reviewer', description='Reviews a diff')
 linter = Agent('anthropic:claude-sonnet-4-6', name='linter', description='Runs the linter and reports failures')
@@ -150,7 +142,7 @@ A repo's markdown agent definitions become delegates without writing any `Agent`
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.subagents import SubAgents
+from pydantic_ai_harness import SubAgents
 
 orchestrator = Agent(
     'anthropic:claude-opus-4-7',
@@ -190,7 +182,8 @@ Frontmatter is read by a small, dependency-free parser limited to those keys (`p
 Disk agents inherit the parent run's model by default. Per agent, the caller can override the model and set a thinking/effort level via `agent_overrides`, keyed by the agent's name:
 
 ```python
-from pydantic_ai_harness.subagents import AgentOverride, SubAgents
+from pydantic_ai_harness import SubAgents
+from pydantic_ai_harness.subagents import AgentOverride
 
 SubAgents(
     agent_folders='agents',
@@ -205,7 +198,7 @@ Every agent the capability builds runs at a minimum thinking-effort floor. `MINI
 A disk agent gets no tools by default (`inherit_tools` is `False`); set `inherit_tools=True` to expose the parent's tools to it through the `inherit_tools` mechanism, in which case its `tools` frontmatter is ignored. To map the frontmatter tool names to specific toolsets instead, pass a `tool_resolver`: it receives each tool name (so it can honor entries like `Bash(git:*)`) and returns the toolsets that provide it, or `None` for an unknown name, which is skipped with a warning.
 
 ```python
-from pydantic_ai_harness.experimental.subagents import SubAgents
+from pydantic_ai_harness import SubAgents
 
 def resolve(tool_name: str):
     return TOOLSETS.get(tool_name)  # -> Sequence[AgentToolset[object]] | None

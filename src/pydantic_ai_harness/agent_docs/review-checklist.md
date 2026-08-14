@@ -12,6 +12,10 @@ Use this before opening a PR or reviewing a capability change.
 ## Implementation
 
 - Public exports are intentional.
+- Every public capability class is lazily re-exported from the top-level
+  `pydantic_ai_harness` package (`__all__` + `TYPE_CHECKING` + `__getattr__`;
+  ACP/experimental excepted) — see `capability-authoring.md` "Capability
+  Submodules And Exports".
 - Private helpers stay private.
 - Types are precise; new public signatures do not use `Any`.
 - No casts are used to paper over type design.
@@ -100,6 +104,13 @@ README, or source code.
   explicit, tested incompatibility. Mocked lifecycle tests alone do not
   establish state continuity across activity, process, or replay boundaries.
 - Relevant protocol-shaped output is snapshotted.
+- **Harness cassettes are re-recorded on composition change.** Each packaged
+  harness has a recorded end-to-end integration test (e.g.
+  `tests/coder/test_coder_integration.py`) that runs it against a real task.
+  Any change to that harness's composition, defaults, or instructions
+  re-records the cassette in the same PR
+  (`uv run --env-file .env --no-sync pytest <test> --record-mode=rewrite`) —
+  a green replay of a stale cassette proves nothing about the new definition.
 - `make lint`, `make typecheck`, and `make test` pass before handoff.
 
 ## Docs
@@ -119,6 +130,12 @@ Checks:
 - Both the README and the unified doc are updated for any user-facing change
   (public class, params, defaults, tool names, extras, safety semantics). A
   change reflected in only one of them is a defect, not a follow-up.
+- **Harness blown-out parity.** A packaged harness (`Coder`, `Researcher`, ...)
+  has its composition written out in full — default instructions and allowlists
+  included, not imported — in its docs page's "Blown-out equivalent" AND in its
+  `examples/` counterpart. Any change to a harness's composition or defaults
+  updates all three together (implementation, docs page, example) in the same
+  PR; drift here is a defect, not a follow-up.
 - The two do not contradict each other or the source on extras, option names,
   defaults, or safety caveats.
 - Every snippet in both docs is runnable: all imports present, class/param names

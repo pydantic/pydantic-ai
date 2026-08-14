@@ -9,7 +9,7 @@ description: Give an agent a tool that locates and returns Pydantic AI documenta
 
 [Source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/pydantic_ai_docs/)
 
-> The API may change between releases. Where practical, breaking changes ship with a deprecation warning.
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ## The problem
 
@@ -29,7 +29,7 @@ Construct an `Agent` with `PydanticAIDocs()` in its `capabilities`. Point `local
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai_harness.pydantic_ai_docs import PydanticAIDocs
+from pydantic_ai_harness import PydanticAIDocs
 
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
@@ -76,7 +76,7 @@ capabilities:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.pydantic_ai_docs import PydanticAIDocs
+from pydantic_ai_harness import PydanticAIDocs
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[PydanticAIDocs])
 result = agent.run_sync('...')

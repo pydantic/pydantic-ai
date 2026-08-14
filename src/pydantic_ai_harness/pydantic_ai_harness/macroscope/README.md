@@ -20,7 +20,7 @@ real ones with whatever tools it already has (for example `FileSystem` or `Shell
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness.macroscope import Macroscope
+from pydantic_ai_harness import Macroscope
 
 agent = Agent('anthropic:claude-sonnet-5', capabilities=[Macroscope()])
 

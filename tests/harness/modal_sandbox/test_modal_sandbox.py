@@ -783,8 +783,7 @@ class TestCapability:
         assert Exported is ModalSandbox
         assert 'ModalSandboxToolset' not in modal_sandbox.__all__
         assert 'ModalSandboxExecResult' in modal_sandbox.__all__
-        # Capabilities with optional dependencies are imported from their submodule, not the package root.
-        assert 'ModalSandbox' not in pydantic_ai_harness.__all__
+        assert pydantic_ai_harness.ModalSandbox is ModalSandbox
 
     @pytest.mark.anyio(backends=['asyncio'])
     async def test_agent_integration(self, fake_modal: FakeModal) -> None:

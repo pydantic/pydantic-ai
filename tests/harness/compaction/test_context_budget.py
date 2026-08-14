@@ -1228,13 +1228,11 @@ class TestWithFocus:
 
 
 class TestNewExports:
-    def test_exposed_under_the_submodule_only(self):
+    def test_capability_exposed_at_top_level(self):
         import pydantic_ai_harness
         import pydantic_ai_harness.compaction as compaction
 
-        for name in ('ContextUsage', 'ReportContextUsage', 'compact_now', 'resolve_context_window'):
-            assert hasattr(compaction, name)
-            assert not hasattr(pydantic_ai_harness, name)
+        assert pydantic_ai_harness.ReportContextUsage is compaction.ReportContextUsage
 
 
 class TestPositionalCompatibility:
