@@ -119,6 +119,16 @@ class DurableOperationConfig(Generic[ConfigT_co], Protocol):
     ) -> ConfigT_co | Literal[False]: ...
 
 
+def resolve_tool_operation_config(
+    config: DurableOperationConfig[ConfigT],
+    operation: DurableOperation[P, W, R],
+    tool: object | None,
+    tool_name: str,
+) -> ConfigT | Literal[False]:
+    """Resolve tool configuration shared by callable and registered backends."""
+    return config.for_tool(operation.config_role, operation.operation_id, tool, tool_name)
+
+
 @dataclass(frozen=True)
 class DurableOperation(Generic[P, W, R]):
     operation_id: DurableOperationId

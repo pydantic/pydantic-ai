@@ -59,7 +59,7 @@ from ._operation import (
     ResultCodec,
     ValidateToolArgumentsId,
 )
-from ._operation_backend import CallableOperationBackend, LegacyCallableBackend
+from ._operation_backend import DurableOperationBackend, LegacyCallableBackend
 from ._operation_names import DurableInvocationName, DurableOperationNamer
 from ._runtime_toolsets import (
     RuntimeToolsetKind,
@@ -552,7 +552,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         raise NotImplementedError
 
-    def _build_operation_backend(self) -> CallableOperationBackend[Any]:
+    def _build_operation_backend(self) -> DurableOperationBackend[ToolConfig]:
         """Build the declaration backend for callable engines using their compatibility hooks."""
         return LegacyCallableBackend(
             self,

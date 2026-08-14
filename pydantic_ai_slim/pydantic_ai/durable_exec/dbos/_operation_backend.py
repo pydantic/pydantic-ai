@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any, Generic, Literal, TypeVar, cast
 
 from dbos import DBOS
@@ -25,7 +25,7 @@ from pydantic_ai.durable_exec._operation import (
     ModelRequestId,
     OperationConfigRole,
 )
-from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, CallableOperationBackend
+from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
 from pydantic_ai.durable_exec._operation_names import DBOSOperationNamer
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import ModelRequestParameters
@@ -85,26 +85,29 @@ class DBOSBoundOperation(Generic[P, W, R]):
         self._step_getter = getter
 
 
-class DBOSOperationBackend(CallableOperationBackend[StepConfig]):
+class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
     """Register typed durable-operation handlers as DBOS steps during agent binding."""
 
     def __init__(self, *, agent_name: str, config: DBOSOperationConfig) -> None:
         super().__init__(namer=DBOSOperationNamer(agent_name), config=config)
-        self._registrations: list[Callable[..., Any]] = []
 
-    def bind(self, operation: DurableOperation[P, P, R]) -> BoundDurableOperation[P, P, R]:
-        name = self._namer.operation_name(operation.operation_id)
-        step_config = self._config.base(operation.config_role, operation.operation_id)
+    def _register(
+        self,
+        operation: DurableOperation[P, W, R],
+        *,
+        name: str,
+        config: StepConfig,
+    ) -> tuple[BoundDurableOperation[P, W, R], Sequence[Callable[..., object]]]:
         if isinstance(operation.operation_id, (ModelRequestId, CancelSuspendedResponseId, EventStreamHandlerId)):
-            step, dispatch = self._bind_model_or_event(operation, name, step_config)
+            step, dispatch = self._bind_model_or_event(operation, name, config)
         else:
-            step, dispatch = self._bind_toolset(operation, name, step_config)
+            step, dispatch = self._bind_toolset(operation, name, config)
 
-        self._registrations.append(step)
-        return DBOSBoundOperation(operation, step, dispatch)
+        bound_operation = DBOSBoundOperation(operation, step, dispatch)
+        return bound_operation, (step,)
 
     def _bind_model_or_event(
-        self, operation: DurableOperation[P, P, R], name: str, step_config: StepConfig
+        self, operation: DurableOperation[P, W, R], name: str, step_config: StepConfig
     ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], P], Any]]:
 
         match operation.operation_id:
@@ -175,7 +178,7 @@ class DBOSOperationBackend(CallableOperationBackend[StepConfig]):
         return step, dispatch
 
     def _bind_toolset(
-        self, operation: DurableOperation[P, P, R], name: str, step_config: StepConfig
+        self, operation: DurableOperation[P, W, R], name: str, step_config: StepConfig
     ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], P], Any]]:
         match operation.operation_id:
             case GetToolsId() | GetInstructionsId():
@@ -234,24 +237,3 @@ class DBOSOperationBackend(CallableOperationBackend[StepConfig]):
                 raise TypeError(f'DBOS operation {operation_id!r} is not registered by this backend yet')
 
         return step, dispatch
-
-    def config_for_tool(
-        self,
-        operation: DurableOperation[P, P, R],
-        tool: object | None,
-        tool_name: str,
-    ) -> StepConfig | Literal[False]:
-        return self._config.for_tool(operation.config_role, operation.operation_id, tool, tool_name)
-
-    def registrations(self) -> Sequence[Callable[..., object]]:
-        return self._registrations
-
-    async def _execute(
-        self,
-        *,
-        name: str,
-        body: Callable[[], Awaitable[object]],
-        cache_key: tuple[object, ...],
-        config: object,
-    ) -> object:
-        raise NotImplementedError('DBOS operations are registered and dispatched by `bind()`')

@@ -9,7 +9,7 @@ from prefect.context import FlowRunContext
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
-from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
+from pydantic_ai.durable_exec._operation_backend import DurableOperationBackend
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
 from pydantic_ai.durable_exec._toolset import Lifecycle
 from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -107,7 +107,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return FlowRunContext.get() is not None
 
-    def _build_operation_backend(self) -> CallableOperationBackend[TaskConfig]:
+    def _build_operation_backend(self) -> DurableOperationBackend[TaskConfig]:
         def tool_config(kind: ToolsetKind, tool: object | None, tool_name: str) -> TaskConfig | Literal[False]:
             config = self._build_resolve_tool_config(self._toolset_base_config(kind))(
                 cast(ToolsetTool[Any] | None, tool), tool_name
