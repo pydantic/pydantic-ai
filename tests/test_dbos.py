@@ -1032,6 +1032,20 @@ def test_dbos_agent_run_sync(allow_model_requests: None, dbos: DBOS):
     assert result.output == snapshot('The capital of Mexico is Mexico City.')
 
 
+async def test_dbos_agent_run_sync_from_sync_callback_is_rejected() -> None:
+    def call_delegate(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('delegate', '{"prompt": "hello"}')])
+
+    outer_agent = Agent(FunctionModel(call_delegate))
+
+    @outer_agent.tool_plain
+    def delegate(prompt: str) -> str:
+        return simple_dbos_agent.run_sync(prompt).output
+
+    with pytest.raises(UserError, match='cannot be called from inside another agent run'):
+        await outer_agent.run('delegate')
+
+
 async def test_dbos_agent_run_stream(allow_model_requests: None):
     # Run stream is not a DBOS workflow, so we can use it directly.
     async with simple_dbos_agent.run_stream('What is the capital of Mexico?') as result:

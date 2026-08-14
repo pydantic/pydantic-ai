@@ -942,6 +942,20 @@ def test_prefect_agent_run_sync(allow_model_requests: None):
     assert result.output == snapshot('The capital of Mexico is Mexico City.')
 
 
+async def test_prefect_agent_run_sync_from_sync_callback_is_rejected() -> None:
+    def call_delegate(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('delegate', '{"prompt": "hello"}')])
+
+    outer_agent = Agent(FunctionModel(call_delegate))
+
+    @outer_agent.tool_plain
+    def delegate(prompt: str) -> str:
+        return simple_prefect_agent.run_sync(prompt).output
+
+    with pytest.raises(UserError, match='cannot be called from inside another agent run'):
+        await outer_agent.run('delegate')
+
+
 async def test_prefect_agent_run_stream(allow_model_requests: None):
     """Test that agent.run_stream() works outside of flows."""
     async with simple_prefect_agent.run_stream('What is the capital of Mexico?') as result:

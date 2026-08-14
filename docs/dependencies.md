@@ -113,8 +113,6 @@ to use `async` methods where dependencies perform IO, although synchronous depen
 !!! note "`run` vs. `run_sync` and Asynchronous vs. Synchronous dependencies"
     Whether you use synchronous or asynchronous dependencies is completely independent of whether you use `run` or `run_sync` — `run_sync` is just a wrapper around `run` and agents are always run in an async context.
 
-    The one exception is a synchronous callback that starts *another* agent run: the standard [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] implementation raises [`UserError`][pydantic_ai.exceptions.UserError] when called from a sync function managed by Pydantic AI, because attempting to run a second event loop there can deadlock. Make that function `async def` and `await` [`Agent.run()`][pydantic_ai.agent.AbstractAgent.run] instead — see [Agent delegation](multi-agent-applications.md#agent-delegation).
-
 Here's the same example as above, but with a synchronous dependency:
 
 ```python {title="sync_dependencies.py"}

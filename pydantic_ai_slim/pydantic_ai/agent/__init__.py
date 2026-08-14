@@ -1789,6 +1789,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 graph_deps.cancellation.release_issued()
 
         async with AsyncExitStack() as stack:
+            stack.enter_context(_utils.agent_run_context())
+
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
 

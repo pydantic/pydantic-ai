@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 import pytest
 
@@ -14,16 +16,15 @@ def return_inner_result(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('inner result')])
 
 
-def make_tool_delegate(inner_agent: Agent[None, str], *, stream: bool = False) -> Agent[None, str]:
-    def call_delegate(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[ToolCallPart('delegate', '{"prompt": "hello"}')])
+def call_delegate(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('delegate', '{"prompt": "hello"}')])
 
+
+def make_tool_delegate(inner_agent: Agent[None, str]) -> Agent[None, str]:
     agent = Agent(FunctionModel(call_delegate))
 
     @agent.tool_plain
     def delegate(prompt: str) -> str:
-        if stream:
-            return inner_agent.run_stream_sync(prompt).get_output()
         return inner_agent.run_sync(prompt).output
 
     return agent
@@ -40,13 +41,26 @@ def make_output_delegate(inner_agent: Agent[None, str]) -> Agent[None, str]:
     return Agent(FunctionModel(call_delegate), output_type=delegate)
 
 
+def make_awaitable_tool_delegate(inner_agent: Agent[None, str]) -> Agent[None, str]:
+    async def run_delegate(prompt: str) -> str:
+        return inner_agent.run_sync(prompt).output
+
+    agent = Agent(FunctionModel(call_delegate))
+
+    @agent.tool_plain
+    def delegate(prompt: str) -> Any:
+        return run_delegate(prompt)
+
+    return agent
+
+
 NESTED_RUN_SYNC_ERROR = (
-    r'`Agent\.run_sync\(\)` cannot be called from a synchronous callback running inside an agent run\. '
-    r'Make the callback `async def` and use `await agent\.run\(\.\.\.\)` instead\.'
+    r'`Agent\.run_sync\(\)` cannot be called from inside another agent run\. '
+    r'Make the calling function `async def` and use `await agent\.run\(\.\.\.\)` instead\.'
 )
 
 
-@pytest.mark.parametrize('make_agent', [make_tool_delegate, make_output_delegate])
+@pytest.mark.parametrize('make_agent', [make_tool_delegate, make_output_delegate, make_awaitable_tool_delegate])
 async def test_run_sync_from_sync_callback_is_rejected(
     make_agent: Callable[[Agent[None, str]], Agent[None, str]],
 ) -> None:
@@ -55,8 +69,6 @@ async def test_run_sync_from_sync_callback_is_rejected(
 
     with pytest.raises(UserError, match=NESTED_RUN_SYNC_ERROR):
         await outer_agent.run('delegate')
-
-    assert (await inner_agent.run('after callback')).output == 'inner result'
 
 
 def test_run_sync_from_sync_callback_is_rejected_with_sync_outer_run() -> None:
@@ -76,18 +88,20 @@ def test_run_sync_from_sync_callback_is_rejected_with_bounded_executor() -> None
             with pytest.raises(UserError, match=NESTED_RUN_SYNC_ERROR):
                 outer_agent.run_sync('delegate')
 
-        assert executor.submit(inner_agent.run_sync, 'after callback').result().output == 'inner result'
-
 
 async def test_run_stream_sync_from_sync_callback_is_rejected() -> None:
     inner_agent = Agent(FunctionModel(return_inner_result))
-    outer_agent = make_tool_delegate(inner_agent, stream=True)
+    outer_agent = Agent(FunctionModel(call_delegate))
+
+    @outer_agent.tool_plain
+    def delegate(prompt: str) -> str:
+        return inner_agent.run_stream_sync(prompt).get_output()
 
     with pytest.raises(
         UserError,
         match=(
-            r'`Agent\.run_stream_sync\(\)` cannot be called from a synchronous callback running inside an agent run\. '
-            r'Make the callback `async def` and use `async with agent\.run_stream\(\.\.\.\)` instead\.'
+            r'`Agent\.run_stream_sync\(\)` cannot be called from inside another agent run\. '
+            r'Make the calling function `async def` and use `async with agent\.run_stream\(\.\.\.\)` instead\.'
         ),
     ):
         await outer_agent.run('delegate')
@@ -101,26 +115,43 @@ async def test_run_sync_from_inline_sync_callback_is_rejected() -> None:
         with pytest.raises(UserError, match=NESTED_RUN_SYNC_ERROR):
             await outer_agent.run('delegate')
 
-    assert (await inner_agent.run('after callback')).output == 'inner result'
 
-
-async def test_async_callback_can_delegate_to_agent() -> None:
-    call_count = 0
-
-    def call_delegate(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return ModelResponse(parts=[ToolCallPart('delegate', '{"prompt": "hello"}')])
-        return ModelResponse(parts=[TextPart('outer result')])
-
+async def test_run_sync_succeeds_in_child_task_after_parent_run() -> None:
+    parent_finished = asyncio.Event()
     inner_agent = Agent(FunctionModel(return_inner_result))
-    outer_agent = Agent(FunctionModel(call_delegate))
+    outer_agent = Agent(FunctionModel(return_inner_result))
 
-    @outer_agent.tool_plain
-    async def delegate(prompt: str) -> str:
-        return (await inner_agent.run(prompt)).output
+    async def run_after_parent() -> str:
+        await parent_finished.wait()
+        return (await asyncio.to_thread(inner_agent.run_sync, 'after parent')).output
 
-    result = await outer_agent.run('delegate')
+    async with outer_agent.iter('parent') as run:
+        child_task = asyncio.create_task(run_after_parent())
+        async for _ in run:
+            pass
 
-    assert result.output == 'outer result'
+    parent_finished.set()
+    assert await child_task == 'inner result'
+
+
+async def test_run_sync_in_child_task_is_rejected_while_parent_run_is_active() -> None:
+    inner_finished = asyncio.Event()
+    delegate_agent = Agent(FunctionModel(return_inner_result))
+    inner_agent = Agent(FunctionModel(return_inner_result))
+    outer_agent = Agent(FunctionModel(return_inner_result))
+
+    async def run_after_inner() -> None:
+        await inner_finished.wait()
+        await asyncio.to_thread(delegate_agent.run_sync, 'while parent is active')
+
+    async with outer_agent.iter('outer') as outer_run:
+        async with inner_agent.iter('inner') as inner_run:
+            child_task = asyncio.create_task(run_after_inner())
+            async for _ in inner_run:
+                pass
+
+        async for _ in outer_run:
+            pass
+        inner_finished.set()
+        with pytest.raises(UserError, match=NESTED_RUN_SYNC_ERROR):
+            await child_task

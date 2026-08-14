@@ -34,22 +34,13 @@ result = agent.run_sync('Who let the dogs out?')
 
 Synchronous methods like [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] reuse the thread's current event loop, and install a fresh one if other code closed it. If this error is raised from inside `httpx` or `httpcore` during a model request, the agent was already used before its event loop was closed: the provider's HTTP connection pool still holds connections bound to the dead loop. Recreate the agent together with its model and provider (or pass a fresh `http_client` to the provider); reusing an existing `Model` instance keeps the dead connection pool. Avoid closing an event loop that other code is still using.
 
-## [`UserError`][pydantic_ai.exceptions.UserError]: `Agent.run_sync()` cannot be called from a synchronous callback running inside an agent run
+## [`UserError`][pydantic_ai.exceptions.UserError]: `Agent.run_sync()` cannot be called from inside another agent run
 
-If a synchronous [tool](tools.md), [output function](output.md#output-functions), or other callback delegates to another standard agent with [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`Agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync], Pydantic AI raises this error rather than risk a deadlock.
+If a synchronous [tool](tools.md) or [output function](output.md#output-functions) delegates to another agent with [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`Agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync], Pydantic AI raises this error rather than risk a deadlock.
 
 Sync callbacks are normally offloaded to worker threads, which have no event loop of their own. A nested sync call would create a second event loop while the parent run is still waiting for the callback. If the delegate uses an async resource bound to the parent loop, the two runs can wait on each other indefinitely.
 
-Make the delegating function `async def` and `await` the inner run:
-
-```python {title="delegate_from_async_tool.py" test="skip" lint="skip"}
-@parent_agent.tool
-async def delegate(ctx: RunContext[None], instructions: str) -> str:
-    result = await inner_agent.run(instructions, usage=ctx.usage)
-    return result.output
-```
-
-The parent agent can still be started with `run_sync()` from normal synchronous application code. If the callback also needs to do blocking work, keep it `async def` and push just that part into [`asyncio.to_thread()`][asyncio.to_thread]. See [Agent delegation](multi-agent-applications.md#agent-delegation).
+Make the delegating function `async def` and `await` the inner run, as shown in [Agent delegation](multi-agent-applications.md#agent-delegation). The parent agent can still be started with `run_sync()` from normal synchronous application code. If the delegating function also needs to do blocking work, push just that part into [`asyncio.to_thread()`][asyncio.to_thread].
 
 ## API Key Configuration
 

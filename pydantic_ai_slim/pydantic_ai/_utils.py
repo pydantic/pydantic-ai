@@ -23,6 +23,7 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
+from functools import partial
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
@@ -72,16 +73,39 @@ _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
-_in_sync_callback: ContextVar[bool] = ContextVar('_in_sync_callback', default=False)
+
+
+@dataclass
+class _AgentRunState:
+    parent: _AgentRunState | None
+    active: bool = True
+
+
+_agent_run_state: ContextVar[_AgentRunState | None] = ContextVar('_agent_run_state', default=None)
 
 
 def check_sync_agent_call(method: str, async_method: str) -> None:
-    """Reject sync agent entry points from framework-managed sync callbacks."""
-    if _in_sync_callback.get():
-        raise UserError(
-            f'`Agent.{method}()` cannot be called from a synchronous callback running inside an agent run. '
-            f'Make the callback `async def` and use `{async_method}` instead.'
-        )
+    """Reject sync agent entry points from inside another agent run."""
+    state = _agent_run_state.get()
+    while state is not None:
+        if state.active:
+            raise UserError(
+                f'`Agent.{method}()` cannot be called from inside another agent run. '
+                f'Make the calling function `async def` and use `{async_method}` instead.'
+            )
+        state = state.parent
+
+
+@contextmanager
+def agent_run_context() -> Generator[None]:
+    """Mark the current context as running an agent."""
+    state = _AgentRunState(parent=_agent_run_state.get())
+    token = _agent_run_state.set(state)
+    try:
+        yield
+    finally:
+        state.active = False
+        _agent_run_state.reset(token)
 
 
 def run_until_complete(coro: Awaitable[_R]) -> _R:
@@ -146,17 +170,10 @@ def using_thread_executor(executor: Executor) -> Generator[None]:
 
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    def call_sync_callback() -> _R:
-        token = _in_sync_callback.set(True)
-        try:
-            return func(*args, **kwargs)
-        finally:
-            _in_sync_callback.reset(token)
-
     if _disable_threads.get():
-        return call_sync_callback()
+        return func(*args, **kwargs)
 
-    wrapped_func = call_sync_callback
+    wrapped_func = partial(func, *args, **kwargs)
 
     executor = _thread_executor.get()
     if executor is not None:
