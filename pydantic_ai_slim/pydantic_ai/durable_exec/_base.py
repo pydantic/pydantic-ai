@@ -106,6 +106,14 @@ class _EventStreamHandlerParams:
     run_context: RunContext[Any]
 
 
+@dataclass(frozen=True)
+class _CallToolParams:
+    name: str
+    tool_args: dict[str, Any]
+    ctx: RunContext[Any]
+    tool: ToolsetTool[Any]
+
+
 class _ModelRequestCacheIdentity(CacheIdentity[_ModelRequestParams]):
     def project(self, params: _ModelRequestParams) -> tuple[object, ...]:
         request = params.request
@@ -128,17 +136,27 @@ class _EventStreamHandlerCacheIdentity(CacheIdentity[_EventStreamHandlerParams])
         return (params.event,)
 
 
+class _FunctionCallToolCacheIdentity(CacheIdentity[_CallToolParams]):
+    def project(self, params: _CallToolParams) -> tuple[object, ...]:
+        return (params.name, params.tool_args, params.ctx, params.tool)
+
+
 class _LegacyOperationNamer(DurableOperationNamer):
     """Preserve callable-engine names by delegating to their existing naming hook."""
 
-    def __init__(self, operation_name: Callable[[DurableOperationId], str]) -> None:
+    def __init__(
+        self,
+        operation_name: Callable[[DurableOperationId], str],
+        invocation_name: Callable[[DurableOperationId, object], DurableInvocationName],
+    ) -> None:
         self._operation_name = operation_name
+        self._invocation_name = invocation_name
 
     def operation_name(self, operation_id: DurableOperationId) -> str:
         return self._operation_name(operation_id)
 
     def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
-        return DurableInvocationName(self.operation_name(operation_id))
+        return self._invocation_name(operation_id, params)
 
 
 class _LegacyOperationConfig(DurableOperationConfig[Any]):
@@ -504,7 +522,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Build the declaration backend for callable engines using their compatibility hooks."""
         return LegacyCallableBackend(
             self,
-            namer=_LegacyOperationNamer(self._legacy_operation_name),
+            namer=_LegacyOperationNamer(self._legacy_operation_name, self._legacy_invocation_name),
             config=_LegacyOperationConfig(self._legacy_base_operation_config, self._legacy_tool_operation_config),
         )
 
@@ -562,8 +580,27 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 )
             case EventStreamHandlerId():
                 return self._unit_name('event_stream_handler', label='Handle Stream Event')
+            case GetToolsId(toolset_kind=kind, toolset_id=toolset_id):
+                prefix = f'{self.name}__{"mcp_server" if kind == "mcp" else f"{kind}_toolset"}__{toolset_id}'
+                return self._unit_name(kind, prefix=prefix, suffix='.get_tools')
+            case GetInstructionsId(toolset_id=toolset_id):
+                prefix = f'{self.name}__mcp_server__{toolset_id}'
+                return self._unit_name('mcp_server', prefix=prefix, suffix='.get_instructions')
+            case CallToolId(toolset_kind=kind, toolset_id=toolset_id):
+                legacy_kind = 'mcp_server' if kind == 'mcp' else f'{kind}_toolset'
+                prefix = f'{self.name}__{legacy_kind}__{toolset_id}'
+                return self._unit_name(legacy_kind, prefix=prefix)
             case _:
                 raise RuntimeError(f'Legacy naming is not yet implemented for durable operation {operation_id!r}')
+
+    def _legacy_invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
+        if isinstance(operation_id, CallToolId):
+            assert isinstance(params, _CallToolParams)
+            kind = 'mcp_server' if operation_id.toolset_kind == 'mcp' else f'{operation_id.toolset_kind}_toolset'
+            prefix = f'{self.name}__{kind}__{operation_id.toolset_id}'
+            label = 'Call MCP Tool' if operation_id.toolset_kind == 'mcp' else 'Call Tool'
+            return DurableInvocationName(self._unit_name(kind, prefix=prefix, tool_name=params.name, label=label))
+        return DurableInvocationName(self._legacy_operation_name(operation_id))
 
     def _legacy_result_codec(self, result_type: object) -> _LegacyResultCodec[Any]:
         return _LegacyResultCodec(partial(self._encode, result_type), partial(self._codec.load, result_type))
@@ -758,7 +795,23 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _build_function_toolset(self, toolset: FunctionToolset[AgentDepsT]) -> DurableFunctionToolset[AgentDepsT]:
         base_config = self._toolset_base_config('function')
-        prefix = f'{self.name}__function_toolset__{toolset.id}'
+
+        async def call_tool_handler(params: _CallToolParams) -> CallToolResult:
+            with self._durable_run_context_scope(params.ctx) as durable_ctx:
+                return await wrap_tool_call_result(
+                    toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
+                )
+
+        call_tool = self._build_operation_backend().bind(
+            DurableOperation(
+                operation_id=CallToolId('function', cast(str, toolset.id)),
+                handler=call_tool_handler,
+                parameter_transport=IdentityParameterTransport[_CallToolParams](),
+                cache_identity=_FunctionCallToolCacheIdentity(),
+                result_codec=self._legacy_result_codec(CallToolResult),
+                config_role=OperationConfigRole.TOOL_CALL,
+            )
+        )
 
         async def call_tool_operation(
             name: str,
@@ -767,14 +820,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool: ToolsetTool[AgentDepsT],
             config: Any,
         ) -> Any:
-            async def fn() -> CallToolResult:
-                with self._durable_run_context_scope(ctx) as durable_ctx:
-                    return await wrap_tool_call_result(toolset.call_tool(name, tool_args, durable_ctx, tool))
-
-            unit_name = self._unit_name('function_toolset', prefix=prefix, tool_name=name, label='Call Tool')
-            payload = await self._durable_operation(
-                unit_name, fn, tp=CallToolResult, inputs=(name, tool_args, ctx, tool), config=config
-            )
+            payload = await call_tool(_CallToolParams(name, tool_args, ctx, tool), config=config)
             return self._unwrap_tool_result(payload)
 
         return DurableFunctionToolset(
