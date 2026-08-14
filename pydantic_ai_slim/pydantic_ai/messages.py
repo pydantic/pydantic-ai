@@ -1161,6 +1161,21 @@ _MULTIMODAL_KINDS: frozenset[str] = frozenset(t.__dataclass_fields__['kind'].def
 # (every dumped item), `file_id` (`UploadedFile`).
 _MULTIMODAL_FIELDS: frozenset[str] = frozenset({'url', 'media_type', 'file_id'})
 
+# Leaf types `json.loads`/pydantic-core's JSON parser ever produces, plus the builtin scalars a
+# `validate_python` caller would pass. Checked with `type(value) in ...` rather than `isinstance`
+# in the fast path below, since none of them can be subclassed away from a matching `kind`/`Mapping`
+# ABC registration the slow path still needs to catch.
+_JSON_LEAF_TYPES: frozenset[type] = frozenset({str, int, float, bool, type(None)})
+
+
+def _is_multimodal_dict(value: Any) -> bool:
+    return (
+        'kind' in value
+        and isinstance(value['kind'], str)
+        and value['kind'] in _MULTIMODAL_KINDS
+        and any(field in value for field in _MULTIMODAL_FIELDS)
+    )
+
 
 def _tool_return_content_discriminator(value: Any) -> str:
     """Route a `ToolReturnContent` value to one of the tagged union branches.
@@ -1176,18 +1191,26 @@ def _tool_return_content_discriminator(value: Any) -> str:
     (carried by every dumped `MultiModalContent`), or `file_id` for `UploadedFile` — so a user
     dict that merely reuses one of our `kind` values (e.g. `{'kind': 'binary', 'label': 'foo'}`)
     stays a plain mapping instead of being forced through multimodal validation.
+
+    Because `ToolReturnContent` is recursive, this runs once per JSON node on `validate_json`
+    (see https://github.com/pydantic/pydantic-ai/issues/7472), so the exact-type fast path below
+    matters: it skips the `MULTI_MODAL_CONTENT_TYPES` tuple check and the `Mapping`/`Sequence` ABC
+    `isinstance` checks for the plain `dict`/`list`/scalar nodes that make up the bulk of any
+    JSON-decoded tree, falling back to the general (slower but exhaustive) checks for everything
+    else, e.g. real `MultiModalContent` instances or custom `Mapping`/`Sequence` implementations
+    passed via `validate_python`.
     """
+    if type(value) is dict:
+        return 'multimodal' if _is_multimodal_dict(value) else 'mapping'
+    if type(value) is list:
+        return 'sequence'
+    if type(value) in _JSON_LEAF_TYPES:
+        return 'any'
+
     if isinstance(value, MULTI_MODAL_CONTENT_TYPES):
         return 'multimodal'
     if isinstance(value, Mapping):
-        if (
-            'kind' in value
-            and isinstance(value['kind'], str)
-            and value['kind'] in _MULTIMODAL_KINDS
-            and any(field in value for field in _MULTIMODAL_FIELDS)
-        ):
-            return 'multimodal'
-        return 'mapping'
+        return 'multimodal' if _is_multimodal_dict(value) else 'mapping'
     if isinstance(value, (str, bytes, bytearray)):
         return 'any'
     if isinstance(value, Sequence):
