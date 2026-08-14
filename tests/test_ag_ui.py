@@ -1147,7 +1147,7 @@ async def test_tool_ag_ui_parts() -> None:
                 'messageId': IsStr(),
                 'toolCallId': tool_call_id,
                 'content': """\
-Unknown tool name: 'get_weather'. Known tools: 'get_weather_parts'
+Unknown tool name: 'get_weather'. Available tools: 'get_weather_parts'
 
 Fix the errors and try again.\
 """,

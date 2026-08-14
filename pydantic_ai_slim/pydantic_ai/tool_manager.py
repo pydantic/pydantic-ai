@@ -501,19 +501,38 @@ class ToolManager(Generic[AgentDepsT]):
         name = call.tool_name
         tool = self.tools.get(name)
         if tool is None:
-            # *Known*, not *available*: the branch below refuses tools that are in `self.tools` but
-            # not callable yet, so this set is deliberately the wider one. The question here is
-            # whether the name is real at all, and a deferred tool is a real name the model may yet
-            # be given — narrowing it would report a not-yet-revealed tool as a typo.
-            if self.tools:
-                known = sorted(self.tools.keys())
-                msg = f'Known tools: {", ".join(f"{n!r}" for n in known)}'
-            else:
-                msg = 'No tools are defined.'
-            raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+            raise ModelRetry(f'Unknown tool name: {name!r}. {self._callable_tools_hint()}')
         if (unavailable := self._unavailable_reason(tool.tool_def)) is not None:
             raise _ToolUnavailable(unavailable, tool)
         return name, tool
+
+    _REVEAL_HINT = (
+        'Other tools exist but have not been shown to you yet; reveal them with tool search or `load_capability`.'
+    )
+
+    def _callable_tools_hint(self) -> str:
+        """What to tell the model after it named a tool that doesn't exist.
+
+        Lists what it can call *right now* rather than everything defined: a not-yet-revealed tool
+        offered as the alternative would only earn the availability refusal below, sending the model
+        back into the same wall. The existence of hidden tools is still disclosed, because a bare
+        list reads as "this is all you have" — and when every tool is deferred, searching is exactly
+        the right next move.
+
+        Deliberately unlike `_tool_choice`'s `Known tools:`, which validates a *developer's*
+        `tool_choice=` against every defined name and has to stay wide so a real-but-unrevealed tool
+        isn't reported as a typo. Here the list is advice to a model, not a validity check.
+        """
+        assert self.tools is not None
+        if not self.tools:
+            return 'No tools are defined.'
+        callable_now = sorted(
+            name for name, tool in self.tools.items() if self._unavailable_reason(tool.tool_def) is None
+        )
+        if not callable_now:
+            return f'No tools are available yet. {self._REVEAL_HINT}'
+        listed = f'Available tools: {", ".join(f"{n!r}" for n in callable_now)}'
+        return f'{listed}. {self._REVEAL_HINT}' if len(callable_now) < len(self.tools) else listed
 
     def _unavailable_reason(self, tool_def: ToolDefinition) -> str | None:
         """Why this tool cannot be called yet, or `None` when it is available.

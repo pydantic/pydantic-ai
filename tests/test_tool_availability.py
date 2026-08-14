@@ -671,3 +671,33 @@ def test_capability_loaded_is_a_deprecated_alias_for_capability_available() -> N
     with warnings.catch_warnings():
         warnings.simplefilter('error', PydanticAIDeprecationWarning)
         assert replace(ctx, capability_available=False).capability_available is False
+
+
+async def test_unknown_tool_retry_lists_only_callable_tools_and_points_at_the_rest() -> None:
+    """A hallucinated name gets the tools the model can actually call, plus how to reach the others.
+
+    Offering a not-yet-revealed tool as the alternative sends the model straight back into the
+    availability refusal, so the list is narrowed to what would survive that gate. The hidden ones
+    are still disclosed as a count-free hint, because "here is all you have" would otherwise tell a
+    model whose tools are all deferred to give up rather than search.
+    """
+
+    def visible_op() -> str:
+        return 'visible'  # pragma: no cover
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, RetryPromptPart) for msg in messages for part in msg.parts):
+            return make_text_response('done')
+        return ModelResponse(parts=[ToolCallPart(tool_name='nope', args={}, tool_call_id='n1')])
+
+    toolset = FunctionToolset[Any]([visible_op])
+    toolset.add_function(secret_op, defer_loading=True)
+    result = await Agent(FunctionModel(model_fn), toolsets=[toolset]).run('go')
+
+    refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
+    assert refusals == snapshot(
+        [
+            "Unknown tool name: 'nope'. Available tools: 'search_tools', 'visible_op'. Other tools exist but have "
+            'not been shown to you yet; reveal them with tool search or `load_capability`.'
+        ]
+    )
