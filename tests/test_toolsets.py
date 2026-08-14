@@ -1779,6 +1779,33 @@ async def test_combined_toolset_instructions_empty():
     assert instructions is None
 
 
+async def test_combined_toolset_collects_instructions_concurrently_in_child_order():
+    """Instruction collection starts all children together without changing their declared order."""
+    started: list[str] = []
+    all_started = anyio.Event()
+
+    class SynchronizingToolset(MockToolsetWithInstructions):
+        async def get_instructions(self, ctx: RunContext[Any]) -> str:
+            assert self.custom_instructions is not None
+            started.append(self.custom_instructions)
+            if len(started) == 2:
+                all_started.set()
+            await all_started.wait()
+            return self.custom_instructions
+
+    combined = CombinedToolset(
+        [SynchronizingToolset('First.', id='first'), SynchronizingToolset('Second.', id='second')]
+    )
+
+    with anyio.fail_after(1):
+        instructions = await combined.get_instructions(build_run_context(None))
+
+    assert instructions == [
+        InstructionPart(content='First.', dynamic=True, id='toolset:first'),
+        InstructionPart(content='Second.', dynamic=True, id='toolset:second'),
+    ]
+
+
 async def test_toolset_ids_must_be_unique_when_they_key_instruction_blocks():
     """Distinct toolsets cannot share the id that addresses their instruction blocks.
 

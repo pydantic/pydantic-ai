@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pydantic_ai._instructions import normalize_toolset_instructions
 from pydantic_ai._run_context import AgentDepsT, RunContext
+from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import InstructionPart
 
@@ -35,10 +36,10 @@ async def _collect_toolset_instructions(
     if isinstance(toolset, WrapperToolset) and type(toolset).get_instructions is WrapperToolset.get_instructions:
         return await _collect_toolset_instructions(toolset.wrapped, ctx)
     if isinstance(toolset, CombinedToolset) and type(toolset).get_instructions is CombinedToolset.get_instructions:
-        contributions: list[tuple[AbstractToolset[AgentDepsT], list[InstructionPart]]] = []
-        for child in toolset.toolsets:
-            contributions.extend(await _collect_toolset_instructions(child, ctx))
-        return contributions
+        child_contributions = await gather(
+            *(_collect_toolset_instructions(child, ctx) for child in toolset.toolsets)
+        )
+        return [contribution for contributions in child_contributions for contribution in contributions]
 
     result = await toolset.get_instructions(ctx)
     source = toolset
