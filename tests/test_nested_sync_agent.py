@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -75,8 +75,7 @@ async def test_run_sync_from_metadata_callback_is_rejected() -> None:
     inner_agent = Agent(FunctionModel(return_inner_result))
 
     def metadata(_: RunContext) -> dict[str, Any]:
-        inner_agent.run_sync('delegate')
-        return {}
+        return cast(dict[str, Any], inner_agent.run_sync('delegate'))
 
     outer_agent = Agent(FunctionModel(return_inner_result), metadata=metadata)
 
