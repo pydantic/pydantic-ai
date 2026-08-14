@@ -621,8 +621,8 @@ async def test_caller_error_after_short_circuit_propagates() -> None:
 
         async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
             nonlocal on_error_called
-            on_error_called = True
-            return AgentRunResult(output='recovered after short-circuit')
+            on_error_called = True  # pragma: no cover
+            return AgentRunResult(output='recovered after short-circuit')  # pragma: no cover
 
     agent = Agent(capabilities=[ShortCircuitThenRecoverCapability()], deps_type=type(None))
 

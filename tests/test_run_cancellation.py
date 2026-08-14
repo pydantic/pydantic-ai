@@ -1611,9 +1611,9 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
         async def wrap_run(self, ctx: RunContext, *, handler: Any) -> AgentRunResult:
             try:
                 return await handler()
-            except asyncio.CancelledError:
-                observed.append('wrap_run')
-                return AgentRunResult(output='recovered')
+            except asyncio.CancelledError:  # pragma: no cover
+                observed.append('wrap_run')  # pragma: no cover
+                return AgentRunResult(output='recovered')  # pragma: no cover
 
         async def on_run_error(self, ctx: RunContext, *, error: BaseException) -> AgentRunResult:
             assert isinstance(error, asyncio.CancelledError)
