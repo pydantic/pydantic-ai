@@ -213,6 +213,14 @@ jobs:
       # Rebenchmark all-extras after https://github.com/cbornet/blockbuster/pull/61 is released
       # in a compatible version; enable it if the job stays within seven minutes.
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' && matrix.install.name != 'all-extras' }}
+      # Disables Temporal's workflow deadlock detector (temporalio reads this to set the
+      # per-activation budget to `None` instead of 2s). That budget is wall-clock, so it measures
+      # runner contention as readily as a blocking call: `tests/test_temporal.py`,
+      # `tests/test_prefect.py` and `tests/test_dbos.py` each pin an xdist group, putting three
+      # durable-execution servers on four vCPUs, and a descheduled workflow thread trips it as
+      # `TMPRL1101`. The cost: a genuine in-workflow blocking call now hangs to the job timeout
+      # instead of failing in 2s.
+      TEMPORAL_DEBUG: '1'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -331,6 +339,8 @@ jobs:
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
       # repeating its stack-inspection overhead here pushes lowest-version jobs past the CI budget.
       BLOCKBUSTER_ENABLED: false
+      # See the note on the `test` job: same runner shape, same deadlock-detector false positives.
+      TEMPORAL_DEBUG: '1'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
