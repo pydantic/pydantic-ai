@@ -692,14 +692,19 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    'When is the next Python feature release due?': ToolCallPart(
+        tool_name='final_result',
+        args={
+            'version': '3.15.0',
+            'release_month': 'October 2026',
+            'source_url': 'https://peps.python.org/pep-0790/',
+        },
+    ),
     'Find recent papers about transformer architectures': (
         'Here are some recent papers about transformer architectures from arxiv.org:\n'
         '\n'
         '1. "Attention Is All You Need" - The foundational paper on the Transformer model.\n'
         '2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.'
-    ),
-    'What was the mass of the largest meteorite found this year?': (
-        'The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.'
     ),
     'Write a long essay about Python': (
         'Python is a versatile, high-level programming language known for its readability and simplicity. '
