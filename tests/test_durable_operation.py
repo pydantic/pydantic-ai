@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Literal, cast
@@ -293,6 +294,84 @@ def test_temporal_name_parity_with_live_registered_activities_and_table() -> Non
     actual = {namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in ids}
     assert actual == live
     assert actual == TEMPORAL_ACTIVITY_NAMES
+
+
+def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
+    pytest.importorskip('temporalio')
+    from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
+
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._toolset import toolset_temporal_activities
+
+    agent = Agent(
+        TestModel(),
+        name='compat',
+        toolsets=list(_synthetic_toolsets()),
+        capabilities=[TemporalDurability(event_stream_handler=_event_handler)],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    backend = durability._operation_backend  # pyright: ignore[reportPrivateUsage]
+    assert backend is not None
+
+    # Rebuild the pre-backend registration list through the old ownership path: the four
+    # capability activities followed by each wrapped toolset's activities.
+    legacy_registrations = [
+        durability.request_activity,
+        durability.request_stream_activity,
+        durability.event_stream_handler_activity,
+        durability.cancel_suspended_response_activity,
+    ]
+    for wrapped in durability._toolsets_by_id.values():  # pyright: ignore[reportPrivateUsage]
+        legacy_registrations.extend(toolset_temporal_activities(wrapped))
+
+    registrations = list(backend.registrations())
+    assert registrations == legacy_registrations
+
+    def sdk_definition(item: Callable[..., object]) -> tuple[str | None, inspect.Signature]:
+        definition = ActivityDefinition.must_from_callable(item)  # pyright: ignore[reportUnknownMemberType]
+        fn = cast(Callable[..., object], definition.fn)  # pyright: ignore[reportUnknownMemberType]
+        return definition.name, inspect.signature(fn)
+
+    assert [sdk_definition(item) for item in registrations] == [sdk_definition(item) for item in legacy_registrations]
+
+
+async def test_temporal_backend_binds_existing_positional_activity() -> None:
+    pytest.importorskip('temporalio')
+    from temporalio.workflow import ActivityConfig
+
+    from pydantic_ai.durable_exec.temporal._operation_backend import (
+        TemporalOperationBackend,
+        TemporalOperationConfig,
+    )
+
+    model_config: ActivityConfig = {'summary': 'model'}
+    event_config: ActivityConfig = {'summary': 'event'}
+    tool_config: ActivityConfig = {'summary': 'tool'}
+    config = TemporalOperationConfig(model=model_config, event=event_config, tool=tool_config)
+    assert config.base(OperationConfigRole.TOOL_CALL, CallToolId('function', 'tools')) is tool_config
+    assert config.for_tool(OperationConfigRole.TOOL_CALL, CallToolId('function', 'tools'), None, 'tool') is tool_config
+
+    backend = TemporalOperationBackend(
+        agent_name='compat',
+        deps_type=int,
+        model_config=model_config,
+        event_config=event_config,
+        tool_config=tool_config,
+    )
+
+    async def existing_activity(params: str, deps: int | None = None) -> str:
+        return f'{params}:{deps}'
+
+    bound = backend.register_activity(
+        existing_activity,
+        operation_id=ModelRequestId(None, False, 'test'),
+        config_role=OperationConfigRole.MODEL,
+    )
+    assert bound.operation.operation_id == ModelRequestId(None, False, 'test')
+    assert await bound.operation.handler(('payload', 42)) == 'payload:42'
+    assert await bound(('payload', 42)) == 'payload:42'
+    assert backend.config_for_tool(bound.operation, None, 'tool') is tool_config
 
 
 def _exhaustive_identity(operation_id: DurableOperationId) -> str:

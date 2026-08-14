@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, cast
 
 from pydantic import ConfigDict, with_config
 from pydantic_core import PydanticSerializationError
-from temporalio import activity, workflow
+from temporalio import workflow
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import messages as _messages
@@ -23,6 +23,12 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
+from pydantic_ai.durable_exec._operation import (
+    CancelSuspendedResponseId,
+    EventStreamHandlerId,
+    ModelRequestId,
+    OperationConfigRole,
+)
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase, Lifecycle
 from pydantic_ai.durable_exec._utils import (
@@ -49,6 +55,7 @@ if TYPE_CHECKING:
     pass
 
 from ._activity_execution import execute_activity
+from ._operation_backend import TemporalOperationBackend
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
@@ -291,8 +298,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         )
         self._toolset_activity_config = toolset_activity_config or {}
 
-        # These are populated by for_agent()
-        self._temporal_activities: list[Callable[..., Any]] = []
+        # Populated by for_agent().
+        self._operation_backend: TemporalOperationBackend | None = None
 
     def _check_bindable(self) -> None:
         if self.in_durable_context:
@@ -307,24 +314,32 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if self._deps_type is None:
             self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
 
-        # Register activities on the bound copy
-        self._temporal_activities = []
+        assert self._deps_type is not None
+        self._operation_backend = TemporalOperationBackend(
+            agent_name=self.name,
+            deps_type=self._deps_type,
+            model_config=self._model_activity_config,
+            event_config=self._event_stream_handler_activity_config,
+            tool_config=self.activity_config,
+        )
         self._register_activities(agent)
 
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Register all Temporal activities for model requests, event streaming, and toolsets."""
-        activity_name_prefix = f'agent__{self.name}'
         assert self._deps_type is not None  # set by `for_agent` before activities are registered
-        deps_type = self._deps_type
         run_context_type = self.run_context_type
-        activities: list[Callable[..., Any]] = []
+        backend = self._operation_backend
+        assert backend is not None
 
-        def register_activity(fn: Callable[..., Any], *, name: str) -> Callable[..., Any]:
-            # Temporal's Pydantic payload converter deserializes `deps` by introspecting the activity's
-            # annotation, and the concrete deps type is only known once the capability is bound to an agent.
-            # Set it here so serialization uses the real type instead of the placeholder the closure declares.
-            fn.__annotations__['deps'] = deps_type | None
-            return activity.defn(name=name)(fn)
+        def register_activity(
+            fn: Callable[..., Any], *, operation_id: ModelRequestId | CancelSuspendedResponseId | EventStreamHandlerId
+        ) -> Callable[..., Any]:
+            role = (
+                OperationConfigRole.EVENT
+                if isinstance(operation_id, EventStreamHandlerId)
+                else OperationConfigRole.MODEL
+            )
+            return backend.register_activity(fn, operation_id=operation_id, config_role=role).registration
 
         # --- Model request activities ---
 
@@ -341,8 +356,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                         params.model_request_parameters,
                     )
 
-        self.request_activity = register_activity(request_activity, name=f'{activity_name_prefix}__model_request')
-        activities.append(self.request_activity)
+        self.request_activity = register_activity(request_activity, operation_id=ModelRequestId(None, False, 'default'))
 
         async def request_stream_activity(params: _RequestParams, deps: Any) -> _StreamedActivityPayload:
             run_context = deserialize_run_context(
@@ -365,9 +379,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 return StreamedActivityResult(response=streamed_response.get(), events=events)
 
         self.request_stream_activity = register_activity(
-            request_stream_activity, name=f'{activity_name_prefix}__model_request_stream'
+            request_stream_activity, operation_id=ModelRequestId(None, True, 'default')
         )
-        activities.append(self.request_stream_activity)
 
         if self._event_stream_handler is not None:
             handler = self._event_stream_handler
@@ -380,9 +393,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     await handler(run_context, self._single_event_stream(params.event))
 
             self.event_stream_handler_activity = register_activity(
-                event_stream_handler_activity, name=f'{activity_name_prefix}__event_stream_handler'
+                event_stream_handler_activity, operation_id=EventStreamHandlerId()
             )
-            activities.append(self.event_stream_handler_activity)
 
         async def cancel_suspended_response_activity(params: _CancelParams, deps: Any = None) -> None:
             if params.serialized_run_context is None:
@@ -404,16 +416,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         self.cancel_suspended_response_activity = register_activity(
             cancel_suspended_response_activity,
-            name=f'{activity_name_prefix}__model_cancel_suspended_response',
+            operation_id=CancelSuspendedResponseId(None, 'default'),
         )
-        activities.append(self.cancel_suspended_response_activity)
 
         # --- Toolset wrapping ---
         self._register_toolsets(agent)
         for wrapped in self._toolsets_by_id.values():
-            activities.extend(toolset_temporal_activities(wrapped))
-
-        self._temporal_activities = activities
+            backend.adopt_registrations(toolset_temporal_activities(wrapped))
 
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         ts_id = ts.id
@@ -440,7 +449,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         Register these with the Temporal worker, either directly or via
         `AgentPlugin`.
         """
-        return self._temporal_activities
+        backend = self._operation_backend
+        if backend is None:
+            return []
+        return list(backend.registrations())
 
     # --- Capability hooks ---
 
