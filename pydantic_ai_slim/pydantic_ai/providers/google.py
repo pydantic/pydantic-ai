@@ -2,14 +2,17 @@ from __future__ import annotations as _annotations
 
 import os
 from abc import ABC, abstractmethod
-from typing import Literal, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, create_async_http_client, get_user_agent
-from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.google import google_model_profile, google_realtime_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
+
+if TYPE_CHECKING:
+    from pydantic_ai.realtime import RealtimeModelProfile
 
 try:
     from google.genai.client import Client
@@ -45,6 +48,10 @@ class BaseGoogleProvider(Provider[Client], ABC):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         return google_model_profile(model_name)
+
+    @staticmethod
+    def realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+        return google_realtime_model_profile(model_name)
 
     def _build_http_options(
         self,

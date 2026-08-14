@@ -6,11 +6,13 @@ import re
 import time
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Literal, cast
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
@@ -19,6 +21,7 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    CancellationToken,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -48,6 +51,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    RunCancelled,
     ToolFailed,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
@@ -63,6 +67,13 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.realtime import (
+    RealtimeModel,
+    RealtimeModelProfile,
+    RealtimeModelSettings,
+    RealtimeSession,
+)
+from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
@@ -297,6 +308,12 @@ runtime_handler_stream_agent = Agent(
     name='runtime_handler_stream_agent',
 )
 runtime_handler_stream_dbos_agent = DBOSAgent(runtime_handler_stream_agent)  # pyright: ignore[reportDeprecated]
+
+iter_handler_stream_agent = Agent(
+    FunctionModel(stream_function=runtime_handler_stream_function),
+    name='iter_handler_stream_agent',
+    capabilities=[DBOSDurability(event_stream_handler=runtime_event_stream_handler)],
+)
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
@@ -719,6 +736,39 @@ async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
     assert exported_event_messages != []
 
 
+async def test_dbos_agent_iter_in_workflow_fires_event_stream_handler(
+    allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire
+) -> None:
+    """`agent.iter()` inside a DBOS workflow delivers events to the durable `event_stream_handler`.
+
+    The handler used to be skipped entirely under `iter()`, because `wrap_run_event_stream` was
+    applied by `run()`/`run_stream()` rather than by the node stream primitives.
+    """
+
+    @DBOS.workflow()
+    async def run_iter_workflow() -> str | None:
+        async with iter_handler_stream_agent.iter('Say hello') as run:
+            async for _node in run:
+                pass
+        assert run.result is not None
+        return run.result.output
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output = await run_iter_workflow()
+
+    assert output == snapshot('Hello world')
+
+    exported_event_messages = [
+        event
+        for span in capfire.exporter.exported_spans_as_dict()
+        if (attributes := span.get('attributes'))
+        and attributes.get('logfire.msg') == 'runtime_event'
+        and isinstance((event := attributes.get('event')), str)
+    ]
+    assert exported_event_messages != []
+
+
 async def test_dbos_agent_event_stream_handler_property_outside_workflow(dbos: DBOS) -> None:
     # Outside a DBOS workflow, the `event_stream_handler` property resolves to the effective handler
     # directly, rather than the in-workflow per-event dispatcher.
@@ -1074,6 +1124,82 @@ async def test_dbos_agent_run_stream_events_in_workflow(allow_model_requests: No
         ),
     ):
         await run_stream_events_workflow()
+
+
+async def test_dbos_agent_realtime_session_in_workflow():
+    # A realtime session opens a long-lived, non-deterministic connection, so it can't run inside a
+    # workflow; the guard trips before the model is ever connected.
+    with patch.object(DBOS, 'workflow_id', 'wf-1'):
+        with pytest.raises(UserError, match='cannot be used inside a DBOS workflow'):
+            async with simple_dbos_agent.realtime(cast('Any', object())).session():
+                pass  # pragma: no cover
+
+
+async def test_dbos_agent_realtime_signaling_in_workflow():
+    # Browser-call signaling issues a live provider request, so workflow code can't call it directly:
+    # the two helpers reach the agent through `_resolve_realtime_session`, which the wrapper guards too.
+    with patch.object(DBOS, 'workflow_id', 'wf-1'):
+        realtime = simple_dbos_agent.realtime(cast('Any', object()))
+        with pytest.raises(UserError, match='cannot be used directly inside a DBOS workflow'):
+            await realtime.answer_webrtc_offer('v=0')
+        with pytest.raises(UserError, match='cannot be used directly inside a DBOS workflow'):
+            await realtime.create_client_secret()
+
+
+async def test_dbos_agent_realtime_signaling_in_step():
+    # Inside a step — the boundary where DBOS records non-deterministic I/O — signaling delegates to
+    # the wrapped agent like `run()` does. The fake model has no WebRTC support, so reaching *its*
+    # refusal proves the workflow guard let the call through.
+    with patch.object(DBOS, 'workflow_id', 'wf-1'), patch.object(DBOS, 'step_id', 7):
+        realtime = simple_dbos_agent.realtime(_FakeRealtimeModel())
+        with pytest.raises(UserError, match='does not support WebRTC'):
+            await realtime.create_client_secret()
+
+
+class _FakeRealtimeConnection(RealtimeConnection):
+    async def send(self, content: Any) -> None: ...  # pragma: no cover
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        return
+        yield  # pragma: no cover
+
+
+class _FakeRealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'
+
+    @property
+    def system(self) -> str:
+        return 'fake'
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(
+            supports_image_input=True,
+            supports_manual_turn_control=True,
+            supports_interruption=True,
+            supports_output_truncation=True,
+            supports_session_seeding=True,
+            supported_native_tools=frozenset(),
+        )
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[_FakeRealtimeConnection]:
+        yield _FakeRealtimeConnection()
+
+
+async def test_dbos_agent_realtime_session_outside_workflow():
+    # Outside a workflow, the session is delegated to the wrapped agent.
+    async with simple_dbos_agent.realtime(_FakeRealtimeModel()).session() as session:
+        assert isinstance(session, RealtimeSession)
+        assert [event async for event in session] == []
 
 
 async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBOS):
@@ -1548,6 +1674,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0006375'),
                 ),
                 model_name=IsStr(),
                 timestamp=IsDatetime(),
@@ -1596,6 +1723,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0005225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1695,6 +1823,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0006375'),
                 ),
                 model_name=IsStr(),
                 timestamp=IsDatetime(),
@@ -1743,6 +1872,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0005225'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1812,6 +1942,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0002875'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1857,6 +1988,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.0003875'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1896,6 +2028,7 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
                     },
+                    cost=Decimal('0.00039'),
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -2227,6 +2360,23 @@ async def test_dbos_durability_simple_agent(dbos: DBOS) -> None:
     assert output == 'Echo: Hello DBOS'
 
 
+async def test_dbos_durability_rejects_cancellation_token_in_workflow(dbos: DBOS) -> None:
+    """A same-process `cancellation_token` can't cross the durable boundary, so it's rejected inside
+    a workflow — but the same durable-capable agent still accepts one when run outside a workflow."""
+    agent = Agent(_durability_fn_model, name='durability_cancel_token', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> None:
+        await agent.run('Hello', cancellation_token=CancellationToken())
+
+    with pytest.raises(UserError, match='`cancellation_token` cannot be used with DBOS durable execution'):
+        await run_durable_agent()
+
+    # Outside a workflow the capability is transparent, so the token works like a normal run.
+    result = await agent.run('Hello', cancellation_token=CancellationToken())
+    assert result.output == 'Echo: Hello'
+
+
 async def test_dbos_durability_registers_legacy_workflows_opt_in(dbos: DBOS) -> None:
     agent = Agent(
         _durability_fn_model,
@@ -2486,6 +2636,66 @@ async def test_dbos_dynamic_tool_rejects_enqueue_in_workflow(dbos: DBOS) -> None
         await run_workflow()
 
     await agent.run('run')
+
+
+async def test_dbos_step_wrapped_tool_rejects_cancel_in_workflow(dbos: DBOS) -> None:
+    """`ctx.cancel()` inside a step-wrapped (dynamic) tool raises instead of replay-diverging.
+
+    Recovery replays the recorded step output without re-executing the tool, so an in-step
+    cancellation would silently not happen again. Outside a workflow the step degrades to a
+    plain call and cancellation keeps working.
+    """
+
+    async def cancel(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_cancel_dynamic',
+        toolsets=[DynamicToolset(lambda ctx: FunctionToolset([cancel]), id='cancel_dynamic')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(UserError, match='cancellation would silently not happen again'):
+        await run_workflow()
+
+    with pytest.raises(RunCancelled):
+        await agent.run('run')
+
+
+async def test_dbos_plain_tool_cancel_works_in_workflow(dbos: DBOS) -> None:
+    """A plain function tool is NOT step-wrapped under DBOS: it runs at workflow level, where
+    `cancel()` is live and replay-consistent (workflow-level code re-executes on recovery),
+    so cancellation works and surfaces as an ordinary `RunCancelled` application outcome."""
+
+    async def cancel(ctx: RunContext[object]) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='dbos_cancel_plain',
+        tools=[cancel],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> None:
+        await agent.run('run')
+
+    with pytest.raises(RunCancelled):
+        await run_workflow()
 
 
 async def test_dbos_dynamic_get_tools_rejects_enqueue_in_workflow(dbos: DBOS) -> None:

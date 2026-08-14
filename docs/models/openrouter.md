@@ -40,7 +40,12 @@ agent = Agent(model)
 
 OpenRouter has an [app attribution](https://openrouter.ai/docs/app-attribution) feature to track your application in their public ranking and analytics.
 
-You can pass in an `app_url` and `app_title` when initializing the provider to enable app attribution.
+You can pass in an `app_url` and `app_title` when initializing the provider to enable app attribution. Both fall back to the `OPENROUTER_APP_URL` and `OPENROUTER_APP_TITLE` environment variables when omitted.
+
+!!! note
+    The environment fallbacks only apply to clients the provider builds itself. If you pass your own
+    `openai_client`, it is reused as-is, so set the `HTTP-Referer` and `X-Title` headers on that client
+    directly.
 
 ```python
 from pydantic_ai.providers.openrouter import OpenRouterProvider
@@ -92,7 +97,7 @@ agent = Agent(model, model_settings=settings)
 
 ## Forced tool choice
 
-Anthropic models don't support a forced [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] while [thinking](../capabilities/thinking.md) is enabled. Where the Anthropic API rejects that combination outright, OpenRouter silently drops the `reasoning` field from the request instead, so the response comes back with no thinking at all. With thinking enabled on an `anthropic/` model:
+Pydantic AI treats a forced [`tool_choice`][pydantic_ai.settings.ModelSettings.tool_choice] as incompatible with [thinking](../capabilities/thinking.md) on every `anthropic/` model routed through OpenRouter. This is deliberately more conservative than [the direct Anthropic API](anthropic.md#forced-tool-choice), where adaptive thinking accepts forcing — the OpenRouter route hasn't been verified, and it fails quietly rather than loudly: where Anthropic rejects an incompatible combination outright, OpenRouter silently drops the `reasoning` field from the request instead, so the response comes back with no thinking at all. See [#7283](https://github.com/pydantic/pydantic-ai/issues/7283). With thinking enabled on an `anthropic/` model:
 
 - An explicit `tool_choice='required'` (or a list of tool names) raises a [`UserError`][pydantic_ai.exceptions.UserError]; disable thinking or use `tool_choice='auto'`.
 - A `required` choice that Pydantic AI resolved on your behalf (e.g. from an [output tool](../output.md#tool-output)) falls back softly to `'auto'`, so thinking is preserved. If the resolved choice named a single tool, the available tool list is filtered to that tool while `tool_choice` remains `'auto'`. The model may therefore answer with text instead of calling it; when an output tool is required, Pydantic AI retries with a prompt to call a tool.
@@ -201,19 +206,24 @@ Pass the prompt list to `agent.run_sync(prompt)`. Everything before the `CachePo
 
 ## Web Search
 
-OpenRouter supports web search via its [plugins](https://openrouter.ai/docs/guides/features/plugins/web-search). You can enable it using the [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
+OpenRouter supports web search through its [Beta server tool](https://openrouter.ai/docs/guides/features/server-tools/web-search). Enable it with [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]. The model decides whether to search and may make zero or multiple searches for a request.
 
 ### Web Search Parameters
 
-You can customize the web search behavior using the `search_context_size` parameter on [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]:
+You can configure search context, approximate user location, domain filters, and a limit on searches with [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]:
 
-```python
+```python {title="web_search_openrouter.py"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.models.openrouter import OpenRouterModel
 from pydantic_ai.native_tools import WebSearchTool
 
-tool = WebSearchTool(search_context_size='high')
+tool = WebSearchTool(
+    search_context_size='high',
+    user_location={'city': 'London', 'country': 'GB'},
+    allowed_domains=['pydantic.dev'],
+    max_uses=1,
+)
 model = OpenRouterModel('openai/gpt-4.1')
 agent = Agent(
     model,
@@ -221,3 +231,8 @@ agent = Agent(
 )
 result = agent.run_sync('What is the latest news in AI?')
 ```
+
+Pydantic AI surfaces the per-request web-search count under [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['server_tool_use']['web_search_requests']`.
+
+!!! note "Engine-specific parameters"
+    A recorded request verifies only that OpenRouter accepts these parameter names. The per-engine effects below come from OpenRouter's [Beta server-tool documentation](https://openrouter.ai/docs/guides/features/server-tools/web-search), not from responses recorded in this project: native provider search ignores `search_context_size`; `user_location` works only with native search; and domain-filter support varies (native OpenAI ignores `excluded_domains`). The server tool can make zero or several searches when it is available to the model. `max_uses` caps a request when OpenRouter uses a non-native search engine or Anthropic's native search; other native providers, including the OpenAI model in this example, ignore it. OpenRouter does not support [`WebSearchTool.external_web_access`][pydantic_ai.native_tools.WebSearchTool.external_web_access].

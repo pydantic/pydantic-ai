@@ -25,6 +25,7 @@ from typing_extensions import ParamSpec, Self, TypeIs, TypeVar, get_type_hints
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
 from ._utils import (
+    await_maybe,
     check_object_json_schema,
     is_async_callable,
     is_model_like,
@@ -83,8 +84,9 @@ class FunctionSchema:
             function = cast(Callable[[Any], Awaitable[str]], self.function)
             return await function(*args, **kwargs)
         else:
-            function = cast(Callable[[Any], str], self.function)
-            return await run_in_executor(function, *args, **kwargs)
+            # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
+            function = cast(Callable[[Any], str | Awaitable[str]], self.function)
+            return await await_maybe(await run_in_executor(function, *args, **kwargs))
 
     def _call_args(
         self,

@@ -194,6 +194,14 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
     )
     parser.add_argument('--host', default='127.0.0.1', help='Host to bind server (default: 127.0.0.1)')
     parser.add_argument('--port', type=int, default=7932, help='Port to bind server (default: 7932)')
+    parser.add_argument(
+        '--allowed-host',
+        action='append',
+        dest='allowed_hosts',
+        help='Hostname to answer to in addition to IP addresses and localhost, which are always '
+        'allowed (can be repeated). Needed only when reaching the UI through a name, e.g. behind a '
+        'reverse proxy or a tunnel. Supports "*.example.com" and "*" for any host.',
+    )
     argcomplete.autocomplete(parser)
     args = parser.parse_args(args_list)
 
@@ -208,6 +216,7 @@ def _cli_web(args_list: list[str], prog_name: str, default_model: str, qualified
         instructions=args.instructions,
         default_model=default_model,
         html_source=args.html_source,
+        allowed_hosts=args.allowed_hosts or [],
     )
 
 
