@@ -10,7 +10,7 @@
 | [Model fallback](#model-fallback-is-not-a-retry) | The same request against a *different* model | [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] | Only the winning response |
 | [Tool](#tool-retries) | One tool call, by asking the model to correct it | `retries={'tools': N}` and per-tool limits | A [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] in place of the tool's result |
 | [Output](#output-retries) | The model's final answer, by asking it to correct it | `retries={'output': N}` and [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries] | A `RetryPromptPart` — see [below](#output-retries) for where it lands |
-| [Model-request hooks](hooks.md) | The model request, from `after_model_request`, `wrap_model_request`, or `on_model_request_error` raising `ModelRetry` | The hook itself; it draws on the **output** budget | A new request carrying a `RetryPromptPart` |
+| [Model-request hooks](hooks.md) | The model request, from `before_model_request`, `after_model_request`, `wrap_model_request`, or `on_model_request_error` raising `ModelRetry` | The hook itself; it draws on the **output** budget | A new request carrying a `RetryPromptPart` |
 
 Only the last three are "agent retries" — they cost a model round trip each, because a retry *is* another request. The first two are invisible to the model.
 

@@ -700,7 +700,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Called inside `wrap_model_request` before each model call.
 
         Can modify the model, messages, settings, and parameters. Exceptions propagate through
-        the wrap chain and are not passed to `on_model_request_error`.
+        the wrap chain and are not passed to `on_model_request_error`. A
+        [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] is converted to a retry prompt by the
+        outer model-request dispatcher.
         """
         return request_context
 
