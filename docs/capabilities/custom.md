@@ -1041,6 +1041,8 @@ assert combined.capabilities[1] is rate_limit_hooks
 
 Capabilities don't have direct access to each other. To share state between capabilities during a run, use a [`contextvars.ContextVar`][contextvars.ContextVar]: one capability sets it (e.g. in `wrap_run` or `before_run`), and another reads it from its hooks. For hooks in the same `before_*` family, put the writer before the reader. A value set by any `wrap_*` hook before it calls `handler` is available to every inner `before_*` hook because the complete wrapper chain encloses the complete before chain; conversely, a wrapper cannot read state that is only set later by a `before_*` hook until its handler returns.
 
+With `run_stream()`, `before_model_request` runs in the model-wrapper task. Its `ContextVar` writes are visible within that request lifecycle, but not to later tool, output, or run hooks. Set cross-stage values in `wrap_run`, `before_run`, or the run dependencies instead.
+
 ### Testing custom capabilities
 
 Test custom capabilities the same way you [test agents](../testing.md) — using [`TestModel`][pydantic_ai.models.test.TestModel] or [`FunctionModel`][pydantic_ai.models.function.FunctionModel]. Create an agent with your capability and assert on the run result, messages, or any observable side effects of your hooks.
