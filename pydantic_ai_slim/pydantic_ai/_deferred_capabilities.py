@@ -153,9 +153,14 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     # and `post_compaction_window` is defined after that point, so it can only be imported at call time.
     from .messages import post_compaction_window
 
+    return _parse_loaded_capabilities(post_compaction_window(messages))
+
+
+def _parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
+    """Parse capability-load evidence from an already-selected message window."""
     call_id_by_tool_call_id: dict[str, str] = {}
     loaded: set[str] = set()
-    for msg in post_compaction_window(messages):
+    for msg in messages:
         for part in msg.parts:
             if isinstance(part, LoadCapabilityCallPart):
                 if part.capability_id is not None:

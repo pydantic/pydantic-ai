@@ -35,6 +35,28 @@ RunContextAgentDepsT = TypeVar('RunContextAgentDepsT', default=object, covariant
 """Type variable for the agent dependencies in `RunContext`."""
 
 
+@dataclasses.dataclass(frozen=True)
+class AnchoredEvidence:
+    """Reveal and load evidence the provider that served a response could still see.
+
+    `RunContext.discovered_tool_names` and `loaded_capability_ids` are cut at any `CompactionPart`,
+    because the consumer that matters for them is the *next* request, whose provider isn't knowable
+    when history is parsed. A call the model already made is a different question with a different
+    answer: the response records which provider served it, so a boundary that provider would have
+    skipped on the wire — another provider's, or one whose payload it doesn't render — hid nothing
+    from it. This holds what those parts of history still evidence.
+
+    Additive, never a replacement: the sets it widens are shared mutable run state that tool
+    execution writes in-step reveals into, so the widened view has to be a separate object.
+    """
+
+    discovered_tool_names: frozenset[str] = frozenset()
+    """Deferred tools revealed inside the anchored window but not in `discovered_tool_names`."""
+
+    loaded_capability_ids: frozenset[str] = frozenset()
+    """Capabilities loaded inside the anchored window but not in `loaded_capability_ids`."""
+
+
 @dataclasses.dataclass(repr=False, kw_only=True)
 class RunContext(Generic[RunContextAgentDepsT]):
     """Information about the current call."""
@@ -229,6 +251,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     Managed by the framework: safe to read, but don't mutate it directly.
     """
 
+    _anchored_evidence: AnchoredEvidence = field(default_factory=lambda: AnchoredEvidence(), repr=False)
+    """Evidence the serving provider could still see that the conservative window dropped.
+
+    Set at tool-call dispatch and read only by `is_tool_available`. Private because the sets above
+    stay the answer for everything that feeds a *future* request, whose provider isn't knowable yet;
+    this one is the answer for a call the model has already made, where it is. See `AnchoredEvidence`.
+    """
+
     @property
     def realtime(self) -> bool:
         """Whether this run is a realtime session, i.e. `model` is the connected `RealtimeModel`.
@@ -355,20 +385,23 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # Both halves are load-bearing. The capability must still be *configured* deferred, not just
         # named by a load record in history: a capability that has since been reconfigured as
         # always-on never announced its tools as a bundle, so a stale record must not reveal them.
+        evidence = self._anchored_evidence
         if (
             capability_id is not None
             and capability_id in self._deferred_capability_ids
-            and capability_id in self.loaded_capability_ids
+            and capability_id in self.loaded_capability_ids | evidence.loaded_capability_ids
         ):
-            return capability_id in self.available_capability_ids
-        if tool_def.name not in self.discovered_tool_names:
+            return capability_id in self.available_capability_ids | evidence.loaded_capability_ids
+        if tool_def.name not in self.discovered_tool_names | evidence.discovered_tool_names:
             return False
         # A run holds to load, then reveal, then call. `discovered_tool_names` is raw history
         # evidence and only answers the middle step, so it can name a tool whose capability was
         # never loaded — a history no real run produces, and one that would skip the instructions
         # written to be read first. Checking the owner here keeps this predicate in step with what
         # `ToolManager` will run, so "available" means one thing everywhere it is asked.
-        return capability_id is None or capability_id in self.available_capability_ids
+        return capability_id is None or capability_id in (
+            self.available_capability_ids | evidence.loaded_capability_ids
+        )
 
     @property
     def tools(self) -> dict[str, ToolDefinition]:

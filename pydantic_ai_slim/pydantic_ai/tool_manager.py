@@ -536,12 +536,12 @@ class ToolManager(Generic[AgentDepsT]):
         ):
             return (
                 f'Tool {tool_def.name!r} is not available yet: it belongs to capability '
-                f'{capability_id!r}. Call `load_capability` for it first, then call the tool on a '
-                "later turn, once the capability's instructions are in view."
+                f'{capability_id!r}. Call `load_capability` for it first, then call the tool again '
+                "once you've read the capability's instructions."
             )
         return (
-            f'Tool {tool_def.name!r} is not available yet: search for it first, then call it once '
-            'the search result has shown you its schema.'
+            f'Tool {tool_def.name!r} is not available yet: search for it first, then call it again '
+            "once you've seen its schema."
         )
 
     def _make_validation_success(
