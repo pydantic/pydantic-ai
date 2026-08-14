@@ -164,9 +164,14 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes:
         """Return all messages from [`all_messages`][pydantic_ai.agent.AgentRun.all_messages] as JSON bytes.
 
+        Args:
+            output_tool_return_content: The return content of the output tool call to set in the last message once the run has ended.
+
         Returns:
             JSON bytes representing the messages.
         """
+        if output_tool_return_content is not None and (result := self.result) is not None:
+            return result.all_messages_json(output_tool_return_content=output_tool_return_content)
         return _messages.ModelMessagesTypeAdapter.dump_json(self.all_messages())
 
     def new_messages(self) -> list[_messages.ModelMessage]:

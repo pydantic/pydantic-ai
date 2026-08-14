@@ -1261,6 +1261,32 @@ def test_plain_response_then_tuple():
     )
 
 
+async def test_iter_run_all_messages_json_output_tool_return_content():
+    """AgentRun JSON should mirror AgentRunResult's output-tool acknowledgement override."""
+    agent = Agent('test', output_type=int)
+
+    async with agent.iter('Hello') as run:
+        async for _ in run:
+            pass
+
+    assert run.result is not None
+    expected_content = 'custom acknowledgement'
+
+    for result in (run, run.result):
+        assert (
+            ModelMessagesTypeAdapter.validate_json(result.all_messages_json())[-1].parts[0].content
+            == 'Final result processed.'
+        )
+        assert (
+            ModelMessagesTypeAdapter.validate_json(
+                result.all_messages_json(output_tool_return_content=expected_content)
+            )[-1]
+            .parts[0]
+            .content
+            == expected_content
+        )
+
+
 def test_output_tool_return_content_str_return():
     agent = Agent('test')
 
