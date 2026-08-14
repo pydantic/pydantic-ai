@@ -415,6 +415,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _name: str | None
     _description: TemplateStr[AgentDepsT] | str | None
+    _constructor_capability_names: tuple[str, ...]
     end_strategy: EndStrategy
     """The strategy for handling function tool calls the model requests alongside a result that ends the run.
 
@@ -624,6 +625,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._name = name
         self._description = description
         self.end_strategy = end_strategy
+        self._constructor_capability_names = tuple(type(capability).__name__ for capability in capabilities or ())
 
         capabilities = wrap_capability_funcs(capabilities)
 
@@ -1535,6 +1537,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model=model_id or model_used.model_id,
             output_type=output_type_,
             tools=len(self._function_toolset.tools),
+            capabilities=self._constructor_capability_names,
             instrumented=instrumentation_settings is not None,
         )
 
