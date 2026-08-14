@@ -389,12 +389,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self.ctx.deps.cancellation.bind()
         run_context = _agent_graph.build_run_context(self.ctx)
         cap = self.ctx.deps.root_capability
-        handler_result: object = object()
 
         async def lifecycle(
             lifecycle_node: _agent_graph.AgentNode[AgentDepsT, Any],
         ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
-            nonlocal handler_result
             lifecycle_node = await cap.before_node_run(run_context, node=lifecycle_node)
             # A `before_node_run` hook that absorbed an external cancellation must not
             # let the node itself start.
@@ -413,11 +411,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             if result is not pre_hook_result:
                 self._sync_graph_state(result)
             _utils.raise_if_cancelling()
-            handler_result = result
             return result
 
         result = await cap.wrap_node_run(run_context, node=node, handler=lifecycle)
-        if result is not handler_result:
+        if not self._graph_reflects(result):
             self._sync_graph_state(result)
         return result
 

@@ -11644,6 +11644,35 @@ class TestNodeRunHooks:
             'wrap:after:CallToolsNode',
         ]
 
+    async def test_wrap_node_run_multiple_calls_reconciles_recovered_result(self):
+        """Returning an earlier attempt restores graph state left by a later failed attempt."""
+
+        @dataclass
+        class RetryCap(AbstractCapability[Any]):
+            after_calls: int = 0
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                first_result = await handler(node)
+                try:
+                    await handler(node)
+                except RuntimeError:
+                    return first_result
+                raise AssertionError('second lifecycle unexpectedly succeeded')  # pragma: no cover
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                self.after_calls += 1
+                if self.after_calls == 2:
+                    raise RuntimeError('reject second attempt')
+                return result
+
+        agent = Agent(TestModel(), capabilities=[RetryCap()])
+        async with agent.iter('hello') as agent_run:
+            start = agent_run.next_node
+            assert not isinstance(start, End)
+            result = await agent_run.next(start)
+
+            assert agent_run.next_node is result
+
     async def test_wrap_node_run_short_circuit_skips_before_and_after(self):
         from pydantic_ai.result import FinalResult
 
