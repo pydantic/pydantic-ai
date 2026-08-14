@@ -228,6 +228,25 @@ _WEB_SEARCH_GROUNDING_METADATA: dict[str, Any] = {
     'grounding_chunks': [{'web': {'uri': 'https://example.com', 'title': 'Example', 'domain': 'example.com'}}]
 }
 
+_MULTIPLE_WEB_SEARCH_PARTS: list[dict[str, Any]] = [
+    {'tool_call': {'id': 'call_1', 'tool_type': 'GOOGLE_SEARCH_WEB', 'args': {}}},
+    {
+        'tool_response': {
+            'id': 'call_1',
+            'tool_type': 'GOOGLE_SEARCH_WEB',
+            'response': {'result': 'first'},
+        }
+    },
+    {'tool_call': {'id': 'call_2', 'tool_type': 'GOOGLE_SEARCH_WEB', 'args': {}}},
+    {
+        'tool_response': {
+            'id': 'call_2',
+            'tool_type': 'GOOGLE_SEARCH_WEB',
+            'response': {'result': 'second'},
+        }
+    },
+]
+
 
 def _process_response(parts: list[dict[str, Any]], *, grounding: dict[str, Any]) -> ModelResponse:
     return _process_response_from_parts(
@@ -322,6 +341,16 @@ def test_web_search_grounding_replaces_tool_response_and_preserves_raw_response(
             ],
         }
     )
+
+
+def test_web_search_multiple_returns_keep_provider_responses():
+    response = _process_response(
+        _MULTIPLE_WEB_SEARCH_PARTS,
+        grounding=_WEB_SEARCH_GROUNDING_METADATA,
+    )
+
+    returns = [part for part in response.parts if isinstance(part, NativeToolReturnPart)]
+    assert [part.content for part in returns] == [{'result': 'first'}, {'result': 'second'}]
 
 
 def _stream_chunk(parts: list[dict[str, Any]], grounding: dict[str, Any] | None = None) -> GenerateContentResponse:
@@ -461,3 +490,16 @@ async def test_web_search_stream_accumulates_grounding_sources():
         for event in events
         if isinstance(event, PartStartEvent) and isinstance(event.part, NativeToolReturnPart)
     ] == returns
+
+
+@pytest.mark.anyio
+async def test_web_search_stream_multiple_returns_keep_provider_responses():
+    _, parts = await _drive_stream(
+        [
+            _stream_chunk(_MULTIPLE_WEB_SEARCH_PARTS),
+            _stream_chunk([{'text': 'Grounded answer.'}], grounding=_WEB_SEARCH_GROUNDING_METADATA),
+        ]
+    )
+
+    returns = [part for part in parts if isinstance(part, NativeToolReturnPart)]
+    assert [part.content for part in returns] == [{'result': 'first'}, {'result': 'second'}]

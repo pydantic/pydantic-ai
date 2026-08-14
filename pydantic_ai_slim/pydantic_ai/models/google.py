@@ -1561,8 +1561,8 @@ class GeminiStreamedResponse(StreamedResponse):
                             yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
                     self._pending_file_search_returns = still_pending
 
+            _fill_single_web_search_return_content(self._pending_web_search_returns, self._grounding_chunks)
             for pending in self._pending_web_search_returns:
-                _fill_web_search_return_content(pending, self._grounding_chunks)
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             self._pending_web_search_returns = []
 
@@ -1915,6 +1915,7 @@ def _process_response_from_parts(
             items.append(web_fetch_call)
             items.append(web_fetch_return)
 
+    explicit_web_search_returns: list[NativeToolReturnPart] = []
     item: ModelResponsePart | None = None
     code_execution_tool_call_id: str | None = None
     for part in parts:
@@ -1922,10 +1923,13 @@ def _process_response_from_parts(
         if item is not None:
             if isinstance(item, NativeToolReturnPart):
                 _fill_empty_file_search_return_content(item, grounding_metadata)
-                _fill_web_search_return_content(
-                    item, grounding_metadata.grounding_chunks if grounding_metadata else None
-                )
+                if item.tool_name == WebSearchTool.kind:
+                    explicit_web_search_returns.append(item)
             items.append(item)
+
+    _fill_single_web_search_return_content(
+        explicit_web_search_returns, grounding_metadata.grounding_chunks if grounding_metadata else None
+    )
 
     return ModelResponse(
         parts=items,
@@ -2144,9 +2148,13 @@ def _map_grounding_metadata(
         return None, None
 
 
-def _fill_web_search_return_content(item: NativeToolReturnPart, grounding_chunks: list[GroundingChunk] | None) -> None:
-    if item.tool_name != WebSearchTool.kind:
+def _fill_single_web_search_return_content(
+    web_search_returns: Sequence[NativeToolReturnPart], grounding_chunks: list[GroundingChunk] | None
+) -> None:
+    # Grounding is candidate-wide, so it cannot be attributed when multiple searches were returned.
+    if len(web_search_returns) != 1:
         return
+    item = web_search_returns[0]
     if sources := [chunk.web.model_dump(mode='json') for chunk in grounding_chunks or [] if chunk.web]:
         item.provider_details = {**(item.provider_details or {}), 'raw_tool_response': item.content}
         item.content = sources
