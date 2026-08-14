@@ -7296,11 +7296,12 @@ def test_durability_activity_config_not_mutated():
 
 
 def test_temporal_agent_retry_policy_non_retryable_errors():
-    """The deprecated wrapper builds its own list, so its entries need their own assertion.
+    """The deprecated wrapper's base config carries the same non-retryable errors as the capability.
 
-    `TemporalAgent` doesn't go through `with_non_retryable_errors`, and every line of its
-    inline list runs on any construction — so without this, dropping `PayloadSizeError`
-    would leave coverage at 100% while restoring the infinite retry of #7110.
+    `TemporalAgent` used to build this list by hand, and it drifted: it never picked up the
+    `UnexpectedModelBehavior` and `FallbackExceptionGroup` entries #6978 added to
+    `with_non_retryable_errors`, so a continuation-ceiling error retried the whole (paid) model
+    request forever instead of failing the workflow (#7163).
     """
     temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
         Agent(TestModel(), name='retry_policy_probe_agent'),
@@ -7311,6 +7312,8 @@ def test_temporal_agent_retry_policy_non_retryable_errors():
     assert retry_policy.non_retryable_error_types == [
         'UserError',
         'PydanticUserError',
+        'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
         'PayloadSizeError',
     ]
 
