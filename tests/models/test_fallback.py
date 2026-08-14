@@ -683,14 +683,10 @@ success_model_stream = FunctionModel(stream_function=success_response_stream)
 failure_model_stream = FunctionModel(stream_function=failure_response_stream)
 
 
-def _chat_span_attributes(capfire: CaptureLogfire) -> dict[str, Any]:
+def _assert_chat_span_model(capfire: CaptureLogfire, model_name: str) -> dict[str, Any]:
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     chat_span = next(s for s in spans if s['attributes'].get('gen_ai.operation.name') == 'chat')
-    return chat_span['attributes']
-
-
-def _assert_chat_span_model(capfire: CaptureLogfire, model_name: str) -> dict[str, Any]:
-    attributes = _chat_span_attributes(capfire)
+    attributes = chat_span['attributes']
     assert {key: attributes[key] for key in ('gen_ai.request.model', 'gen_ai.system', 'gen_ai.provider.name')} == {
         'gen_ai.request.model': model_name,
         'gen_ai.system': 'function',
@@ -2469,18 +2465,26 @@ def test_fallback_continuation_non_fallback_error_propagates() -> None:
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_fallback_continuation_non_fallback_error_records_pinned_model(capfire: CaptureLogfire) -> None:
-    calls = 0
+    primary_calls = 0
+    pinned_calls = 0
 
     def primary(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            raise ModelHTTPError(status_code=500, model_name='primary', body=None)
+        return ModelResponse(parts=[TextPart('unexpected normal-chain response')])
+
+    def pinned(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal pinned_calls
+        pinned_calls += 1
+        if pinned_calls == 1:
             return ModelResponse(parts=[TextPart('paused')], state='suspended')
         raise PotatoException('not a fallback error')
 
     model = FallbackModel(
         FunctionModel(primary, model_name='primary'),
-        FunctionModel(success_response, model_name='fallback'),
+        FunctionModel(pinned, model_name='pinned'),
     )
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
     parameters = ModelRequestParameters()
@@ -2490,7 +2494,7 @@ async def test_fallback_continuation_non_fallback_error_records_pinned_model(cap
     with pytest.raises(PotatoException, match='not a fallback error'):
         await InstrumentedModel(model, InstrumentationSettings()).request(messages, None, parameters)
 
-    _assert_chat_span_model(capfire, 'primary')
+    _assert_chat_span_model(capfire, 'pinned')
 
 
 def test_fallback_continuation_recovery_replaces_response_parts() -> None:
@@ -3083,21 +3087,29 @@ async def test_fallback_streaming_pinned_continuation_non_fallback_error_propaga
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_fallback_streaming_pinned_non_fallback_error_records_model(capfire: CaptureLogfire) -> None:
-    calls = 0
+    primary_calls = 0
+    pinned_calls = 0
 
     async def primary_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            raise ModelHTTPError(status_code=500, model_name='primary', body=None)
+        yield 'unexpected normal-chain response'
+
+    async def pinned_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal pinned_calls
+        pinned_calls += 1
+        if pinned_calls == 1:
             yield 'partial'
             return
         raise PotatoException('not a fallback error')
 
-    primary = _ContinuationModel(
-        _inner=FunctionModel(stream_function=primary_stream, model_name='primary'),
+    pinned = _ContinuationModel(
+        _inner=FunctionModel(stream_function=pinned_stream, model_name='pinned'),
         _stream_state=['suspended'],
     )
-    model = FallbackModel(primary, FunctionModel(stream_function=success_response_stream, model_name='fallback'))
+    model = FallbackModel(FunctionModel(stream_function=primary_stream, model_name='primary'), pinned)
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
     parameters = ModelRequestParameters()
 
@@ -3112,7 +3124,7 @@ async def test_fallback_streaming_pinned_non_fallback_error_records_model(capfir
                 InstrumentedModel(model, InstrumentationSettings()).request_stream(messages, None, parameters)
             )
 
-    _assert_chat_span_model(capfire, 'primary')
+    _assert_chat_span_model(capfire, 'pinned')
 
 
 async def test_fallback_streaming_rewind_without_trailing_request() -> None:
