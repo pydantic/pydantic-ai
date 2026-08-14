@@ -53,7 +53,7 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
         """Collect instructions from the wrapped authoring toolset."""
         from ._instruction_collection import collect_toolset_instructions
 
-        return await collect_toolset_instructions(self, ctx) or None
+        return await collect_toolset_instructions(self.wrapped, ctx) or None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return await self.wrapped.get_tools(ctx)
