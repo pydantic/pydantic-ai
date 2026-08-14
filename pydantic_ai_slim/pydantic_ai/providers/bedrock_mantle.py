@@ -8,19 +8,19 @@ from typing_extensions import assert_never
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
-from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
 
 try:
     from openai import AsyncBedrockOpenAI, AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the Bedrock Mantle dependencies to use the Bedrock Mantle provider, '
         'you can use the `bedrock-mantle` optional group — `pip install "pydantic-ai-slim[bedrock-mantle]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 BedrockMantleInterface = Literal['chat', 'responses', 'openai-responses']
 """The OpenAI-compatible endpoint family a Bedrock Mantle model is served on.
@@ -90,7 +90,7 @@ def _mantle_origin(base_url: str) -> str:
     return origin
 
 
-class BedrockMantleProvider(Provider[AsyncOpenAI]):
+class BedrockMantleProvider(_OpenAICompatibleProvider):
     """Provider for the Amazon Bedrock Mantle OpenAI-compatible API."""
 
     @property
@@ -198,10 +198,7 @@ class BedrockMantleProvider(Provider[AsyncOpenAI]):
                     'or pass `base_url` to use a Bedrock Mantle model.'
                 )
 
-            if http_client is None:
-                http_client = create_async_http_client()
-                self._own_http_client = http_client
-                self._http_client_factory = create_async_http_client
+            http_client = self._get_http_client(http_client)
 
             base_client = AsyncBedrockOpenAI(
                 api_key=api_key,

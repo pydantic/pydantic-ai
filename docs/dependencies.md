@@ -98,7 +98,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-In addition to [`.deps`][pydantic_ai.tools.RunContext.deps], [`RunContext`][pydantic_ai.tools.RunContext] provides access to the running agent via [`.agent`][pydantic_ai.tools.RunContext.agent], which is useful when [tools](tools.md), [hooks](hooks.md), or [capabilities](capabilities/overview.md) need to read agent properties like [`name`][pydantic_ai.agent.Agent.name] or [`output_type`][pydantic_ai.agent.Agent.output_type].
+In addition to [`.deps`][pydantic_ai.tools.RunContext.deps], [`RunContext`][pydantic_ai.tools.RunContext] provides access to the running agent via [`.agent`][pydantic_ai.tools.RunContext.agent], which is useful when [tools](tools.md), [hooks](hooks.md), or [capabilities](capabilities/overview.md) need to read agent properties like [`name`][pydantic_ai.agent.Agent.name] or [`output_type`][pydantic_ai.agent.Agent.output_type]. The [`.realtime`][pydantic_ai.tools.RunContext.realtime] property identifies realtime sessions without requiring a model type check, and [`.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] exposes the live [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] to tools and hooks once it is connected.
 
 Dependency fields can also be referenced in instructions and descriptions via [template strings](agent-spec.md#template-strings) — for example, [`TemplateStr('Hello {{name}}')`][pydantic_ai.template.TemplateStr] renders `name` from the deps object at runtime. This is especially useful in [agent specs](agent-spec.md) where callables aren't available.
 

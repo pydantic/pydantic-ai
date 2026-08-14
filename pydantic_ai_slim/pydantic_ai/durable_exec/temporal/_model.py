@@ -31,8 +31,12 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._activity_execution import execute_activity
-from ._durability import _RequestParams  # pyright: ignore[reportPrivateUsage]
+from ._durability import (
+    IMAGE_OUTPUT_UNSUPPORTED_MESSAGE,
+    _RequestParams,  # pyright: ignore[reportPrivateUsage]
+)
 from ._run_context import TemporalRunContext, deserialize_run_context
+from ._toolset import model_response_payload_errors
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -182,20 +186,21 @@ class TemporalModel(WrapperModel):
 
         model_name = model_id or self.model_id
         activity_config: ActivityConfig = {'summary': f'request model: {model_name}', **self.activity_config}
-        return await execute_activity(
-            activity=self.request_activity,
-            args=[
-                _RequestParams(
-                    messages=messages,
-                    model_settings=cast(dict[str, Any] | None, model_settings),
-                    model_request_parameters=model_request_parameters,
-                    serialized_run_context=serialized_run_context,
-                    model_id=model_id,
-                ),
-                deps,
-            ],
-            **activity_config,
-        )
+        with model_response_payload_errors(model_name):
+            return await execute_activity(
+                activity=self.request_activity,
+                args=[
+                    _RequestParams(
+                        messages=messages,
+                        model_settings=cast(dict[str, Any] | None, model_settings),
+                        model_request_parameters=model_request_parameters,
+                        serialized_run_context=serialized_run_context,
+                        model_id=model_id,
+                    ),
+                    deps,
+                ],
+                **activity_config,
+            )
 
     @asynccontextmanager
     async def request_stream(
@@ -227,20 +232,21 @@ class TemporalModel(WrapperModel):
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
         model_name = model_id or self.model_id
         activity_config: ActivityConfig = {'summary': f'request model: {model_name} (stream)', **self.activity_config}
-        response = await execute_activity(
-            activity=self.request_stream_activity,
-            args=[
-                _RequestParams(
-                    messages=messages,
-                    model_settings=cast(dict[str, Any] | None, model_settings),
-                    model_request_parameters=model_request_parameters,
-                    serialized_run_context=serialized_run_context,
-                    model_id=model_id,
-                ),
-                run_context.deps,
-            ],
-            **activity_config,
-        )
+        with model_response_payload_errors(model_name):
+            response = await execute_activity(
+                activity=self.request_stream_activity,
+                args=[
+                    _RequestParams(
+                        messages=messages,
+                        model_settings=cast(dict[str, Any] | None, model_settings),
+                        model_request_parameters=model_request_parameters,
+                        serialized_run_context=serialized_run_context,
+                        model_id=model_id,
+                    ),
+                    run_context.deps,
+                ],
+                **activity_config,
+            )
         yield CompletedStreamedResponse(response, model_request_parameters=model_request_parameters)
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
@@ -261,7 +267,7 @@ class TemporalModel(WrapperModel):
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
-            raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')
+            raise UserError(IMAGE_OUTPUT_UNSUPPORTED_MESSAGE)
 
     def _get_model_id(self, model: models.Model | models.KnownModelName | str | None = None) -> str | None:
         """Get the model ID for the given model parameter.

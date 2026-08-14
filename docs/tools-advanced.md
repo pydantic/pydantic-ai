@@ -410,7 +410,8 @@ Pydantic AI distinguishes between **[function tools](tools.md)** (tools you regi
 | [`ToolOrOutput`][pydantic_ai.settings.ToolOrOutput]`(function_tools=['...'])` | Restrict function tools while auto-including all output tools. |
 
 Tools hidden by [deferred loading](#tool-search) interact with `tool_choice`: a tool that is still
-hidden names are ignored when forcing by name, and an explicit choice raises only when every requested tool is hidden. `'required'` raises when every function
+hidden is ignored when forcing by name, and an explicit choice raises only when every requested
+tool is hidden. `'required'` raises when every function
 tool is hidden. A tool *declared* with its schema deferred can be forced. On providers that carry
 revealed definitions outside the `tools` list (OpenAI Responses `additional_tools`), a revealed
 tool can't be forced by name either, since by-name forcing can only target declared tools.
@@ -494,12 +495,15 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Provider | `'required'` | Specific tools | Notes |
 |----------|:------------:|:--------------:|-------|
 | OpenAI | ✓ | ✓ | Full support |
-| Anthropic | ⚠️ | ⚠️ | Not supported with thinking enabled |
+| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking; adaptive thinking is compatible |
 | Google | ✓ | ✓ | |
 | Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
 | Mistral | ✓ | ✓ | Maps `'required'` to `'any'` mode |
+| Cohere | ✓ | ✓ | Maps `'required'` to `'REQUIRED'`; a named subset is applied by trimming the tools array |
 | xAI | ✓ | ✓ | Some models may not support forcing; falls back to 'auto' |
+
+The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — behave as the OpenAI row describes, with two exceptions. Ollama documents `tool_choice` as unsupported and ignores it. OpenRouter raises a `UserError` for an explicit `'required'` or named subset on models that can't combine forced tool choice with thinking, rather than silently dropping the reasoning; forcing that Pydantic AI merely inferred falls back to `'auto'` instead.
 
 ### Prompt caching implications {#tool-choice-caching}
 
@@ -512,11 +516,12 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 
 | Provider | Cache-breaking case |
 |----------|---------------------|
-| Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled |
+| Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
 | OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
 | Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled or on a model that doesn't support forcing |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
 | Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
+| Cohere | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | xAI | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
 | OpenAI Responses | Never — `allowed_tools` handles all cases natively |
 | Google | Never — `allowed_function_names` handles all cases natively |
@@ -606,7 +611,7 @@ import asyncio
 
 from pydantic_ai import Agent
 
-# Set a default timeout for all tools on the agent
+# Set a default timeout for the agent's own tools
 agent = Agent('test', tool_timeout=30)
 
 
@@ -624,10 +629,12 @@ async def fast_tool() -> str:
     return 'Done'
 ```
 
-- **Agent-level timeout**: Set `tool_timeout` on the [`Agent`][pydantic_ai.agent.Agent] to apply a default timeout to all tools.
+- **Agent-level timeout**: Set `tool_timeout` on the [`Agent`][pydantic_ai.agent.Agent] to apply a default timeout to the tools registered on it.
 - **Per-tool timeout**: Set `timeout` on individual tools via [`@agent.tool`][pydantic_ai.agent.Agent.tool], [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain], or the [`Tool`][pydantic_ai.tools.Tool] dataclass. This overrides the agent-level default.
 
 When a timeout occurs, the tool is treated as a retryable failure and the model receives a retry prompt with the message `"Timed out after {timeout} seconds."`. This counts towards the tool's retry limit just like validation errors or explicit [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exceptions.
+
+Both settings are enforced by [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], which is what backs the agent's own tools. Tools served by an [MCP server](mcp/client.md), an [external toolset](deferred-tools.md), or a custom [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] do not read them — bind those deadlines at the server or transport level instead. See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for how tool timeouts relate to the other deadlines in a run.
 
 ### Cancelling the Run from a Tool
 

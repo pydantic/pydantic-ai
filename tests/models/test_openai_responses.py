@@ -55,7 +55,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
-from pydantic_ai.messages import INVALID_JSON_KEY
+from pydantic_ai.messages import INVALID_JSON_KEY, sanitize_messages
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -84,10 +84,12 @@ with try_import() as imports_successful:
     from openai import APIStatusError, AsyncAzureOpenAI, AsyncOpenAI, omit
     from openai.types import responses as resp
     from openai.types.responses import (
+        CompactedResponse,
         ResponseCreatedEvent,
         ResponseFunctionWebSearch,
         ResponseQueuedEvent,
     )
+    from openai.types.responses.response_compaction_item import ResponseCompactionItem
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
     from openai.types.responses.response_output_text import ResponseOutputText
@@ -1700,6 +1702,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
         and event.delta.provider_details
         and 'annotations' in event.delta.provider_details
     )
+    assert isinstance(annotation_event, PartDeltaEvent)
+    assert isinstance(annotation_event.delta, TextPartDelta)
     assert annotation_event.delta.provider_details == snapshot(
         {
             'annotations': [
@@ -13290,7 +13294,10 @@ async def test_openai_responses_trims_before_latest_compaction(allow_model_reque
                 CompactionPart(
                     content='latest summary',
                     provider_name='openai',
-                    provider_details={'encrypted_content': 'latest-encrypted'},
+                    provider_details={
+                        'encrypted_content': 'latest-encrypted',
+                        'pydantic_ai_standing_prompt_planted': True,
+                    },
                 ),
                 TextPart(content='keep after boundary'),
             ],
@@ -13303,11 +13310,13 @@ async def test_openai_responses_trims_before_latest_compaction(allow_model_reque
         messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
     )
 
-    # The standing system prompt survives the trim; everything else before the latest
-    # compaction item is dropped, since the Responses API would process and bill it.
+    # Everything before the latest compaction item is dropped, since the Responses API would
+    # process and bill it — including the standing system prompt: the compaction item retains the
+    # window's leading `system` items (live-verified), so re-sending it would duplicate it. The
+    # re-compaction path re-plants it instead (see
+    # `test_openai_responses_compact_replants_standing_prompt`).
     assert mapped == snapshot(
         [
-            {'role': 'system', 'content': 'Standing system prompt.'},
             {'id': None, 'encrypted_content': 'latest-encrypted', 'type': 'compaction'},
             {'role': 'assistant', 'content': 'keep after boundary'},
             {'role': 'user', 'content': 'keep tail'},
@@ -13316,6 +13325,138 @@ async def test_openai_responses_trims_before_latest_compaction(allow_model_reque
 
     await model.count_tokens(messages, None, ModelRequestParameters())
     assert cast(MockOpenAIResponses, mock_client).count_kwargs[0]['input'] == mapped
+
+
+async def test_openai_responses_unstamped_compaction_reinserts_standing_prompt(allow_model_requests: None):
+    """An unstamped compaction item — externally supplied, spliced in, or minted before the
+    provenance stamp existed — cannot be trusted to have been built from a window containing this
+    history's standing prompt, so the trim re-inserts it as it always did."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='drop first request')]
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content='foreign summary',
+                    provider_name='openai',
+                    provider_details={'encrypted_content': 'foreign-encrypted'},
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    assert mapped == snapshot(
+        [
+            {'role': 'system', 'content': 'Standing system prompt.'},
+            {'id': None, 'encrypted_content': 'foreign-encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
+async def test_openai_responses_sanitized_compaction_reinserts_standing_prompt(allow_model_requests: None):
+    """Sanitizing a client-supplied stamped compaction item removes its provenance, so the trim
+    re-inserts the server's standing prompt."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='drop first request')]
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content='foreign summary',
+                    provider_name='openai',
+                    provider_details={
+                        'encrypted_content': 'foreign-encrypted',
+                        'pydantic_ai_standing_prompt_planted': True,
+                    },
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    sanitized = sanitize_messages(messages, strip_system_prompts=False)
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        sanitized, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    assert mapped == snapshot(
+        [
+            {'role': 'system', 'content': 'Standing system prompt.'},
+            {'id': None, 'encrypted_content': 'foreign-encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
+async def test_openai_responses_compact_replants_standing_prompt(allow_model_requests: None):
+    """Re-compaction plants the standing prompt explicitly instead of relying on the previous
+    compaction item to carry it forward — blob-of-blob retention decayed in live probing. The
+    ordinary-request mapping of the same history omits it (see
+    `test_openai_responses_trims_before_latest_compaction`)."""
+    model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart(content='Standing system prompt.'), UserPromptPart(content='drop first request')]
+        ),
+        ModelResponse(
+            parts=[
+                CompactionPart(
+                    content='summary',
+                    provider_name='openai',
+                    provider_details={'encrypted_content': 'encrypted'},
+                )
+            ],
+            provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    compact_kwargs: dict[str, Any] = {}
+
+    async def fake_compact(**kwargs: Any) -> Any:
+        compact_kwargs.update(kwargs)
+        return CompactedResponse(
+            id='resp-compact',
+            created_at=0,
+            object='response.compaction',
+            output=[ResponseCompactionItem(id='comp-2', encrypted_content='new-encrypted', type='compaction')],
+            usage=ResponseUsage.model_construct(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    model.client.responses.compact = fake_compact
+    from pydantic_ai.models import ModelRequestContext
+
+    response = await model.compact_messages(
+        ModelRequestContext(
+            model=model, messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
+        )
+    )
+
+    assert compact_kwargs['input'] == snapshot(
+        [
+            {'role': 'system', 'content': 'Standing system prompt.'},
+            {'id': None, 'encrypted_content': 'encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+    # The minted part carries the provenance stamp: this window demonstrably planted the standing
+    # prompt, so later ordinary requests may rely on the item's retention and skip re-sending it.
+    minted = response.parts[0]
+    assert isinstance(minted, CompactionPart)
+    assert minted.provider_details is not None
+    assert minted.provider_details['pydantic_ai_standing_prompt_planted'] is True
 
 
 async def test_openai_responses_pre_compaction_introduced_tool_keeps_its_tools_declaration(
@@ -13398,7 +13539,11 @@ async def test_openai_responses_pre_compaction_revealed_deferred_tool_is_redecla
 
 
 async def test_openai_responses_standing_prompt_survives_response_first_history(allow_model_requests: None):
-    """A history that opens with a `ModelResponse` still keeps the first request's standing prompt."""
+    """A history that opens with a `ModelResponse` still finds the first request's standing prompt.
+
+    Pinned on the planting path (`standing_prompt_retained=False`, as re-compaction maps this
+    history): ordinary requests omit the standing prompt, relying on the compaction item's
+    retention."""
     model = OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test'))
     messages: list[ModelMessage] = [
         ModelResponse(parts=[TextPart(content='resumed mid-conversation')], provider_name='openai'),
@@ -13415,7 +13560,7 @@ async def test_openai_responses_standing_prompt_survives_response_first_history(
     ]
 
     _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters(), standing_prompt_retained=False
     )
 
     assert mapped == snapshot(
@@ -13564,6 +13709,48 @@ async def test_openai_responses_compaction_without_encrypted_content_does_not_tr
                 TextPart(content='keep text'),
             ],
             provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    assert mapped == snapshot(
+        [
+            {'role': 'user', 'content': 'keep before unrenderable boundary'},
+            {'role': 'assistant', 'content': 'keep text'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
+async def test_openai_responses_non_openai_provider_name_still_requires_encrypted_content(
+    allow_model_requests: None,
+):
+    """The render condition follows the adapter, not the provider's name.
+
+    This adapter serves providers under names other than `'openai'` — Azure among them — and it
+    sends only the encrypted compaction item. Keying the boundary on the name would treat an
+    unrenderable part as a trim boundary here and drop the pre-boundary history with nothing sent
+    in its place, which is a silent context loss rather than a size optimization.
+    """
+    model = OpenAIResponsesModel(
+        'gpt-5.2',
+        provider=AzureProvider(
+            azure_endpoint='https://example.openai.azure.com', api_version='2024-01-01', api_key='test'
+        ),
+    )
+    assert model.system == 'azure'
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('keep before unrenderable boundary'),
+        ModelResponse(
+            parts=[
+                CompactionPart(content='summary without payload', provider_name='azure'),
+                TextPart(content='keep text'),
+            ],
+            provider_name='azure',
         ),
         ModelRequest.user_text_prompt('keep tail'),
     ]

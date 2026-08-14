@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
@@ -162,14 +162,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
         def resolve(ctx: RunContext[AgentDepsT]) -> ModelSettings:
             merged: ModelSettings | None = None
+            # This layering only runs in the classic request pipeline, where `ctx.model_settings`
+            # never holds `RealtimeModelSettings` (realtime sessions resolve settings at connect).
             for entry in settings_chain:
                 # Mutate ctx.model_settings so each dynamic entry sees the
                 # accumulated settings from all prior layers.
-                ctx.model_settings = merge_model_settings(ctx.model_settings, merged)
+                ctx.model_settings = merge_model_settings(cast('ModelSettings | None', ctx.model_settings), merged)
                 resolved = entry(ctx) if callable(entry) else entry
                 merged = merge_model_settings(merged, resolved)
             # Update ctx.model_settings to include the final entry's contribution
-            ctx.model_settings = merge_model_settings(ctx.model_settings, merged)
+            ctx.model_settings = merge_model_settings(cast('ModelSettings | None', ctx.model_settings), merged)
             return merged if merged is not None else ModelSettings()
 
         return resolve
@@ -474,7 +476,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: str | dict[str, Any],
     ) -> str | dict[str, Any]:
         for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_tool_hook(capability, ctx, tool_def)) is not None:
+            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
                 args = await capability.before_tool_validate(cap_ctx, call=call, tool_def=tool_def, args=args)
         return args
 
@@ -487,7 +489,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
     ) -> dict[str, Any]:
         for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_tool_hook(capability, ctx, tool_def)) is not None:
+            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
                 args = await capability.after_tool_validate(cap_ctx, call=call, tool_def=tool_def, args=args)
         return args
 
@@ -502,7 +504,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> dict[str, Any]:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_tool_hook(capability, ctx, tool_def) is not None:
+            if _ctx_for_available_cap(capability, ctx) is not None:
                 chain = _make_tool_validate_wrap(capability, ctx, call, tool_def, chain)
         return await chain(args)
 
@@ -516,7 +518,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: ValidationError | ModelRetry,
     ) -> dict[str, Any]:
         for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_tool_hook(capability, ctx, tool_def)
+            cap_ctx = _ctx_for_available_cap(capability, ctx)
             if cap_ctx is None:
                 continue
             try:
@@ -540,7 +542,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
     ) -> dict[str, Any]:
         for capability in self.capabilities:
-            if (cap_ctx := _ctx_for_tool_hook(capability, ctx, tool_def)) is not None:
+            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
                 args = await capability.before_tool_execute(cap_ctx, call=call, tool_def=tool_def, args=args)
         return args
 
@@ -554,7 +556,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         result: Any,
     ) -> Any:
         for capability in reversed(self.capabilities):
-            if (cap_ctx := _ctx_for_tool_hook(capability, ctx, tool_def)) is not None:
+            if (cap_ctx := _ctx_for_available_cap(capability, ctx)) is not None:
                 result = await capability.after_tool_execute(
                     cap_ctx, call=call, tool_def=tool_def, args=args, result=result
                 )
@@ -571,7 +573,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> Any:
         chain = handler
         for capability in reversed(self.capabilities):
-            if _ctx_for_tool_hook(capability, ctx, tool_def) is not None:
+            if _ctx_for_available_cap(capability, ctx) is not None:
                 chain = _make_tool_execute_wrap(capability, ctx, call, tool_def, chain)
         return await chain(args)
 
@@ -585,7 +587,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         error: Exception,
     ) -> Any:
         for capability in reversed(self.capabilities):
-            cap_ctx = _ctx_for_tool_hook(capability, ctx, tool_def)
+            cap_ctx = _ctx_for_available_cap(capability, ctx)
             if cap_ctx is None:
                 continue
             try:
@@ -882,24 +884,6 @@ def _ctx_for_available_cap(
     if capability.defer_loading is True and not capability_loaded:
         return None
     return replace(ctx, capability_loaded=capability_loaded)
-
-
-def _ctx_for_tool_hook(
-    capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT], tool_def: ToolDefinition
-) -> RunContext[AgentDepsT] | None:
-    """The context for a tool validate/execute hook, or `None` when the hook must not run.
-
-    Like `_ctx_for_available_cap`, but a capability's *own* tool always activates its hooks:
-    a capability-owned tool stays callable while its capability counts as unloaded — reveal
-    evidence in history with no load pair, or a load pair reset at a `CompactionPart`
-    boundary — and executing it without its owner's validation/approval hooks would turn
-    model-visibility state into a hook bypass. `capability_loaded` on the returned context
-    stays truthful, so a hook can still distinguish the two states.
-    """
-    cap_ctx = _ctx_for_available_cap(capability, ctx)
-    if cap_ctx is None and tool_def.capability_id is not None and tool_def.capability_id == capability.id:
-        return _ctx_for_cap(capability, ctx)
-    return cap_ctx
 
 
 def _capability_loaded(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:

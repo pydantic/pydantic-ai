@@ -38,6 +38,7 @@ from ..messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -76,7 +77,7 @@ from ..profiles.anthropic import (
 )
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import ModelSettings, merge_model_settings
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
 from ..toolsets._tool_search import discovered_tool_names_in_order
 from . import (
@@ -85,7 +86,7 @@ from . import (
     StreamedResponse,
     ToolVisibility,
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
-    _trim_messages_before_compaction,  # pyright: ignore[reportPrivateUsage]
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -561,6 +562,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     supported_tool_deferral_modes = frozenset({'standalone'})
     supported_tool_addition_modes = frozenset({'by_reference'})
+    # The API ignores (and doesn't bill) blocks before a compaction block, so the trim only saves
+    # request size here — but it also keeps a `tool_result` whose `tool_use` was trimmed away from
+    # 400ing, since validation runs even on ignored content.
+    #
+    # Both declarations match the inherited defaults, restated because they're what makes this
+    # adapter's trim correct rather than an accident: the summary is plaintext message content, so
+    # there is no encrypted blob to require, and the standing prompt travels in the top-level
+    # `system` parameter, rebuilt from the opening `SystemPromptPart`s on every request, so the trim
+    # has to re-insert them.
+    compaction_requires_encrypted_content = False
+    compaction_retains_standing_prompt = False
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
@@ -757,24 +769,41 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
             )
 
-        thinking_enabled = False
-        if anthropic_thinking := merged.get('anthropic_thinking'):
-            thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
-        elif merged.get('thinking'):
-            thinking_enabled = True
+        supports_adaptive_thinking = profile.get('anthropic_supports_adaptive_thinking', False)
+        supports_forced_tool_choice = profile.get('anthropic_supports_forced_tool_choice', True)
+        thinking_type = _effective_thinking_type(
+            merged.get('anthropic_thinking'),
+            merged.get('thinking'),
+            supports_adaptive_thinking=supports_adaptive_thinking,
+        )
+        # Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended
+        # thinking. Adaptive thinking is accepted — but only on models that accept forcing at all;
+        # on the rest, Tool Output could only degrade to a soft `tool_choice='auto'` the model may
+        # ignore, so they keep switching away from it whenever a thinking setting is configured.
+        thinking_blocks_output_tools = thinking_type == 'enabled' or (
+            thinking_type == 'adaptive' and not supports_forced_tool_choice
+        )
 
-        if model_request_parameters.output_tools and thinking_enabled:
-            output_mode = 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
-            model_request_parameters = model_request_parameters.with_default_output_mode(output_mode)
+        if model_request_parameters.output_tools and thinking_blocks_output_tools:
+            supports_json_schema_output = profile.get('supports_json_schema_output', False)
+            model_request_parameters = model_request_parameters.with_default_output_mode(
+                'native' if supports_json_schema_output else 'prompted'
+            )
             if (
                 model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
             ):  # pragma: no branch
-                # This would result in `tool_choice=required`, which Anthropic does not support with thinking.
-                suggested_output_type = (
-                    'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
-                )
+                # This would result in `tool_choice=required`, which isn't available here.
+                suggested_output_type = 'NativeOutput' if supports_json_schema_output else 'PromptedOutput'
+                remedy = f'Use `output_type={suggested_output_type}(...)` instead.'
+                if thinking_type == 'adaptive':
+                    raise UserError(
+                        f'{self.model_name!r} does not support output tools when a thinking setting is '
+                        f'configured, because it rejects the forced tool choice they require. {remedy}'
+                    )
+                if supports_adaptive_thinking:
+                    remedy += " Alternatively, `anthropic_thinking={'type': 'adaptive'}` supports output tools."
                 raise UserError(
-                    f'Anthropic does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
+                    f'Anthropic does not support extended thinking and output tools at the same time. {remedy}'
                 )
 
         # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
@@ -1248,7 +1277,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 call_part = builtin_tool_calls.get(item.tool_use_id)
                 items.append(_map_mcp_server_result_block(item, call_part, self.system))
             elif isinstance(item, BetaCompactionBlock):
-                items.append(CompactionPart(content=item.content, provider_name=self.system))
+                items.append(
+                    CompactionPart(
+                        content=item.content,
+                        provider_name=self.system,
+                        provider_details=_compaction_provider_details(item.encrypted_content),
+                    )
+                )
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
@@ -1519,6 +1554,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         tool_defs = model_request_parameters.declared_tool_defs
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
         supports_forced_tool_choice = self.profile.get('anthropic_supports_forced_tool_choice', True)
+        supports_adaptive_thinking = self.profile.get('anthropic_supports_adaptive_thinking', False)
 
         tool_choice: BetaToolChoiceParam
 
@@ -1532,6 +1568,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 resolved_tool_choice,
                 "tool_choice='required'",
                 supports_forced_tool_choice=supports_forced_tool_choice,
+                supports_adaptive_thinking=supports_adaptive_thinking,
             )
             tool_choice = {'type': 'any'} if supports else {'type': 'auto'}
         elif isinstance(resolved_tool_choice, tuple):
@@ -1541,12 +1578,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 model_request_parameters,
                 resolved_tool_choice,
                 supports_forced_tool_choice=supports_forced_tool_choice,
+                supports_adaptive_thinking=supports_adaptive_thinking,
             )
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 if supports:
                     tool_choice = {'type': 'tool', 'name': next(iter(tool_names))}
                 else:
-                    # Forcing not supported (thinking enabled, or a model that rejects it outright):
+                    # Forcing not supported (extended thinking, or a model that rejects it outright):
                     # filter so the model can only see the requested tool, since `auto` alone
                     # wouldn't restrict the choice.
                     # Breaks caching, but Anthropic doesn't support limiting tools via API arg.
@@ -1595,7 +1633,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
-        messages = _trim_messages_before_compaction(messages, self.system)
+        messages = self._trim_before_compaction(messages)
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
         # Cross-provider files are dropped silently here, not raised via
@@ -1797,6 +1835,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             is_error=request_part.outcome == 'failed',
                         )
                         user_content_params.append(tool_result_block_param)
+                    elif isinstance(request_part, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
+                        raise _unconverted_speech_part_error()
                     elif isinstance(request_part, RetryPromptPart):  # pragma: no branch
                         if request_part.tool_name is None:
                             text = request_part.model_response()
@@ -2109,12 +2150,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 )
                     elif isinstance(response_part, CompactionPart):
                         if response_part.provider_name == self.system:  # pragma: no branch
-                            assistant_content_params.append(
-                                BetaCompactionBlockParam(content=response_part.content, type='compaction')
+                            compaction_block = BetaCompactionBlockParam(
+                                content=response_part.content, type='compaction'
                             )
+                            if (
+                                response_part.provider_details
+                                and response_part.provider_details.get('encrypted_content') is not None
+                            ):
+                                compaction_block['encrypted_content'] = response_part.provider_details[
+                                    'encrypted_content'
+                                ]
+                            assistant_content_params.append(compaction_block)
                     elif isinstance(response_part, FilePart):  # pragma: no cover
                         # Files generated by models are not sent back to models that don't themselves generate files.
                         pass
+                    elif isinstance(response_part, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(response_part)
                 if len(assistant_content_params) > 0:
@@ -2781,6 +2833,12 @@ def _map_usage(
     )
 
 
+def _compaction_provider_details(encrypted_content: str | None) -> dict[str, Any] | None:
+    if encrypted_content is not None:
+        return {'encrypted_content': encrypted_content}
+    return None
+
+
 @dataclass
 class AnthropicStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Anthropic models."""
@@ -2930,7 +2988,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                     elif isinstance(current_block, BetaCompactionBlock):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
-                            part=CompactionPart(content=current_block.content, provider_name=self.provider_name),
+                            part=CompactionPart(
+                                content=current_block.content,
+                                provider_name=self.provider_name,
+                                provider_details=_compaction_provider_details(current_block.encrypted_content),
+                            ),
                         )
 
                 elif isinstance(event, BetaRawContentBlockDeltaEvent):
@@ -2967,7 +3029,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                             # Re-emit part with updated content; replaces the initial block start part
                             yield self._parts_manager.handle_part(
                                 vendor_part_id=event.index,
-                                part=CompactionPart(content=event.delta.content, provider_name=self.provider_name),
+                                part=CompactionPart(
+                                    content=event.delta.content,
+                                    provider_name=self.provider_name,
+                                    provider_details=_compaction_provider_details(event.delta.encrypted_content),
+                                ),
                             )
                     # TODO(Marcelo): We need to handle citations.
                     elif isinstance(event.delta, BetaCitationsDelta):
@@ -3612,6 +3678,27 @@ def _map_mcp_server_result_block(
     )
 
 
+def _effective_thinking_type(
+    anthropic_thinking: BetaThinkingConfigParam | None,
+    unified_thinking: ThinkingLevel | None,
+    *,
+    supports_adaptive_thinking: bool,
+) -> Literal['enabled', 'adaptive'] | None:
+    """Resolve the effective Anthropic thinking type for the output-tool and tool-forcing guards.
+
+    Extended thinking (`{'type': 'enabled'}`) is incompatible with forced tool use and Tool Output;
+    adaptive thinking is compatible with both. Unified thinking maps to `adaptive` when the profile
+    advertises it and to `enabled` otherwise — the same mapping `_translate_thinking` uses to build
+    the wire payload. Returns `'enabled'`, `'adaptive'`, or `None` when thinking is off.
+    """
+    if anthropic_thinking:
+        thinking_type = anthropic_thinking.get('type')
+        return thinking_type if thinking_type in ('enabled', 'adaptive') else None
+    if unified_thinking:
+        return 'adaptive' if supports_adaptive_thinking else 'enabled'
+    return None
+
+
 def _support_tool_forcing(
     model_settings: AnthropicModelSettings,
     model_request_parameters: ModelRequestParameters,
@@ -3619,32 +3706,39 @@ def _support_tool_forcing(
     context: str = 'forcing specific tools',
     *,
     supports_forced_tool_choice: bool = True,
+    supports_adaptive_thinking: bool = False,
 ) -> bool:
     """A forced `tool_choice` ('required'/specific tool) isn't always compatible with Anthropic.
 
-    Thinking mode rejects forcing, and some models (e.g. Claude Fable 5, Claude Mythos Preview) reject it unconditionally.
+    Extended thinking rejects forcing (adaptive thinking does not), and some models
+    (e.g. Claude Fable 5, Claude Mythos Preview) reject it unconditionally.
     We only raise an error if the user explicitly set a forcing value; a forcing value that came
     from the `tool_choice` resolution logic falls back softly to 'auto'.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
     """
-    # Mirror the dual-check pattern from prepare_request(); also check params.thinking
-    # since Model.prepare_request strips unified `thinking` from model_settings into params.thinking.
-    thinking_enabled = bool(model_request_parameters.thinking)
-    if not thinking_enabled:
-        if anthropic_thinking := model_settings.get('anthropic_thinking'):
-            thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
-        elif model_settings.get('thinking'):
-            thinking_enabled = True
+    # `params.thinking` is checked too since Model.prepare_request strips unified `thinking` from
+    # model_settings into params.thinking before the tool-choice helpers run.
+    thinking_type = _effective_thinking_type(
+        model_settings.get('anthropic_thinking'),
+        model_request_parameters.thinking or model_settings.get('thinking'),
+        supports_adaptive_thinking=supports_adaptive_thinking,
+    )
 
-    if supports_forced_tool_choice and not thinking_enabled:
+    if supports_forced_tool_choice and thinking_type != 'enabled':
         return True
 
     explicit_choice = model_settings.get('tool_choice')
     if explicit_choice == 'required' or isinstance(explicit_choice, list):
         if not supports_forced_tool_choice:
             raise UserError(f"Anthropic does not support {context} for this model. Use `tool_choice='auto'`.")
+        adaptive_hint = (
+            " Alternatively, `anthropic_thinking={'type': 'adaptive'}` supports forcing."
+            if supports_adaptive_thinking
+            else ''
+        )
         raise UserError(
-            f"Anthropic does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`."
+            f'Anthropic does not support {context} with extended thinking. '
+            f"Disable thinking or use `tool_choice='auto'`.{adaptive_hint}"
         )
 
     if resolved_tool_choice == 'required' or isinstance(resolved_tool_choice, tuple):

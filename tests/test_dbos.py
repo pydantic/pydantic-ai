@@ -6,12 +6,13 @@ import re
 import time
 import uuid
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Literal, cast
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
@@ -66,6 +67,13 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.realtime import (
+    RealtimeModel,
+    RealtimeModelProfile,
+    RealtimeModelSettings,
+    RealtimeSession,
+)
+from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
@@ -1116,6 +1124,82 @@ async def test_dbos_agent_run_stream_events_in_workflow(allow_model_requests: No
         ),
     ):
         await run_stream_events_workflow()
+
+
+async def test_dbos_agent_realtime_session_in_workflow():
+    # A realtime session opens a long-lived, non-deterministic connection, so it can't run inside a
+    # workflow; the guard trips before the model is ever connected.
+    with patch.object(DBOS, 'workflow_id', 'wf-1'):
+        with pytest.raises(UserError, match='cannot be used inside a DBOS workflow'):
+            async with simple_dbos_agent.realtime(cast('Any', object())).session():
+                pass  # pragma: no cover
+
+
+async def test_dbos_agent_realtime_signaling_in_workflow():
+    # Browser-call signaling issues a live provider request, so workflow code can't call it directly:
+    # the two helpers reach the agent through `_resolve_realtime_session`, which the wrapper guards too.
+    with patch.object(DBOS, 'workflow_id', 'wf-1'):
+        realtime = simple_dbos_agent.realtime(cast('Any', object()))
+        with pytest.raises(UserError, match='cannot be used directly inside a DBOS workflow'):
+            await realtime.answer_webrtc_offer('v=0')
+        with pytest.raises(UserError, match='cannot be used directly inside a DBOS workflow'):
+            await realtime.create_client_secret()
+
+
+async def test_dbos_agent_realtime_signaling_in_step():
+    # Inside a step — the boundary where DBOS records non-deterministic I/O — signaling delegates to
+    # the wrapped agent like `run()` does. The fake model has no WebRTC support, so reaching *its*
+    # refusal proves the workflow guard let the call through.
+    with patch.object(DBOS, 'workflow_id', 'wf-1'), patch.object(DBOS, 'step_id', 7):
+        realtime = simple_dbos_agent.realtime(_FakeRealtimeModel())
+        with pytest.raises(UserError, match='does not support WebRTC'):
+            await realtime.create_client_secret()
+
+
+class _FakeRealtimeConnection(RealtimeConnection):
+    async def send(self, content: Any) -> None: ...  # pragma: no cover
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        return
+        yield  # pragma: no cover
+
+
+class _FakeRealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'
+
+    @property
+    def system(self) -> str:
+        return 'fake'
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(
+            supports_image_input=True,
+            supports_manual_turn_control=True,
+            supports_interruption=True,
+            supports_output_truncation=True,
+            supports_session_seeding=True,
+            supported_native_tools=frozenset(),
+        )
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[_FakeRealtimeConnection]:
+        yield _FakeRealtimeConnection()
+
+
+async def test_dbos_agent_realtime_session_outside_workflow():
+    # Outside a workflow, the session is delegated to the wrapped agent.
+    async with simple_dbos_agent.realtime(_FakeRealtimeModel()).session() as session:
+        assert isinstance(session, RealtimeSession)
+        assert [event async for event in session] == []
 
 
 async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBOS):

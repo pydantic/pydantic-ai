@@ -6,7 +6,7 @@ from datetime import timedelta
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
-from typing_extensions import TypedDict, assert_never, override
+from typing_extensions import TypedDict, override
 
 from .. import usage
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
@@ -27,6 +27,7 @@ from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
+from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
 from ._tool_choice import ResolvedToolChoice
 
 try:
@@ -348,107 +349,6 @@ class _OpenRouterError(BaseModel):
     message: str
 
 
-class _BaseReasoningDetail(BaseModel, frozen=True):
-    """Common fields shared across all reasoning detail types."""
-
-    id: str | None = None
-    format: (
-        Literal['unknown', 'openai-responses-v1', 'anthropic-claude-v1', 'xai-responses-v1', 'google-gemini-v1']
-        | str
-        | None
-    ) = None
-    index: int | None = None
-    type: Literal['reasoning.text', 'reasoning.summary', 'reasoning.encrypted']
-
-
-class _ReasoningSummary(_BaseReasoningDetail, frozen=True):
-    """Represents a high-level summary of the reasoning process."""
-
-    type: Literal['reasoning.summary']
-    summary: str = ''
-
-
-class _ReasoningEncrypted(_BaseReasoningDetail, frozen=True):
-    """Represents encrypted reasoning data."""
-
-    type: Literal['reasoning.encrypted']
-    data: str = ''
-
-
-class _ReasoningText(_BaseReasoningDetail, frozen=True):
-    """Represents raw text reasoning."""
-
-    type: Literal['reasoning.text']
-    text: str = ''
-    signature: str | None = None
-
-
-_OpenRouterReasoningDetail = _ReasoningSummary | _ReasoningEncrypted | _ReasoningText
-
-
-def _from_reasoning_detail(reasoning: _OpenRouterReasoningDetail) -> ThinkingPart:
-    provider_name = 'openrouter'
-    provider_details = reasoning.model_dump(include={'format', 'index', 'type'})
-    if isinstance(reasoning, _ReasoningText):
-        return ThinkingPart(
-            id=reasoning.id,
-            content=reasoning.text,
-            signature=reasoning.signature,
-            provider_name=provider_name,
-            provider_details=provider_details,
-        )
-    elif isinstance(reasoning, _ReasoningSummary):
-        return ThinkingPart(
-            id=reasoning.id, content=reasoning.summary, provider_name=provider_name, provider_details=provider_details
-        )
-    elif isinstance(reasoning, _ReasoningEncrypted):
-        return ThinkingPart(
-            id=reasoning.id,
-            content='',
-            signature=reasoning.data,
-            provider_name=provider_name,
-            provider_details=provider_details,
-        )
-    else:
-        assert_never(reasoning)
-
-
-def _into_reasoning_detail(thinking_part: ThinkingPart) -> _OpenRouterReasoningDetail | None:
-    if thinking_part.provider_details is None:  # pragma: lax no cover
-        return None
-
-    data = _BaseReasoningDetail.model_validate(thinking_part.provider_details)
-
-    if data.type == 'reasoning.text':
-        return _ReasoningText(
-            type=data.type,
-            id=thinking_part.id,
-            format=data.format,
-            index=data.index,
-            text=thinking_part.content,
-            signature=thinking_part.signature,
-        )
-    elif data.type == 'reasoning.summary':
-        return _ReasoningSummary(
-            type=data.type,
-            id=thinking_part.id,
-            format=data.format,
-            index=data.index,
-            summary=thinking_part.content,
-        )
-    elif data.type == 'reasoning.encrypted':
-        assert thinking_part.signature is not None
-        return _ReasoningEncrypted(
-            type=data.type,
-            id=thinking_part.id,
-            format=data.format,
-            index=data.index,
-            data=thinking_part.signature,
-        )
-    else:
-        assert_never(data.type)
-
-
 class _OpenRouterFileAnnotation(BaseModel, frozen=True):
     """File annotation from OpenRouter.
 
@@ -490,7 +390,7 @@ class _OpenRouterCompletionMessage(chat.ChatCompletionMessage):
     reasoning: str | None = None
     """The reasoning text associated with the message, if any."""
 
-    reasoning_details: list[_OpenRouterReasoningDetail] | None = None
+    reasoning_details: list[ReasoningDetail] | None = None
     """The reasoning details associated with the message, if any."""
 
     tool_calls: list[_OpenRouterChatCompletionMessageToolCallUnion] | None = None  # type: ignore[reportIncompatibleVariableOverride]
@@ -527,7 +427,7 @@ class _OpenRouterCostDetails:
 
 @dataclass
 class _OpenRouterServerToolUseDetails:
-    """Counts of OpenRouter server-side tool calls (e.g. the advisor tool).
+    """Counts of OpenRouter server-side tool calls.
 
     OpenRouter reports these aggregate counts in usage, including when individual server-tool
     calls are not exposed as message parts in the Chat Completions response.
@@ -535,6 +435,8 @@ class _OpenRouterServerToolUseDetails:
 
     tool_calls_requested: int | None = None
     tool_calls_executed: int | None = None
+
+    web_search_requests: int | None = None
 
 
 class _OpenRouterPromptTokenDetails(completion_usage.PromptTokensDetails):
@@ -673,11 +575,16 @@ def _map_openrouter_provider_details(
         if (is_byok := usage.is_byok) is not None:
             provider_details['is_byok'] = is_byok
 
-        if server_tool_use := usage.server_tool_use_details:
-            provider_details['server_tool_use'] = {
-                'tool_calls_requested': server_tool_use.tool_calls_requested,
-                'tool_calls_executed': server_tool_use.tool_calls_executed,
-            }
+        server_tool_use: dict[str, int | None] = {}
+        if server_tool_use_details := usage.server_tool_use_details:
+            if (tool_calls_requested := server_tool_use_details.tool_calls_requested) is not None:
+                server_tool_use['tool_calls_requested'] = tool_calls_requested
+            if (tool_calls_executed := server_tool_use_details.tool_calls_executed) is not None:
+                server_tool_use['tool_calls_executed'] = tool_calls_executed
+            if (web_search_requests := server_tool_use_details.web_search_requests) is not None:
+                server_tool_use['web_search_requests'] = web_search_requests
+        if server_tool_use:
+            provider_details['server_tool_use'] = server_tool_use
 
     return provider_details
 
@@ -709,9 +616,9 @@ def _openrouter_settings_to_openai_settings(
     Returns:
         An 'OpenAIChatModelSettings' object with equivalent settings.
     """
-    # Copy so the `openrouter_` pops and `extra_body` mutations never mutate the caller's dict:
+    # Copy so the `openrouter_` pops and `extra_body` updates never mutate the caller's dict:
     # `merge_model_settings` can return the model's own `settings` by identity, so popping in place
-    # would drop the keys on the next request and accumulate duplicate plugin entries.
+    # would drop the keys on the next request.
     model_settings = model_settings.copy()
     extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
 
@@ -741,13 +648,6 @@ def _openrouter_settings_to_openai_settings(
     # openrouter_cache_tool_definitions are intentionally NOT popped here - they are consumed
     # by OpenRouterModel._map_messages and ._get_tool_choice via the model_settings dict, not passed
     # to the OpenAI SDK.
-
-    for native_tool in model_request_parameters.native_tools:
-        if isinstance(native_tool, WebSearchTool):
-            # Rebuild rather than append: `dict(...)` above is shallow, so an `extra_body['plugins']`
-            # the caller passed in is still their list object.
-            extra_body['plugins'] = [*extra_body.get('plugins', []), {'id': 'web'}]
-            extra_body['web_search_options'] = {'search_context_size': native_tool.search_context_size}
 
     model_settings['extra_body'] = extra_body
 
@@ -961,7 +861,7 @@ class OpenRouterModel(OpenAIChatModel):
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle.
 
-        OpenRouter supports web search via its plugins system.
+        OpenRouter supports web search through its server-tool API.
         """
         return frozenset({WebSearchTool, AdvisorTool})
 
@@ -1050,8 +950,7 @@ class OpenRouterModel(OpenAIChatModel):
             last_tool = cast(dict[str, Any], tools[-1])
             last_tool['cache_control'] = self._build_cache_control(cache_tool_defs)
 
-        # Appended after the cache block so the tool-definitions cache breakpoint stays on the
-        # last function tool; the advisor entry is a small stable dict after the breakpoint.
+        # Append server tools after the cache block so the tool-definitions cache breakpoint stays on the last function tool.
         advisor = next((t for t in model_request_parameters.native_tools if isinstance(t, AdvisorTool)), None)
         if advisor is not None:
             parameters: dict[str, Any] = {
@@ -1062,6 +961,21 @@ class OpenRouterModel(OpenAIChatModel):
                 **({'max_completion_tokens': advisor.max_tokens} if advisor.max_tokens is not None else {}),
             }
             tools.append(cast(chat.ChatCompletionToolParam, {'type': 'openrouter:advisor', 'parameters': parameters}))
+
+        web_search = next((t for t in model_request_parameters.native_tools if isinstance(t, WebSearchTool)), None)
+        if web_search is not None:
+            parameters: dict[str, Any] = {'search_context_size': web_search.search_context_size}
+            if (user_location := web_search.user_location) is not None:
+                parameters['user_location'] = {'type': 'approximate', **user_location}
+            if (allowed_domains := web_search.allowed_domains) is not None:
+                parameters['allowed_domains'] = allowed_domains
+            if (blocked_domains := web_search.blocked_domains) is not None:
+                parameters['excluded_domains'] = blocked_domains
+            if (max_uses := web_search.max_uses) is not None:
+                parameters['max_uses'] = max_uses
+            tools.append(
+                cast(chat.ChatCompletionToolParam, {'type': 'openrouter:web_search', 'parameters': parameters})
+            )
 
         return tools, tool_choice
 
@@ -1104,7 +1018,7 @@ class OpenRouterModel(OpenAIChatModel):
 
     @override
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
-        """OpenRouter handles web search via plugins in extra_body, not via the OpenAI web_search_options parameter."""
+        """OpenRouter maps web search to its server tool, not the OpenAI `web_search_options` parameter."""
         return None
 
     @override
@@ -1150,7 +1064,7 @@ class OpenRouterModel(OpenAIChatModel):
         assert isinstance(message, _OpenRouterCompletionMessage)
 
         if reasoning_details := message.reasoning_details:
-            return [_from_reasoning_detail(detail) for detail in reasoning_details]
+            return [from_reasoning_detail(detail, self.system) for detail in reasoning_details]
         else:
             return super()._process_thinking(message)
 
@@ -1183,7 +1097,7 @@ class OpenRouterModel(OpenAIChatModel):
         def _map_response_thinking_part(self, item: ThinkingPart) -> None:
             assert isinstance(self._model, OpenRouterModel)
             if item.provider_name == self._model.system:
-                if reasoning_detail := _into_reasoning_detail(item):  # pragma: lax no cover
+                if reasoning_detail := into_reasoning_detail(item):  # pragma: lax no cover
                     self.reasoning_details.append(reasoning_detail.model_dump())
             else:  # pragma: lax no cover
                 super()._map_response_thinking_part(item)
@@ -1254,7 +1168,7 @@ class _OpenRouterChoiceDelta(chat_completion_chunk.ChoiceDelta):
     reasoning: str | None = None
     """The reasoning text associated with the message, if any."""
 
-    reasoning_details: list[_OpenRouterReasoningDetail] | None = None
+    reasoning_details: list[ReasoningDetail] | None = None
     """The reasoning details associated with the message, if any."""
 
     annotations: list[_OpenRouterAnnotation] | None = None
@@ -1332,7 +1246,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
 
         if reasoning_details := choice.delta.reasoning_details:
             for i, detail in enumerate(reasoning_details):
-                thinking_part = _from_reasoning_detail(detail)
+                thinking_part = from_reasoning_detail(detail, self._provider_name)
                 # OpenRouter's index is stable across chunks, unlike the position in the current
                 # chunk. It distinguishes separate details while merging deltas for one detail.
                 # The type remains part of the identifier because Gemini 3 Pro can emit text and

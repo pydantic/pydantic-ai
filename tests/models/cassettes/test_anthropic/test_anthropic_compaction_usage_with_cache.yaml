@@ -4,7 +4,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -15,6 +15,9 @@ interactions:
       - api.anthropic.com
     method: POST
     parsed_body:
+      cache_control:
+        ttl: 5m
+        type: ephemeral
       context_management:
         edits:
         - trigger:
@@ -24,10 +27,7 @@ interactions:
       max_tokens: 4096
       messages:
       - content:
-        - cache_control:
-            ttl: 5m
-            type: ephemeral
-          text: "Remember this context: The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy
+        - text: "Remember this context: The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy
             dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown
             fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy
             dog. The quick brown fox jumps over the lazy dog. The quick brown fox jumps over the lazy dog. The quick brown
@@ -2041,15 +2041,15 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1422'
+      - '1578'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
-      server-timing:
-      - x-originResponse;dur=5020
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-f5e77d9b9ee60821c264b75b963ee4db-e4a2772c3b888b58-01
       transfer-encoding:
       - chunked
       vary:
@@ -2059,15 +2059,19 @@ interactions:
       - content: |-
           The user provided a very long context consisting entirely of the repeated sentence "The quick brown fox jumps over the lazy dog." repeated thousands of times, followed by the instruction "Now say hello."
 
-          The task is simply to respond to "Now say hello." - I should say hello.
+          The task was simply to say hello in response to the user's prompt.
 
-          Next step: Say hello to the user.
+          The response to give is: "Hello!"
+
+          No complex task is being solved here. The user simply wants a greeting in response to their "Now say hello" instruction. The massive repeated text appears to be a context window stress test.
+
+          Next step: Simply say "Hello!" to the user.
         type: compaction
-      - text: "Hello! \U0001F44B"
+      - text: Hello!
         type: text
       context_management:
         applied_edits: []
-      id: msg_01WhrmimdvExAsAeWRBgMmaF
+      id: msg_011CduoCGqnmwXgi7jhzyVZM
       model: claude-sonnet-4-6
       role: assistant
       stop_details: null
@@ -2081,7 +2085,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: global
-        input_tokens: 180
+        input_tokens: 229
         iterations:
         - cache_creation:
             ephemeral_1h_input_tokens: 0
@@ -2089,20 +2093,17 @@ interactions:
           cache_creation_input_tokens: 55096
           cache_read_input_tokens: 0
           input_tokens: 100
-          output_tokens: 82
+          output_tokens: 131
           type: compaction
         - cache_creation:
             ephemeral_1h_input_tokens: 0
             ephemeral_5m_input_tokens: 0
           cache_creation_input_tokens: 0
           cache_read_input_tokens: 0
-          input_tokens: 180
-          output_tokens: 8
+          input_tokens: 229
+          output_tokens: 5
           type: message
-        output_tokens: 8
-        server_tool_use:
-          web_fetch_requests: 0
-          web_search_requests: 0
+        output_tokens: 5
         service_tier: standard
     status:
       code: 200

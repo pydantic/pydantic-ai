@@ -26,6 +26,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -160,7 +161,8 @@ class FunctionModel(Model):
         if inspect.iscoroutinefunction(self.function):
             response = await self.function(messages, agent_info)
         else:
-            response_ = await _utils.run_in_executor(self.function, messages, agent_info)
+            # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
+            response_ = await _utils.await_maybe(await _utils.run_in_executor(self.function, messages, agent_info))
             assert isinstance(response_, ModelResponse), response_
             response = response_
         response.model_name = self._model_name
@@ -425,6 +427,11 @@ def _estimate_usage(  # noqa: C901
                     if not allow_tool_availability_deltas:
                         raise _unsynthesized_tool_availability_delta_error()
                     request_tokens += _estimate_string_tokens(' '.join(part.tools_added))
+                elif isinstance(part, SpeechPart):
+                    # A direct `FunctionModel.request()` doesn't run `Model.prepare_messages`, so
+                    # user speech can arrive unconverted; estimate from the transcript like the
+                    # response side below rather than undercounting the turn to zero.
+                    request_tokens += _estimate_string_tokens(part.content)
                 else:
                     assert_never(part)
         elif isinstance(message, ModelResponse):
@@ -441,6 +448,8 @@ def _estimate_usage(  # noqa: C901
                     response_tokens += _estimate_string_tokens([part.content])
                 elif isinstance(part, CompactionPart):
                     pass
+                elif isinstance(part, SpeechPart):
+                    response_tokens += _estimate_string_tokens(part.content)
                 else:
                     assert_never(part)
         else:

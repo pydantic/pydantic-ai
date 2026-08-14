@@ -6,14 +6,16 @@ enabling streaming event-based communication for interactive AI applications.
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass, field
 from uuid import uuid4
 
+from pydantic_core import to_json
+
 from ..._utils import now_utc
 from ...exceptions import RunCancelled
 from ...messages import (
+    CompactionPart,
     FunctionToolResultEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -31,6 +33,7 @@ from ...messages import (
 from ...output import OutputDataT
 from ...tools import AgentDepsT, DeferredToolRequests
 from .. import SSE_CONTENT_TYPE, NativeEvent, UIEventStream
+from .._adapter import compaction_payload
 from ._interrupt import (
     HAS_INTERRUPTS,
     RunFinishedInterruptOutcome,
@@ -40,6 +43,7 @@ from ._interrupt import (
 from ._utils import (
     ACTIVITY_EVENTS_VERSION,
     BUILTIN_TOOL_CALL_ID_PREFIX,
+    COMPACTION_ACTIVITY_TYPE,
     DEFAULT_AG_UI_VERSION,
     INTERRUPTS_VERSION,
     REASONING_VERSION,
@@ -298,7 +302,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             tool_call_id = self._builtin_tool_call_ids[tool_call_id]
         yield ToolCallArgsEvent(
             tool_call_id=tool_call_id,
-            delta=delta.args_delta if isinstance(delta.args_delta, str) else json.dumps(delta.args_delta),
+            delta=delta.args_delta if isinstance(delta.args_delta, str) else to_json(delta.args_delta).decode(),
         )
 
     async def handle_tool_call_end(self, part: ToolCallPart) -> AsyncIterator[BaseEvent]:
@@ -339,6 +343,18 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             message_id=str(uuid4()),
             activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
             content={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+        )
+
+    async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[BaseEvent]:
+        if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
+            return
+
+        from ag_ui.core import ActivitySnapshotEvent
+
+        yield ActivitySnapshotEvent(
+            message_id=str(uuid4()),
+            activity_type=COMPACTION_ACTIVITY_TYPE,
+            content=compaction_payload(part),
         )
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:
