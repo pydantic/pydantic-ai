@@ -1749,6 +1749,8 @@ async def test_combined_toolset_instructions():
     combined = CombinedToolset([toolset1, toolset2, toolset3])
     ctx = build_run_context(None)
 
+    assert combined.id is None
+
     # CombinedToolset aggregates non-None instructions from all contained toolsets as parts,
     # each identified by the toolset that contributed it.
     instructions = await combined.get_instructions(ctx)
