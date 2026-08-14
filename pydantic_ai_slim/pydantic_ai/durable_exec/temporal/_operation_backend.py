@@ -8,10 +8,13 @@ from temporalio import activity
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai.durable_exec._operation import (
+    CallToolId,
     CancelSuspendedResponseId,
     DurableOperation,
     DurableOperationId,
     EventStreamHandlerId,
+    GetInstructionsId,
+    GetToolsId,
     IdentityParameterTransport,
     ModelRequestId,
     NoCacheIdentity,
@@ -49,10 +52,18 @@ class _EventParams(Protocol):
 
 
 class TemporalOperationConfig:
-    def __init__(self, *, model: ActivityConfig, event: ActivityConfig, tool: ActivityConfig) -> None:
+    def __init__(
+        self,
+        *,
+        model: ActivityConfig,
+        event: ActivityConfig,
+        tool: ActivityConfig,
+        resolve_tool: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]] | None = None,
+    ) -> None:
         self._model = model
         self._event = event
         self._tool = tool
+        self._resolve_tool = resolve_tool
 
     def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> ActivityConfig:
         if role is OperationConfigRole.MODEL:
@@ -68,7 +79,9 @@ class TemporalOperationConfig:
         tool: object | None,
         tool_name: str,
     ) -> ActivityConfig | Literal[False]:
-        return self._tool
+        if self._resolve_tool is None:
+            return self._tool
+        return self._resolve_tool(operation_id, tool, tool_name)
 
 
 class TemporalBoundOperation(Generic[P, W, R]):
@@ -103,6 +116,13 @@ class TemporalBoundOperation(Generic[P, W, R]):
         elif isinstance(operation_id, CancelSuspendedResponseId):
             model_name = cast(_ModelParams, params).model_id or operation_id.model_name
             activity_config['summary'] = f'cancel suspended response: {model_name}'
+        elif isinstance(operation_id, CallToolId):
+            tool_name = cast(Any, params).name
+            activity_config['summary'] = f'call tool: {operation_id.toolset_id}:{tool_name}'
+        elif isinstance(operation_id, GetToolsId):
+            activity_config['summary'] = f'get tools: {operation_id.toolset_id}'
+        elif isinstance(operation_id, GetInstructionsId):
+            activity_config['summary'] = f'get instructions: {operation_id.toolset_id}'
         else:
             assert isinstance(operation_id, EventStreamHandlerId)
             event = cast(_EventParams, params).event
@@ -127,11 +147,15 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
         model_config: ActivityConfig,
         event_config: ActivityConfig,
         tool_config: ActivityConfig,
+        resolve_tool_config: Callable[[DurableOperationId, object | None, str], ActivityConfig | Literal[False]]
+        | None = None,
         runtime: object | None = None,
     ) -> None:
         super().__init__(
             namer=TemporalOperationNamer(agent_name),
-            config=TemporalOperationConfig(model=model_config, event=event_config, tool=tool_config),
+            config=TemporalOperationConfig(
+                model=model_config, event=event_config, tool=tool_config, resolve_tool=resolve_tool_config
+            ),
         )
         self._deps_type = deps_type
         self._runtime = runtime
@@ -167,7 +191,9 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
 
     def adopt_registrations(self, registrations: Sequence[Callable[..., object]]) -> None:
         """Adopt already-decorated toolset activities without changing their identity."""
-        self._registrations.extend(registrations)
+        self._registrations.extend(
+            registration for registration in registrations if registration not in self._registrations
+        )
 
     def move_registration_to_end(self, registration: Callable[..., object]) -> None:
         self._registrations.remove(registration)

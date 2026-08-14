@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, cast
 
 from pydantic import ConfigDict, with_config
 from pydantic_core import PydanticSerializationError
@@ -24,10 +25,12 @@ from pydantic_ai.durable_exec._base import (
     EventStreamHandlerOperationParams as _SemanticEventStreamHandlerParams,
     ModelRequestOperationParams,
     ToolsetKind,
+    _CallToolParams,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
+from pydantic_ai.durable_exec._operation import DurableOperationId
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
-from pydantic_ai.durable_exec._toolset import DurableToolsetBase, Lifecycle
+from pydantic_ai.durable_exec._toolset import CallToolResult, DurableToolsetBase, Lifecycle
 from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
@@ -35,7 +38,8 @@ from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestPar
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 if TYPE_CHECKING:
     pass
@@ -43,12 +47,54 @@ if TYPE_CHECKING:
 from ._operation_backend import TemporalOperationBackend
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
+    CallToolParams,
     TemporalWrapperToolset,
+    resolve_tool_activity_config,
     temporalize_toolset as _default_temporalize_toolset,
+    tool_result_payload_errors,
     toolset_temporal_activities,
     validate_activity_config,
     with_non_retryable_errors,
 )
+
+
+class _FunctionCallTransport:
+    wire_type = CallToolParams
+    result_type = CallToolResult
+
+    def __init__(self, durability: TemporalDurability[Any], toolset: FunctionToolset[Any]) -> None:
+        self._durability = durability
+        self._toolset = toolset
+
+    def dump(self, params: _CallToolParams) -> tuple[CallToolParams, Any]:
+        assert params.tool is not None
+        tool = params.tool
+        return (
+            CallToolParams(
+                name=params.name,
+                tool_args=params.tool_args,
+                serialized_run_context=self._durability.run_context_type.serialize_run_context(params.ctx),
+                tool_def=tool.tool_def,
+                original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
+            ),
+            params.ctx.deps,
+        )
+
+    def load(self, payload: tuple[CallToolParams, Any], *, runtime: object) -> _CallToolParams:
+        params, deps = payload
+        ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
+        try:
+            tool = (
+                self._toolset.tool_for_tool_def(params.tool_def, ctx=ctx, original_name=params.original_name)
+                if params.tool_def is not None
+                else None
+            )
+        except KeyError as exc:
+            raise UserError(
+                f'Tool {params.name!r} not found in toolset {self._toolset.id!r}. '
+                'Removing or renaming tools during an agent run is not supported with Temporal.'
+            ) from exc
+        return _CallToolParams(params.name, params.tool_args, ctx, tool)
 
 
 @dataclass
@@ -394,6 +440,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             model_config=self._model_activity_config,
             event_config=self._event_stream_handler_activity_config,
             tool_config=self.activity_config,
+            resolve_tool_config=self._resolve_temporal_tool_config,
             runtime=self,
         )
         self._register_activities(agent)
@@ -421,6 +468,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             backend.adopt_registrations(toolset_temporal_activities(wrapped))
 
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
+        if isinstance(ts, FunctionToolset):
+            return self._build_function_toolset(ts)
         ts_id = ts.id
         toolset_activity_config = self.activity_config.copy()
         if ts_id is not None:
@@ -437,6 +486,66 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._agent,
         )
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
+
+    def _build_operation_backend(self) -> TemporalOperationBackend:
+        backend = self._operation_backend
+        assert backend is not None
+        return backend
+
+    def _toolset_base_config(self, kind: ToolsetKind) -> ActivityConfig:
+        return self.activity_config
+
+    def _toolset_operation_config(self, kind: ToolsetKind, toolset_id: str) -> ActivityConfig:
+        config = self.activity_config.copy()
+        config.update(self._toolset_activity_config.get(toolset_id, {}))
+        config['retry_policy'] = with_non_retryable_errors(config.get('retry_policy'))
+        return config
+
+    @contextmanager
+    def _tool_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT], None, None]:
+        # Temporal applies its durable-operation guards while deserializing the run context;
+        # wrapping it again would replace activity-specific compatibility state.
+        yield ctx
+
+    def _resolve_temporal_tool_config(
+        self, operation_id: DurableOperationId, tool: object | None, name: str
+    ) -> ActivityConfig | Literal[False]:
+        toolset_id = cast(Any, operation_id).toolset_id
+        base_config = self._toolset_operation_config('function', toolset_id)
+        config = resolve_tool_activity_config(cast(ToolsetTool[Any] | None, tool), name, {})
+        if config is False:
+            assert isinstance(tool, FunctionToolsetTool)
+            if not tool.is_async:
+                raise UserError(
+                    f'Temporal activity config for tool {name!r} has been explicitly set to `False` (activity disabled), '
+                    'but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead.'
+                )
+            return False
+        return cast(ActivityConfig, {**base_config, **config})
+
+    def _function_call_parameter_transport(self, toolset: FunctionToolset[AgentDepsT]) -> _FunctionCallTransport:
+        return _FunctionCallTransport(self, toolset)
+
+    def _bound_operation_registrations(self, *operations: object) -> list[Callable[..., Any]]:
+        return [cast(Any, operation).registration for operation in operations]
+
+    async def _prepare_function_call_params(
+        self, toolset: FunctionToolset[AgentDepsT], params: _CallToolParams
+    ) -> _CallToolParams:
+        tool = params.tool
+        if tool is None:
+            try:
+                tool = (await toolset.get_tools(params.ctx))[params.name]
+            except KeyError as exc:
+                raise UserError(
+                    f'Tool {params.name!r} not found in toolset {toolset.id!r}. '
+                    'Removing or renaming tools during an agent run is not supported with Temporal.'
+                ) from exc
+        args = tool.args_validator.validate_python(params.tool_args)
+        return _CallToolParams(params.name, args, params.ctx, tool)
+
+    def _tool_call_payload_errors(self, tool_name: str):
+        return tool_result_payload_errors(tool_name)
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:

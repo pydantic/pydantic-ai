@@ -126,7 +126,7 @@ class _CallToolParams:
     name: str
     tool_args: dict[str, Any]
     ctx: RunContext[Any]
-    tool: ToolsetTool[Any]
+    tool: ToolsetTool[Any] | None
 
 
 @dataclass(frozen=True)
@@ -703,6 +703,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Engine base config for a toolset kind's durable units (merged with per-tool config)."""
         return None
 
+    def _toolset_operation_config(self, kind: ToolsetKind, toolset_id: str) -> Any:
+        """Return the base config for one concrete toolset's operations."""
+        return self._toolset_base_config(kind)
+
     def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
         """Guard `ctx.enqueue()` and `ctx.cancel()` for user code that runs inside a durable unit (#6666)."""
         return guard_run_context(ctx, unit_noun=self._durable_unit_noun, container_noun=self._durable_container_noun)
@@ -802,6 +806,30 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return unwrap_recorded_tool_call_result(payload)
         return unwrap_tool_call_result(payload)
 
+    async def _prepare_function_call_params(
+        self, toolset: FunctionToolset[AgentDepsT], params: _CallToolParams
+    ) -> _CallToolParams:
+        """Prepare engine-transported function call parameters for the common handler."""
+        return params
+
+    @contextmanager
+    def _tool_call_payload_errors(self, tool_name: str) -> Generator[None]:
+        """Map engine-specific failures while dispatching a tool call."""
+        yield
+
+    @contextmanager
+    def _tool_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT]]:
+        """Install the durable run-context policy used by common tool handlers."""
+        with self._durable_run_context_scope(ctx) as durable_ctx:
+            yield durable_ctx
+
+    def _function_call_parameter_transport(self, toolset: FunctionToolset[AgentDepsT]) -> Any:
+        return IdentityParameterTransport[_CallToolParams]()
+
+    def _bound_operation_registrations(self, *operations: object) -> list[Callable[..., Any]]:
+        """Return engine registrations contributed by bound operations, if any."""
+        return []
+
     def _toolset_in_durable_context(self) -> bool:
         """Whether durable toolset operations should use their durable boundary."""
         return self.in_durable_context
@@ -832,10 +860,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return None
 
     def _build_function_toolset(self, toolset: FunctionToolset[AgentDepsT]) -> DurableFunctionToolset[AgentDepsT]:
-        base_config = self._toolset_base_config('function')
+        base_config = self._toolset_operation_config('function', cast(str, toolset.id))
 
         async def call_tool_handler(params: _CallToolParams) -> CallToolResult:
-            with self._durable_run_context_scope(params.ctx) as durable_ctx:
+            params = await self._prepare_function_call_params(toolset, params)
+            assert params.tool is not None
+            with self._tool_run_context_scope(params.ctx) as durable_ctx:
                 return await wrap_tool_call_result(
                     toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
                 )
@@ -844,7 +874,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         operation = DurableOperation(
             operation_id=CallToolId('function', cast(str, toolset.id)),
             handler=call_tool_handler,
-            parameter_transport=IdentityParameterTransport[_CallToolParams](),
+            parameter_transport=self._function_call_parameter_transport(toolset),
             cache_identity=_FunctionCallToolCacheIdentity(),
             result_codec=self._legacy_result_codec(CallToolResult),
             config_role=OperationConfigRole.TOOL_CALL,
@@ -861,7 +891,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool: ToolsetTool[AgentDepsT],
             config: Any,
         ) -> Any:
-            payload = await call_tool(_CallToolParams(name, tool_args, ctx, tool), config=config)
+            with self._tool_call_payload_errors(name):
+                payload = await call_tool(_CallToolParams(name, tool_args, ctx, tool), config=config)
             return self._unwrap_tool_result(payload)
 
         return DurableFunctionToolset(
@@ -870,6 +901,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             call_tool_operation=call_tool_operation,
             resolve_tool_config=resolve_tool_config,
             lifecycle=self._toolset_lifecycles['function'],
+            durable_registrations=self._bound_operation_registrations(call_tool),
             durable_config=base_config,
         )
 
