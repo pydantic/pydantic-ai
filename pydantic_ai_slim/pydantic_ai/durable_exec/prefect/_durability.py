@@ -1,27 +1,26 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import Any, ClassVar, Literal, cast
 
-from prefect import task
 from prefect.context import FlowRunContext
 
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
+from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
 from pydantic_ai.durable_exec._toolset import Lifecycle
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.toolsets import ToolsetTool
 
 from ._model import _stamp_response_provenance  # pyright: ignore[reportPrivateUsage]
+from ._operation_backend import PrefectOperationBackend, PrefectOperationConfig
 from ._toolset import with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass(init=False)
@@ -29,10 +28,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by routing I/O through Prefect tasks.
 
     Ported onto the declarative Shape-D base: the base owns toolset/model/event assembly, and this
-    capability contributes only the Prefect primitive (`run_durable_unit`), the transparency gate
-    (`in_durable_context`), the naming scheme, the config knobs, and -- the one genuine behavioral
-    override -- the hash-keyed event dispatch (Prefect keys replay on input hash, so identical events
-    need a per-flow-run sequence number the sequence-keyed engines don't).
+    capability contributes the Prefect operation backend, transparency gate, and task configuration.
     """
 
     # --- Declarative surface ---
@@ -111,28 +107,21 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return FlowRunContext.get() is not None
 
-    async def run_durable_unit(
-        self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
-    ) -> Any:
-        """Run `fn` as a Prefect task.
+    def _build_operation_backend(self) -> CallableOperationBackend[TaskConfig]:
+        def tool_config(kind: ToolsetKind, tool: object | None, tool_name: str) -> TaskConfig | Literal[False]:
+            config = self._build_resolve_tool_config(self._toolset_base_config(kind))(
+                cast(ToolsetTool[Any] | None, tool), tool_name
+            )
+            return cast(TaskConfig | Literal[False], config)
 
-        `inputs` are passed as task arguments so the cache policy (`PrefectAgentInputs` --
-        hash-keyed) forks the cache key on them; `fn` (a closure) does the real work. `name` is
-        prepended to the hashed inputs so operations with identical inputs but different identity
-        keep distinct cache entries.
-
-        They ride in one `*args` tuple, so no ceiling is imposed on how many inputs an operation
-        may have. `PrefectAgentInputs` recurses into that tuple to project the `RunContext` and
-        `ToolsetTool` it holds; without that projection, hashing a raw `RunContext` fails outright
-        whenever `deps` holds an unserializable resource (a client, a pool, a lock).
-        """
-
-        @task
-        async def _unit(unit_name: str, *args: Any) -> Any:
-            return await fn()
-
-        options = cast(TaskConfig, config or {})
-        return await _unit.with_options(name=name, **options)(name, *inputs)
+        return PrefectOperationBackend(
+            config=PrefectOperationConfig(
+                model=self._model_task_config,
+                event=self._event_stream_handler_task_config,
+                tool=tool_config,
+            ),
+            event_sequence_key=f'pydantic_ai_event_sequence:{self.name}',
+        )
 
     # --- Naming (compat surface): Prefect's human-readable task display names ---
 
@@ -151,12 +140,6 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
 
     # --- Config knobs ---
 
-    def _model_unit_config(self) -> Any:
-        return self._model_task_config
-
-    def _event_unit_config(self) -> Any:
-        return self._event_stream_handler_task_config
-
     def _toolset_base_config(self, kind: ToolsetKind) -> Any:
         return self._mcp_task_config if kind == 'mcp' else self._tool_task_config
 
@@ -165,32 +148,3 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _stamp_response(self, response: ModelResponse, messages: list[ModelMessage]) -> None:
         _stamp_response_provenance(response, messages)
-
-    # --- The one genuine behavioral override: hash-keyed event dispatch ---
-
-    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
-        handler = self._event_stream_handler
-        assert handler is not None
-
-        # The sequence number makes content-identical events within one flow run each fire (distinct
-        # task-cache keys) while a flow retry reproduces the same numbers and replays from cache.
-        # `task_run_dynamic_keys` is Prefect's per-flow-run counter store.
-        flow_context = FlowRunContext.get()
-        assert flow_context is not None
-        sequence_key = f'pydantic_ai_event_sequence:{self.name}'
-        sequence = flow_context.task_run_dynamic_keys.get(sequence_key, 0)
-        assert isinstance(sequence, int)
-        flow_context.task_run_dynamic_keys[sequence_key] = sequence + 1
-
-        async def fn() -> None:
-            with self._durable_run_context_scope(ctx) as durable_ctx:
-                await handler(durable_ctx, self._single_event_stream(event))
-            return None
-
-        await self._durable_operation(
-            'Handle Stream Event',
-            fn,
-            tp=type(None),
-            inputs=(event, sequence),
-            config=self._event_unit_config(),
-        )

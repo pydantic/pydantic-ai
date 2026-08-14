@@ -231,6 +231,8 @@ def test_prefect_name_parity_with_live_old_implementation_and_table() -> None:
     actual = [namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in ids]
     assert actual == live
     assert set(actual) == PREFECT_OPERATION_NAMES
+    assert old._model_id_suffix('registered') == ''  # pyright: ignore[reportPrivateUsage]
+    assert old._legacy_operation_name(CancelSuspendedResponseId(None, 'test')) == 'Cancel Suspended Response: test'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_dbos_name_parity_with_live_old_implementation_and_table() -> None:

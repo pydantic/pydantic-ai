@@ -62,8 +62,9 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     Toolset,
 )
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC, JSON_CODEC
+from pydantic_ai.durable_exec._operation import CallToolId, ModelRequestId, OperationConfigRole
 from pydantic_ai.durable_exec._toolset import (
     DurableDynamicToolset,
     DurableFunctionToolset,
@@ -119,6 +120,7 @@ try:
         _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.prefect._mcp_toolset import prefectify_mcp_toolset
+    from pydantic_ai.durable_exec.prefect._operation_backend import PrefectOperationConfig
     from pydantic_ai.durable_exec.prefect._toolset import with_non_retryable_errors
 except ImportError:  # pragma: lax no cover
     pytest.skip('Prefect is not installed', allow_module_level=True)
@@ -357,6 +359,36 @@ async def test_durability_base_serialization_failure_hook() -> None:
         await unmapped._durable_operation(  # pyright: ignore[reportPrivateUsage]
             'unmapped', non_serializable, tp=object, inputs=(), config=None
         )
+
+    async def serializable() -> str:
+        return 'ok'
+
+    assert (
+        await unmapped._durable_operation('success', serializable, tp=str, inputs=(), config=None)  # pyright: ignore[reportPrivateUsage]
+        == 'ok'
+    )
+
+
+def test_prefect_operation_config_routes_roles_and_tool_kinds() -> None:
+    calls: list[tuple[str, object | None, str]] = []
+
+    def tool_config(kind: ToolsetKind, tool: object | None, tool_name: str) -> TaskConfig:
+        calls.append((kind, tool, tool_name))
+        return TaskConfig(timeout_seconds=3)
+
+    config = PrefectOperationConfig(
+        model=TaskConfig(timeout_seconds=1),
+        event=TaskConfig(timeout_seconds=2),
+        tool=tool_config,
+    )
+    model_id = ModelRequestId(None, False, 'test')
+    call_id = CallToolId('function', 'tools')
+    assert config.base(OperationConfigRole.MODEL, model_id) == {'timeout_seconds': 1}
+    assert config.base(OperationConfigRole.EVENT, model_id) == {'timeout_seconds': 2}
+    assert config.base(OperationConfigRole.TOOL_CALL, call_id) == {'timeout_seconds': 3}
+    marker = object()
+    assert config.for_tool(OperationConfigRole.TOOL_CALL, call_id, marker, 'tool') == {'timeout_seconds': 3}
+    assert calls == [('function', None, ''), ('function', marker, 'tool')]
 
 
 # `PrefectAgent` is deprecated in favor of `capabilities=[PrefectDurability(...)]`.
@@ -2335,6 +2367,44 @@ async def test_durability_repeated_run_hits_cache_preserves_provenance():
     assert result2.all_messages()[0].run_id != response2.run_id
 
 
+async def test_durability_cache_identity_distinguishes_model_inputs_and_tool_arguments() -> None:
+    """Native operation dispatch gives Prefect every logical input that forks task behavior."""
+    model_inputs: list[str] = []
+    tool_arguments: list[int] = []
+
+    def model_fn(messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart('done')])
+        prompt = next(
+            cast(str, part.content)
+            for message in messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        )
+        model_inputs.append(prompt)
+        return ModelResponse(parts=[ToolCallPart('record_argument', {'value': int(prompt)})])
+
+    async def record_argument(value: int) -> str:
+        tool_arguments.append(value)
+        return str(value)
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name='cache_identity_inputs',
+        tools=[record_argument],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow
+    async def run_distinct_inputs() -> None:
+        await agent.run('1')
+        await agent.run('2')
+
+    await run_distinct_inputs()
+    assert model_inputs == ['1', '2']
+    assert tool_arguments == [1, 2]
+
+
 async def test_flow_retry_replays_tool_result() -> None:
     """A flow retry replays a tool task's recorded result instead of re-running the tool body.
 
@@ -3384,12 +3454,19 @@ async def test_prefect_durability_identical_events_are_dispatched_twice() -> Non
         capabilities=[durability],
     )
 
-    @flow
+    attempts = 0
+
+    @flow(retries=1)
     async def run_twice() -> None:
+        nonlocal attempts
+        attempts += 1
         await agent.run('same')
         await agent.run('same')
+        if attempts == 1:
+            raise RuntimeError('retry after both identical events were cached')
 
     await run_twice()
+    assert attempts == 2
     assert calls == 2
 
 
