@@ -25,10 +25,18 @@ from pydantic_ai.capabilities.abstract import (
     leaf_capabilities,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ModelResponseStreamEvent
-from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
+from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ModelResponseStreamEvent
+from pydantic_ai.models import (
+    KnownModelName,
+    Model,
+    ModelRequestContext,
+    ModelRequestParameters,
+    ModelResolutionContext,
+    infer_model,
+)
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
@@ -89,7 +97,9 @@ _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 @dataclass(frozen=True)
 class _ModelRequestParams:
     model_id: str | None
-    request: ModelRequestContext
+    messages: list[ModelMessage]
+    model_settings: ModelSettings | None
+    model_request_parameters: ModelRequestParameters
     run_context: RunContext[Any]
 
 
@@ -121,12 +131,11 @@ class _CallToolParams:
 
 class _ModelRequestCacheIdentity(CacheIdentity[_ModelRequestParams]):
     def project(self, params: _ModelRequestParams) -> tuple[object, ...]:
-        request = params.request
         return (
             params.model_id,
-            request.messages,
-            request.model_settings,
-            request.model_request_parameters,
+            params.messages,
+            params.model_settings,
+            params.model_request_parameters,
             params.run_context,
         )
 
@@ -294,6 +303,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._event_stream_handler = event_stream_handler
         self._process_event_stream = ProcessEventStream(event_stream_handler) if event_stream_handler else None
         self._toolsets_by_id: dict[str, WrapperToolset[AgentDepsT]] = {}
+        self._bound_model_operations: tuple[Any, Any, Any] | None = None
+        self._bound_event_operation: Any = None
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> Self:
         """Bind to the agent and register this engine's durable units on a new copy."""
@@ -1034,7 +1045,51 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         model_id = self._model_id_for_request(ctx, request_context)
         model_name = request_context.model.model_name
         backend = self._build_operation_backend()
+        request_operation, request_stream_operation, cancel_suspended_response_operation = (
+            self._bound_model_operations
+            or self._bind_model_operations(backend, model_id=model_id, model_name=model_name)
+        )
 
+        async def request_segment(request: ModelRequestContext) -> ModelResponse:
+            return await request_operation(
+                _ModelRequestParams(
+                    model_id,
+                    request.messages,
+                    request.model_settings,
+                    request.model_request_parameters,
+                    ctx,
+                )
+            )
+
+        async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
+            result = await request_stream_operation(
+                _ModelRequestParams(
+                    model_id,
+                    request.messages,
+                    request.model_settings,
+                    request.model_request_parameters,
+                    ctx,
+                )
+            )
+            return await self._load_streamed_activity_result(result, request.model_request_parameters)
+
+        async def cancel_suspended_response_segment(response: ModelResponse) -> None:
+            await cancel_suspended_response_operation(_CancelSuspendedResponseParams(model_id, response, ctx))
+
+        request_context.model = DurableModel(
+            request_context.model,
+            request_segment=request_segment,
+            request_stream_segment=request_stream_segment,
+            cancel_suspended_response_segment=cancel_suspended_response_segment,
+        )
+        return await handler(request_context)
+
+    async def _load_streamed_activity_result(
+        self, result: object, model_request_parameters: ModelRequestParameters
+    ) -> StreamedActivityResult:
+        return cast(StreamedActivityResult, result)
+
+    def _bind_model_operations(self, backend: Any, *, model_id: str | None, model_name: str) -> tuple[Any, Any, Any]:
         request_operation = backend.bind(
             DurableOperation(
                 operation_id=ModelRequestId(model_id, False, model_name),
@@ -1066,35 +1121,18 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             )
         )
 
-        async def request_segment(request: ModelRequestContext) -> ModelResponse:
-            return await request_operation(_ModelRequestParams(model_id, request, ctx))
-
-        async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
-            return await request_stream_operation(_ModelRequestParams(model_id, request, ctx))
-
-        async def cancel_suspended_response_segment(response: ModelResponse) -> None:
-            await cancel_suspended_response_operation(_CancelSuspendedResponseParams(model_id, response, ctx))
-
-        request_context.model = DurableModel(
-            request_context.model,
-            request_segment=request_segment,
-            request_stream_segment=request_stream_segment,
-            cancel_suspended_response_segment=cancel_suspended_response_segment,
-        )
-        return await handler(request_context)
+        return request_operation, request_stream_operation, cancel_suspended_response_operation
 
     async def _model_request_operation(self, params: _ModelRequestParams) -> ModelResponse:
-        request = params.request
         async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
-            response = await model.request(request.messages, request.model_settings, request.model_request_parameters)
-        self._stamp_response(response, request.messages)
+            response = await model.request(params.messages, params.model_settings, params.model_request_parameters)
+        self._stamp_response(response, params.messages)
         return response
 
     async def _model_request_stream_operation(self, params: _ModelRequestParams) -> StreamedActivityResult:
-        request = params.request
         async with self._durable_model_scope(params.model_id, params.run_context) as (model, durable_ctx):
             async with model.request_stream(
-                request.messages, request.model_settings, request.model_request_parameters, durable_ctx
+                params.messages, params.model_settings, params.model_request_parameters, durable_ctx
             ) as streamed:
                 events = await capture_event_stream(
                     run_context=durable_ctx,
@@ -1102,7 +1140,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     handler=self._effective_event_stream_handler(),
                 )
         response = streamed.get()
-        self._stamp_response(response, request.messages)
+        self._stamp_response(response, params.messages)
         return StreamedActivityResult(response=response, events=events)
 
     async def _cancel_suspended_response_operation(self, params: _CancelSuspendedResponseParams) -> None:
@@ -1156,6 +1194,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         (#5477 requirement 4). That override is the one genuine behavioral difference the hash-keyed
         family forces.
         """
+        bound_operation = self._bound_event_operation or self._bind_event_operation(self._build_operation_backend())
+        await bound_operation(_EventStreamHandlerParams(event, ctx))
+
+    def _bind_event_operation(self, backend: Any) -> Any:
         operation = DurableOperation(
             operation_id=EventStreamHandlerId(),
             handler=self._event_stream_handler_operation,
@@ -1164,7 +1206,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             result_codec=self._legacy_result_codec(type(None)),
             config_role=OperationConfigRole.EVENT,
         )
-        await self._build_operation_backend().bind(operation)(_EventStreamHandlerParams(event, ctx))
+        return backend.bind(operation)
 
     async def _event_stream_handler_operation(self, params: _EventStreamHandlerParams) -> None:
         handler = self._effective_event_stream_handler()
