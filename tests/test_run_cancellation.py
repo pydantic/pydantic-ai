@@ -128,7 +128,7 @@ async def test_after_run_hook_cannot_convert_external_cancel_to_success():
             in_flight.set()
             try:
                 await asyncio.Event().wait()  # the in-flight "durable step"
-            except asyncio.CancelledError:  # pragma: no cover
+            except asyncio.CancelledError:
                 pass  # step completed successfully; cancellation consumed
             return result
 
@@ -1611,7 +1611,7 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
         async def wrap_run(self, ctx: RunContext, *, handler: Any) -> AgentRunResult:
             try:
                 return await handler()
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # pragma: no cover
                 observed.append('wrap_run')  # pragma: no cover
                 return AgentRunResult(output='recovered')  # pragma: no cover
 
