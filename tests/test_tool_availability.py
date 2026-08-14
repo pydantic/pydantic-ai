@@ -667,11 +667,17 @@ def test_capability_loaded_is_a_deprecated_alias_for_capability_available() -> N
         )
     assert constructed.capability_available is True
 
+    # Assignment worked while this was a plain dataclass field, so a read-only property would turn
+    # it into an `AttributeError` rather than a deprecation.
+    with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_available` instead'):
+        ctx.capability_loaded = False  # pyright: ignore[reportDeprecated]
+    assert ctx.capability_available is False
+
     # `replace()` is on the run's hot path and must not warn: the shim is a non-field keyword, so
     # `replace()` never round-trips it the way an `InitVar` would.
     with warnings.catch_warnings():
         warnings.simplefilter('error', PydanticAIDeprecationWarning)
-        assert replace(ctx, capability_available=False).capability_available is False
+        assert replace(ctx, capability_available=True).capability_available is True
 
 
 async def test_unknown_tool_retry_lists_only_callable_tools_and_points_at_the_rest() -> None:

@@ -283,6 +283,17 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """
         return self.capability_available
 
+    @capability_loaded.setter
+    @deprecated(
+        '`capability_loaded` is deprecated, use `capability_available` instead: the value is `True` for an '
+        'always-on capability that was never loaded.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def capability_loaded(self, value: bool | None) -> None:
+        # A plain dataclass field until this rename, so assignment used to work; a read-only property
+        # would turn that into an `AttributeError` at runtime rather than a deprecation.
+        self.capability_available = value
+
     @property
     def realtime(self) -> bool:
         """Whether this run is a realtime session, i.e. `model` is the connected `RealtimeModel`.
