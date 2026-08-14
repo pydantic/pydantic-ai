@@ -1787,7 +1787,7 @@ async def test_combined_toolset_collects_instructions_concurrently_in_child_orde
     all_started = anyio.Event()
 
     class SynchronizingToolset(MockToolsetWithInstructions):
-        async def get_instructions(self, ctx: RunContext[Any]) -> str:
+        async def get_instructions(self, ctx: RunContext[object]) -> str:
             assert self.custom_instructions is not None
             started.append(self.custom_instructions)
             if len(started) == 2:
