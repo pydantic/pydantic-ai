@@ -34,9 +34,9 @@ result = agent.run_sync('Who let the dogs out?')
 
 Synchronous methods like [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] reuse the thread's current event loop, and install a fresh one if other code closed it. If this error is raised from inside `httpx` or `httpcore` during a model request, the agent was already used before its event loop was closed: the provider's HTTP connection pool still holds connections bound to the dead loop. Recreate the agent together with its model and provider (or pass a fresh `http_client` to the provider); reusing an existing `Model` instance keeps the dead connection pool. Avoid closing an event loop that other code is still using.
 
-## [`UserError`][pydantic_ai.exceptions.UserError]: `Agent.run_sync()` cannot be called from inside another agent run
+## [`UserError`][pydantic_ai.exceptions.UserError]: `Agent.run_sync()` cannot be called from a synchronous callback run by Pydantic AI
 
-If a synchronous [tool](tools.md) or [output function](output.md#output-functions) delegates to another agent with [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`Agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync], Pydantic AI raises this error rather than risk a deadlock.
+If a synchronous [tool](tools.md) or [output function](output.md#output-functions) running in a Pydantic AI worker thread delegates to another agent with [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`Agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync], Pydantic AI raises this error rather than risk a deadlock.
 
 Sync callbacks are normally offloaded to worker threads, which have no event loop of their own. A nested sync call would create a second event loop while the parent run is still waiting for the callback. If the delegate uses an async resource bound to the parent loop, the two runs can wait on each other indefinitely.
 

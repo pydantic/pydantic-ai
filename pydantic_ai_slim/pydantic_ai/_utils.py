@@ -19,11 +19,10 @@ from collections.abc import (
     Iterator,
 )
 from concurrent.futures import Executor
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
-from functools import partial
 from types import GenericAlias
 from typing import (
     TYPE_CHECKING,
@@ -73,54 +72,16 @@ _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
-
-
-@dataclass
-class _AgentRunState:
-    parent: _AgentRunState | None
-    active: bool = True
-
-
-_agent_run_state: ContextVar[_AgentRunState | None] = ContextVar('_agent_run_state', default=None)
+_in_executor: ContextVar[bool] = ContextVar('_in_executor', default=False)
 
 
 def check_sync_agent_call(method: str, async_method: str) -> None:
-    """Reject sync agent entry points from inside another agent run."""
-    state = _agent_run_state.get()
-    while state is not None:
-        if state.active:
-            raise UserError(
-                f'`Agent.{method}()` cannot be called from inside another agent run. '
-                f'Make the calling function `async def` and use `{async_method}` instead.'
-            )
-        state = state.parent
-
-
-@contextmanager
-def agent_run_context() -> Generator[None]:
-    """Mark the current context as running an agent."""
-    state = _AgentRunState(parent=_agent_run_state.get())
-    token = _agent_run_state.set(state)
-    try:
-        yield
-    finally:
-        state.active = False
-        _agent_run_state.reset(token)
-
-
-def with_agent_run_context(
-    func: Callable[_P, AbstractAsyncContextManager[_R]],
-) -> Callable[_P, AbstractAsyncContextManager[_R]]:
-    """Mark an async context manager's complete lifetime as running an agent."""
-
-    @functools.wraps(func)
-    @asynccontextmanager
-    async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> AsyncGenerator[_R]:
-        with agent_run_context():
-            async with func(*args, **kwargs) as value:
-                yield value
-
-    return wrapper
+    """Reject sync agent entry points from framework-managed worker threads."""
+    if _in_executor.get():
+        raise UserError(
+            f'`Agent.{method}()` cannot be called from a synchronous callback run by Pydantic AI. '
+            f'Make the callback `async def` and use `{async_method}` instead.'
+        )
 
 
 def run_until_complete(coro: Awaitable[_R]) -> _R:
@@ -188,15 +149,20 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
     if _disable_threads.get():
         return func(*args, **kwargs)
 
-    wrapped_func = partial(func, *args, **kwargs)
+    def call_with_sync_agent_guard() -> _R:
+        token = _in_executor.set(True)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _in_executor.reset(token)
 
     executor = _thread_executor.get()
     if executor is not None:
         loop = asyncio.get_running_loop()
         ctx = copy_context()
-        return await loop.run_in_executor(executor, ctx.run, wrapped_func)
+        return await loop.run_in_executor(executor, ctx.run, call_with_sync_agent_guard)
 
-    return await run_sync(wrapped_func)
+    return await run_sync(call_with_sync_agent_guard)
 
 
 def is_async_generator_already_running(exc: RuntimeError) -> bool:

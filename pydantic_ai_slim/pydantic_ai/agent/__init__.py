@@ -1179,7 +1179,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
-    @_utils.with_agent_run_context
     @asynccontextmanager
     async def iter(  # noqa: C901
         self,

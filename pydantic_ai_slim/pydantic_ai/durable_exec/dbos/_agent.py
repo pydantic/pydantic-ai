@@ -596,8 +596,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] with `loop.run_until_complete(...)`.
         You therefore can't use this method inside async code or if there's an active event loop.
 
-        This method cannot be called from a runtime callback inside another agent run. See
-        [Agent delegation](../../../multi-agent-applications.md#agent-delegation).
+        This method cannot be called from a synchronous callback run by Pydantic AI.
 
         Example:
         ```python
