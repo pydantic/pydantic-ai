@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from dbos import DBOS
 
@@ -28,6 +28,9 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._agent import DBOSParallelExecutionMode
 from ._utils import StepConfig, guard_enqueue_in_workflow
+
+if TYPE_CHECKING:
+    pass
 
 
 @dataclass(init=False)

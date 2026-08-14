@@ -55,6 +55,8 @@ Useful `RunContext` fields include:
 - `ctx.usage`
 - `ctx.messages`
 - `ctx.retry`
+- `ctx.realtime` — whether the run is a realtime session
+- `ctx.realtime_session` — the live `RealtimeSession` once connected (`None` in classic runs and before connect)
 
 ## Use MCP Servers
 

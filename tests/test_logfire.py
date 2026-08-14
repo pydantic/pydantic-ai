@@ -1,12 +1,12 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import pytest
 from dirty_equals import IsJson, IsList
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import (
@@ -24,7 +24,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -34,12 +34,11 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     UnexpectedModelBehavior,
 )
-from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputContext, PromptedOutput, TextOutput
-from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -466,6 +465,7 @@ def test_logfire(
                             }
                         ],
                         'native_tools': [],
+                        'tool_visibility': {'my_ret': 'visible'},
                         'revealed_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
@@ -835,6 +835,131 @@ def test_prompted_output_schema_instructions_do_not_set_variable_instructions(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+@pytest.mark.parametrize('streaming', [False, True])
+async def test_chat_span_captures_request_before_wrapper_restores_it(capfire: CaptureLogfire, streaming: bool) -> None:
+    sent_messages: list[ModelMessage] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent_messages.extend(messages)
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        sent_messages.extend(messages)
+        yield 'done'
+
+    class EphemeralRequestContext(AbstractCapability[Any]):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            handler: WrapModelRequestHandler,
+        ) -> ModelResponse:
+            original_messages = request_context.messages
+            request_context.messages = [
+                *original_messages,
+                ModelRequest(parts=[UserPromptPart('temporary reminder')]),
+            ]
+            try:
+                return await handler(request_context)
+            finally:
+                request_context.messages = original_messages
+
+    agent = Agent(
+        FunctionModel(model_fn, stream_function=stream_fn),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), EphemeralRequestContext()],
+    )
+
+    if streaming:
+        async with agent.run_stream('hello') as stream:
+            assert await stream.get_output() == 'done'
+    else:
+        assert (await agent.run('hello')).output == 'done'
+    assert any(
+        isinstance(part, UserPromptPart) and part.content == 'temporary reminder'
+        for message in sent_messages
+        for part in message.parts
+    )
+    chat_span = next(span for span in _get_spans(capfire) if span['name'].startswith('chat '))
+    assert chat_span['attributes']['gen_ai.input.messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'parts': [
+                    {'type': 'text', 'content': 'hello'},
+                    {'type': 'text', 'content': 'temporary reminder'},
+                ],
+            }
+        ]
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_chat_span_records_response_rejected_by_after_hook(capfire: CaptureLogfire) -> None:
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        return ModelResponse(
+            parts=[TextPart(f'response {call_count}')],
+            usage=RequestUsage(input_tokens=call_count * 10, output_tokens=call_count),
+        )
+
+    @dataclass
+    class RetryFirstResponse(AbstractCapability[Any]):
+        retried: bool = False
+
+        async def after_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            response: ModelResponse,
+        ) -> ModelResponse:
+            if not self.retried:
+                self.retried = True
+                raise ModelRetry('try again')
+            return response
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), RetryFirstResponse()],
+    )
+
+    assert (await agent.run('hello')).output == 'response 2'
+    chat_spans = [span for span in _get_spans(capfire) if span['name'].startswith('chat ')]
+    assert len(chat_spans) == 2
+    rejected_span = chat_spans[0]
+    _assert_span_recorded_exception(rejected_span, 'pydantic_ai.exceptions.ModelRetry', 'try again', escaped=False)
+    assert rejected_span['attributes']['gen_ai.output.messages'] == snapshot(
+        [{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response 1'}]}]
+    )
+    assert rejected_span['attributes']['gen_ai.usage.input_tokens'] == 10
+    assert rejected_span['attributes']['gen_ai.usage.output_tokens'] == 1
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+async def test_nested_instrumentation_capabilities_capture_request_and_response(capfire: CaptureLogfire) -> None:
+    settings = InstrumentationSettings()
+    agent = Agent(
+        TestModel(),
+        capabilities=[Instrumentation(id='outer', settings=settings), Instrumentation(id='inner', settings=settings)],
+    )
+
+    await agent.run('hello')
+
+    chat_spans = [span for span in _get_spans(capfire) if span['name'].startswith('chat ')]
+    assert len(chat_spans) == 2
+    for span in chat_spans:
+        assert 'gen_ai.input.messages' in span['attributes']
+        assert 'gen_ai.output.messages' in span['attributes']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize(
     'settings',
     [deprecated_instrumentation_settings(version=2), deprecated_instrumentation_settings(version=3)],
@@ -1018,6 +1143,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                     {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'tool',
@@ -1326,6 +1452,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'model_request_parameters': {
                         'function_tools': [],
                         'native_tools': [],
+                        'tool_visibility': {},
                         'revealed_tool_names': [],
                         'deferred_capability_ids': [],
                         'output_mode': 'text',
@@ -1582,6 +1709,154 @@ Fix the errors and try again.\
                     'gen_ai.agent.call.id': IsStr(),
                 }
             )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('failure_source', ['schema', 'validator'])
+def test_tool_argument_validation_failure_emits_span(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    capfire: CaptureLogfire,
+    failure_source: Literal['schema', 'validator'],
+    include_content: bool,
+) -> None:
+    """A rejected tool call emits one error span without duplicating the successful retry."""
+    model_calls = 0
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls == 1:
+            x: Any = 'private-invalid-value' if failure_source == 'schema' else 2
+            return ModelResponse(parts=[ToolCallPart('double', {'x': x})])
+        if model_calls == 2:
+            return ModelResponse(parts=[ToolCallPart('double', {'x': 2})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    def validate_args(ctx: RunContext[Any], x: int) -> None:
+        if failure_source == 'validator' and ctx.retry == 0:
+            raise ModelRetry(f'reject {x}')
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=include_content))],
+    )
+    calls: list[int] = []
+
+    @agent.tool_plain(args_validator=validate_args)
+    def double(x: int) -> int:
+        calls.append(x)
+        return x * 2
+
+    agent.run_sync('Use the tool')
+
+    tool_spans = [
+        attributes
+        for attributes in get_logfire_summary().attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert calls == [2]
+    assert len(tool_spans) == 2
+    assert tool_spans[0]['logfire.level_num'] == 17
+    assert tool_spans[0]['logfire.msg'] == 'invalid tool call: double'
+    assert tool_spans[0]['pydantic_ai.tool.failure_stage'] == 'validation'
+    assert 'logfire.level_num' not in tool_spans[1]
+    assert tool_spans[1]['logfire.msg'] == 'running tool: double'
+    assert 'pydantic_ai.tool.failure_stage' not in tool_spans[1]
+    if include_content:
+        expected_error = 'int_parsing' if failure_source == 'schema' else 'reject 2'
+        assert expected_error in tool_spans[0]['gen_ai.tool.call.result']
+        assert tool_spans[1]['gen_ai.tool.call.result'] == '4'
+    else:
+        assert all('gen_ai.tool.call.result' not in span for span in tool_spans)
+        assert 'private-invalid-value' not in str(capfire.exporter.exported_spans_as_dict())
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('instrumentation_first', [True, False])
+def test_recovered_tool_validation_emits_no_error_span(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    instrumentation_first: bool,
+) -> None:
+    """Instrumentation observes only errors that earlier capabilities did not recover."""
+
+    @dataclass
+    class RecoverValidation(AbstractCapability[Any]):
+        async def on_tool_validate_error(self, ctx: RunContext[Any], **kwargs: Any) -> Any:
+            return {'x': 2}
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('double', {'x': 'invalid'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    instrumentation = Instrumentation(settings=InstrumentationSettings())
+    recovery = RecoverValidation()
+    capabilities = [instrumentation, recovery] if instrumentation_first else [recovery, instrumentation]
+    agent = Agent(FunctionModel(call_tool), capabilities=capabilities)
+
+    @agent.tool_plain
+    def double(x: int) -> int:
+        return x * 2
+
+    agent.run_sync('Use the tool')
+
+    tool_spans = [
+        attributes
+        for attributes in get_logfire_summary().attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    assert len(tool_spans) == 1
+    assert 'logfire.level_num' not in tool_spans[0]
+    assert 'pydantic_ai.tool.failure_stage' not in tool_spans[0]
+    assert tool_spans[0]['gen_ai.tool.call.result'] == '4'
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_raw_mode_validation_failure_emits_span(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    """Sandboxed dispatch (`handle_call(wrap_validation_errors=False)`) still emits the failure span.
+
+    The raw exception surfaces to the dispatching code rather than the model: no
+    `RetryPromptPart` enters message history, so the span's recorded retry prompt is a
+    rendered description of the failure, not a message the model received.
+    """
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('dispatch', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+
+    @agent.tool_plain
+    def double(x: int) -> int:
+        return x * 2  # pragma: no cover — only ever dispatched with invalid args
+
+    @agent.tool
+    async def dispatch(ctx: RunContext[Any]) -> str:
+        assert ctx.tool_manager is not None
+        inner = ToolCallPart('double', {'x': 'invalid'}, tool_call_id='inner-call')
+        with pytest.raises(ValidationError):
+            await ctx.tool_manager.handle_call(inner, wrap_validation_errors=False)
+        return 'validation error handled by dispatching code'
+
+    result = agent.run_sync('go')
+
+    tool_spans = [
+        attributes
+        for attributes in get_logfire_summary().attributes.values()
+        if attributes.get('gen_ai.operation.name') == 'execute_tool'
+    ]
+    failure_spans = [span for span in tool_spans if span.get('pydantic_ai.tool.failure_stage') == 'validation']
+    assert len(failure_spans) == 1
+    assert failure_spans[0]['logfire.level_num'] == 17
+    assert failure_spans[0]['logfire.msg'] == 'invalid tool call: double'
+    assert not any(isinstance(part, RetryPromptPart) for message in result.all_messages() for part in message.parts)
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
@@ -2719,108 +2994,6 @@ def test_static_function_instructions_in_agent_run_span(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_chat_span_records_earlier_history_instructions_when_before_model_request_fails(
-    get_logfire_summary: Callable[[], LogfireSummary],
-) -> None:
-    class FailBeforeModelRequest(AbstractCapability[Any]):
-        async def before_model_request(self, ctx: RunContext[Any], request_context: Any) -> Any:
-            raise RuntimeError('boom')
-
-    my_agent = Agent(
-        model=TestModel(),
-        capabilities=[Instrumentation(settings=InstrumentationSettings()), FailBeforeModelRequest()],
-    )
-
-    with pytest.raises(RuntimeError, match='boom'):
-        my_agent.run_sync(
-            message_history=[
-                ModelRequest(
-                    parts=[UserPromptPart(content='Hi')],
-                    instructions='Instructions from history',
-                    timestamp=IsDatetime(),
-                ),
-                ModelResponse(parts=[TextPart(content='Hello')]),
-                ModelRequest(parts=[RetryPromptPart(content='try again')], instructions=None, timestamp=IsDatetime()),
-            ],
-        )
-
-    summary = get_logfire_summary()
-    assert summary.traces == snapshot(
-        [
-            {
-                'id': 0,
-                'name': 'invoke_agent my_agent',
-                'message': 'my_agent run',
-                'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
-            }
-        ]
-    )
-    chat_attributes = summary.attributes[1]
-    assert chat_attributes['gen_ai.request.model'] == 'test'
-    assert chat_attributes['gen_ai.input.messages'] == IsJson(
-        snapshot(
-            [
-                {'role': 'user', 'parts': [{'type': 'text', 'content': 'Hi'}]},
-                {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Hello'}]},
-                {
-                    'role': 'user',
-                    'parts': [
-                        {
-                            'type': 'text',
-                            'content': 'Validation feedback:\ntry again\n\nFix the errors and try again.',
-                        }
-                    ],
-                },
-            ]
-        )
-    )
-    assert chat_attributes['logfire.level_num'] == 17
-    assert chat_attributes['gen_ai.system_instructions'] == snapshot(
-        '[{"type":"text","content":"Instructions from history"}]'
-    )
-
-
-@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_chat_span_backfill_failure_does_not_mask_lifecycle_error(
-    get_logfire_summary: Callable[[], LogfireSummary],
-) -> None:
-    """Backfilling deferred request attributes re-runs `Model.prepare_request` while the
-    lifecycle error unwinds; if that preparation itself raises, the original error must
-    still be the one that propagates, with the telemetry failure suppressed."""
-
-    class BrokenPrepareModel(FunctionModel):
-        def prepare_request(
-            self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
-        ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-            raise ValueError('prepare boom')
-
-        async def request(
-            self,
-            messages: list[ModelMessage],
-            model_settings: ModelSettings | None,
-            model_request_parameters: ModelRequestParameters,
-        ) -> ModelResponse:
-            raise RuntimeError('model boom')
-
-    def unreached(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        raise NotImplementedError  # pragma: no cover
-
-    agent = Agent(
-        model=BrokenPrepareModel(unreached),
-        capabilities=[Instrumentation(settings=InstrumentationSettings())],
-    )
-
-    with pytest.raises(RuntimeError, match='model boom'):
-        agent.run_sync('hello')
-
-    summary = get_logfire_summary()
-    chat_attributes = summary.attributes[1]
-    # The span still closes as an error, but without the backfilled request attributes.
-    assert chat_attributes['logfire.level_num'] == 17
-    assert 'gen_ai.input.messages' not in chat_attributes
-
-
-@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_run_span_records_history_instructions_when_before_run_fails(
     get_logfire_summary: Callable[[], LogfireSummary],
 ) -> None:
@@ -3501,56 +3674,6 @@ def test_tool_span_error_when_before_tool_execute_raises(capfire: CaptureLogfire
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_chat_span_error_when_after_model_request_raises_model_retry(capfire: CaptureLogfire) -> None:
-    """Provisional: the provider call succeeded and the rejection came from a hook; whether the chat span should
-    instead record the response with OK status is an open maintainer decision on PR #7053.
-
-    Either way, the rejected response was real (billed) provider work, so the span must record the
-    response output, usage, and cost metrics even though it closes as an error."""
-
-    @dataclass
-    class RetryModelResponse(AbstractCapability[Any]):
-        retried: bool = False
-
-        async def after_model_request(
-            self,
-            ctx: RunContext[Any],
-            *,
-            request_context: ModelRequestContext,
-            response: ModelResponse,
-        ) -> ModelResponse:
-            if not self.retried:
-                self.retried = True
-                raise ModelRetry('reject model response')
-            return response
-
-    call_count = 0
-
-    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal call_count
-        call_count += 1
-        return ModelResponse(parts=[TextPart(f'response {call_count}')])
-
-    agent = Agent(
-        FunctionModel(model_fn),
-        capabilities=[Instrumentation(settings=InstrumentationSettings()), RetryModelResponse()],
-    )
-    assert agent.run_sync('Hello').output == 'response 2'
-
-    chat_spans = [span for span in _get_spans(capfire) if span['name'].startswith('chat ')]
-    assert len(chat_spans) == 2
-    rejected_attributes = chat_spans[0]['attributes']
-    assert rejected_attributes['gen_ai.output.messages'] == snapshot(
-        [{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response 1'}]}]
-    )
-    assert rejected_attributes['gen_ai.usage.input_tokens'] == 51
-    assert rejected_attributes['gen_ai.usage.output_tokens'] == 2
-    _assert_span_recorded_exception(
-        chat_spans[0], 'pydantic_ai.exceptions.ModelRetry', 'reject model response', escaped=False
-    )
-
-
-@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_chat_span_ok_when_on_model_request_error_recovers(capfire: CaptureLogfire) -> None:
     class RecoverModelError(AbstractCapability[Any]):
         async def on_model_request_error(
@@ -3670,8 +3793,7 @@ def test_run_span_ok_when_on_run_error_recovers(capfire: CaptureLogfire) -> None
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 def test_run_span_error_when_after_run_raises(capfire: CaptureLogfire) -> None:
-    """Provisional: the graph iteration succeeded and the rejection came from a hook; whether the run span should
-    instead record the result with OK status is an open maintainer decision on PR #7053."""
+    """An `after_run` failure is inside the run span and marks it as an error."""
 
     class FailAfterRun(AbstractCapability[Any]):
         async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:

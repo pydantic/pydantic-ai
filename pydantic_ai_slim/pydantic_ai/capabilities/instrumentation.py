@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode
-from pydantic_core import to_json
+from pydantic_core import ValidationError, to_json
 
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
@@ -19,7 +19,9 @@ from pydantic_ai._instrumentation import (
     get_agent_run_baggage_attributes,
     get_instructions,
     has_stale_message_json,
+    model_response_span_capture,
     open_model_request_span,
+    redact_binary_content,
     safe_to_json,
     serialize_any,
     time_to_first_chunk_ctx,
@@ -29,16 +31,18 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     MessageHistoryMutatedWarning,
+    ModelRetry,
     SkipToolExecution,
     ToolFailedError,
     ToolRetryError,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
+from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
 from pydantic_ai.tools import ToolDefinition
 
 from .abstract import (
     AbstractCapability,
     CapabilityOrdering,
+    RawToolArgs,
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapOutputProcessHandler,
@@ -153,6 +157,12 @@ class Instrumentation(AbstractCapability[Any]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
+        # `RealtimeSession` owns its session and per-response spans; a second run span here would
+        # duplicate the session's canonical `invoke_agent` span. See the capability-owned span
+        # direction documented in `realtime/_session.py`.
+        if ctx.realtime:
+            return await handler()
+
         settings = self.settings
         names = self._instrumentation_names
         agent_name = self._agent_name
@@ -190,7 +200,7 @@ class Instrumentation(AbstractCapability[Any]):
                         (
                             result.output
                             if isinstance(result.output, str)
-                            else safe_to_json(serialize_any(result.output)).decode()
+                            else safe_to_json(serialize_any(redact_binary_content(result.output, settings))).decode()
                         ),
                     )
 
@@ -250,16 +260,9 @@ class Instrumentation(AbstractCapability[Any]):
             attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
-            attrs['metadata'] = safe_to_json(serialize_any(metadata)).decode()
+            attrs['metadata'] = safe_to_json(serialize_any(redact_binary_content(metadata, settings))).decode()
 
-        usage_attrs = (
-            {
-                k.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): v
-                for k, v in ctx.usage.opentelemetry_attributes().items()
-            }
-            if settings.use_aggregated_usage_attribute_names
-            else ctx.usage.opentelemetry_attributes()
-        )
+        usage_attrs = settings.aggregated_usage_attributes(ctx.usage)
 
         return {
             **usage_attrs,
@@ -301,28 +304,97 @@ class Instrumentation(AbstractCapability[Any]):
             message_json_cache=self._message_json_cache,
             defer_request_attributes=True,
         ) as (finish, _):
-            try:
-                response = await handler(request_context)
-            except BaseException:
-                # Preserve the latest in-place state for the enclosing run span too. The model
-                # span context manager records these available fields and marks the span as failed.
-                track_request(request_context)
-                raise
+            captured_response: ModelResponse | None = None
 
-            # The graph updates this same context object after the before-chain, so all request
-            # telemetry is captured from the final model/messages/settings/parameters.
-            prepared_request_context = finish(
-                response,
-                time_to_first_chunk=time_to_first_chunk_ctx.get(),
-                request_context=request_context,
-            )
-            # Use the prepared parameters so prompted-output instructions match the model payload.
-            track_request(prepared_request_context)
-            return response
+            def capture_response(response: ModelResponse) -> None:
+                nonlocal captured_response
+                captured_response = response
+
+            with model_response_span_capture(capture_response):
+                try:
+                    response = await handler(request_context)
+                except BaseException:
+                    if captured_response is None:
+                        # Preserve the entry state for the enclosing run span. The chat span records
+                        # request content only after the request reaches the model-call boundary.
+                        track_request(request_context)
+                    else:
+                        prepared_request_context = finish(
+                            captured_response,
+                            time_to_first_chunk=time_to_first_chunk_ctx.get(),
+                        )
+                        track_request(prepared_request_context)
+                    raise
+
+                prepared_request_context = finish(
+                    response,
+                    time_to_first_chunk=time_to_first_chunk_ctx.get(),
+                )
+                # Use the prepared parameters so prompted-output instructions match the model payload.
+                track_request(prepared_request_context)
+                return response
 
     # ------------------------------------------------------------------
     # wrap_tool_execute — tool execution span
     # ------------------------------------------------------------------
+
+    async def on_tool_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: RawToolArgs,
+        error: ValidationError | ModelRetry,
+    ) -> ValidatedToolArgs:
+        """Emit an error span for a tool call whose argument validation failed.
+
+        Runs only after every other capability has declined to recover the error, so a
+        recovered validation failure produces no span. The span keeps the `execute_tool`
+        operation name so tracing backends group it with other tool spans, and sets
+        `pydantic_ai.tool.failure_stage: 'validation'` to distinguish it from execution
+        failures.
+
+        With content capture enabled, the span records the retry prompt built from the
+        error as the tool result. That is the exact message the model receives when the
+        agent loop handles the failure; raw-mode callers (e.g. sandboxed dispatch via
+        `handle_call(wrap_validation_errors=False)`) surface the raw exception to the
+        calling code instead, and the recorded prompt is just the rendered description
+        of the failure.
+        """
+        names = self._instrumentation_names
+        attributes = self._tool_span_attributes(call)
+        # The tool never ran: keep the `execute_tool` operation name so backends find the
+        # span, but say so in the message and mark the failure stage for querying.
+        attributes['logfire.msg'] = f'invalid tool call: {call.tool_name}'
+        attributes[names.tool_failure_stage_attr] = 'validation'
+        with self.settings.tracer.start_as_current_span(
+            names.get_tool_span_name(call.tool_name),
+            attributes=attributes,
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
+            if self.settings.include_content and span.is_recording():
+                retry = RetryPromptPart.from_error(error, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
+                span.set_attribute(names.tool_result_attr, retry.model_response())
+                span.record_exception(error, escaped=True)
+            else:
+                # Validation errors may contain rejected arguments, so omit their message and
+                # stack trace when content capture is disabled. Execution spans keep their
+                # existing exception recording behavior. The type formatting must match what
+                # the OTel SDK's `Span.record_exception` would have produced for this error.
+                error_type = type(error)
+                type_name = (
+                    f'{error_type.__module__}.{error_type.__qualname__}'
+                    if error_type.__module__ != 'builtins'
+                    else error_type.__qualname__
+                )
+                span.add_event(
+                    'exception',
+                    attributes={'exception.type': type_name, 'exception.escaped': True},
+                )
+            span.set_status(StatusCode.ERROR)
+        raise error
 
     def _tool_span_attributes(self, call: ToolCallPart) -> dict[str, Any]:
         """Build the span attributes shared by `wrap_tool_execute` and `wrap_output_process`.
@@ -404,10 +476,11 @@ class Instrumentation(AbstractCapability[Any]):
                 # ERROR for older instrumentation versions that expected that shape.
                 span.set_attribute(names.tool_deferral_name_attr, type(exc).__name__)
                 if include_content and span.is_recording() and exc.metadata is not None:
+                    redacted_metadata = redact_binary_content(exc.metadata, settings)
                     try:
-                        metadata_str = to_json(exc.metadata).decode()
+                        metadata_str = to_json(redacted_metadata).decode()
                     except (TypeError, ValueError):
-                        metadata_str = repr(exc.metadata)
+                        metadata_str = repr(redacted_metadata)
                     span.set_attribute(names.tool_deferral_metadata_attr, metadata_str)
                 if settings.version < 5:
                     span.record_exception(exc, escaped=True)
@@ -456,11 +529,19 @@ class Instrumentation(AbstractCapability[Any]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
+        attributes = self._tool_span_attributes(call)
+        if ctx.realtime:
+            # Realtime spans all carry this marker (see `docs/realtime/observability.md`) so
+            # backends can recognize the session tree; the tool span is shared with classic runs,
+            # which stay unmarked.
+            attributes['pydantic_ai.realtime'] = True
         return await self._run_tool_span(
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
-            attributes=self._tool_span_attributes(call),
+            attributes=attributes,
             action=lambda: handler(args),
-            serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
+            serialize_result=lambda value: tool_return_ta.dump_json(
+                redact_binary_content(value, self.settings)
+            ).decode(),
             handle_tool_control_flow=True,
         )
 
@@ -504,7 +585,7 @@ class Instrumentation(AbstractCapability[Any]):
         if tool_call is not None and tool_call.tool_call_id:
             attributes['gen_ai.tool.call.id'] = tool_call.tool_call_id
         if include_content:
-            attributes[names.tool_arguments_attr] = safe_to_json(output).decode()
+            attributes[names.tool_arguments_attr] = safe_to_json(redact_binary_content(output, self.settings)).decode()
 
         attributes['logfire.json_schema'] = to_json(
             {
@@ -528,5 +609,7 @@ class Instrumentation(AbstractCapability[Any]):
             span_name=names.get_output_tool_span_name(span_target),
             attributes=attributes,
             action=lambda: handler(output),
-            serialize_result=lambda value: safe_to_json(serialize_any(value)).decode(),
+            serialize_result=lambda value: safe_to_json(
+                serialize_any(redact_binary_content(value, self.settings))
+            ).decode(),
         )

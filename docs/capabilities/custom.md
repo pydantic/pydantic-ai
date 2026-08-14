@@ -432,7 +432,7 @@ Binding hooks establish which capability participates in a run; lifecycle hooks 
 | Run binding | [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] | A complete [`RunContext`][pydantic_ai.tools.RunContext] containing the bootstrap model; may return a run-scoped replacement capability |
 | Each logical model step | Post-`for_run()` model selection/resolution, model settings, tool preparation, and message preparation | The selected model is installed in `RunContext` before its settings, profile-sensitive tools, and model-specific message preparation are evaluated |
 | Model request and response | Model request, tool, output, node, and event-stream [hooks](#hooking-into-the-lifecycle) | The request context and live run state at each hook's position in the lifecycle |
-| Run completion | The `wrap_run` handler completes graph iteration, applies `on_run_error` recovery when needed, then runs `after_run`; a wrapper can short-circuit the handler | Final result or error, accumulated messages, and usage |
+| Run completion | The `wrap_run` handler completes the run body, applies `on_run_error` recovery when needed, then runs `after_run`; a wrapper can short-circuit the handler | Final result or error, accumulated messages, and usage |
 
 If `for_run()` returns the original capability, the bootstrap model selection is reused for step one. A replacement capability can select a different model for step one. Continuation polling within one logical step remains pinned to that step's selected model.
 
@@ -455,9 +455,19 @@ Capabilities can hook into seven lifecycle stages, each with up to four variants
 | [`before_run`][pydantic_ai.capabilities.AbstractCapability.before_run] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`) -> None` | Observe-only notification that a run is starting |
 | [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, result: `[`AgentRunResult`][pydantic_ai.run.AgentRunResult]`) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Modify the final result |
 | [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, handler: `[`WrapRunHandler`][pydantic_ai.capabilities.WrapRunHandler]`) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Wrap the complete run lifecycle |
-| [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, error: BaseException) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Handle graph-iteration errors (see [error hooks](#error-hooks)) |
+| [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, error: BaseException) -> `[`AgentRunResult`][pydantic_ai.run.AgentRunResult] | Handle run-body errors (see [error hooks](#error-hooks)) |
 
-`wrap_run` supports error recovery: `on_run_error` first gets a chance to recover graph-iteration failures inside `handler()`. If the error remains unrecovered and `handler()` raises, `wrap_run` can catch it and return a result instead. This works with both [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] and [`agent.iter()`][pydantic_ai.agent.Agent.iter].
+`wrap_run` supports error recovery: `on_run_error` first gets a chance to recover run-body failures inside `handler()`. If the error remains unrecovered and `handler()` raises, `wrap_run` can catch it and return a result instead. This works with [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.iter()`][pydantic_ai.agent.Agent.iter], and [realtime sessions](../realtime/capabilities.md). A realtime session is a run, so all four hooks fire once around it, with `wrap_run`'s handler resolving when the session closes. Check [`ctx.realtime`][pydantic_ai.tools.RunContext.realtime] to branch behavior, and use [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session] (set once the session is connected) to interact with the live session.
+
+!!! warning "Tearing down tasks you spawn"
+    A run is cancelled — via [`RunContext.cancel()`][pydantic_ai.tools.RunContext.cancel], a [`CancellationToken`][pydantic_ai.CancellationToken], an `asyncio.wait_for` timeout, or an enclosing task group — by cancelling the single asyncio task that drives it. Work the run `await`s inline receives the `CancelledError` automatically; a task you start yourself with `asyncio.create_task(...)` runs on a **different** task and does **not**, so a capability that spawns tasks must tear them down itself.
+
+    Prefer structured concurrency ([`anyio.create_task_group()`](https://anyio.readthedocs.io/en/stable/tasks.html) with `async with`): the run's cancellation flows through the `async with` and children are cancelled on scope exit, with no manual cleanup. If you keep raw tasks, cancel and drain them in a `try`/`finally` in `wrap_run` (issue every `task.cancel()` first, then a single `await asyncio.gather(*tasks, return_exceptions=True)`), and wrap that teardown in `anyio.CancelScope(shield=True)` so it still completes when the run is already being cancelled. A raw `task.cancel()` can pierce even a shielded scope, so for work that must finish regardless, keep it on its own task and protect it with [`asyncio.shield()`](https://docs.python.org/3/library/asyncio-task.html#asyncio.shield) (holding a strong reference to the task) — awaiting the task directly would not help, since cancelling the run's task propagates the `CancelledError` into the task it's awaiting. A sub-agent run you launch on a background task is likewise yours to cancel and drain — only sub-agents you `await` inline are torn down for you.
+
+!!! note "Observing cancellation"
+    A cancellation reaches a capability as an `asyncio.CancelledError`: through a `wrap_*` hook's `handler()` await (catch it around `await handler(...)`), or at the run's terminal funnel [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error], whose `error` is a `BaseException`. It does **not** reach the recovery-oriented `Exception`-typed hooks — [`on_tool_execute_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_execute_error], [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error], [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] — because a cancellation is a terminal control signal, not a failure of that step you could recover from.
+
+    Cancellation is terminal: a hook may observe it and clean up, but returning a result to recover the run does not work — on Python 3.11+ the run re-asserts the cancellation at the next step boundary (best-effort on Python 3.10).
 
 ### Node hooks
 
@@ -473,9 +483,7 @@ Capabilities can hook into seven lifecycle stages, each with up to four variants
 Node hooks fire however the run is driven: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent_run.next()`][pydantic_ai.run.AgentRun.next], and `async for node in agent_run:` over [`agent.iter()`][pydantic_ai.agent.Agent.iter] all take the same path.
 
 !!! note
-    [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] is the exception: it hands you the result as soon as the final output is found mid-stream, so the model request that produced it gets `before_node_run` but not `wrap_node_run` or `after_node_run`. If a hook does cleanup or result rewriting that has to run for every node, drive the run with `agent.run()` or `agent.iter()` instead.
-
-    [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] is an ordering exception because it yields control while a node is in progress. `before_node_run` fires before streaming. For non-final streamed nodes, `wrap_node_run` encloses graph advancement only, followed by `on_node_run_error` and `after_node_run`; the final streamed `ModelRequestNode` skips `wrap_node_run` and `after_node_run`.
+    [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] splits the node lifecycle around streaming: `before_node_run` fires before the stream opens. For non-final streamed nodes, `wrap_node_run` then encloses graph advancement, `on_node_run_error`, and `after_node_run`. The final streamed `ModelRequestNode` skips `wrap_node_run` and `after_node_run` because `run_stream()` returns as soon as it finds final output mid-stream. If a hook needs cleanup or result rewriting for every node, use `agent.run()` or `agent.iter()`.
 
 ```python {title="node_logging_example.py"}
 from __future__ import annotations
@@ -638,6 +646,9 @@ Capabilities can filter or modify which tool definitions the model sees on each 
 
 Both hooks operate at the toolset level — the result flows into both the model's request parameters and `ToolManager.tools`, so filtering also blocks tool execution.
 
+!!! note "On a deferred capability"
+    `prepare_tools` runs only once the capability is [loaded](on-demand.md), and then receives every function tool, just as it would for an always-available capability. Before that there is nothing for it to govern: an unloaded capability's tools are neither advertised to the model nor callable.
+
 ```python {title="prepare_tools_example.py"}
 from dataclasses import dataclass
 from typing import Any
@@ -687,7 +698,7 @@ For runs with event streaming ([`run_stream_events`][pydantic_ai.agent.AbstractA
 |---|---|---|
 | [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, stream: AsyncIterable[`[`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]`]) -> AsyncIterable[`[`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]`]` | Observe, filter, or transform streamed events |
 
-The hook wraps the stream where it's produced, so it fires for every drive mode: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] (which enables streaming automatically when this hook is registered), [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] — whether you advance it with `async for node in agent_run:`, with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], or by [streaming a node yourself](../agent.md#streaming-all-events). Events a capability drops or adds are reflected in what a manual `node.stream()` consumer sees, the same as for any other consumer.
+The hook wraps the stream where it's produced, so it fires for every drive mode: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] (which enables streaming automatically when this hook is registered), [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], and [`agent.iter()`][pydantic_ai.agent.Agent.iter] — whether you advance it with `async for node in agent_run:`, with [`agent_run.next()`][pydantic_ai.run.AgentRun.next], or by [streaming a node yourself](../agent.md#streaming-all-events). Events a capability drops or adds are reflected in what a manual `node.stream()` consumer sees, the same as for any other consumer. It also wraps a [realtime session's](../realtime/capabilities.md) event iterator, where the stream additionally contains realtime-only [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] members.
 
 When a consumer closes the event stream before exhausting it, Pydantic AI also closes each wrapper returned by `wrap_run_event_stream` if it provides an `aclose()` method. Custom wrappers should use `try`/`finally` for teardown and may safely await cleanup there, but must not yield events while handling `GeneratorExit` because the consumer has gone away.
 
@@ -765,8 +776,6 @@ wrap_X(handler)
 
 A wrapper that returns without calling `handler` skips everything inside it. Exceptions from `before_X`, `after_X`, or `wrap_X` are also outside `on_X_error`'s scope, although outer wrappers can still catch them.
 
-If the `before_*` chain fails partway through, instrumentation spans record the request as it was at stage entry — not any individual hook's partial changes. To keep sensitive content out of telemetry, use [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]'s content settings (e.g. `include_content=False`) rather than relying on a `before_model_request` hook, which only controls what is sent to the model.
-
 Error hooks use **raise-to-propagate, return-to-recover** semantics:
 
 - **Raise the original error** — propagates the error unchanged *(default)*
@@ -775,7 +784,7 @@ Error hooks use **raise-to-propagate, return-to-recover** semantics:
 
 | Hook | Fires when | Recovery type |
 |---|---|---|
-| [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | Core graph iteration fails | Return [`AgentRunResult`][pydantic_ai.run.AgentRunResult] |
+| [`on_run_error`][pydantic_ai.capabilities.AbstractCapability.on_run_error] | The run body fails | Return [`AgentRunResult`][pydantic_ai.run.AgentRunResult] |
 | [`on_node_run_error`][pydantic_ai.capabilities.AbstractCapability.on_node_run_error] | Core graph-node execution fails | Return next node or [`End`][pydantic_graph.basenode.End] |
 | [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] | Core model call fails | Return [`ModelResponse`][pydantic_ai.messages.ModelResponse] |
 | [`on_tool_validate_error`][pydantic_ai.capabilities.AbstractCapability.on_tool_validate_error] | Core tool validation fails | Return validated args `dict` |

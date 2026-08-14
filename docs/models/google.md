@@ -495,7 +495,7 @@ Templates must be created in advance in the [Google Cloud Console](https://conso
 
 When a prompt or response is blocked, a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] is raised.
 
-Note that response templates only screen non-streaming requests: with streaming, Google Cloud returns the response text unscreened, so apply your own output handling if you rely on response-side blocking.
+Note that Model Armor screening — both prompt and response templates — only works with non-streaming requests (`agent.run()`). With streaming (`agent.run_stream()`), Google Cloud does not apply Model Armor: the prompt is not screened and the response text is returned unscreened. If you require streaming and need Model Armor protection, pre-screen prompts using the [`google-cloud-modelarmor` SDK](https://pypi.org/project/google-cloud-modelarmor/) before calling the agent.
 
 ### Context caching (`google_cached_content`)
 
@@ -542,50 +542,5 @@ agent = Agent(GoogleModel('gemini-2.5-pro'), model_settings=model_settings)
 
 ## Streaming cancellation
 
-!!! warning "Cancellation limitations"
-    The `google-genai` SDK exposes streaming responses only as an async iterator, with no separate handle for closing the underlying HTTP transport. Because of a [Python language rule on async generators](https://peps.python.org/pep-0525/), [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] cannot interrupt an in-flight chunk read while another coroutine is iterating the stream. Pydantic AI marks the response with `state='interrupted'`, but upstream generation may continue until the surrounding `async with agent.run_stream(...)` block exits.
-
-    For reliable cancellation, either pass `debounce_by=None` to [`stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text], [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output], or [`stream_response()`][pydantic_ai.result.StreamedRunResult.stream_response] and call `cancel()` from the same task that's iterating:
-
-    ```python {title="cancel_google.py" test="skip"}
-    from pydantic_ai import Agent
-
-    agent = Agent('google:gemini-3-pro-preview')
-
-
-    def should_stop(chunk: str) -> bool:
-        return len(chunk) > 100
-
-
-    async def main():
-        async with agent.run_stream('Write a long essay about Python') as result:
-            async for chunk in result.stream_text(debounce_by=None):
-                if should_stop(chunk):
-                    await result.cancel()
-                    break
-    ```
-
-    Or, if you need to keep debouncing, wrap the stream with [`contextlib.aclosing`](https://docs.python.org/3/library/contextlib.html#contextlib.aclosing) so the iterator is closed before `cancel()` runs:
-
-    ```python {title="cancel_google_aclosing.py" test="skip"}
-    from contextlib import aclosing
-
-    from pydantic_ai import Agent
-
-    agent = Agent('google:gemini-3-pro-preview')
-
-
-    def should_stop(chunk: str) -> bool:
-        return len(chunk) > 100
-
-
-    async def main():
-        async with agent.run_stream('Write a long essay about Python') as result:
-            async with aclosing(result.stream_text()) as stream:
-                async for chunk in stream:
-                    if should_stop(chunk):
-                        break
-            await result.cancel()
-    ```
-
-    Calling `cancel()` from a different task while iteration is in progress is not currently reliable on this provider.
+!!! note "Transport cancellation"
+    [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] safely interrupts an active local stream pull, including one running in another task. The `google-genai` SDK exposes no documented per-stream transport handle, so closing the returned iterator does not guarantee immediate HTTP teardown or when remote generation and billing stop. See [googleapis/python-genai#2425](https://github.com/googleapis/python-genai/issues/2425).

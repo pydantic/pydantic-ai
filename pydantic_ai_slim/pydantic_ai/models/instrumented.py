@@ -37,6 +37,7 @@ from ..messages import (
     ToolAvailabilityDeltaPart,
 )
 from ..settings import ModelSettings
+from ..usage import UsageBase
 from . import KnownModelName, Model, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
@@ -94,7 +95,12 @@ class InstrumentationSettings:
             meter_provider: The OpenTelemetry meter provider to use.
                 If not provided, the global meter provider is used.
                 Calling `logfire.configure()` sets the global meter provider, so most users don't need this.
-            include_binary_content: Whether to include binary content in the instrumentation events.
+            include_binary_content: Whether to include binary file data in the instrumentation events:
+                user prompts and model responses, tool returns, the agent's output and the arguments
+                its output function receives, and run and tool deferral metadata. The media type is
+                recorded either way. Binary content is found inside dictionaries, lists and
+                `ToolReturn`s, but not inside your own types: a `BinaryContent` held as a field of a
+                model or dataclass you define is still recorded in full.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
             include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on
@@ -246,65 +252,34 @@ class InstrumentationSettings:
         *,
         message_json_cache: MessageJsonCache | None = None,
     ):
-        attributes, json_schema_properties = self._input_message_attributes(
-            input_messages, parameters, message_json_cache
-        )
         output_messages = self.messages_to_otel_messages([response])
         assert len(output_messages) == 1
         output_message = output_messages[0]
-        attributes.update(
-            {
-                'gen_ai.output.messages': safe_to_json([output_message]).decode(),
-                'logfire.json_schema': to_json(
-                    {
-                        'type': 'object',
-                        'properties': {
-                            **json_schema_properties,
-                            'gen_ai.output.messages': {'type': 'array'},
-                            **(
-                                {'model_request_parameters': {'type': 'object'}}
-                                if self.include_model_request_parameters
-                                else {}
-                            ),
-                        },
-                    }
-                ).decode(),
-            }
-        )
-        span.set_attributes(attributes)
 
-    def handle_input_messages(
-        self,
-        input_messages: list[ModelMessage],
-        span: Span,
-        parameters: ModelRequestParameters | None = None,
-        *,
-        message_json_cache: MessageJsonCache | None = None,
-    ) -> None:
-        """Record the available request messages when a model lifecycle fails before a response."""
-        attributes, json_schema_properties = self._input_message_attributes(
-            input_messages, parameters, message_json_cache
-        )
-        attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
-        span.set_attributes(attributes)
+        instructions = get_instructions(input_messages, parameters)
+        system_instructions_attributes = self.system_instructions_attributes(instructions)
 
-    def _input_message_attributes(
-        self,
-        input_messages: list[ModelMessage],
-        parameters: ModelRequestParameters | None,
-        message_json_cache: MessageJsonCache | None,
-    ) -> tuple[dict[str, AttributeValue], dict[str, dict[str, str]]]:
-        instructions_attributes = self.system_instructions_attributes(get_instructions(input_messages, parameters))
         attributes: dict[str, AttributeValue] = {
             'gen_ai.input.messages': self._input_messages_json(input_messages, message_json_cache).decode(),
-            **instructions_attributes,
+            'gen_ai.output.messages': safe_to_json([output_message]).decode(),
+            **system_instructions_attributes,
+            'logfire.json_schema': to_json(
+                {
+                    'type': 'object',
+                    'properties': {
+                        'gen_ai.input.messages': {'type': 'array'},
+                        'gen_ai.output.messages': {'type': 'array'},
+                        **({'gen_ai.system_instructions': {'type': 'array'}} if system_instructions_attributes else {}),
+                        **(
+                            {'model_request_parameters': {'type': 'object'}}
+                            if self.include_model_request_parameters
+                            else {}
+                        ),
+                    },
+                }
+            ).decode(),
         }
-        json_schema_properties = {
-            'gen_ai.input.messages': {'type': 'array'},
-            **({'gen_ai.system_instructions': {'type': 'array'}} if instructions_attributes else {}),
-            **({'model_request_parameters': {'type': 'object'}} if self.include_model_request_parameters else {}),
-        }
-        return attributes, json_schema_properties
+        span.set_attributes(attributes)
 
     def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
         if instructions and self.include_content:
@@ -314,6 +289,19 @@ class InstrumentationSettings:
                 ).decode(),
             }
         return {}
+
+    def aggregated_usage_attributes(self, usage: UsageBase) -> dict[str, int]:
+        """Cumulative-usage OpenTelemetry attributes for a run/session span.
+
+        Remaps `gen_ai.usage.*` to `gen_ai.aggregated_usage.*` when `use_aggregated_usage_attribute_names`
+        is set, so a backend that sums span attributes doesn't double-count the run's cumulative usage
+        against the per-request `chat` spans' `gen_ai.usage.*`. Shared by the classic agent-run span (the
+        `Instrumentation` capability) and the realtime session span so the two can't drift.
+        """
+        attributes = usage.opentelemetry_attributes()
+        if not self.use_aggregated_usage_attribute_names:
+            return attributes
+        return {key.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): value for key, value in attributes.items()}
 
     def record_metrics(
         self,

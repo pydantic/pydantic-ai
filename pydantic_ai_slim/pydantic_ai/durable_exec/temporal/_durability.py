@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, ClassVar, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, cast
 
 from pydantic import ConfigDict, with_config
 from pydantic_core import PydanticSerializationError
@@ -43,11 +43,15 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 
+if TYPE_CHECKING:
+    pass
+
 from ._activity_execution import execute_activity
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
     heartbeating,
+    model_response_payload_errors,
     temporalize_toolset as _default_temporalize_toolset,
     toolset_temporal_activities,
     validate_activity_config,
@@ -113,6 +117,14 @@ def serialization_user_error(error: PydanticSerializationError) -> UserError:
         '`TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and '
         '`tool_call_metadata`, and tool `metadata`.'
     )
+
+
+IMAGE_OUTPUT_UNSUPPORTED_MESSAGE = (
+    'Image output is not supported with Temporal because the image would ride the activity payload, '
+    'which is capped by the server blob-size limit (2MB by default, leaving about 1.5MB of raw image '
+    'bytes once base64-encoded).'
+)
+"""Shared by the capability and the deprecated `TemporalModel`, which reject image output identically."""
 
 
 @dataclass(init=False)
@@ -510,16 +522,18 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
             config: ActivityConfig = {'summary': f'request model: {model_name}', **self._model_activity_config}
-            return await execute_activity(activity=self.request_activity, args=[params(request), deps], **config)
+            with model_response_payload_errors(model_name):
+                return await execute_activity(activity=self.request_activity, args=[params(request), deps], **config)
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
             config: ActivityConfig = {
                 'summary': f'request model: {model_name} (stream)',
                 **self._model_activity_config,
             }
-            result = await execute_activity(
-                activity=self.request_stream_activity, args=[params(request), deps], **config
-            )
+            with model_response_payload_errors(model_name):
+                result = await execute_activity(
+                    activity=self.request_stream_activity, args=[params(request), deps], **config
+                )
             if isinstance(result, ModelResponse):
                 stream = CompletedStreamedResponse(
                     result,
@@ -557,4 +571,4 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
-            raise UserError('Image output is not supported with Temporal because of the 2MB payload size limit.')
+            raise UserError(IMAGE_OUTPUT_UNSUPPORTED_MESSAGE)

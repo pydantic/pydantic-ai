@@ -450,6 +450,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Return a filtered or modified list. The result flows into both the model's request
         parameters and `ToolManager.tools`, so filtering also blocks tool execution.
+
+        On a deferred capability this runs only once the capability is loaded, and then receives
+        every function tool, as an always-available capability does. There is nothing to govern
+        before that: an unloaded capability's tools are neither advertised to the model nor
+        callable, so no filtering here could change what the model can reach.
         """
         return tool_defs
 
@@ -478,6 +483,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Called before the agent run starts, inside `wrap_run`.
 
         Observe-only; use `wrap_run` for modification.
+
+        A realtime session is a run. ContextVars set here are ambient in its instruction
+        resolution, pump and tool tasks, and the caller's `async with` block.
         """
 
     async def after_run(
@@ -489,13 +497,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """Modify the run result after iteration or error recovery, inside `wrap_run`.
 
         Not called when `wrap_run` returns without calling its handler, or recovers an error by
-        returning its own result. It is called when `on_run_error` recovers an iteration failure.
+        returning its own result. It is called when `on_run_error` recovers a run-body failure.
 
         It is also called when the handler produces a result while a cancellation is pending or
         absorbed upstream — but before the backstop's cancellation re-check, so the cancellation
         still propagates after this hook returns and the run still ends cancelled.
         Put cancellation-safe cleanup in [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
         (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
+
+        For a realtime session, the result is produced when the session closes; a transformed result
+        becomes `session.result` before the caller leaves the `async with` boundary.
         """
         return result
 
@@ -507,16 +518,22 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     ) -> AgentRunResult[Any]:
         """Wrap the complete agent-run lifecycle.
 
-        `handler()` runs `before_run`, graph iteration with `on_run_error` recovery, and
-        `after_run`. Returning without calling `handler()` skips that lifecycle; calling it
-        multiple times runs the lifecycle each time.
+        `handler()` runs `before_run`, the run body with `on_run_error` recovery, and
+        `after_run`. Returning without calling `handler()` skips that lifecycle.
 
         If `handler()` raises and this method catches the exception and returns a result instead,
         the error is suppressed and the recovery result is used directly without `after_run`.
 
         Note: if the caller cancels the run (e.g. by breaking out of an
         `iter()` loop), this method receives an `asyncio.CancelledError`.
-        Implementations that hold resources should handle cleanup accordingly.
+        Implementations that hold resources should handle cleanup accordingly. Cancellation is
+        terminal: the hook may observe it and clean up, but cannot recover the run to success.
+
+        A realtime session is a run: `handler()` resolves when the session closes. ContextVars set
+        before calling it are ambient in instruction resolution, pumps, tool tasks, and the caller's
+        block. Downward ContextVar propagation is one-way; keep bidirectional per-run state on the
+        `for_run` copy's instance attributes. Suppression and result transformation apply at the
+        session's `async with` boundary, after the caller may have observed events in real time.
         """
         return await handler()
 
@@ -526,7 +543,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         error: BaseException,
     ) -> AgentRunResult[Any]:
-        """Called inside `wrap_run` when graph iteration fails with an exception.
+        """Called inside `wrap_run` when the run body fails with an exception.
 
         This is the error counterpart to
         [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run].
@@ -538,7 +555,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Recovery happens before control returns to `wrap_run`, so wrap hooks only observe
         failures that this hook does not recover.
 
+        Cancellation is terminal: the hook may observe it and clean up, but cannot recover the
+        run to success.
+
         Not called for `GeneratorExit` or `KeyboardInterrupt`.
+
+        For a realtime session, returning a recovery result sets `session.result` and suppresses the
+        error at the caller's `async with` boundary, after events may already have been observed.
         """
         raise error
 
@@ -569,6 +592,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         boundary: cancellation skips downstream hooks. Put cancellation-safe cleanup in
         [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run]
         (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
+        (A hook that catches the `CancelledError` *and* calls `Task.uncancel()` takes over the
+        cancellation bookkeeping for that boundary, so this hook does fire for that node —
+        the run itself still ends cancelled at the next boundary.)
         """
         return result
 
@@ -602,6 +628,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         fires before streaming, and the final streamed `ModelRequestNode` skips `wrap_node_run` and
         `after_node_run`; for non-final streamed nodes, the wrapper encloses only graph advancement,
         followed by the error and after hooks.
+
+        A cancelled run delivers `asyncio.CancelledError` through `handler()`. Cancellation is
+        terminal: the hook may observe it and clean up, but cannot recover the run to success —
+        even a returned `End` result is discarded once a cancellation is pending.
         """
         return await handler(node)
 
@@ -638,11 +668,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        """Wraps the event stream for a streamed node. Can observe or transform events.
+        """Wrap a run or realtime session's consumer-facing event stream.
 
-        The wrapper is applied where the node's stream is produced, so it fires however the run
-        is driven — including under [`agent.iter()`][pydantic_ai.agent.Agent.iter] and when the
-        caller streams a node itself with `node.stream()`.
+        For classic runs, the wrapper is applied where each node's stream is produced, so it fires
+        however the run is driven — including under [`agent.iter()`][pydantic_ai.agent.Agent.iter]
+        and when the caller streams a node itself with `node.stream()`. For realtime sessions, it
+        wraps the `async for event in session` view. A wrapper must yield events appropriate for the
+        stream it wraps.
+
+        Transformations affect only what the stream consumer sees. They never change realtime
+        session history, tool execution, or the classic run's accumulated response and output.
 
         Note: when this method is overridden (or [`Hooks.on.event`][pydantic_ai.capabilities.hooks.Hooks.on]
         / [`Hooks.on.run_event_stream`][pydantic_ai.capabilities.hooks.Hooks.on] are registered),
@@ -698,7 +733,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Calling `handler(request_context)` runs `before_model_request`, the model call with
         `on_model_request_error` recovery, and `after_model_request`. Returning without calling
-        `handler` skips that inner lifecycle. Calling it multiple times runs the lifecycle each time.
+        `handler` skips that inner lifecycle. A wrapper may call it only once.
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip `on_model_request_error`
         and directly retry the model request with a retry prompt. If the handler was called,

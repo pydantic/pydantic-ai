@@ -6,7 +6,7 @@ import inspect
 import time
 from asyncio import Task
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -20,7 +20,8 @@ from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     capture_current_context,
-    core_model_response_ctx,
+    capture_model_request_span_context,
+    capture_model_response_span_context,
     get_instructions as _get_history_instructions,
     time_to_first_chunk_ctx,
 )
@@ -35,16 +36,22 @@ from pydantic_ai.models import (
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.toolsets._capability_owned import tool_defs_for_loaded_capabilities
-from pydantic_ai.toolsets._tool_search import parse_discovered_tools
+from pydantic_ai.toolsets._tool_search import (
+    _discovered_tool_names_in_order,  # pyright: ignore[reportPrivateUsage]
+    parse_discovered_tools,
+)
 from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
+from ._cancel import RunCancellation
 from ._cost import best_effort_price, fill_response_cost
-from ._deferred_capabilities import parse_loaded_capabilities
+from ._deferred_capabilities import (
+    _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
+    parse_loaded_capabilities,
+)
 from ._instructions import normalize_toolset_instructions
-from ._run_context import set_current_run_context
+from ._run_context import AnchoredEvidence, set_current_run_context
 from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
@@ -407,9 +414,11 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     # Invariant: these two sets are shared by reference into every `RunContext` this run (their
     # identity survives `replace(ctx, ...)`, which shallow-copies) and are only ever mutated in
-    # place — never reassigned. The per-step refresh and the `load_capability` tool body rely on
-    # that shared identity. Reassigning either (here, or by passing it to a `replace(ctx, ...=...)`)
-    # would silently break in-step capability loads / tool reveals.
+    # place — never reassigned. The per-step refresh relies on that shared identity for both, and
+    # `discovered_tool_names` additionally on the in-step reveals written by tool execution.
+    # `loaded_capability_ids` is refreshed from history only: a capability loaded during a step
+    # lands from the next one, so nothing writes it mid-step. Reassigning either (here, or by
+    # passing it to a `replace(ctx, ...=...)`) would silently break in-step tool reveals.
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
 
@@ -420,6 +429,9 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     instrumentation_settings: InstrumentationSettings | None
 
     agent: Agent[DepsT, Any] | None = None
+
+    cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
+    """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
 
     model_id: str | None = None
     """The model-id string `model` was resolved from, if the run's model came from a string.
@@ -793,10 +805,11 @@ async def _prepare_request_parameters(
 
     # Drop the auto-injected `ToolSearchTool` native tool when the search corpus is empty —
     # the toolset has nothing to manage, so emitting the native tool would waste a tool slot
-    # and surface an inert native tool in `ModelRequestParameters` snapshots. Filtering
-    # here (at MRP-construction time) keeps the request shape honest before
-    # `prepare_request` runs. Non-optional `ToolSearchTool` instances (user-passed) are
-    # preserved so the request still fails loudly on unsupported models.
+    # and surface an inert native tool in `ModelRequestParameters` snapshots. `prepare_request`
+    # applies the same drop during resolution, but instrumentation and durable-execution
+    # payloads observe the parameters BEFORE resolution, so filtering here too is what keeps
+    # the observed request shape honest. Non-optional `ToolSearchTool` instances (user-passed)
+    # are preserved so the request still fails loudly on unsupported models.
     has_tool_search_corpus = any(t.with_native == ToolSearchTool.kind for t in function_tools)
     if not has_tool_search_corpus:
         # Confine the corpus-empty drop to `ToolSearchTool`: other optional native tools
@@ -805,18 +818,23 @@ async def _prepare_request_parameters(
         # path in `Model.prepare_request`.
         native_tools = [t for t in native_tools if not (isinstance(t, ToolSearchTool) and t.optional)]
 
+    deferred_capability_ids = {
+        capability_id
+        for capability_id, capability in run_context.capabilities.items()
+        if capability.defer_loading is True
+    }
+
     return models.ModelRequestParameters(
         function_tools=function_tools,
         native_tools=native_tools,
-        # Preserve discovered names that aren't in the current definitions while routing the
-        # capability-owned half through the canonical availability predicate.
-        revealed_tool_names=run_context.discovered_tool_names
-        | tool_defs_for_loaded_capabilities(run_context, function_tools).keys(),
-        deferred_capability_ids={
-            capability_id
-            for capability_id, capability in run_context.capabilities.items()
-            if capability.defer_loading is True
-        },
+        deferred_capability_ids=deferred_capability_ids,
+        # Preserve discovered names that aren't in the current definitions.
+        revealed_tool_names=_revealed_tool_names(
+            run_context.discovered_tool_names,
+            function_tools,
+            deferred_capability_ids=deferred_capability_ids,
+            loaded_capability_ids=run_context.loaded_capability_ids,
+        ),
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_schema.object_def,
@@ -1141,11 +1159,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
         _handler_response: _messages.ModelResponse | None = None
+        _handler_called = False
 
         async def _streaming_handler(
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
-            nonlocal _handler_response
+            nonlocal _handler_called, _handler_response
+            if _handler_called:
+                raise exceptions.UserError('`wrap_model_request` may call its handler only once')
+            _handler_called = True
             # Known limitation: on the streaming path the before-chain runs inside this wrap
             # task, so `ContextVar` writes made by `before_model_request` hooks are not visible
             # to later tool or after-run code in the outer task (unlike `agent.run()`, which
@@ -1156,6 +1178,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # After the before-chain, so the check applies to the model actually being called
             # (a `before_model_request` hook may have swapped it).
             _ensure_model_supports_streaming(req_ctx.model)
+            capture_model_request_span_context(req_ctx)
             # Stamp the request-issue instant so the instrumentation capability can record
             # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
             # the first-chunk instant; the delta is the client-side time to first token.
@@ -1184,9 +1207,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `on_model_request_error` cannot recover an error after streaming has begun.
             response = sr.get()
             _handler_response = response
-            # Marks the streamed response as this span's core outcome so the instrumentation
-            # error path can record its usage if a later hook fails.
-            core_model_response_ctx.set(response)
+            capture_model_response_span_context(response)
             return await ctx.deps.root_capability.after_model_request(
                 run_context, request_context=req_ctx, response=response
             )
@@ -1249,7 +1270,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     await agent_stream.aclose_events()
                 return
             self._did_stream = True
-            ctx.state.usage.requests += 1
             replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=wrap_request_context.model_request_parameters,
@@ -1348,9 +1368,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         request_context, run_context = await self._prepare_request(ctx, streaming=False)
 
         _handler_response: _messages.ModelResponse | None = None
+        _handler_called = False
 
         async def model_handler(req_ctx: ModelRequestContext) -> _messages.ModelResponse:
-            nonlocal _handler_response
+            nonlocal _handler_called, _handler_response
+            if _handler_called:
+                raise exceptions.UserError('`wrap_model_request` may call its handler only once')
+            _handler_called = True
             req_ctx = await self._apply_before_model_request(
                 ctx, run_context, req_ctx, original_request_context=request_context
             )
@@ -1363,8 +1387,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             def on_progress(response: _messages.ModelResponse) -> None:
                 nonlocal _handler_response
                 _handler_response = response
-                core_model_response_ctx.set(response)
 
+            capture_model_request_span_context(req_ctx)
+            ctx.state.usage.requests += 1
             try:
                 response = await model_request(
                     req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
@@ -1376,9 +1401,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     run_context, request_context=req_ctx, error=e
                 )
             _handler_response = response
-            # Marks the (possibly recovered) response as this span's core outcome so the
-            # instrumentation error path can record its usage if a later hook fails.
-            core_model_response_ctx.set(response)
+            capture_model_response_span_context(response)
             return await ctx.deps.root_capability.after_model_request(
                 run_context, request_context=req_ctx, response=response
             )
@@ -1398,10 +1421,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `ModelRetry` from any model lifecycle hook retries the model request.
             # If the handler was called, preserve the response in history for context.
             if _handler_response is not None:
-                ctx.state.usage.requests += 1
                 self._append_response(ctx, _handler_response)
             return await self._build_retry_node(ctx, e)
-        ctx.state.usage.requests += 1
 
         return await self._finish_handling(ctx, model_response)
 
@@ -1620,6 +1641,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             # Normalize consecutive trailing requests for model adapters without changing stored history.
             messages = _clean_message_history(messages, repair_last_response=True)
+            model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
+            request_context.model_request_parameters = model_request_parameters
             prepared = model.prepare_messages(messages, model_request_parameters)
             messages = (
                 _clean_message_history(prepared, repair_last_response=True) if prepared is not messages else prepared
@@ -1652,6 +1675,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
             # Redo the pre-wrap trim on the processed messages, in case the before-chain
             # rewrote the history this turn resumes from.
+            model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
+            request_context.model_request_parameters = model_request_parameters
             self._trim_suspended_tail(ctx, messages)
             usage = ctx.state.usage
 
@@ -1900,6 +1925,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 elif isinstance(part, _messages.CompactionPart):
                     if part.content:
                         compaction_text += part.content
+                elif isinstance(part, _messages.SpeechPart):
+                    # No standard model produces realtime audio parts, but a custom model (e.g. a
+                    # `FunctionModel` bridging one) can. Its transcript is the response's text —
+                    # `ModelResponse.text` already reads it that way — so treat it like a `TextPart`
+                    # rather than judging the response empty and forcing a retry.
+                    text += part.content
                 else:
                     assert_never(part)
 
@@ -1974,15 +2005,41 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         response_output: tuple[str, list[_messages.BinaryContent]] | None = None,
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
+        # Re-derive reveals now that the response is in history: a provider-side tool search
+        # reveals a tool *inside* the response that goes on to call it, and the model saw that
+        # schema before emitting the call. The step-start refresh ran before the response existed.
+        # A `load_capability` call in the same response is deliberately *not* covered — it has not
+        # executed yet, so its capability stays unavailable and its tools stay uncallable until the
+        # next request carries the capability's instructions.
+        _refresh_discovered_tool_names(ctx)
+
         run_context = build_run_context(ctx)
+        evidence_window = _messages._post_compaction_window_for_response(  # pyright: ignore[reportPrivateUsage]
+            ctx.state.message_history, self.model_response
+        )
+        # Held in a local because it lands in two places below.
+        anchored_evidence = AnchoredEvidence(
+            discovered_tool_names=frozenset(_discovered_tool_names_in_order(evidence_window))
+            - ctx.deps.discovered_tool_names,
+            loaded_capability_ids=frozenset(_parse_loaded_capabilities(evidence_window))
+            - ctx.deps.loaded_capability_ids,
+        )
         run_context = replace(
             run_context,
             retry=ctx.state.output_retries_used,
             max_retries=ctx.deps.tool_manager.default_max_retries,
+            _anchored_evidence=anchored_evidence,
         )
 
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+        # The manager was already prepared for this same run step before the model request, so
+        # `for_run_step` deliberately returns it unchanged, keeping the retries it accumulated —
+        # which is why the evidence lands field by field rather than by swapping in `run_context`.
+        # Only the retrospective evidence is carried: replacing the prospective shared sets would
+        # affect the next request's reveal pruning and search ranking.
+        assert ctx.deps.tool_manager.ctx is not None
+        ctx.deps.tool_manager.ctx._anchored_evidence = anchored_evidence  # pyright: ignore[reportPrivateUsage]
 
         # Under `end_strategy='early'`, `response_output` holds the response's `(text, files)`. If it carries a
         # valid non-tool output (schema-validated text, or an image) and every co-emitted tool call is a plain
@@ -2231,18 +2288,35 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         loaded_capability_ids=ctx.deps.loaded_capability_ids,
         discovered_tool_names=ctx.deps.discovered_tool_names,
         pending_messages=ctx.state.pending_messages,
+        _cancellation=ctx.deps.cancellation,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _mcp_tool_defs_cache=ctx.state.mcp_tool_defs_cache,
     )
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
-    # `discovered_tool_names`, `pending_messages`, `_event_stream_buffer`, `_mcp_tool_defs_cache` (see the
-    # invariant on `GraphAgentDeps.loaded_capability_ids`). Never add any of them as a `replace` kwarg — forking the
-    # object would silently break in-step capability loads / tool reveals / message enqueues / event delivery /
+    # `discovered_tool_names`, `pending_messages`, `_cancellation`, `_event_stream_buffer`,
+    # `_mcp_tool_defs_cache` (see the invariant on `GraphAgentDeps.loaded_capability_ids`). Never
+    # add any of them as a `replace` kwarg — forking the object would silently break in-step
+    # capability loads / tool reveals / message enqueues / cancellation / event delivery /
     # tool-defs caching.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
+
+
+def run_cancelled_snapshot(
+    message: str, state: GraphAgentState, deps: GraphAgentDeps[Any, Any]
+) -> exceptions.RunCancelled:
+    """Build a `RunCancelled` carrying a detached snapshot of the run's current state."""
+    return exceptions.RunCancelled(
+        message,
+        messages=state.message_history,
+        new_message_index=deps.new_message_index,
+        usage=state.usage,
+        metadata=state.metadata,
+        run_id=state.run_id,
+        conversation_id=state.conversation_id,
+    )
 
 
 def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
@@ -2271,6 +2345,64 @@ def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAg
     # Mutate in place (not reassign), for the same shared-by-reference reason as the set above.
     ctx.deps.discovered_tool_names.clear()
     ctx.deps.discovered_tool_names.update(discovered_tool_names)
+
+
+def _revealed_tool_names(
+    discovered: Iterable[str],
+    function_tools: Iterable[ToolDefinition],
+    *,
+    deferred_capability_ids: set[str],
+    loaded_capability_ids: set[str],
+) -> set[str]:
+    """Drop reveals whose owning capability is not available yet.
+
+    The ordering a run holds to is load, then reveal, then call: a capability's instructions and
+    hooks come as a bundle, and its tools should not reach the model ahead of the runbook for using
+    them. A reveal says a schema *may* be shown; it cannot stand in for the load.
+
+    Not a trust boundary, and not trying to be one. Any history the model could plausibly have
+    produced is honoured — fabricating a coherent `load_capability` exchange is equivalent to the
+    model having called it, and history integrity is the deployment's job. What is rejected is a
+    history no legitimate run could have produced: a capability tool revealed with no load behind it
+    describes a world that never existed, and honouring it would put the run in a state its own
+    rules forbid — including advertising a tool `ToolManager` will refuse to run.
+
+    Only *deferred* capabilities gate their tools this way. An always-on capability's search-gated
+    tool is revealed by discovery alone, which is why this needs `deferred_capability_ids` read from
+    the capability instances rather than a guess from the tool definitions.
+    """
+    owner_by_name = {
+        tool_def.name: tool_def.capability_id for tool_def in function_tools if tool_def.capability_id is not None
+    }
+    # The complement of `RunContext.available_capability_ids` over the run's capabilities: available
+    # is "not deferred, or loaded", so unavailable is "deferred and not loaded". Spelled from the
+    # two history-derived sets because this also runs against a bare message list, with no
+    # `RunContext` to ask — but it must keep answering exactly what `is_tool_available` answers.
+    unavailable_capability_ids = deferred_capability_ids - loaded_capability_ids
+    return {name for name in discovered if owner_by_name.get(name) not in unavailable_capability_ids}
+
+
+def _with_outgoing_reveal_state(
+    parameters: models.ModelRequestParameters, messages: list[_messages.ModelMessage]
+) -> models.ModelRequestParameters:
+    """Make per-request reveal state match the history that will be sent to the model.
+
+    Gated on the same availability rule as the run-level state: a reveal naming a tool whose
+    deferred capability this history does not show as loaded is dropped, so the model is never
+    offered a tool it has not been properly given — and never one `ToolManager` would refuse to
+    run. An always-on capability's search-gated tools are unaffected: they carry no load marker by
+    design, and `deferred_capability_ids` is read from the capability instances, so they are not
+    in it.
+    """
+    return replace(
+        parameters,
+        revealed_tool_names=_revealed_tool_names(
+            parse_discovered_tools(messages),
+            parameters.function_tools,
+            deferred_capability_ids=parameters.deferred_capability_ids,
+            loaded_capability_ids=parse_loaded_capabilities(messages),
+        ),
+    )
 
 
 def build_validation_context(
@@ -2496,8 +2628,6 @@ def _is_same_request(message: _messages.ModelMessage, request: _messages.ModelRe
 SYNTHESIZED_TOOL_RETURN_METADATA_KEY = 'pydantic_ai_synthesized_tool_return'
 """Metadata key set to `True` on `ToolReturnPart`s synthesized for tool calls that never received a result."""
 
-_SYNTHESIZED_TOOL_RETURN_CONTENT = 'The tool call was interrupted before a result was produced.'
-
 
 def _dangling_tool_calls_by_response(messages: list[_messages.ModelMessage]) -> dict[int, list[_messages.ToolCallPart]]:
     """Find tool calls that will never receive a result, keyed by the index of their response.
@@ -2623,10 +2753,10 @@ def _repair_dangling_tool_calls(
 
     This includes a call whose args string was cut off mid-stream (unparsable JSON): the call is
     kept verbatim and closed out like any other dangling call, never removed. Malformed args are
-    already sendable — serializers degrade them gracefully (see `ToolCallPart.args_as_dict`), as
-    the tool-call retry flow relies on — and removing the call would disturb the response's shape,
-    e.g. leaving a thinking-only response whose signature was computed over a turn that included
-    the call.
+    already sendable — serializers degrade them gracefully (see `ToolCallPart.args_as_dict` and
+    `ToolCallPart.args_as_json_str`), as the tool-call retry flow relies on — and removing the call
+    would disturb the response's shape, e.g. leaving a thinking-only response whose signature was
+    computed over a turn that included the call.
 
     The last `ModelResponse` is only repaired when `repair_last_response` is set: its tool calls
     are the live frontier that run resumption and `deferred_tool_results` may still answer, and a
@@ -2674,7 +2804,7 @@ def _repair_dangling_tool_calls(
                     synthesized.append(
                         _messages.ToolReturnPart(
                             tool_name=call.tool_name,
-                            content=_SYNTHESIZED_TOOL_RETURN_CONTENT,
+                            content=_messages.INTERRUPTED_TOOL_RETURN_CONTENT,
                             tool_call_id=call.tool_call_id,
                             metadata={SYNTHESIZED_TOOL_RETURN_METADATA_KEY: True},
                             timestamp=message.timestamp,

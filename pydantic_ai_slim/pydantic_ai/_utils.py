@@ -735,6 +735,20 @@ def is_async_callable(obj: Any) -> Any:
     return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))
 
 
+async def await_maybe(value: T | Awaitable[T]) -> T:
+    """Await `value` if it is awaitable, otherwise return it unchanged.
+
+    Use this to resolve the result of calling a callback typed as `X | Awaitable[X]`, regardless of
+    how the awaitable is produced: an `async def`, or a plain `def` / callable object that *returns*
+    a coroutine. [`is_async_callable`][pydantic_ai._utils.is_async_callable] can't detect the latter
+    because it inspects the callable rather than its result, so dispatching on it alone drops such a
+    callback's coroutine un-awaited.
+    """
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
 def takes_run_context(callable_obj: Callable[..., Any]) -> bool:
     """Check if a callable takes a `RunContext` as its first argument.
 

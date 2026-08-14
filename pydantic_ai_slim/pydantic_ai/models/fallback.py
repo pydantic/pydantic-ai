@@ -14,13 +14,9 @@ from opentelemetry.trace import get_current_span
 from opentelemetry.util.types import AttributeValue
 from typing_extensions import assert_never
 
-from pydantic_ai._instrumentation import (
-    model_attributes,
-    model_request_parameters_attributes,
-    model_request_parameters_enabled,
-)
+from pydantic_ai._instrumentation import model_attributes, model_request_parameters_attributes
 from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import get_first_param_type, is_async_callable
+from pydantic_ai._utils import await_maybe, get_first_param_type
 
 from .._cost import fill_response_cost
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
@@ -180,7 +176,7 @@ class FallbackModel(Model):
         handlers = self._exception_handlers if isinstance(value, Exception) else self._response_handlers
         for handler in handlers:
             # pyright can't narrow handler's param type from the isinstance check on value
-            result = await handler(value) if is_async_callable(handler) else handler(value)  # type: ignore[arg-type]
+            result = await await_maybe(handler(value))  # type: ignore[arg-type]
             if result:
                 return True
         return False
@@ -258,12 +254,14 @@ class FallbackModel(Model):
             # `_get_continuation_model` only returns a model when the last message is a suspended response.
             suspended_response = messages[-1]
             assert isinstance(suspended_response, ModelResponse)
+            prepared_parameters = model_request_parameters
             try:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
                 response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if not await self._should_fallback(exc):
+                    self._set_span_attributes(pinned, prepared_parameters)
                     raise
                 # Best-effort cancel the suspended server-side job we're abandoning before rewinding
                 # and retrying the chain. `FallbackModel` swallows the error, so the graph's own
@@ -282,6 +280,7 @@ class FallbackModel(Model):
                 return response
 
         for model in self.models:
+            prepared_parameters = model_request_parameters
             try:
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
@@ -291,6 +290,7 @@ class FallbackModel(Model):
                 if await self._should_fallback(exc):
                     exceptions.append(exc)
                     continue
+                self._set_span_attributes(model, prepared_parameters)
                 raise exc
 
             if await self._should_fallback(response):
@@ -341,6 +341,7 @@ class FallbackModel(Model):
             suspended_response = messages[-1]
             assert isinstance(suspended_response, ModelResponse)
             async with AsyncExitStack() as stack:
+                prepared_parameters = model_request_parameters
                 try:
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
@@ -349,6 +350,7 @@ class FallbackModel(Model):
                     )
                 except Exception as exc:
                     if not await self._should_fallback(exc):
+                        self._set_span_attributes(pinned, prepared_parameters)
                         raise
                     # Best-effort cancel the suspended server-side job we're abandoning before
                     # rewinding to the chain (see the non-streaming path above); `FallbackModel`
@@ -371,6 +373,7 @@ class FallbackModel(Model):
 
         for model in self.models:
             async with AsyncExitStack() as stack:
+                prepared_parameters = model_request_parameters
                 try:
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = model.prepare_messages(messages, model_request_parameters)
@@ -381,7 +384,8 @@ class FallbackModel(Model):
                     if await self._should_fallback(exc):
                         exceptions.append(exc)
                         continue
-                    raise exc  # pragma: no cover
+                    self._set_span_attributes(model, prepared_parameters)
+                    raise exc
 
                 # After a rewind, mark this fresh stream as replacing the abandoned suspended turn.
                 # Unlike the continuation pin (stamped after `yield`, once the final `state` is known),
@@ -475,19 +479,12 @@ class FallbackModel(Model):
             span = get_current_span()
             if span.is_recording():
                 attributes = getattr(span, 'attributes', {})
-                request_model = attributes.get('gen_ai.request.model')
-                # The capability opens its span before request attributes exist, so the OTel context
-                # carries this setting across the streaming task handoff. Its presence also proves a
-                # model-less span is the deferred Pydantic AI chat span rather than an unrelated
-                # active span (e.g. a server span with no Pydantic AI instrumentation), which must
-                # not receive `gen_ai.*` attributes. The attribute-presence fallback preserves
-                # compatibility with spans opened by older/custom instrumentation.
-                include_parameters = model_request_parameters_enabled()
-                if request_model == self.model_name or (request_model is None and include_parameters is not None):
+                if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
                     span_attributes: dict[str, AttributeValue] = {**model_attributes(model)}
-                    if include_parameters is True or (
-                        include_parameters is None and 'model_request_parameters' in attributes
-                    ):
+                    # Only refresh `model_request_parameters` if it was emitted at span open; its absence
+                    # means `InstrumentationSettings.include_model_request_parameters` is off, and re-adding
+                    # it here would leak the attribute the setting is meant to suppress.
+                    if 'model_request_parameters' in attributes:
                         span_attributes.update(model_request_parameters_attributes(model_request_parameters))
                     span.set_attributes(span_attributes)
 

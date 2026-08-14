@@ -9,10 +9,12 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Bedrock](bedrock.md)
 * [Cerebras](cerebras.md)
 * [Cohere](cohere.md)
+* [Crusoe](crusoe.md)
 * [Groq](groq.md)
 * [Hugging Face](huggingface.md)
 * [Mistral](mistral.md)
 * [OpenRouter](openrouter.md)
+* [Snowflake Cortex](snowflake.md)
 * [Z.AI](zai.md)
 
 ## OpenAI-compatible Providers
@@ -23,7 +25,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
 - [DeepSeek](openai.md#deepseek)
 - [Fireworks AI](openai.md#fireworks-ai)
-- [GitHub Models](openai.md#github-models)
+- [GitHub Models](openai.md#github-models) (retired, deprecated)
 - [Heroku](openai.md#heroku-ai)
 - [LiteLLM](openai.md#litellm)
 - [Nebius AI Studio](openai.md#nebius-ai-studio)
