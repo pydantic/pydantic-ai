@@ -36,9 +36,7 @@ async def _collect_toolset_instructions(
     if isinstance(toolset, WrapperToolset) and type(toolset).get_instructions is WrapperToolset.get_instructions:
         return await _collect_toolset_instructions(toolset.wrapped, ctx)
     if isinstance(toolset, CombinedToolset) and type(toolset).get_instructions is CombinedToolset.get_instructions:
-        child_contributions = await gather(
-            *(_collect_toolset_instructions(child, ctx) for child in toolset.toolsets)
-        )
+        child_contributions = await gather(*(_collect_toolset_instructions(child, ctx) for child in toolset.toolsets))
         return [contribution for contributions in child_contributions for contribution in contributions]
 
     result = await toolset.get_instructions(ctx)
