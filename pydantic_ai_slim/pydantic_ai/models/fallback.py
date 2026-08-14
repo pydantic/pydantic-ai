@@ -291,7 +291,7 @@ class FallbackModel(Model):
                     exceptions.append(exc)
                     continue
                 self._set_span_attributes(model, prepared_parameters)
-                raise
+                raise exc
 
             if await self._should_fallback(response):
                 fill_response_cost(response)
@@ -385,7 +385,7 @@ class FallbackModel(Model):
                         exceptions.append(exc)
                         continue
                     self._set_span_attributes(model, prepared_parameters)
-                    raise
+                    raise exc
 
                 # After a rewind, mark this fresh stream as replacing the abandoned suspended turn.
                 # Unlike the continuation pin (stamped after `yield`, once the final `state` is known),
