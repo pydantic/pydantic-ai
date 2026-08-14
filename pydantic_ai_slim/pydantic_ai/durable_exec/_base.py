@@ -911,40 +911,75 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _build_mcp_toolset(self, toolset: Any) -> DurableMCPToolset[AgentDepsT]:
         base_config = self._toolset_base_config('mcp')
-        prefix = f'{self.name}__mcp_server__{toolset.id}'
+
+        async def get_tools_handler(params: _GetToolsParams) -> dict[str, ToolDefinition]:
+            with self._durable_run_context_scope(params.ctx) as durable_ctx:
+                tools = await toolset.get_tools(durable_ctx)
+            return {name: tool.tool_def for name, tool in tools.items()}
+
+        async def get_instructions_handler(params: _GetToolsParams) -> Instructions:
+            with self._durable_run_context_scope(params.ctx) as durable_ctx:
+                # A server's instructions are captured during `__aenter__`, so it has to be
+                # connected *inside* this unit: an engine whose lifecycle never enters the
+                # toolset (DBOS's `enter-never`) would otherwise journal `None` and silently
+                # drop the instructions. Entry is refcounted, so this is a no-op when the
+                # toolset is already entered (`enter-always`/`enter-outside-durable`).
+                async with toolset:
+                    return await toolset.get_instructions(durable_ctx)
+
+        async def call_tool_handler(params: _CallToolParams) -> CallToolResult:
+            with self._durable_run_context_scope(params.ctx) as durable_ctx:
+                return await wrap_tool_call_result(
+                    toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
+                )
+
+        backend = self._build_operation_backend()
+        get_tools = (
+            backend.bind(
+                DurableOperation(
+                    operation_id=GetToolsId('mcp', cast(str, toolset.id)),
+                    handler=get_tools_handler,
+                    parameter_transport=IdentityParameterTransport[_GetToolsParams](),
+                    cache_identity=_GetToolsCacheIdentity(),
+                    result_codec=self._legacy_result_codec(dict[str, ToolDefinition]),
+                    config_role=OperationConfigRole.TOOL_DISCOVERY,
+                )
+            )
+            if self._journal_discovery
+            else None
+        )
+        get_instructions = (
+            backend.bind(
+                DurableOperation(
+                    operation_id=GetInstructionsId(cast(str, toolset.id)),
+                    handler=get_instructions_handler,
+                    parameter_transport=IdentityParameterTransport[_GetToolsParams](),
+                    cache_identity=_GetToolsCacheIdentity(),
+                    result_codec=self._legacy_result_codec(Instructions),
+                    config_role=OperationConfigRole.TOOL_DISCOVERY,
+                )
+            )
+            if self._journal_discovery
+            else None
+        )
+        call_tool = backend.bind(
+            DurableOperation(
+                operation_id=CallToolId('mcp', cast(str, toolset.id)),
+                handler=call_tool_handler,
+                parameter_transport=IdentityParameterTransport[_CallToolParams](),
+                cache_identity=_FunctionCallToolCacheIdentity(),
+                result_codec=self._legacy_result_codec(CallToolResult),
+                config_role=OperationConfigRole.TOOL_CALL,
+            )
+        )
 
         async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
-            async def fn() -> dict[str, ToolDefinition]:
-                with self._durable_run_context_scope(ctx) as durable_ctx:
-                    tools = await toolset.get_tools(durable_ctx)
-                return {n: t.tool_def for n, t in tools.items()}
-
-            return await self._durable_operation(
-                self._unit_name('mcp_server', prefix=prefix, suffix='.get_tools'),
-                fn,
-                tp=dict[str, ToolDefinition],
-                inputs=(ctx,),
-                config=base_config,
-            )
+            assert get_tools is not None
+            return await get_tools(_GetToolsParams(ctx), config=base_config)
 
         async def get_instructions_operation(ctx: RunContext[AgentDepsT]) -> Instructions:
-            async def fn() -> Instructions:
-                with self._durable_run_context_scope(ctx) as durable_ctx:
-                    # A server's instructions are captured during `__aenter__`, so it has to be
-                    # connected *inside* this unit: an engine whose lifecycle never enters the
-                    # toolset (DBOS's `enter-never`) would otherwise journal `None` and silently
-                    # drop the instructions. Entry is refcounted, so this is a no-op when the
-                    # toolset is already entered (`enter-always`/`enter-outside-durable`).
-                    async with toolset:
-                        return await toolset.get_instructions(durable_ctx)
-
-            return await self._durable_operation(
-                self._unit_name('mcp_server', prefix=prefix, suffix='.get_instructions'),
-                fn,
-                tp=Instructions,
-                inputs=(ctx,),
-                config=base_config,
-            )
+            assert get_instructions is not None
+            return await get_instructions(_GetToolsParams(ctx), config=base_config)
 
         async def call_tool_operation(
             name: str,
@@ -953,14 +988,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool: ToolsetTool[AgentDepsT],
             config: Any,
         ) -> Any:
-            async def fn() -> CallToolResult:
-                with self._durable_run_context_scope(ctx) as durable_ctx:
-                    return await wrap_tool_call_result(toolset.call_tool(name, tool_args, durable_ctx, tool))
-
-            unit_name = self._unit_name('mcp_server', prefix=prefix, tool_name=name, label='Call MCP Tool')
-            payload = await self._durable_operation(
-                unit_name, fn, tp=CallToolResult, inputs=(name, tool_args, ctx, tool), config=config
-            )
+            payload = await call_tool(_CallToolParams(name, tool_args, ctx, tool), config=config)
             return self._unwrap_tool_result(payload)
 
         return DurableMCPToolset(
