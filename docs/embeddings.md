@@ -653,7 +653,9 @@ embedder = Embedder(model)
 - `dimensions`: Reduce the output embedding dimensions (supported by OpenAI, Google, Cohere, Bedrock, VoyageAI)
 - `truncate`: When `True`, truncate input text that exceeds the model's context length instead of raising an error (supported by Cohere, Bedrock, VoyageAI)
 
-Settings can be specified at the embedder level (applied to all calls) or per-call:
+Settings can be specified on the model, at the embedder level (applied to all calls), or per call.
+They are merged in that order: later settings override earlier values for the same key, while values set only in earlier layers are preserved.
+The example below shows embedder defaults overridden for one call:
 
 ```python {title="embedding_settings.py"}
 from pydantic_ai import Embedder
@@ -674,33 +676,6 @@ async def main():
     )
     print(len(result.embeddings[0]))
     #> 256
-```
-
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
-
-### Settings precedence and merging
-
-Embedding configuration can come from three places:
-
-1. **Model defaults** – when you construct an embedding model with `settings=...`.
-2. **Embedder defaults** – when you create an [`Embedder`][pydantic_ai.embeddings.Embedder] with `settings=...`.
-3. **Per-call overrides** – when you pass `settings=` to [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query], [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents], or [`embed()`][pydantic_ai.embeddings.Embedder.embed].
-
-Internally, these settings are merged using [`merge_embedding_settings()`][pydantic_ai.embeddings.merge_embedding_settings]:
-
-- later sources override earlier ones when they specify the same key
-- keys that only appear in earlier sources are preserved
-
-For example, if you have:
-
-- model defaults: `{'dimensions': 128, 'from_model': True}`
-- embedder defaults: `{'dimensions': 256, 'from_embedder': True}`
-- per-call settings: `{'dimensions': 512, 'from_embed': True}`
-
-then the merged settings used for the request are:
-
-```python
-{'dimensions': 512, 'from_model': True, 'from_embedder': True, 'from_embed': True}
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
