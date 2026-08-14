@@ -216,10 +216,10 @@ Need deterministic, fast tests?
 |----------|--------|
 | Building a chatbot or assistant that shows tool calls, progress, and output in real-time | `agent.run(event_stream_handler=...)` — streams all events while running to completion |
 | Running an autonomous agent, batch job, or background task | `agent.run()` |
-| Writing a CLI tool, script, or Jupyter notebook (no async) | `agent.run_sync()` — top level only |
+| Writing a CLI tool, script, or Jupyter notebook (no async) | `agent.run_sync()` |
 | Streaming final text word-by-word to a UI | `agent.run_stream()` |
-| Synchronous streaming for CLI tools or scripts (no async) | `agent.run_stream_sync()` — top level only |
-| Delegating to another agent from a tool or output function | `await agent.run()` in an `async def` callback — never `run_sync()`, which deadlocks inside a run |
+| Synchronous streaming for CLI tools or scripts (no async) | `agent.run_stream_sync()` |
+| Delegating to another agent from a tool or output function | `await agent.run()` in an `async def` callback — `run_sync()` and `run_stream_sync()` are rejected from Pydantic AI-managed sync callbacks because they can deadlock |
 | Receiving an async iterable of typed events (tool calls, results, final output) | `agent.run_stream_events()` |
 | Inspecting or modifying state between agent steps, human-in-the-loop approval | `agent.iter()` |
 

@@ -34,11 +34,11 @@ result = agent.run_sync('Who let the dogs out?')
 
 Synchronous methods like [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] reuse the thread's current event loop, and install a fresh one if other code closed it. If this error is raised from inside `httpx` or `httpcore` during a model request, the agent was already used before its event loop was closed: the provider's HTTP connection pool still holds connections bound to the dead loop. Recreate the agent together with its model and provider (or pass a fresh `http_client` to the provider); reusing an existing `Model` instance keeps the dead connection pool. Avoid closing an event loop that other code is still using.
 
-## A run freezes when a tool or output function calls `run_sync()`
+## [`UserError`][pydantic_ai.exceptions.UserError]: `Agent.run_sync()` cannot be called from a synchronous callback running inside an agent run
 
-[`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] and [`Agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] are for the top level of your program only. If a *sync* [tool](tools.md) or [output function](output.md#output-functions) delegates to another agent with `run_sync()`, the run can hang forever with no error and no traceback.
+If a synchronous [tool](tools.md), [output function](output.md#output-functions), or other callback delegates to another standard agent with [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`Agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync], Pydantic AI raises this error rather than risk a deadlock.
 
-Sync callbacks are offloaded to worker threads, which have no event loop of their own, so the nested `run_sync()` creates a second one. The delegate run then awaits objects bound to the parent's loop — most often the model provider's HTTP connection pool — and neither loop can make progress. No `RuntimeError: This event loop is already running` is raised, because the worker thread's loop really is fresh; that's also why the same code sometimes appears to work, right up until the delegate touches something the parent owns.
+Sync callbacks are normally offloaded to worker threads, which have no event loop of their own. A nested sync call would create a second event loop while the parent run is still waiting for the callback. If the delegate uses an async resource bound to the parent loop, the two runs can wait on each other indefinitely.
 
 Make the delegating function `async def` and `await` the inner run:
 
@@ -49,7 +49,7 @@ async def delegate(ctx: RunContext[None], instructions: str) -> str:
     return result.output
 ```
 
-The parent agent can still be started with `run_sync()`. If the function also needs to do blocking work, keep it `async def` and push just that part into [`asyncio.to_thread()`][asyncio.to_thread]. See [Agent delegation](multi-agent-applications.md#agent-delegation).
+The parent agent can still be started with `run_sync()` from normal synchronous application code. If the callback also needs to do blocking work, keep it `async def` and push just that part into [`asyncio.to_thread()`][asyncio.to_thread]. See [Agent delegation](multi-agent-applications.md#agent-delegation).
 
 ## API Key Configuration
 
