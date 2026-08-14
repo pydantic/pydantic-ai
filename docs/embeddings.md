@@ -766,7 +766,9 @@ embedder = Embedder(model)
 - `dimensions`: Reduce the output embedding dimensions (supported by OpenAI, Google, Cohere, Bedrock, VoyageAI)
 - `truncate`: When `True`, truncate input text that exceeds the model's context length instead of raising an error (supported by Cohere, Bedrock, VoyageAI)
 
-Settings can be specified at the embedder level (applied to all calls) or per-call:
+Settings can be specified on the model, at the embedder level (applied to all calls), or per call.
+They are merged in that order: later settings override earlier values for the same key, while values set only in earlier layers are preserved.
+The example below shows embedder defaults overridden for one call:
 
 ```python {title="embedding_settings.py"}
 from pydantic_ai import Embedder

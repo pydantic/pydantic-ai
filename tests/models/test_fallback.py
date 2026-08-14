@@ -4,7 +4,7 @@ import dataclasses
 import json
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timezone
 from decimal import Decimal
@@ -681,6 +681,72 @@ async def failure_response_stream(_model_messages: list[ModelMessage], _agent_in
 
 success_model_stream = FunctionModel(stream_function=success_response_stream)
 failure_model_stream = FunctionModel(stream_function=failure_response_stream)
+
+
+def _assert_chat_span_model(capfire: CaptureLogfire, model_name: str) -> dict[str, Any]:
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    chat_span = next(s for s in spans if s['attributes'].get('gen_ai.operation.name') == 'chat')
+    attributes = chat_span['attributes']
+    assert {key: attributes[key] for key in ('gen_ai.request.model', 'gen_ai.system', 'gen_ai.provider.name')} == {
+        'gen_ai.request.model': model_name,
+        'gen_ai.system': 'function',
+        'gen_ai.provider.name': 'function',
+    }
+    return attributes
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_non_fallback_error_records_terminal_model_and_parameters(capfire: CaptureLogfire) -> None:
+    """The span records the terminal model and its prepared parameters after an earlier fallback."""
+
+    def fallback_error(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        raise ValueError
+
+    terminal_model = FunctionModel(failure_response, profile=ModelProfile(supports_thinking=True))
+    fallback_model = FallbackModel(FunctionModel(fallback_error), terminal_model, fallback_on=(ValueError,))
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
+    with pytest.raises(ModelHTTPError):
+        agent.run_sync('hello', model_settings=ModelSettings(thinking='high'))
+    attributes = _assert_chat_span_model(capfire, 'function:failure_response:')
+    assert attributes['model_request_parameters']['thinking'] == 'high'
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_non_fallback_error_records_failing_model_instrumented_stream(capfire: CaptureLogfire) -> None:
+    """The streaming span resolves to the model that produced the terminal error after a fallback."""
+
+    async def fallback_error_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        raise ValueError
+        yield ''
+
+    fallback_model = FallbackModel(
+        FunctionModel(stream_function=fallback_error_stream), failure_model_stream, fallback_on=(ValueError,)
+    )
+    agent = Agent(model=fallback_model, capabilities=[Instrumentation(settings=InstrumentationSettings())])
+    with pytest.raises(ModelHTTPError):
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(agent.run_stream('input'))
+    _assert_chat_span_model(capfire, 'function::failure_response_stream')
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+def test_non_fallback_prepare_request_error_records_failing_model(capfire: CaptureLogfire) -> None:
+    class PreparationFailureModel(FunctionModel):
+        def prepare_request(
+            self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+        ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+            raise PotatoException('preparation failed')
+
+    failing_model = PreparationFailureModel(success_response, model_name='preparation-failure')
+    agent = Agent(
+        FallbackModel(failing_model, success_model),
+        capabilities=[Instrumentation(settings=InstrumentationSettings())],
+    )
+
+    with pytest.raises(PotatoException, match='preparation failed'):
+        agent.run_sync('hello')
+
+    _assert_chat_span_model(capfire, 'preparation-failure')
 
 
 async def test_first_success_streaming() -> None:
@@ -2397,6 +2463,40 @@ def test_fallback_continuation_non_fallback_error_propagates() -> None:
     assert call_count == 2
 
 
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_fallback_continuation_non_fallback_error_records_pinned_model(capfire: CaptureLogfire) -> None:
+    primary_calls = 0
+    pinned_calls = 0
+
+    def primary(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            raise ModelHTTPError(status_code=500, model_name='primary', body=None)
+        return ModelResponse(parts=[TextPart('unexpected normal-chain response')])
+
+    def pinned(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal pinned_calls
+        pinned_calls += 1
+        if pinned_calls == 1:
+            return ModelResponse(parts=[TextPart('paused')], state='suspended')
+        raise PotatoException('not a fallback error')
+
+    model = FallbackModel(
+        FunctionModel(primary, model_name='primary'),
+        FunctionModel(pinned, model_name='pinned'),
+    )
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    parameters = ModelRequestParameters()
+    suspended = await model.request(messages, None, parameters)
+    messages.append(suspended)
+
+    with pytest.raises(PotatoException, match='not a fallback error'):
+        await InstrumentedModel(model, InstrumentationSettings()).request(messages, None, parameters)
+
+    _assert_chat_span_model(capfire, 'pinned')
+
+
 def test_fallback_continuation_recovery_replaces_response_parts() -> None:
     """When primary suspends then fails and fallback recovers, the final merged response
     contains only the fallback model's parts — not accumulated parts from the suspended primary."""
@@ -2983,6 +3083,48 @@ async def test_fallback_streaming_pinned_continuation_non_fallback_error_propaga
 
     assert primary_call_count == 2
     assert fallback_calls == 0
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_fallback_streaming_pinned_non_fallback_error_records_model(capfire: CaptureLogfire) -> None:
+    primary_calls = 0
+    pinned_calls = 0
+
+    async def primary_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal primary_calls
+        primary_calls += 1
+        if primary_calls == 1:
+            raise ModelHTTPError(status_code=500, model_name='primary', body=None)
+        yield 'unexpected normal-chain response'
+
+    async def pinned_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal pinned_calls
+        pinned_calls += 1
+        if pinned_calls == 1:
+            yield 'partial'
+            return
+        raise PotatoException('not a fallback error')
+
+    pinned = _ContinuationModel(
+        _inner=FunctionModel(stream_function=pinned_stream, model_name='pinned'),
+        _stream_state=['suspended'],
+    )
+    model = FallbackModel(FunctionModel(stream_function=primary_stream, model_name='primary'), pinned)
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='test')])]
+    parameters = ModelRequestParameters()
+
+    async with model.request_stream(messages, None, parameters) as streamed_response:
+        async for _ in streamed_response:
+            pass
+    messages.append(streamed_response.get())
+
+    with pytest.raises(PotatoException, match='not a fallback error'):
+        async with AsyncExitStack() as stack:
+            await stack.enter_async_context(
+                InstrumentedModel(model, InstrumentationSettings()).request_stream(messages, None, parameters)
+            )
+
+    _assert_chat_span_model(capfire, 'pinned')
 
 
 async def test_fallback_streaming_rewind_without_trailing_request() -> None:
