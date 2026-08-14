@@ -107,6 +107,11 @@ class _EventStreamHandlerParams:
 
 
 @dataclass(frozen=True)
+class _GetToolsParams:
+    ctx: RunContext[Any]
+
+
+@dataclass(frozen=True)
 class _CallToolParams:
     name: str
     tool_args: dict[str, Any]
@@ -136,9 +141,19 @@ class _EventStreamHandlerCacheIdentity(CacheIdentity[_EventStreamHandlerParams])
         return (params.event,)
 
 
+class _GetToolsCacheIdentity(CacheIdentity[_GetToolsParams]):
+    def project(self, params: _GetToolsParams) -> tuple[object, ...]:
+        return (params.ctx,)
+
+
 class _FunctionCallToolCacheIdentity(CacheIdentity[_CallToolParams]):
     def project(self, params: _CallToolParams) -> tuple[object, ...]:
         return (params.name, params.tool_args, params.ctx, params.tool)
+
+
+class _DynamicCallToolCacheIdentity(CacheIdentity[_CallToolParams]):
+    def project(self, params: _CallToolParams) -> tuple[object, ...]:
+        return (params.name, params.tool_args, params.ctx)
 
 
 class _LegacyOperationNamer(DurableOperationNamer):
@@ -834,24 +849,45 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _build_dynamic_toolset(self, toolset: DynamicToolset[AgentDepsT]) -> DurableDynamicToolset[AgentDepsT]:
         base_config = self._toolset_base_config('dynamic')
-        prefix = f'{self.name}__dynamic_toolset__{toolset.id}'
+
+        async def get_tools_handler(params: _GetToolsParams) -> DynamicToolsResult:
+            with self._durable_run_context_scope(params.ctx) as durable_ctx:
+                return await get_dynamic_tools(toolset, durable_ctx)
+
+        async def call_tool_handler(params: _CallToolParams) -> CallToolResult:
+            with self._durable_run_context_scope(params.ctx) as durable_ctx:
+                return await wrap_tool_call_result(
+                    call_dynamic_tool(toolset, params.name, params.tool_args, durable_ctx)
+                )
+
+        backend = self._build_operation_backend()
+        get_tools = backend.bind(
+            DurableOperation(
+                operation_id=GetToolsId('dynamic', cast(str, toolset.id)),
+                handler=get_tools_handler,
+                parameter_transport=IdentityParameterTransport[_GetToolsParams](),
+                cache_identity=_GetToolsCacheIdentity(),
+                result_codec=self._legacy_result_codec(DynamicToolsResult),
+                config_role=OperationConfigRole.TOOL_DISCOVERY,
+            )
+        )
+        call_tool = backend.bind(
+            DurableOperation(
+                operation_id=CallToolId('dynamic', cast(str, toolset.id)),
+                handler=call_tool_handler,
+                parameter_transport=IdentityParameterTransport[_CallToolParams](),
+                cache_identity=_DynamicCallToolCacheIdentity(),
+                result_codec=self._legacy_result_codec(CallToolResult),
+                config_role=OperationConfigRole.TOOL_CALL,
+            )
+        )
 
         async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
             if not self._journal_discovery:
                 # Prefect resolves the dynamic toolset in flow code, not a durable unit.
                 return await get_dynamic_tools(toolset, ctx)
 
-            async def fn() -> DynamicToolsResult:
-                with self._durable_run_context_scope(ctx) as durable_ctx:
-                    return await get_dynamic_tools(toolset, durable_ctx)
-
-            return await self._durable_operation(
-                self._unit_name('dynamic_toolset', prefix=prefix, suffix='.get_tools'),
-                fn,
-                tp=DynamicToolsResult,
-                inputs=(ctx,),
-                config=base_config,
-            )
+            return await get_tools(_GetToolsParams(ctx), config=base_config)
 
         async def call_tool_operation(
             name: str,
@@ -860,14 +896,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool: ToolsetTool[AgentDepsT],
             config: Any,
         ) -> Any:
-            async def fn() -> CallToolResult:
-                with self._durable_run_context_scope(ctx) as durable_ctx:
-                    return await wrap_tool_call_result(call_dynamic_tool(toolset, name, tool_args, durable_ctx))
-
-            unit_name = self._unit_name('dynamic_toolset', prefix=prefix, tool_name=name, label='Call Tool')
-            payload = await self._durable_operation(
-                unit_name, fn, tp=CallToolResult, inputs=(name, tool_args, ctx), config=config
-            )
+            payload = await call_tool(_CallToolParams(name, tool_args, ctx, tool), config=config)
             return self._unwrap_tool_result(payload)
 
         return DurableDynamicToolset(
