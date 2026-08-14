@@ -227,6 +227,7 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * Mistral
     * xAI
+    * Cerebras
     * Crusoe
     * Ollama
     * OpenRouter
@@ -310,6 +311,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * xAI
     * HuggingFace
+    * Cerebras
     * Crusoe
     * Ollama
     * OpenRouter
@@ -330,6 +332,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral
     * xAI
     * HuggingFace
+    * Cerebras
     * Crusoe
     * Ollama
     * OpenRouter
@@ -346,6 +349,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI Chat Completions
     * Groq
     * HuggingFace
+    * Cerebras
     * Crusoe
     * Ollama (sent, but Ollama documents `logit_bias` as unsupported)
     * OpenRouter
@@ -394,6 +398,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenRouter
     * Snowflake
     * Z.AI
+    * Cerebras
     * Bedrock Mantle
     """
 

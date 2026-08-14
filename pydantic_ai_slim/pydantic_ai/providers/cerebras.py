@@ -63,11 +63,6 @@ class CerebrasProvider(_OpenAICompatibleProvider):
         # Cerebras doesn't support some model settings.
         # openai_chat_supports_web_search=False is default, so not required here
         unsupported_model_settings = (
-            'frequency_penalty',
-            'logit_bias',
-            'presence_penalty',
-            'parallel_tool_calls',
-            'service_tier',
             'openai_service_tier',
         )
         is_reasoning = model_name_lower.startswith(reasoning_prefixes)
