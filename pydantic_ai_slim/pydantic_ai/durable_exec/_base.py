@@ -100,6 +100,12 @@ class _CancelSuspendedResponseParams:
     run_context: RunContext[Any]
 
 
+@dataclass(frozen=True)
+class _EventStreamHandlerParams:
+    event: AgentStreamEvent
+    run_context: RunContext[Any]
+
+
 class _ModelRequestCacheIdentity(CacheIdentity[_ModelRequestParams]):
     def project(self, params: _ModelRequestParams) -> tuple[object, ...]:
         request = params.request
@@ -115,6 +121,11 @@ class _ModelRequestCacheIdentity(CacheIdentity[_ModelRequestParams]):
 class _CancelSuspendedResponseCacheIdentity(CacheIdentity[_CancelSuspendedResponseParams]):
     def project(self, params: _CancelSuspendedResponseParams) -> tuple[object, ...]:
         return (params.model_id, params.response, params.run_context)
+
+
+class _EventStreamHandlerCacheIdentity(CacheIdentity[_EventStreamHandlerParams]):
+    def project(self, params: _EventStreamHandlerParams) -> tuple[object, ...]:
+        return (params.event,)
 
 
 class _LegacyOperationNamer(DurableOperationNamer):
@@ -1030,21 +1041,21 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         (#5477 requirement 4). That override is the one genuine behavioral difference the hash-keyed
         family forces.
         """
+        operation = DurableOperation(
+            operation_id=EventStreamHandlerId(),
+            handler=self._event_stream_handler_operation,
+            parameter_transport=IdentityParameterTransport[_EventStreamHandlerParams](),
+            cache_identity=_EventStreamHandlerCacheIdentity(),
+            result_codec=self._legacy_result_codec(type(None)),
+            config_role=OperationConfigRole.EVENT,
+        )
+        await self._build_operation_backend().bind(operation)(_EventStreamHandlerParams(event, ctx))
+
+    async def _event_stream_handler_operation(self, params: _EventStreamHandlerParams) -> None:
         handler = self._effective_event_stream_handler()
         assert handler is not None
-
-        async def fn() -> None:
-            with self._durable_run_context_scope(ctx) as durable_ctx:
-                await handler(durable_ctx, self._single_event_stream(event))
-            return None
-
-        await self._durable_operation(
-            self._unit_name('event_stream_handler', label='Handle Stream Event'),
-            fn,
-            tp=type(None),
-            inputs=(event,),
-            config=self._event_unit_config(),
-        )
+        with self._durable_run_context_scope(params.run_context) as durable_ctx:
+            await handler(durable_ctx, self._single_event_stream(params.event))
 
     @staticmethod
     async def _single_event_stream(
