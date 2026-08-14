@@ -214,6 +214,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
     _run_error: BaseException | None = None
     _handler_errors: list[BaseException] = []
     _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
+    _body_context: contextvars.Context | None = None
 
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
@@ -228,6 +229,13 @@ async def _run_lifecycle_hooks(  # noqa: C901
         ]
         _run_ready.set()
         await _run_done.wait()
+        # The run body executes in the caller's task. Bring its latest ContextVar values back
+        # into this wrapper task before running the post-body lifecycle, so error/after hooks and
+        # the post-handler half of `wrap_run` observe state produced while the run was active.
+        body_context = _body_context
+        if body_context is not None:
+            for var in body_context:
+                var.set(body_context[var])
         if _run_error is not None:
             error = extract_error(_run_error) if extract_error is not None else _run_error
             if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
@@ -314,6 +322,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
             # the error from handler() and returns a recovery result, it is suppressed.
         finally:
             if not short_circuited:
+                _body_context = contextvars.copy_context()
                 _run_done.set()
                 if _run_error is None and (result_ready is None or result_ready()):
                     await _finalize_result(await _wrap_task)
