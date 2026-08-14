@@ -244,12 +244,14 @@ class FallbackModel(Model):
             # `_get_continuation_model` only returns a model when the last message is a suspended response.
             suspended_response = messages[-1]
             assert isinstance(suspended_response, ModelResponse)
+            prepared_parameters = model_request_parameters
             try:
                 _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages)
                 response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if not await self._should_fallback(exc):
+                    self._set_span_attributes(pinned, prepared_parameters)
                     raise
                 # Best-effort cancel the suspended server-side job we're abandoning before rewinding
                 # and retrying the chain. `FallbackModel` swallows the error, so the graph's own
@@ -268,6 +270,7 @@ class FallbackModel(Model):
                 return response
 
         for model in self.models:
+            prepared_parameters = model_request_parameters
             try:
                 _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
@@ -277,13 +280,8 @@ class FallbackModel(Model):
                 if await self._should_fallback(exc):
                     exceptions.append(exc)
                     continue
-                # Non-fallback-eligible error: only this model was tried, so resolve the span to it
-                # (instead of leaving the `fallback:...` wrapper name) before propagating, so a failed
-                # call is attributed to the model that actually failed, not a synthetic provider.
-                # `model_request_parameters` (not the possibly-unbound `prepared_parameters`) is used
-                # since `prepare_request` may be what raised; the span only needs the model identity.
-                self._set_span_attributes(model, model_request_parameters)
-                raise exc
+                self._set_span_attributes(model, prepared_parameters)
+                raise
 
             if await self._should_fallback(response):
                 rejected_responses.append(response)
@@ -324,6 +322,7 @@ class FallbackModel(Model):
             suspended_response = messages[-1]
             assert isinstance(suspended_response, ModelResponse)
             async with AsyncExitStack() as stack:
+                prepared_parameters = model_request_parameters
                 try:
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages)
@@ -332,6 +331,7 @@ class FallbackModel(Model):
                     )
                 except Exception as exc:
                     if not await self._should_fallback(exc):
+                        self._set_span_attributes(pinned, prepared_parameters)
                         raise
                     # Best-effort cancel the suspended server-side job we're abandoning before
                     # rewinding to the chain (see the non-streaming path above); `FallbackModel`
@@ -354,6 +354,7 @@ class FallbackModel(Model):
 
         for model in self.models:
             async with AsyncExitStack() as stack:
+                prepared_parameters = model_request_parameters
                 try:
                     _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = model.prepare_messages(messages)
@@ -364,10 +365,8 @@ class FallbackModel(Model):
                     if await self._should_fallback(exc):
                         exceptions.append(exc)
                         continue
-                    # See the non-streaming `request`: resolve the span to the model that actually
-                    # failed before propagating, so a failed call isn't attributed to `fallback:...`.
-                    self._set_span_attributes(model, model_request_parameters)
-                    raise exc
+                    self._set_span_attributes(model, prepared_parameters)
+                    raise
 
                 # After a rewind, mark this fresh stream as replacing the abandoned suspended turn.
                 # Unlike the continuation pin (stamped after `yield`, once the final `state` is known),
