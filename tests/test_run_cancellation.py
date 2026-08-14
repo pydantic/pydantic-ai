@@ -128,7 +128,7 @@ async def test_after_run_hook_cannot_convert_external_cancel_to_success():
             in_flight.set()
             try:
                 await asyncio.Event().wait()  # the in-flight "durable step"
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # pragma: no cover
                 pass  # step completed successfully; cancellation consumed
             return result
 
@@ -1635,7 +1635,7 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
             runs.append(agent_run)
             async for _node in agent_run:
                 pass
-        assert agent_run.result is not None  # pragma: no cover
+        assert agent_run.result is not None
         return agent_run.result  # pragma: no cover
 
     task = asyncio.create_task(drive())
