@@ -134,6 +134,7 @@ class _DynamicCallToolParams:
     name: str
     tool_args: dict[str, Any]
     ctx: RunContext[Any]
+    tool_def: ToolDefinition | None = None
 
 
 class _ModelRequestCacheIdentity(CacheIdentity[ModelRequestOperationParams]):
@@ -832,6 +833,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _get_instructions_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> Any:
         return IdentityParameterTransport[_GetToolsParams]()
 
+    def _dynamic_get_tools_parameter_transport(self, toolset: DynamicToolset[AgentDepsT]) -> Any:
+        return IdentityParameterTransport[_GetToolsParams]()
+
+    def _dynamic_call_parameter_transport(self, toolset: DynamicToolset[AgentDepsT]) -> Any:
+        return IdentityParameterTransport[_DynamicCallToolParams]()
+
     def _mcp_call_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> Any:
         return IdentityParameterTransport[_CallToolParams]()
 
@@ -923,14 +930,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
 
     def _build_dynamic_toolset(self, toolset: DynamicToolset[AgentDepsT]) -> DurableDynamicToolset[AgentDepsT]:
-        base_config = self._toolset_base_config('dynamic')
+        base_config = self._toolset_operation_config('dynamic', cast(str, toolset.id))
 
         async def get_tools_handler(params: _GetToolsParams) -> DynamicToolsResult:
             with self._tool_run_context_scope(params.ctx) as durable_ctx:
                 return await get_dynamic_tools(toolset, durable_ctx)
 
         async def call_tool_handler(params: _DynamicCallToolParams) -> CallToolResult:
-            with self._durable_run_context_scope(params.ctx) as durable_ctx:
+            with self._tool_run_context_scope(params.ctx) as durable_ctx:
                 return await wrap_tool_call_result(
                     call_dynamic_tool(toolset, params.name, params.tool_args, durable_ctx)
                 )
@@ -940,7 +947,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             DurableOperation(
                 operation_id=GetToolsId('dynamic', cast(str, toolset.id)),
                 handler=get_tools_handler,
-                parameter_transport=IdentityParameterTransport[_GetToolsParams](),
+                parameter_transport=self._dynamic_get_tools_parameter_transport(toolset),
                 cache_identity=_GetToolsCacheIdentity(),
                 result_codec=self._legacy_result_codec(DynamicToolsResult),
                 config_role=OperationConfigRole.TOOL_DISCOVERY,
@@ -949,7 +956,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         call_operation = DurableOperation(
             operation_id=CallToolId('dynamic', cast(str, toolset.id)),
             handler=call_tool_handler,
-            parameter_transport=IdentityParameterTransport[_DynamicCallToolParams](),
+            parameter_transport=self._dynamic_call_parameter_transport(toolset),
             cache_identity=_DynamicCallToolCacheIdentity(),
             result_codec=self._legacy_result_codec(CallToolResult),
             config_role=OperationConfigRole.TOOL_CALL,
@@ -973,7 +980,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool: ToolsetTool[AgentDepsT],
             config: Any,
         ) -> Any:
-            payload = await call_tool(_DynamicCallToolParams(name, tool_args, ctx), config=config)
+            with self._tool_call_payload_errors(name):
+                payload = await call_tool(
+                    _DynamicCallToolParams(name, tool_args, ctx, tool_def=tool.tool_def), config=config
+                )
             return self._unwrap_tool_result(payload)
 
         return DurableDynamicToolset(
@@ -983,6 +993,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             call_tool_operation=call_tool_operation,
             resolve_tool_config=resolve_tool_config,
             lifecycle=self._toolset_lifecycles['dynamic'],
+            durable_registrations=self._bound_operation_registrations(get_tools, call_tool),
             durable_config=base_config,
         )
 

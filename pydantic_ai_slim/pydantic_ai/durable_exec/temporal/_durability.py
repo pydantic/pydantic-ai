@@ -26,12 +26,13 @@ from pydantic_ai.durable_exec._base import (
     ModelRequestOperationParams,
     ToolsetKind,
     _CallToolParams,  # pyright: ignore[reportPrivateUsage]
+    _DynamicCallToolParams,  # pyright: ignore[reportPrivateUsage]
     _GetToolsParams,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
-from pydantic_ai.durable_exec._operation import DurableOperationId
+from pydantic_ai.durable_exec._operation import CallToolId, DurableOperationId
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
-from pydantic_ai.durable_exec._toolset import CallToolResult, DurableToolsetBase, Lifecycle
+from pydantic_ai.durable_exec._toolset import CallToolResult, DurableToolsetBase, DynamicToolsResult, Lifecycle
 from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
@@ -40,6 +41,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
+from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 if TYPE_CHECKING:
@@ -147,6 +149,34 @@ class _MCPCallTransport:
             ctx,
             self._toolset.tool_for_tool_def(params.tool_def, ctx=ctx),
         )
+
+
+class _DynamicCallTransport:
+    wire_type = CallToolParams
+    result_type = CallToolResult
+
+    def __init__(self, durability: TemporalDurability[Any]) -> None:
+        self._durability = durability
+
+    def dump(self, params: _DynamicCallToolParams) -> tuple[CallToolParams, Any]:
+        return (
+            CallToolParams(
+                name=params.name,
+                tool_args=params.tool_args,
+                serialized_run_context=self._durability.run_context_type.serialize_run_context(params.ctx),
+                tool_def=params.tool_def,
+            ),
+            params.ctx.deps,
+        )
+
+    def load(self, payload: tuple[CallToolParams, Any], *, runtime: object) -> _DynamicCallToolParams:
+        params, deps = payload
+        ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
+        return _DynamicCallToolParams(params.name, params.tool_args, ctx, tool_def=params.tool_def)
+
+
+class _DynamicGetToolsTransport(_GetToolsTransport):
+    result_type = DynamicToolsResult
 
 
 @dataclass
@@ -522,6 +552,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         if isinstance(ts, FunctionToolset):
             return self._build_function_toolset(ts)
+        if isinstance(ts, DynamicToolset):
+            return self._build_dynamic_toolset(ts)
         try:
             from pydantic_ai.mcp import MCPToolset
         except ImportError:  # pragma: no cover
@@ -575,6 +607,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if config is False:
             from pydantic_ai.mcp import MCPToolset
 
+            if isinstance(operation_id, CallToolId) and operation_id.toolset_kind == 'dynamic':
+                raise UserError(
+                    f'Temporal activity config for dynamic toolset tool {name!r} has been explicitly set to `False` '
+                    '(activity disabled), but dynamic-toolset tools cannot run inside the workflow: resolving the '
+                    'toolset and calling the tool may perform I/O. Remove the opt-out, or move the tool to a static '
+                    '`FunctionToolset` (async tools there may opt out of activities).'
+                )
             if isinstance(cast(ToolsetTool[Any], tool).toolset, MCPToolset):
                 raise UserError(
                     f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled), '
@@ -597,6 +636,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _get_instructions_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _GetToolsTransport:
         return _GetToolsTransport(self)
+
+    def _dynamic_get_tools_parameter_transport(self, toolset: DynamicToolset[AgentDepsT]) -> _DynamicGetToolsTransport:
+        return _DynamicGetToolsTransport(self)
+
+    def _dynamic_call_parameter_transport(self, toolset: DynamicToolset[AgentDepsT]) -> _DynamicCallTransport:
+        return _DynamicCallTransport(self)
 
     def _mcp_call_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _MCPCallTransport:
         return _MCPCallTransport(self, toolset)
