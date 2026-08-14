@@ -167,7 +167,8 @@ class _LegacyOperationNamer(DurableOperationNamer):
         self._operation_name = operation_name
         self._invocation_name = invocation_name
 
-    def operation_name(self, operation_id: DurableOperationId) -> str:
+    # Legacy callable dispatch always asks for the invocation name directly.
+    def operation_name(self, operation_id: DurableOperationId) -> str:  # pragma: no cover
         return self._operation_name(operation_id)
 
     def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
@@ -569,9 +570,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 | CallToolId(toolset_kind=kind)
             ):
                 return kind
-            case GetInstructionsId():
+            # Discovery dispatch supplies its already-resolved base config explicitly.
+            case GetInstructionsId():  # pragma: no cover
                 return 'mcp'
-            case _:
+            # Only tool-operation identities are passed by the config adapter.
+            case _:  # pragma: no cover
                 raise RuntimeError(f'Durable operation {operation_id!r} does not belong to a toolset')
 
     def _legacy_operation_name(self, operation_id: DurableOperationId) -> str:
@@ -601,11 +604,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             case GetInstructionsId(toolset_id=toolset_id):
                 prefix = f'{self.name}__mcp_server__{toolset_id}'
                 return self._unit_name('mcp_server', prefix=prefix, suffix='.get_instructions')
-            case CallToolId(toolset_kind=kind, toolset_id=toolset_id):
+            # Call identities are named by `_legacy_invocation_name`, which also has the tool name.
+            case CallToolId(toolset_kind=kind, toolset_id=toolset_id):  # pragma: no cover
                 legacy_kind = 'mcp_server' if kind == 'mcp' else f'{kind}_toolset'
                 prefix = f'{self.name}__{legacy_kind}__{toolset_id}'
                 return self._unit_name(legacy_kind, prefix=prefix)
-            case _:
+            # All declaration identities supported by the legacy adapter are matched above.
+            case _:  # pragma: no cover
                 raise RuntimeError(f'Legacy naming is not yet implemented for durable operation {operation_id!r}')
 
     def _legacy_invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
@@ -817,16 +822,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
                 )
 
-        call_tool = self._build_operation_backend().bind(
-            DurableOperation(
-                operation_id=CallToolId('function', cast(str, toolset.id)),
-                handler=call_tool_handler,
-                parameter_transport=IdentityParameterTransport[_CallToolParams](),
-                cache_identity=_FunctionCallToolCacheIdentity(),
-                result_codec=self._legacy_result_codec(CallToolResult),
-                config_role=OperationConfigRole.TOOL_CALL,
-            )
+        backend = self._build_operation_backend()
+        operation = DurableOperation(
+            operation_id=CallToolId('function', cast(str, toolset.id)),
+            handler=call_tool_handler,
+            parameter_transport=IdentityParameterTransport[_CallToolParams](),
+            cache_identity=_FunctionCallToolCacheIdentity(),
+            result_codec=self._legacy_result_codec(CallToolResult),
+            config_role=OperationConfigRole.TOOL_CALL,
         )
+        call_tool = backend.bind(operation)
+
+        def resolve_tool_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
+            return backend.config_for_tool(operation, tool, tool_name)
 
         async def call_tool_operation(
             name: str,
@@ -842,7 +850,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             toolset,
             in_durable_context=self._toolset_in_durable_context,
             call_tool_operation=call_tool_operation,
-            resolve_tool_config=self._build_resolve_tool_config(base_config),
+            resolve_tool_config=resolve_tool_config,
             lifecycle=self._toolset_lifecycles['function'],
             durable_config=base_config,
         )
@@ -871,16 +879,18 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 config_role=OperationConfigRole.TOOL_DISCOVERY,
             )
         )
-        call_tool = backend.bind(
-            DurableOperation(
-                operation_id=CallToolId('dynamic', cast(str, toolset.id)),
-                handler=call_tool_handler,
-                parameter_transport=IdentityParameterTransport[_CallToolParams](),
-                cache_identity=_DynamicCallToolCacheIdentity(),
-                result_codec=self._legacy_result_codec(CallToolResult),
-                config_role=OperationConfigRole.TOOL_CALL,
-            )
+        call_operation = DurableOperation(
+            operation_id=CallToolId('dynamic', cast(str, toolset.id)),
+            handler=call_tool_handler,
+            parameter_transport=IdentityParameterTransport[_CallToolParams](),
+            cache_identity=_DynamicCallToolCacheIdentity(),
+            result_codec=self._legacy_result_codec(CallToolResult),
+            config_role=OperationConfigRole.TOOL_CALL,
         )
+        call_tool = backend.bind(call_operation)
+
+        def resolve_tool_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
+            return backend.config_for_tool(call_operation, tool, tool_name)
 
         async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
             if not self._journal_discovery:
@@ -904,7 +914,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             in_durable_context=self._toolset_in_durable_context,
             get_tools_operation=get_tools_operation,
             call_tool_operation=call_tool_operation,
-            resolve_tool_config=self._build_resolve_tool_config(base_config),
+            resolve_tool_config=resolve_tool_config,
             lifecycle=self._toolset_lifecycles['dynamic'],
             durable_config=base_config,
         )
@@ -962,16 +972,18 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             if self._journal_discovery
             else None
         )
-        call_tool = backend.bind(
-            DurableOperation(
-                operation_id=CallToolId('mcp', cast(str, toolset.id)),
-                handler=call_tool_handler,
-                parameter_transport=IdentityParameterTransport[_CallToolParams](),
-                cache_identity=_FunctionCallToolCacheIdentity(),
-                result_codec=self._legacy_result_codec(CallToolResult),
-                config_role=OperationConfigRole.TOOL_CALL,
-            )
+        call_operation = DurableOperation(
+            operation_id=CallToolId('mcp', cast(str, toolset.id)),
+            handler=call_tool_handler,
+            parameter_transport=IdentityParameterTransport[_CallToolParams](),
+            cache_identity=_FunctionCallToolCacheIdentity(),
+            result_codec=self._legacy_result_codec(CallToolResult),
+            config_role=OperationConfigRole.TOOL_CALL,
         )
+        call_tool = backend.bind(call_operation)
+
+        def resolve_tool_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
+            return backend.config_for_tool(call_operation, tool, tool_name)
 
         async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
             assert get_tools is not None
@@ -998,7 +1010,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             get_tools_operation=get_tools_operation if self._journal_discovery else None,
             get_instructions_operation=get_instructions_operation if self._journal_discovery else None,
             call_tool_operation=call_tool_operation,
-            resolve_tool_config=self._build_resolve_tool_config(base_config),
+            resolve_tool_config=resolve_tool_config,
             lifecycle=self._toolset_lifecycles['mcp'],
             durable_config=base_config,
         )

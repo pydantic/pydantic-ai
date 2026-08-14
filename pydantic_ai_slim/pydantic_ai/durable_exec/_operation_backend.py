@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Generic, Protocol, TypeVar
+from typing import Generic, Literal, Protocol, TypeVar
 
 from ._operation import DurableOperation, DurableOperationConfig
 from ._operation_names import DurableOperationNamer
@@ -73,6 +73,14 @@ class CallableOperationBackend(ABC, Generic[ConfigT]):
             return operation.result_codec.load(payload)
 
         return _CallableBoundOperation(operation, dispatch)
+
+    def config_for_tool(
+        self,
+        operation: DurableOperation[P, P, R],
+        tool: object | None,
+        tool_name: str,
+    ) -> ConfigT | Literal[False]:
+        return self._config.for_tool(operation.config_role, operation.operation_id, tool, tool_name)
 
     def registrations(self) -> Sequence[Callable[..., object]]:
         return ()
