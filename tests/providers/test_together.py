@@ -1,6 +1,5 @@
 import re
 
-import httpx
 import pytest
 from pytest_mock import MockerFixture
 
@@ -46,12 +45,6 @@ def test_together_provider_need_api_key(env: TestEnv) -> None:
         ),
     ):
         TogetherProvider()
-
-
-def test_together_provider_pass_http_client() -> None:
-    http_client = httpx.AsyncClient()
-    provider = TogetherProvider(http_client=http_client, api_key='api-key')
-    assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 
 
 def test_together_pass_openai_client() -> None:

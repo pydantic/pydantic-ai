@@ -22,6 +22,7 @@
 - Don't access or modify private attributes (`_prefixed`) — use public APIs, properties, or constructor parameters — Prevents breakage when internal implementation changes and ensures compatibility with library updates
 <!-- rule:72 -->
 - Promote settings to base classes (`ModelSettings`, embedding settings) when 2-3+ providers support them; maintain backward compatibility with automatic mapping from new common fields to legacy provider-prefixed fields — Prevents API duplication across provider-specific subclasses (e.g., `OpenAIEmbeddingSettings`, `CohereEmbeddingSettings`) while preserving backward compatibility when refactoring provider-prefixed parameters (e.g., `cohere_`, `openai_`) to shared fields
+- Never change a shared default, public signature, or abstraction to accommodate one new feature — if a new type only behaves correctly once an existing public default is rewritten, the new type's design is wrong — Fix the new code instead, or split the shared change into its own PR with maintainer sign-off, so one caller's needs don't silently change behavior for every existing user
 <!-- rule:302 -->
 - Keep `NativeToolReturnPart.content` flat and non-redundant — avoid duplicating part fields, repeating `return_value` data, single-key wrappers, or unnecessary lists — Reduces API surface area, prevents inconsistencies between duplicate fields, and simplifies consumption for both users and AI assistants
 <!-- rule:265 -->

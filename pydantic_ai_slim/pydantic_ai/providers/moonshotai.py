@@ -4,18 +4,25 @@ import os
 from typing import Literal, overload
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import (
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
 )
-from pydantic_ai.providers import Provider
+
+try:
+    from openai import AsyncOpenAI
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install the `openai` package to use the MoonshotAI provider, '
+        'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
+    ) from _import_error
+else:
+    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 MoonshotAIModelName = Literal[
     'moonshot-v1-8k',
@@ -36,7 +43,7 @@ MoonshotAIModelName = Literal[
 ]
 
 
-class MoonshotAIProvider(Provider[AsyncOpenAI]):
+class MoonshotAIProvider(_OpenAICompatibleProvider):
     """Provider for MoonshotAI platform (Kimi models)."""
 
     @property
@@ -109,13 +116,5 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
 
         if openai_client is not None:
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+            self._client = self._create_openai_client(base_url=self.base_url, api_key=api_key, http_client=http_client)

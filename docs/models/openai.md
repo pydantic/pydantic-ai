@@ -353,6 +353,8 @@ agent = Agent(
 
 By default, `OpenAICompaction` runs in **stateful mode**: it configures OpenAI's server-side auto-compaction via the `context_management` field on the regular `/responses` request, and OpenAI triggers compaction whenever the input token count crosses a threshold it manages for you. This mode is compatible with [`openai_previous_response_id='auto'`](#referencing-earlier-responses) and [`openai_conversation_id`](#using-durable-conversations).
 
+After compaction, subsequent requests send only the compacted window, from the latest compaction item onward. The Responses API processes and bills replayed items that precede a compaction item, so omitting them keeps the compacted context from growing again.
+
 To override the threshold, pass [`token_threshold`][pydantic_ai.models.openai.OpenAICompaction]:
 
 ```python {title="openai_compaction_token_threshold.py" test="skip"}
@@ -386,7 +388,7 @@ For lower-level use cases, you can call [`compact_messages`][pydantic_ai.models.
 
 ### Text phases
 
-Models that support it label each assistant message with a `phase`: `commentary` for the preamble the model writes while it works, and `final_answer` for the answer itself. Pydantic AI surfaces it as `'phase'` in [`TextPart.provider_details`][pydantic_ai.messages.TextPart.provider_details], and sends it back on the next request so the model keeps the distinction across turns.
+Models that support it label each assistant message with a `phase`: `commentary` for the preamble the model writes while it works, and `final_answer` for the answer itself. Pydantic AI surfaces it as `'phase'` in [`TextPart.provider_details`][pydantic_ai.messages.TextPart.provider_details], and on models known to accept the field it also sends it back on the next request so the model keeps the distinction across turns.
 
 When [streaming](../agent.md#streaming-all-events), the phase is set on the [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] that opens each text part (including its first content chunk), so you can route commentary and the final answer differently as they're generated. Prefer [`run_stream_events`][pydantic_ai.agent.AbstractAgent.run_stream_events] for this: [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] treats the first text part as the final output, which is often `commentary` on models that emit a preamble.
 
@@ -416,7 +418,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" -- you'll need to add `asyncio.run(main())` to run `main`)_
 
-On models that don't label their output, per [`OpenAIModelProfile.openai_supports_phase`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_phase], `provider_details` has no `'phase'` key and nothing is sent back.
+A `'phase'` key appears in `provider_details` whenever the model labels its output, but it is only sent back on models that [`OpenAIModelProfile.openai_supports_phase`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_supports_phase] marks as accepting it. On every other model the label is surfaced to you and dropped from follow-up requests.
 
 ### Background mode
 
@@ -458,6 +460,8 @@ model = OpenAIChatModel('gpt-5.2')
 agent = Agent(model)
 ...
 ```
+
+Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI only through this API — `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` and `stop_sequences`. The Responses API accepts none of them, so they are dropped on the default `openai:` path.
 
 `OpenAIChatModel` is also what backs every [OpenAI-compatible provider](#openai-compatible-models) below — they all speak the Chat Completions wire format, so the same model class applies.
 
@@ -567,6 +571,29 @@ model = OpenAIChatModel(
 agent = Agent(model)
 ...
 ```
+
+As an alternative to the Chat Completions API shown above, DeepSeek also serves an OpenAI-compatible [Responses API](#responses-api-features), [currently for the `deepseek-v4-flash` model only](https://api-docs.deepseek.com/guides/responses_api). Use it by pairing [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with [`DeepSeekProvider`][pydantic_ai.providers.deepseek.DeepSeekProvider]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.deepseek import DeepSeekProvider
+
+model = OpenAIResponsesModel(
+    'deepseek-v4-flash',
+    provider=DeepSeekProvider(api_key='your-deepseek-api-key'),
+)
+agent = Agent(model)
+...
+```
+
+DeepSeek [documents](https://api-docs.deepseek.com/guides/responses_api) which parts of the Responses API it implements, and unsupported fields are silently ignored rather than rejected, so it's worth knowing what does nothing:
+
+- The API is stateless, so [`openai_conversation_id`](#using-durable-conversations), [background mode](#background-mode) and [message compaction](#message-compaction) are unavailable. Pass [message history](../message-history.md) back on each run instead.
+- Leave [`openai_previous_response_id`](#referencing-earlier-responses) unset. Setting it makes Pydantic AI drop the earlier turns it assumes the server already holds, and DeepSeek stores nothing, so the model silently loses the conversation instead of erroring.
+- Of the [native tools](../native-tools.md), DeepSeek runs only [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool]; it ignores the other built-in tool types instead of reporting an error.
+- Image and document inputs are replaced with placeholder text rather than rejected.
+- Reasoning is configured with `openai_reasoning_effort` (or the unified [`thinking`](../capabilities/thinking.md) setting); `openai_reasoning_summary` is accepted but produces no summary.
 
 ### Alibaba Cloud Model Studio (DashScope)
 
@@ -771,33 +798,10 @@ agent = Agent(model)
 
 ### GitHub Models
 
-To use [GitHub Models](https://docs.github.com/en/github-models), you'll need a GitHub personal access token with the `models: read` permission.
+!!! warning "GitHub Models has been retired"
+    GitHub Models was [retired on July 30, 2026](https://docs.github.com/en/github-models) — the playground, model catalog, and inference API are no longer available. [`GitHubProvider`][pydantic_ai.providers.github.GitHubProvider] is therefore deprecated and will be removed in v3.
 
-You can set the `GITHUB_API_KEY` environment variable and use [`GitHubProvider`][pydantic_ai.providers.github.GitHubProvider] by name:
-
-```python
-from pydantic_ai import Agent
-
-agent = Agent('github:xai/grok-3-mini')
-...
-```
-
-Or initialise the model and provider directly:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.github import GitHubProvider
-
-model = OpenAIChatModel(
-    'xai/grok-3-mini',  # GitHub Models uses prefixed model names
-    provider=GitHubProvider(api_key='your-github-token'),
-)
-agent = Agent(model)
-...
-```
-
-GitHub Models supports various model families with different prefixes. You can see the full list on the [GitHub Marketplace](https://github.com/marketplace?type=models) or the public [catalog endpoint](https://models.github.ai/catalog/models).
+    For model access going forward, GitHub recommends [Azure AI Foundry](https://ai.azure.com/) or [GitHub Copilot](https://docs.github.com/en/copilot).
 
 ### Perplexity
 

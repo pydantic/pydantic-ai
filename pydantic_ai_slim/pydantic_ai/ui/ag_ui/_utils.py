@@ -24,11 +24,18 @@ carrier (`ReasoningEncryptedValueEvent`) is a separate `REASONING_*` event gated
 REASONING_VERSION = (0, 1, 13)
 """AG-UI version that introduced REASONING_* events (replacing THINKING_*)."""
 
-MULTIMODAL_VERSION = (0, 1, 15)
-"""AG-UI version that introduced typed multimodal input content (Image/Audio/Video/Document).
+REASONING_MESSAGE_ROLE_VERSION = (0, 1, 14)
+"""AG-UI version that changed `ReasoningMessageStartEvent.role` from `'assistant'` to `'reasoning'`.
 
-Also changed `ReasoningMessageStartEvent.role` from `'assistant'` to `'reasoning'`.
+The field is a `Literal`, so the value we emit has to match the *installed* model exactly or
+constructing the event raises — see `REASONING_MESSAGE_ROLE`.
 """
+
+MULTIMODAL_VERSION = (0, 1, 15)
+"""AG-UI version that introduced typed multimodal input content (Image/Audio/Video/Document)."""
+
+ACTIVITY_EVENTS_VERSION = (0, 1, 19)
+"""AG-UI version that introduced activity snapshot and delta events."""
 
 INTERRUPTS_VERSION = (0, 1, 19)
 """AG-UI version that introduced the interrupt-aware run lifecycle.
@@ -50,8 +57,14 @@ Keep this string stable — clients may persist `Interrupt.id` across page reloa
 FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_file'
 """Activity type for agent-generated files stored as AG-UI ActivityMessages."""
 
+COMPACTION_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_compaction'
+"""Activity type for compaction parts stored as AG-UI ActivityMessages."""
+
 UPLOADED_FILE_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_uploaded_file'
 """Activity type for uploaded files stored as AG-UI ActivityMessages."""
+
+TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE: Final[str] = 'pydantic_ai_tool_availability_delta'
+"""Activity type for tool availability changes stored as AG-UI ActivityMessages."""
 
 
 class FileActivityContent(TypedDict, total=False):
@@ -106,7 +119,7 @@ DEFAULT_AG_UI_VERSION: str = detect_ag_ui_version()
 """The default AG-UI version, auto-detected from the installed `ag-ui-protocol` package."""
 
 REASONING_MESSAGE_ROLE: str = (
-    'reasoning' if parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= MULTIMODAL_VERSION else 'assistant'
+    'reasoning' if parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= REASONING_MESSAGE_ROLE_VERSION else 'assistant'
 )
 """The correct `role` value for `ReasoningMessageStartEvent`, based on the installed SDK version."""
 
