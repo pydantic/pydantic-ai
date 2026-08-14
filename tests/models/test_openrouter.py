@@ -1688,6 +1688,52 @@ async def test_openrouter_web_search_tool_usage_stream(allow_model_requests: Non
     assert stream.response.provider_details['server_tool_use'] == {'web_search_requests': 1}
 
 
+async def test_openrouter_web_search_annotations(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """OpenRouter's `url_citation` annotations surface as the response's `annotations` provider detail.
+
+    Uses a model whose downstream provider has no native search, because OpenRouter only returns
+    annotations when a non-native search engine ran; native provider search returns none.
+    """
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('deepseek/deepseek-chat', provider=provider)
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
+
+    result = await agent.run("Use web search to find Pydantic AI's GitHub repository and answer with its URL only.")
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details is not None
+    annotations = response.provider_details['annotations']
+    assert [annotation['type'] for annotation in annotations] == snapshot(
+        ['url_citation', 'url_citation', 'url_citation', 'url_citation', 'url_citation']
+    )
+    assert annotations[0]['url_citation']['url'] == snapshot('https://github.com/pydantic/pydantic-ai')
+
+
+async def test_openrouter_web_search_annotations_stream(allow_model_requests: None, openrouter_api_key: str) -> None:
+    """Streaming accumulates annotations across deltas rather than keeping only the last chunk's."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key)
+    model = OpenRouterModel('deepseek/deepseek-chat', provider=provider)
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool(max_uses=1))])
+
+    async with agent.run_stream(
+        "Use web search to find Pydantic AI's GitHub repository and answer with its URL only."
+    ) as stream:
+        assert await stream.get_output()
+
+    assert stream.response.provider_details is not None
+    annotations = stream.response.provider_details['annotations']
+    assert [annotation['url_citation']['url'] for annotation in annotations] == snapshot(
+        [
+            'https://github.com/pydantic/pydantic-ai',
+            'https://pydantic.dev/pydantic-ai',
+            'https://github.com/pydantic/pydantic-ai/releases/tag/v2.0.0',
+            'https://pydantic.dev/docs/ai/overview/',
+            'https://github.com/pydantic/pydantic-ai/tree/refs/tags/v1.44.0',
+        ]
+    )
+
+
 def test_openrouter_nested_provider_response() -> None:
     """OpenRouter sometimes nests the real response inside the 'provider' dict.
 

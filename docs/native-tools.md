@@ -89,7 +89,7 @@ making it ideal for queries that require up-to-date data.
 | Google | ✅ | No parameter support. No [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] is generated when streaming. See [Google tool combinations](#google-tool-combinations). |
 | xAI | ✅ | Supports `blocked_domains`, `allowed_domains`, and `user_location` parameters. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
-| OpenRouter | ✅ | Uses OpenRouter's [Beta web-search server tool](https://openrouter.ai/docs/guides/features/server-tools/web-search). The model can make 0–N searches. Recorded requests verify only that OpenRouter accepts the parameter names; the per-engine effects below are per OpenRouter's docs: native search ignores `search_context_size`; `user_location` is native-only; native OpenAI ignores `blocked_domains`; and `max_uses` works with non-native or Anthropic native search. |
+| OpenRouter | ✅ | Uses OpenRouter's [Beta web-search server tool](https://openrouter.ai/docs/guides/features/server-tools/web-search). The model can make 0–N searches. Recorded requests verify only that OpenRouter accepts the parameter names; the per-engine effects below are per OpenRouter's docs: native search ignores `search_context_size`; `user_location` is native-only; native OpenAI ignores `blocked_domains`; and `max_uses` works with non-native or Anthropic native search. Search sources surface in `provider_details['annotations']`, but only when a non-native engine ran the search. |
 | OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
