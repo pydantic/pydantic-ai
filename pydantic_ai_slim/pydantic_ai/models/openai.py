@@ -5011,6 +5011,13 @@ def _map_usage(
         cache_write_tokens = input_tokens_details.get('cache_write_tokens')
         if isinstance(cache_write_tokens, int):
             request_usage.cache_write_tokens = cache_write_tokens
+    prompt_cache_hit_tokens = usage_data.get('prompt_cache_hit_tokens')
+    if (
+        request_usage.cache_read_tokens == 0
+        and isinstance(prompt_cache_hit_tokens, int)
+        and not isinstance(prompt_cache_hit_tokens, bool)
+    ):
+        request_usage.cache_read_tokens = prompt_cache_hit_tokens
     return request_usage
 
 

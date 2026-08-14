@@ -23,8 +23,13 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
+    from openai.types.chat.chat_completion_message import ChatCompletionMessage
+    from openai.types.completion_usage import CompletionUsage
+
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.deepseek import DeepSeekProvider
+
+    from .mock_openai import MockOpenAI, completion_message
 
 
 pytestmark = [
@@ -45,6 +50,30 @@ def freeze_deepseek_off_peak_pricing(monkeypatch: pytest.MonkeyPatch) -> None:
             return timestamp if tz is not None else timestamp.replace(tzinfo=None)
 
     monkeypatch.setattr('pydantic_ai._utils.datetime', FrozenDatetime)
+
+
+async def test_deepseek_chat_prompt_cache_hits_are_first_class(allow_model_requests: None):
+    completion = completion_message(
+        ChatCompletionMessage(content='cached response', role='assistant'),
+        usage=CompletionUsage.model_construct(
+            completion_tokens=5,
+            prompt_tokens=20,
+            total_tokens=25,
+            prompt_cache_hit_tokens=12,
+            prompt_cache_miss_tokens=8,
+        ),
+    )
+    mock_client = MockOpenAI.create_mock(completion)
+    model = OpenAIChatModel('deepseek-chat', provider=DeepSeekProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    result = await agent.run('Hello')
+
+    assert result.usage.input_tokens == 20
+    assert result.usage.cache_read_tokens == 12
+    assert result.usage.output_tokens == 5
+    assert result.usage.details['prompt_cache_hit_tokens'] == 12
+    assert result.usage.details['prompt_cache_miss_tokens'] == 8
 
 
 @pytest.mark.moves_cache_prefix(reason='dynamic tool disclosure after ToolSearch discovery')
