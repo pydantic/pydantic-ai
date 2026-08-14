@@ -4,6 +4,8 @@ import copy
 from abc import abstractmethod
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeVar, cast
 
 from pydantic_core import PydanticSerializationError
@@ -33,6 +35,24 @@ from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._codec import IDENTITY_CODEC, DurabilityCodec
+from ._operation import (
+    CacheIdentity,
+    CallToolId,
+    CancelSuspendedResponseId,
+    DurableOperation,
+    DurableOperationConfig,
+    DurableOperationId,
+    EventStreamHandlerId,
+    GetInstructionsId,
+    GetToolsId,
+    IdentityParameterTransport,
+    ModelRequestId,
+    OperationConfigRole,
+    ResultCodec,
+    ValidateToolArgumentsId,
+)
+from ._operation_backend import CallableOperationBackend, LegacyCallableBackend
+from ._operation_names import DurableInvocationName, DurableOperationNamer
 from ._runtime_toolsets import (
     RuntimeToolsetKind,
     cancellation_token_unsupported_error,
@@ -64,6 +84,88 @@ if TYPE_CHECKING:
     pass
 
 _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
+
+
+@dataclass(frozen=True)
+class _ModelRequestParams:
+    model_id: str | None
+    request: ModelRequestContext
+    run_context: RunContext[Any]
+
+
+@dataclass(frozen=True)
+class _CancelSuspendedResponseParams:
+    model_id: str | None
+    response: ModelResponse
+    run_context: RunContext[Any]
+
+
+class _ModelRequestCacheIdentity(CacheIdentity[_ModelRequestParams]):
+    def project(self, params: _ModelRequestParams) -> tuple[object, ...]:
+        request = params.request
+        return (
+            params.model_id,
+            request.messages,
+            request.model_settings,
+            request.model_request_parameters,
+            params.run_context,
+        )
+
+
+class _CancelSuspendedResponseCacheIdentity(CacheIdentity[_CancelSuspendedResponseParams]):
+    def project(self, params: _CancelSuspendedResponseParams) -> tuple[object, ...]:
+        return (params.model_id, params.response, params.run_context)
+
+
+class _LegacyOperationNamer(DurableOperationNamer):
+    """Preserve callable-engine names by delegating to their existing naming hook."""
+
+    def __init__(self, operation_name: Callable[[DurableOperationId], str]) -> None:
+        self._operation_name = operation_name
+
+    def operation_name(self, operation_id: DurableOperationId) -> str:
+        return self._operation_name(operation_id)
+
+    def invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
+        return DurableInvocationName(self.operation_name(operation_id))
+
+
+class _LegacyOperationConfig(DurableOperationConfig[Any]):
+    """Route declaration roles through the callable engines' existing config hooks."""
+
+    def __init__(
+        self,
+        base_config: Callable[[OperationConfigRole, DurableOperationId], Any],
+        tool_config: Callable[[OperationConfigRole, DurableOperationId, object | None, str], Any | Literal[False]],
+    ) -> None:
+        self._base_config = base_config
+        self._tool_config = tool_config
+
+    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> Any:
+        return self._base_config(role, operation_id)
+
+    def for_tool(
+        self,
+        role: OperationConfigRole,
+        operation_id: DurableOperationId,
+        tool: object | None,
+        tool_name: str,
+    ) -> Any | Literal[False]:
+        return self._tool_config(role, operation_id, tool, tool_name)
+
+
+class _LegacyResultCodec(ResultCodec[_T]):
+    """Apply the capability codec and its engine-specific serialization error mapping."""
+
+    def __init__(self, dump: Callable[[_T], object], load: Callable[[object], _T]) -> None:
+        self._dump = dump
+        self._load = load
+
+    def dump(self, value: _T) -> object:
+        return self._dump(value)
+
+    def load(self, payload: object) -> _T:
+        return self._load(payload)
 
 
 class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
@@ -386,6 +488,74 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         call-time callable. Temporal therefore overrides the assembly methods below instead.
         """
         raise NotImplementedError
+
+    def _build_operation_backend(self) -> CallableOperationBackend[Any]:
+        """Build the declaration backend for callable engines using their compatibility hooks."""
+        return LegacyCallableBackend(
+            self,
+            namer=_LegacyOperationNamer(self._legacy_operation_name),
+            config=_LegacyOperationConfig(self._legacy_base_operation_config, self._legacy_tool_operation_config),
+        )
+
+    def _legacy_base_operation_config(self, role: OperationConfigRole, operation_id: DurableOperationId) -> Any:
+        if role is OperationConfigRole.MODEL:
+            return self._model_unit_config()
+        if role is OperationConfigRole.EVENT:
+            return self._event_unit_config()
+        kind = self._legacy_toolset_kind(operation_id)
+        return self._normalize_unit_config(self._toolset_base_config(kind))
+
+    def _legacy_tool_operation_config(
+        self,
+        role: OperationConfigRole,
+        operation_id: DurableOperationId,
+        tool: object | None,
+        tool_name: str,
+    ) -> Any | Literal[False]:
+        kind = self._legacy_toolset_kind(operation_id)
+        resolve = self._build_resolve_tool_config(self._toolset_base_config(kind))
+        return resolve(cast(ToolsetTool[Any] | None, tool), tool_name)
+
+    @staticmethod
+    def _legacy_toolset_kind(operation_id: DurableOperationId) -> ToolsetKind:
+        match operation_id:
+            case (
+                GetToolsId(toolset_kind=kind)
+                | ValidateToolArgumentsId(toolset_kind=kind)
+                | CallToolId(toolset_kind=kind)
+            ):
+                return kind
+            case GetInstructionsId():
+                return 'mcp'
+            case _:
+                raise RuntimeError(f'Durable operation {operation_id!r} does not belong to a toolset')
+
+    def _legacy_operation_name(self, operation_id: DurableOperationId) -> str:
+        """Map declaration identities to the exact kwargs accepted by the legacy naming hook."""
+        match operation_id:
+            case ModelRequestId(model_id=model_id, streaming=streaming, model_name=model_name):
+                kind = 'model.request_stream' if streaming else 'model.request'
+                label = 'Model Request (Streaming)' if streaming else 'Model Request'
+                return self._unit_name(
+                    kind,
+                    suffix=self._model_id_suffix(model_id),
+                    model_name=model_name,
+                    label=label,
+                )
+            case CancelSuspendedResponseId(model_id=model_id, model_name=model_name):
+                return self._unit_name(
+                    'model.cancel_suspended_response',
+                    suffix=self._model_id_suffix(model_id),
+                    model_name=model_name,
+                    label='Cancel Suspended Response',
+                )
+            case EventStreamHandlerId():
+                return self._unit_name('event_stream_handler', label='Handle Stream Event')
+            case _:
+                raise RuntimeError(f'Legacy naming is not yet implemented for durable operation {operation_id!r}')
+
+    def _legacy_result_codec(self, result_type: object) -> _LegacyResultCodec[Any]:
+        return _LegacyResultCodec(partial(self._encode, result_type), partial(self._codec.load, result_type))
 
     async def _durable_operation(
         self, name: str, fn: Callable[[], Awaitable[_T]], *, tp: Any, inputs: tuple[Any, ...], config: Any
@@ -736,70 +906,48 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return await handler(request_context)
 
         model_id = self._model_id_for_request(ctx, request_context)
-        suffix = self._model_id_suffix(model_id)
         model_name = request_context.model.model_name
-        config = self._model_unit_config()
+        backend = self._build_operation_backend()
+
+        request_operation = backend.bind(
+            DurableOperation(
+                operation_id=ModelRequestId(model_id, False, model_name),
+                handler=self._model_request_operation,
+                parameter_transport=IdentityParameterTransport[_ModelRequestParams](),
+                cache_identity=_ModelRequestCacheIdentity(),
+                result_codec=self._legacy_result_codec(ModelResponse),
+                config_role=OperationConfigRole.MODEL,
+            )
+        )
+        request_stream_operation = backend.bind(
+            DurableOperation(
+                operation_id=ModelRequestId(model_id, True, model_name),
+                handler=self._model_request_stream_operation,
+                parameter_transport=IdentityParameterTransport[_ModelRequestParams](),
+                cache_identity=_ModelRequestCacheIdentity(),
+                result_codec=self._legacy_result_codec(StreamedActivityResult),
+                config_role=OperationConfigRole.MODEL,
+            )
+        )
+        cancel_suspended_response_operation = backend.bind(
+            DurableOperation(
+                operation_id=CancelSuspendedResponseId(model_id, model_name),
+                handler=self._cancel_suspended_response_operation,
+                parameter_transport=IdentityParameterTransport[_CancelSuspendedResponseParams](),
+                cache_identity=_CancelSuspendedResponseCacheIdentity(),
+                result_codec=self._legacy_result_codec(type(None)),
+                config_role=OperationConfigRole.MODEL,
+            )
+        )
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
-            async def fn() -> ModelResponse:
-                async with self._durable_model_scope(model_id, ctx) as (model, _):
-                    response = await model.request(
-                        request.messages, request.model_settings, request.model_request_parameters
-                    )
-                self._stamp_response(response, request.messages)
-                return response
-
-            return await self._durable_operation(
-                self._unit_name('model.request', suffix=suffix, model_name=model_name, label='Model Request'),
-                fn,
-                tp=ModelResponse,
-                inputs=(model_id, request.messages, request.model_settings, request.model_request_parameters, ctx),
-                config=config,
-            )
+            return await request_operation(_ModelRequestParams(model_id, request, ctx))
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
-            async def fn() -> StreamedActivityResult:
-                async with self._durable_model_scope(model_id, ctx) as (model, durable_ctx):
-                    async with model.request_stream(
-                        request.messages, request.model_settings, request.model_request_parameters, durable_ctx
-                    ) as streamed:
-                        events = await capture_event_stream(
-                            run_context=durable_ctx,
-                            stream=streamed,
-                            handler=self._effective_event_stream_handler(),
-                        )
-                response = streamed.get()
-                self._stamp_response(response, request.messages)
-                return StreamedActivityResult(response=response, events=events)
-
-            return await self._durable_operation(
-                self._unit_name(
-                    'model.request_stream', suffix=suffix, model_name=model_name, label='Model Request (Streaming)'
-                ),
-                fn,
-                tp=StreamedActivityResult,
-                inputs=(model_id, request.messages, request.model_settings, request.model_request_parameters, ctx),
-                config=config,
-            )
+            return await request_stream_operation(_ModelRequestParams(model_id, request, ctx))
 
         async def cancel_suspended_response_segment(response: ModelResponse) -> None:
-            async def fn() -> None:
-                async with self._durable_model_scope(model_id, ctx) as (model, _):
-                    await model.cancel_suspended_response(response)
-                return None
-
-            await self._durable_operation(
-                self._unit_name(
-                    'model.cancel_suspended_response',
-                    suffix=suffix,
-                    model_name=model_name,
-                    label='Cancel Suspended Response',
-                ),
-                fn,
-                tp=type(None),
-                inputs=(model_id, response, ctx),
-                config=config,
-            )
+            await cancel_suspended_response_operation(_CancelSuspendedResponseParams(model_id, response, ctx))
 
         request_context.model = DurableModel(
             request_context.model,
@@ -808,6 +956,32 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             cancel_suspended_response_segment=cancel_suspended_response_segment,
         )
         return await handler(request_context)
+
+    async def _model_request_operation(self, params: _ModelRequestParams) -> ModelResponse:
+        request = params.request
+        async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
+            response = await model.request(request.messages, request.model_settings, request.model_request_parameters)
+        self._stamp_response(response, request.messages)
+        return response
+
+    async def _model_request_stream_operation(self, params: _ModelRequestParams) -> StreamedActivityResult:
+        request = params.request
+        async with self._durable_model_scope(params.model_id, params.run_context) as (model, durable_ctx):
+            async with model.request_stream(
+                request.messages, request.model_settings, request.model_request_parameters, durable_ctx
+            ) as streamed:
+                events = await capture_event_stream(
+                    run_context=durable_ctx,
+                    stream=streamed,
+                    handler=self._effective_event_stream_handler(),
+                )
+        response = streamed.get()
+        self._stamp_response(response, request.messages)
+        return StreamedActivityResult(response=response, events=events)
+
+    async def _cancel_suspended_response_operation(self, params: _CancelSuspendedResponseParams) -> None:
+        async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
+            await model.cancel_suspended_response(params.response)
 
     def _model_id_suffix(self, model_id: str | None) -> str:
         """Suffix non-default model units while keeping the agent's default model names stable."""

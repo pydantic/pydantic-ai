@@ -125,6 +125,11 @@ class JournalDurability(BaseDurabilityCapability[Any]):
         return await fn()
 
 
+class _OverrideNameDurability(JournalDurability):
+    def _unit_name(self, kind: str, **parts: Any) -> str:
+        return f'override:{kind}:{parts["label"]}'
+
+
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:
     pytest.importorskip('mcp')
     from fastmcp.client.transports import StdioTransport
@@ -678,6 +683,16 @@ async def test_legacy_callable_backend_matches_live_production_assembly_inputs()
         await backend.bind(operation)(_DispatchParams(inputs, tool_name), config=config)
 
     assert [(name, inputs, config) for name, inputs, config, _ in declaration_capability.calls] == comparable
+
+
+async def test_live_model_declaration_honors_legacy_unit_name_override() -> None:
+    agent = Agent(TestModel(), name='compat', capabilities=[_OverrideNameDurability()])
+
+    await agent.run('hello')
+
+    durability = _OverrideNameDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _, _ in durability.calls] == ['override:model.request:Model Request']
 
 
 async def test_callable_operation_backend_resolves_and_round_trips() -> None:
