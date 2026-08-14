@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
-from dataclasses import dataclass
-from typing import Any, ClassVar, Literal
+from dataclasses import dataclass, replace
+from typing import Any, ClassVar, Literal, cast
 
 import pytest
 from typing_extensions import assert_never
@@ -247,25 +247,15 @@ def test_dbos_name_parity_with_live_old_implementation_and_table() -> None:
     )
     old = DBOSDurability.from_agent(agent)
     assert old is not None
-    live = [
-        old._request_step.dbos_function_name,  # pyright: ignore[reportPrivateUsage]
-        old._request_stream_step.dbos_function_name,  # pyright: ignore[reportPrivateUsage]
-        old._cancel_suspended_response_step.dbos_function_name,  # pyright: ignore[reportPrivateUsage]
-        old._event_stream_handler_step.dbos_function_name,  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('mcp_server', prefix='compat__mcp_server__mcp', suffix='.get_tools'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('mcp_server', prefix='compat__mcp_server__mcp', suffix='.get_instructions'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('mcp_server', prefix='compat__mcp_server__mcp', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name('dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', suffix='.get_tools'),  # pyright: ignore[reportPrivateUsage]
-        old._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', tool_name='dynamic_tool'
-        ),
-    ]
+    backend = old._operation_backend  # pyright: ignore[reportPrivateUsage]
+    assert backend is not None
+    live = {cast(Any, registration).dbos_function_name for registration in backend.registrations()}
     ids = [_ids()[0], _ids()[2], _ids()[4], _ids()[6], _ids()[7], _ids()[8], _ids()[10], _ids()[11], _ids()[12]]
     namer = DBOSOperationNamer('compat')
     actual = [namer.invocation_name(operation_id, _params(operation_id)).operation_name for operation_id in ids]
-    assert actual == live
+    assert set(actual) == live
     assert set(actual) == DBOS_OPERATION_NAMES
-    assert namer.operation_name(ModelRequestId('registered', False, 'test')) == live[0]
+    assert namer.operation_name(ModelRequestId('registered', False, 'test')) in live
 
 
 def test_temporal_name_parity_with_live_registered_activities_and_table() -> None:
@@ -654,6 +644,7 @@ async def test_legacy_callable_backend_matches_live_production_assembly_inputs()
 
     production = JournalDurability.from_agent(agent)
     assert production is not None
+    assert production._legacy_operation_name(GetInstructionsId('mcp')) == 'compat__mcp_server__mcp.get_instructions'  # pyright: ignore[reportPrivateUsage]
     assert production.calls
     operation_ids: dict[str, DurableOperationId] = {
         'compat__model.request_stream': ModelRequestId(None, True, 'test'),
@@ -735,3 +726,43 @@ def test_trivial_transport_cache_and_invocation_helpers() -> None:
     invocation = OperationInvocation(params=value, config='config')
     assert invocation.params is value
     assert invocation.config == 'config'
+
+
+def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported_ids() -> None:
+    pytest.importorskip('dbos')
+    from pydantic_ai.durable_exec.dbos._operation_backend import DBOSOperationBackend, DBOSOperationConfig
+
+    async def handler(params: _DispatchParams) -> None:
+        return None
+
+    backend = DBOSOperationBackend(
+        agent_name='registered',
+        config=DBOSOperationConfig(model={}, event={}, tool={}),
+    )
+    operation = DurableOperation(
+        operation_id=ModelRequestId(None, False, 'test'),
+        handler=handler,
+        parameter_transport=IdentityParameterTransport[_DispatchParams](),
+        cache_identity=_LogicalInputs(),
+        result_codec=TypedResultCodec[None](type(None), mode='identity'),
+        config_role=OperationConfigRole.MODEL,
+    )
+    assert backend.bind(operation).operation is operation
+
+    unsupported = DurableOperation(
+        operation_id=ValidateToolArgumentsId('dynamic', 'tools'),
+        handler=handler,
+        parameter_transport=IdentityParameterTransport[_DispatchParams](),
+        cache_identity=_LogicalInputs(),
+        result_codec=TypedResultCodec[None](type(None), mode='identity'),
+        config_role=OperationConfigRole.TOOL_VALIDATION,
+    )
+    with pytest.raises(RuntimeError, match='not yet assigned'):
+        backend.bind(unsupported)
+
+    with pytest.raises(TypeError, match='not a model or event operation'):
+        backend._bind_model_or_event(unsupported, 'unsupported', {})  # pyright: ignore[reportPrivateUsage]
+
+    unsupported_call = replace(unsupported, operation_id=CallToolId('function', 'tools'))
+    with pytest.raises(TypeError, match='not registered'):
+        backend.bind(unsupported_call)

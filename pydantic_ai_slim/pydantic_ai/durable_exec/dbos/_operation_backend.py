@@ -1,25 +1,31 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Generic, Literal, TypeVar, cast
 
 from dbos import DBOS
 
-from pydantic_ai import messages as _messages
+from pydantic_ai import ToolsetTool, messages as _messages
 from pydantic_ai.durable_exec._base import (
+    _CallToolParams,  # pyright: ignore[reportPrivateUsage]
     _CancelSuspendedResponseParams,  # pyright: ignore[reportPrivateUsage]
+    _DynamicCallToolParams,  # pyright: ignore[reportPrivateUsage]
     _EventStreamHandlerParams,  # pyright: ignore[reportPrivateUsage]
+    _GetToolsParams,  # pyright: ignore[reportPrivateUsage]
     _ModelRequestParams,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.durable_exec._operation import (
+    CallToolId,
     CancelSuspendedResponseId,
     DurableOperation,
     DurableOperationId,
     EventStreamHandlerId,
+    GetInstructionsId,
+    GetToolsId,
     ModelRequestId,
     OperationConfigRole,
 )
-from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation
+from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, CallableOperationBackend
 from pydantic_ai.durable_exec._operation_names import DBOSOperationNamer
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import ModelRequestParameters
@@ -79,20 +85,30 @@ class DBOSBoundOperation(Generic[P, W, R]):
         self._step_getter = getter
 
 
-class DBOSOperationBackend:
+class DBOSOperationBackend(CallableOperationBackend[StepConfig]):
     """Register typed durable-operation handlers as DBOS steps during agent binding."""
 
     def __init__(self, *, agent_name: str, config: DBOSOperationConfig) -> None:
-        self._namer = DBOSOperationNamer(agent_name)
-        self._config = config
+        super().__init__(namer=DBOSOperationNamer(agent_name), config=config)
         self._registrations: list[Callable[..., Any]] = []
 
-    def bind(self, operation: DurableOperation[P, W, R]) -> BoundDurableOperation[P, W, R]:
+    def bind(self, operation: DurableOperation[P, P, R]) -> BoundDurableOperation[P, P, R]:
         name = self._namer.operation_name(operation.operation_id)
         step_config = self._config.base(operation.config_role, operation.operation_id)
+        if isinstance(operation.operation_id, (ModelRequestId, CancelSuspendedResponseId, EventStreamHandlerId)):
+            step, dispatch = self._bind_model_or_event(operation, name, step_config)
+        else:
+            step, dispatch = self._bind_toolset(operation, name, step_config)
+
+        self._registrations.append(step)
+        return DBOSBoundOperation(operation, step, dispatch)
+
+    def _bind_model_or_event(
+        self, operation: DurableOperation[P, P, R], name: str, step_config: StepConfig
+    ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], P], Any]]:
 
         match operation.operation_id:
-            case ModelRequestId(streaming=streaming):
+            case ModelRequestId():
 
                 async def model_step(
                     model_id: str | None,
@@ -120,7 +136,6 @@ class DBOSOperationBackend:
                     return operation.result_codec.load(payload)
 
                 dispatch: Callable[[Callable[..., Any], P], Any] = dispatch_model
-                _ = streaming
 
             case CancelSuspendedResponseId():
 
@@ -155,14 +170,74 @@ class DBOSOperationBackend:
                 dispatch = dispatch_event
 
             case _ as operation_id:
+                raise TypeError(f'DBOS operation {operation_id!r} is not a model or event operation')
+
+        return step, dispatch
+
+    def _bind_toolset(
+        self, operation: DurableOperation[P, P, R], name: str, step_config: StepConfig
+    ) -> tuple[Callable[..., Any], Callable[[Callable[..., Any], P], Any]]:
+        match operation.operation_id:
+            case GetToolsId() | GetInstructionsId():
+
+                async def discovery_step(run_context: RunContext[Any]) -> object:
+                    params = _GetToolsParams(run_context)
+                    return operation.result_codec.dump(await operation.handler(cast(P, params)))
+
+                step = DBOS.step(name=name, **step_config)(discovery_step)
+
+                async def dispatch_discovery(step: Callable[..., Any], params: P) -> R:
+                    discovery_params = cast(_GetToolsParams, params)
+                    payload = await step(discovery_params.ctx)
+                    return operation.result_codec.load(payload)
+
+                dispatch = dispatch_discovery
+
+            case CallToolId(toolset_kind='mcp'):
+
+                async def mcp_call_step(
+                    tool_name: str,
+                    tool_args: dict[str, Any],
+                    run_context: RunContext[Any],
+                    tool: ToolsetTool[Any],
+                ) -> object:
+                    params = _CallToolParams(tool_name, tool_args, run_context, tool)
+                    return operation.result_codec.dump(await operation.handler(cast(P, params)))
+
+                step = DBOS.step(name=name, **step_config)(mcp_call_step)
+
+                async def dispatch_mcp_call(step: Callable[..., Any], params: P) -> R:
+                    call_params = cast(_CallToolParams, params)
+                    payload = await step(call_params.name, call_params.tool_args, call_params.ctx, call_params.tool)
+                    return operation.result_codec.load(payload)
+
+                dispatch = dispatch_mcp_call
+
+            case CallToolId(toolset_kind='dynamic'):
+
+                async def dynamic_call_step(
+                    tool_name: str, tool_args: dict[str, Any], run_context: RunContext[Any]
+                ) -> object:
+                    params = _DynamicCallToolParams(tool_name, tool_args, run_context)
+                    return operation.result_codec.dump(await operation.handler(cast(P, params)))
+
+                step = DBOS.step(name=name, **step_config)(dynamic_call_step)
+
+                async def dispatch_dynamic_call(step: Callable[..., Any], params: P) -> R:
+                    call_params = cast(_DynamicCallToolParams, params)
+                    payload = await step(call_params.name, call_params.tool_args, call_params.ctx)
+                    return operation.result_codec.load(payload)
+
+                dispatch = dispatch_dynamic_call
+
+            case _ as operation_id:
                 raise TypeError(f'DBOS operation {operation_id!r} is not registered by this backend yet')
 
-        self._registrations.append(step)
-        return DBOSBoundOperation(operation, step, dispatch)
+        return step, dispatch
 
     def config_for_tool(
         self,
-        operation: DurableOperation[P, W, R],
+        operation: DurableOperation[P, P, R],
         tool: object | None,
         tool_name: str,
     ) -> StepConfig | Literal[False]:
@@ -170,3 +245,13 @@ class DBOSOperationBackend:
 
     def registrations(self) -> Sequence[Callable[..., object]]:
         return self._registrations
+
+    async def _execute(
+        self,
+        *,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: object,
+    ) -> object:
+        raise NotImplementedError('DBOS operations are registered and dispatched by `bind()`')

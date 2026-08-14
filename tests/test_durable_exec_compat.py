@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 import pytest
 from pydantic import ValidationError
@@ -242,26 +242,10 @@ def test_dbos_operation_name_matrix_and_assembly_completeness() -> None:
         DurableMCPToolset,
         DurableDynamicToolset,
     }
-    registered_names = {
-        durability._request_step.dbos_function_name,  # pyright: ignore[reportPrivateUsage]
-        durability._request_stream_step.dbos_function_name,  # pyright: ignore[reportPrivateUsage]
-        durability._cancel_suspended_response_step.dbos_function_name,  # pyright: ignore[reportPrivateUsage]
-        durability._event_stream_handler_step.dbos_function_name,  # pyright: ignore[reportPrivateUsage]
-    }
-    closure_names = {
-        durability._unit_name('mcp_server', prefix='compat__mcp_server__mcp', suffix='.get_tools'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'mcp_server', prefix='compat__mcp_server__mcp', suffix='.get_instructions'
-        ),
-        durability._unit_name('mcp_server', prefix='compat__mcp_server__mcp', tool_name='mcp_tool'),  # pyright: ignore[reportPrivateUsage]
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', suffix='.get_tools'
-        ),
-        durability._unit_name(  # pyright: ignore[reportPrivateUsage]
-            'dynamic_toolset', prefix='compat__dynamic_toolset__dynamic', tool_name='dynamic_tool'
-        ),
-    }
-    assert registered_names | closure_names == DBOS_OPERATION_NAMES
+    backend = durability._operation_backend  # pyright: ignore[reportPrivateUsage]
+    assert backend is not None
+    registered_names = {cast(Any, registration).dbos_function_name for registration in backend.registrations()}
+    assert registered_names == DBOS_OPERATION_NAMES
 
 
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:

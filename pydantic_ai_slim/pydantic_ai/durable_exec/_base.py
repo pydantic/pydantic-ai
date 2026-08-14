@@ -129,6 +129,13 @@ class _CallToolParams:
     tool: ToolsetTool[Any]
 
 
+@dataclass(frozen=True)
+class _DynamicCallToolParams:
+    name: str
+    tool_args: dict[str, Any]
+    ctx: RunContext[Any]
+
+
 class _ModelRequestCacheIdentity(CacheIdentity[_ModelRequestParams]):
     def project(self, params: _ModelRequestParams) -> tuple[object, ...]:
         return (
@@ -160,8 +167,8 @@ class _FunctionCallToolCacheIdentity(CacheIdentity[_CallToolParams]):
         return (params.name, params.tool_args, params.ctx, params.tool)
 
 
-class _DynamicCallToolCacheIdentity(CacheIdentity[_CallToolParams]):
-    def project(self, params: _CallToolParams) -> tuple[object, ...]:
+class _DynamicCallToolCacheIdentity(CacheIdentity[_DynamicCallToolParams]):
+    def project(self, params: _DynamicCallToolParams) -> tuple[object, ...]:
         return (params.name, params.tool_args, params.ctx)
 
 
@@ -626,7 +633,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _legacy_invocation_name(self, operation_id: DurableOperationId, params: object) -> DurableInvocationName:
         if isinstance(operation_id, CallToolId):
-            assert isinstance(params, _CallToolParams)
+            assert isinstance(params, (_CallToolParams, _DynamicCallToolParams))
             kind = 'mcp_server' if operation_id.toolset_kind == 'mcp' else f'{operation_id.toolset_kind}_toolset'
             prefix = f'{self.name}__{kind}__{operation_id.toolset_id}'
             label = 'Call MCP Tool' if operation_id.toolset_kind == 'mcp' else 'Call Tool'
@@ -873,7 +880,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             with self._durable_run_context_scope(params.ctx) as durable_ctx:
                 return await get_dynamic_tools(toolset, durable_ctx)
 
-        async def call_tool_handler(params: _CallToolParams) -> CallToolResult:
+        async def call_tool_handler(params: _DynamicCallToolParams) -> CallToolResult:
             with self._durable_run_context_scope(params.ctx) as durable_ctx:
                 return await wrap_tool_call_result(
                     call_dynamic_tool(toolset, params.name, params.tool_args, durable_ctx)
@@ -893,7 +900,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         call_operation = DurableOperation(
             operation_id=CallToolId('dynamic', cast(str, toolset.id)),
             handler=call_tool_handler,
-            parameter_transport=IdentityParameterTransport[_CallToolParams](),
+            parameter_transport=IdentityParameterTransport[_DynamicCallToolParams](),
             cache_identity=_DynamicCallToolCacheIdentity(),
             result_codec=self._legacy_result_codec(CallToolResult),
             config_role=OperationConfigRole.TOOL_CALL,
@@ -917,7 +924,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool: ToolsetTool[AgentDepsT],
             config: Any,
         ) -> Any:
-            payload = await call_tool(_CallToolParams(name, tool_args, ctx, tool), config=config)
+            payload = await call_tool(_DynamicCallToolParams(name, tool_args, ctx), config=config)
             return self._unwrap_tool_result(payload)
 
         return DurableDynamicToolset(

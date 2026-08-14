@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, cast
@@ -128,10 +128,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         self._legacy_run_workflow: Any = None
         self._legacy_run_sync_workflow: Any = None
         self._operation_backend: DBOSOperationBackend | None = None
-        self._durable_unit_fns: ContextVar[dict[str, Callable[[], Awaitable[Any]]]] = ContextVar(
-            '_durable_unit_fns', default={}
-        )
-        self._durable_unit_steps: dict[str, Callable[[], Awaitable[Any]]] = {}
         self._init_legacy_context_vars()
 
     def _init_legacy_context_vars(self) -> None:
@@ -153,9 +149,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # one capability instance attached to several agents would leak one agent's per-run
         # legacy state into another's runs.
         self._init_legacy_context_vars()
-        self._durable_unit_fns = ContextVar('_durable_unit_fns', default={})
-        self._durable_unit_steps = {}
-
         self._operation_backend = DBOSOperationBackend(
             agent_name=self.name,
             config=DBOSOperationConfig(
@@ -234,30 +227,9 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         # safe, so only guard once actually inside a workflow.
         return guard_enqueue_in_workflow(ctx)
 
-    async def run_durable_unit(
-        self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
-    ) -> Any:
-        step = self._durable_unit_steps.get(name)
-        if step is None:
-            step_config = cast(StepConfig, config or {})
-
-            @DBOS.step(name=name, **step_config)
-            async def durable_unit_step() -> Any:
-                return await self._durable_unit_fns.get()[name]()
-
-            self._durable_unit_steps[name] = step = durable_unit_step
-        current = self._durable_unit_fns.get()
-        token = self._durable_unit_fns.set({**current, name: fn})
-        try:
-            return await step()
-        finally:
-            self._durable_unit_fns.reset(token)
-
-    def _unit_name(self, kind: str, **parts: Any) -> str:
-        prefix = parts.get('prefix', f'{self.name}__{kind}')
-        if parts.get('tool_name') is not None:
-            return f'{prefix}.call_tool'
-        return f'{prefix}{parts.get("suffix", "")}'
+    def _build_operation_backend(self) -> DBOSOperationBackend:
+        assert self._operation_backend is not None
+        return self._operation_backend
 
     def _toolset_base_config(self, kind: ToolsetKind) -> StepConfig:
         return self._mcp_step_config

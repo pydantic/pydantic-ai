@@ -3784,6 +3784,73 @@ async def test_dbos_durability_dynamic_capability_tool_runs_in_step(dbos: DBOS) 
     assert 'dbos_dynamic_capability__dynamic_toolset__dyn.call_tool' in step_names
 
 
+async def test_dbos_durability_routes_concurrent_calls_to_same_dynamic_operation(dbos: DBOS) -> None:
+    """Concurrent invocations share one registration without sharing call-local routing state."""
+
+    def factory(ctx: RunContext[str]) -> FunctionToolset[str]:
+        def read_route() -> str:
+            return ctx.deps
+
+        return FunctionToolset([read_route])
+
+    agent = Agent(
+        TestModel(call_tools=['read_route']),
+        deps_type=str,
+        name='dbos_concurrent_dynamic',
+        toolsets=[DynamicToolset(factory, id='routes')],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> list[str]:
+        results = await asyncio.gather(agent.run('route', deps='left'), agent.run('route', deps='right'))
+        return [result.output for result in results]
+
+    assert await run_agent() == ['{"read_route":"left"}', '{"read_route":"right"}']
+
+
+async def test_dbos_durability_nested_agent_in_tool_routes_to_inner_registrations(dbos: DBOS) -> None:
+    """A workflow-level function tool can run another durable agent without ambient registry routing."""
+
+    def inner_factory(ctx: RunContext[str]) -> FunctionToolset[str]:
+        def inner_route() -> str:
+            return ctx.deps
+
+        return FunctionToolset([inner_route])
+
+    inner_agent = Agent(
+        TestModel(call_tools=['inner_route']),
+        deps_type=str,
+        name='dbos_nested_inner',
+        toolsets=[DynamicToolset(inner_factory, id='inner_routes')],
+        capabilities=[DBOSDurability()],
+    )
+
+    async def run_inner() -> str:
+        return (await inner_agent.run('route', deps='inner')).output
+
+    outer_agent = Agent(
+        TestModel(call_tools=['run_inner']),
+        name='dbos_nested_outer',
+        tools=[run_inner],
+        capabilities=[DBOSDurability()],
+    )
+
+    wfid = str(uuid.uuid4())
+
+    @DBOS.workflow()
+    async def run_outer() -> str:
+        return (await outer_agent.run('run nested')).output
+
+    with SetWorkflowID(wfid):
+        output = await run_outer()
+
+    assert 'inner_route' in output
+    step_names = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    assert 'dbos_nested_inner__dynamic_toolset__inner_routes.get_tools' in step_names
+    assert 'dbos_nested_inner__dynamic_toolset__inner_routes.call_tool' in step_names
+
+
 @pytest.mark.parametrize('metadata', [{'dbos': False}, {'': False}])
 async def test_dbos_durability_ignores_per_tool_metadata(dbos: DBOS, metadata: dict[str, Any]) -> None:
     """DBOS takes no per-tool config: tool metadata never opts a tool out of its step.
