@@ -219,3 +219,27 @@ def test_model_profile_image_model():
     assert profile.get('supports_image_output', False) is True
     assert profile.get('supports_json_schema_output', False) is False
     assert profile.get('supports_tools', True) is False
+
+
+def test_model_profile_gemini_3_7_flash_disables_minimal_thinking_level():
+    profile = google_model_profile('gemini-3.7-flash')
+    assert profile is not None
+    assert profile.get('google_supports_minimal_thinking_level', True) is False
+
+
+def test_model_profile_gemini_3_pro_preview_disables_minimal_thinking_level():
+    profile = google_model_profile('gemini-3-pro-preview')
+    assert profile is not None
+    assert profile.get('google_supports_minimal_thinking_level', True) is False
+
+
+def test_model_profile_gemini_3_1_pro_preview_disables_minimal_thinking_level():
+    profile = google_model_profile('gemini-3.1-pro-preview')
+    assert profile is not None
+    assert profile.get('google_supports_minimal_thinking_level', True) is False
+
+
+def test_model_profile_minimal_thinking_level_supported_by_default():
+    profile = google_model_profile('gemini-3.0-pro')
+    assert profile is not None
+    assert profile.get('google_supports_minimal_thinking_level', True) is True

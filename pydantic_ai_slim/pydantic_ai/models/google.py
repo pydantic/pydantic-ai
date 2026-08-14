@@ -853,11 +853,16 @@ class GoogleModel(Model[Client]):
         profile = self.profile
         if thinking is False:
             if profile.get('google_supports_thinking_level', False):
-                return ThinkingConfigDict(thinking_level=cast(Any, 'MINIMAL'))
+                # Models without `minimal` fall back to `low`, their lowest level.
+                if profile.get('google_supports_minimal_thinking_level', True):
+                    return ThinkingConfigDict(thinking_level=cast(Any, 'MINIMAL'))
+                return ThinkingConfigDict(thinking_level=cast(Any, 'LOW'))
             return ThinkingConfigDict(thinking_budget=0)
         if profile.get('google_supports_thinking_level', False):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
+            if thinking == 'minimal' and not profile.get('google_supports_minimal_thinking_level', True):
+                return ThinkingConfigDict(include_thoughts=True, thinking_level=cast(Any, 'LOW'))
             return ThinkingConfigDict(
                 include_thoughts=True, thinking_level=cast(Any, _thinking_effort_to_level(thinking))
             )
