@@ -79,8 +79,12 @@ class TemporalRunContext(RunContext[AgentDepsT]):
     def __init__(self, deps: AgentDepsT, **kwargs: Any):
         self.__dict__ = {**kwargs, 'deps': deps}
         for old_name, new_name in _RENAMED_FIELDS:
-            if (value := self.__dict__.pop(old_name, None)) is not None:
-                self.__dict__.setdefault(new_name, value)
+            # Keyed on presence, not truthiness: `capability_available` is `None` for every activity
+            # dispatched outside capability dispatch — the common case — and a value-based guard
+            # would drop the key there, leaving the renamed field absent and the guard below
+            # reporting it as one that never crossed the boundary.
+            if old_name in self.__dict__:
+                self.__dict__.setdefault(new_name, self.__dict__.pop(old_name))
         for name in _NONE_UNLESS_ATTACHED:
             self.__dict__.setdefault(name, None)
         for name, default in _DEFAULTED_UNLESS_CARRIED:

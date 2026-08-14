@@ -656,14 +656,14 @@ def test_capability_loaded_is_a_deprecated_alias_for_capability_available() -> N
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), capability_available=True)
 
     with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_available` instead'):
-        assert ctx.capability_loaded is True  # type: ignore[reportDeprecated]
+        assert ctx.capability_loaded is True  # pyright: ignore[reportDeprecated]
 
     with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_available` instead'):
         constructed = RunContext[None](
             deps=None,
             model=TestModel(),
             usage=RunUsage(),
-            capability_loaded=True,  # type: ignore[call-arg]
+            capability_loaded=True,  # pyright: ignore[reportCallIssue]
         )
     assert constructed.capability_available is True
 
