@@ -1239,15 +1239,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if thinking_parts := self._process_thinking(choice.message):
             items.extend(thinking_parts)
 
-        if choice.message.content:
-            items.extend(
-                _map_chat_content(
-                    choice.message,
-                    self.profile,
-                    self.system,
-                    include_raw_annotations=include_raw_annotations,
-                )
+        items.extend(
+            _map_chat_content(
+                choice.message,
+                self.profile,
+                self.system,
+                include_raw_annotations=include_raw_annotations,
             )
+        )
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 if isinstance(c, ChatCompletionMessageFunctionToolCall):
@@ -1981,6 +1980,8 @@ def _map_chat_content(
         message.content or '', profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
     )
     if message.annotations:
+        if not content_parts:
+            content_parts = [TextPart('')]
         text_parts = [part for part in content_parts if isinstance(part, TextPart)]
         if len(content_parts) == 1 and text_parts:
             text_parts[0].citations = _map_chat_citations(message.annotations, text_parts[0].content)

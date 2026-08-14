@@ -4012,6 +4012,36 @@ async def test_openai_chat_url_citation(allow_model_requests: None):
     ]
 
 
+async def test_openai_chat_citation_without_content(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com',
+            title='Example',
+            start_index=0,
+            end_index=0,
+        ),
+    )
+    completion = completion_message(
+        chat.ChatCompletionMessage(role='assistant', content=None, annotations=[annotation])
+    )
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(completion)))
+
+    response = await model.request([], {}, ModelRequestParameters())
+
+    assert response.parts == [
+        TextPart(
+            '',
+            citations=[
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com', title='Example')],
+                    anchor=CitationAnchor(start=0, end=0, kind='marker'),
+                )
+            ],
+        )
+    ]
+
+
 async def test_openai_chat_invalid_citation_range_is_ignored(allow_model_requests: None):
     annotation = chat.chat_completion_message.Annotation(
         type='url_citation',
