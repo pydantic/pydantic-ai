@@ -98,7 +98,7 @@ Important hook families:
 - output-validation and output-processing hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants
 - event-stream hooks
 
-For each stage, the entire `wrap_*` chain encloses the `before_*` chain, the core operation with `on_*_error` recovery, and the `after_*` chain. A wrapper that returns without calling its handler skips everything inside. Recovered core failures are hidden from wrappers; hook failures and unrecovered core failures propagate through them. The exception is `agent.run_stream()` node handling: `before_node_run` fires before streaming, non-final nodes wrap later graph advancement, and the final streamed `ModelRequestNode` skips `wrap_node_run`/`after_node_run`.
+For each stage, the entire `wrap_*` chain encloses the `before_*` chain, the core operation with `on_*_error` recovery, and the `after_*` chain. A wrapper that returns without calling its handler skips everything inside, so mandatory authorization belongs in an outer wrapper or outside a short-circuitable cache. Recovered core failures are hidden from wrappers; hook failures and unrecovered core failures propagate through them. The exception is `agent.run_stream()` node handling: `before_node_run` fires before streaming, non-final nodes wrap only later graph advancement, and the final streamed `ModelRequestNode` skips `wrap_node_run`/`after_node_run`.
 
 From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
 

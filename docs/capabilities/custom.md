@@ -445,6 +445,8 @@ Capabilities can hook into seven lifecycle stages, each with up to four variants
 * **`wrap_*`** — full middleware control around the complete stage lifecycle: receives a `handler` callable and decides whether or how to run it
 * **`on_*_error`** — handles failures from the core operation inside the `wrap_*` boundary, before wrappers observe an unrecovered failure
 
+A short-circuiting wrapper skips `before_*`, including policy hooks. Put mandatory authorization in an outer wrapper or outside any short-circuitable cache.
+
 !!! tip
     For quick, application-level hooks without subclassing, use the [`Hooks`](../hooks.md) capability instead.
 
@@ -483,7 +485,7 @@ Capabilities can hook into seven lifecycle stages, each with up to four variants
 Node hooks fire however the run is driven: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent_run.next()`][pydantic_ai.run.AgentRun.next], and `async for node in agent_run:` over [`agent.iter()`][pydantic_ai.agent.Agent.iter] all take the same path.
 
 !!! note
-    [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] splits the node lifecycle around streaming: `before_node_run` fires before the stream opens. For non-final streamed nodes, `wrap_node_run` then encloses graph advancement, `on_node_run_error`, and `after_node_run`. The final streamed `ModelRequestNode` skips `wrap_node_run` and `after_node_run` because `run_stream()` returns as soon as it finds final output mid-stream. If a hook needs cleanup or result rewriting for every node, use `agent.run()` or `agent.iter()`.
+    [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] splits the node lifecycle around streaming: `before_node_run` fires before the stream opens. For non-final streamed nodes, `wrap_node_run` encloses only graph advancement; `on_node_run_error` and `after_node_run` run outside it. The final streamed `ModelRequestNode` skips `wrap_node_run` and `after_node_run` because `run_stream()` returns as soon as it finds final output mid-stream. If a hook needs cleanup or result rewriting for every node, use `agent.run()` or `agent.iter()`.
 
 ```python {title="node_logging_example.py"}
 from __future__ import annotations

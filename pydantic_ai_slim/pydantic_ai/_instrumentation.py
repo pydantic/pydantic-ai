@@ -555,7 +555,8 @@ def open_model_request_span(
             ) -> ModelRequestContext:
                 nonlocal prepared_request_context, record_metrics
 
-                assert prepared_request_context is not None
+                if prepared_request_context is None:
+                    return request_context
                 prepared_parameters = prepared_request_context.model_request_parameters
 
                 annotate_tool_call_otel_metadata(response, prepared_parameters)

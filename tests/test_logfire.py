@@ -960,6 +960,39 @@ async def test_nested_instrumentation_capabilities_capture_request_and_response(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.anyio
+@pytest.mark.parametrize('streaming', [False, True])
+async def test_instrumented_model_request_short_circuit_has_no_model_attributes(
+    capfire: CaptureLogfire, streaming: bool
+) -> None:
+    class ShortCircuit(AbstractCapability[Any]):
+        async def wrap_model_request(
+            self,
+            ctx: RunContext[Any],
+            *,
+            request_context: ModelRequestContext,
+            handler: WrapModelRequestHandler,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('cached')])
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), ShortCircuit()],
+    )
+
+    if streaming:
+        async with agent.run_stream('hello') as stream:
+            assert await stream.get_output() == 'cached'
+    else:
+        assert (await agent.run('hello')).output == 'cached'
+
+    chat_span = next(span for span in _get_spans(capfire) if span['name'].startswith('chat '))
+    assert 'gen_ai.input.messages' not in chat_span['attributes']
+    assert 'gen_ai.output.messages' not in chat_span['attributes']
+    assert 'gen_ai.usage.input_tokens' not in chat_span['attributes']
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize(
     'settings',
     [deprecated_instrumentation_settings(version=2), deprecated_instrumentation_settings(version=3)],

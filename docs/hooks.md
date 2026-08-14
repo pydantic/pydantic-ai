@@ -132,7 +132,7 @@ Node hooks fire for each graph step ([`UserPromptNode`][pydantic_ai.agent.UserPr
 Node hooks fire no matter how the run is driven: [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent_run.next()`][pydantic_ai.run.AgentRun.next], and `async for node in agent_run:` over [`agent.iter()`][pydantic_ai.agent.Agent.iter] all advance the run the same way.
 
 !!! note
-    [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] splits the node lifecycle around streaming: `before_node_run` fires before the stream opens. For non-final streamed nodes, `wrap_node_run` then encloses graph advancement, `on_node_run_error`, and `after_node_run`. The final streamed `ModelRequestNode` skips `wrap_node_run` and `after_node_run` because `run_stream()` returns as soon as it finds final output mid-stream.
+    [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] splits the node lifecycle around streaming: `before_node_run` fires before the stream opens. For non-final streamed nodes, `wrap_node_run` encloses only graph advancement; `on_node_run_error` and `after_node_run` run outside it. The final streamed `ModelRequestNode` skips `wrap_node_run` and `after_node_run` because `run_stream()` returns as soon as it finds final output mid-stream.
 
 ### Model request hooks
 
@@ -356,6 +356,8 @@ Timeouts are set via the decorator parameter (`@hooks.on.before_model_request(ti
 ## Wrap hooks
 
 Wrap hooks are the outermost layer of a stage, so they can surround the complete lifecycle with setup and teardown logic. Calling the supplied `handler` runs the `before_*` chain, the core operation with `on_*_error` recovery, and the `after_*` chain. Returning without calling the handler skips that inner lifecycle.
+
+A short-circuiting wrapper also skips policy hooks in `before_*`. Put mandatory authorization in an outer wrapper or outside any short-circuitable cache.
 
 In the `hooks.on` namespace, wrap hooks drop the `wrap_` prefix — `hooks.on.model_request` corresponds to `wrap_model_request`:
 
