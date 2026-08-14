@@ -117,6 +117,12 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # e.g. a `gateway/anthropic:` or `anthropic:` model resolved lazily via `infer_model`.
             # Safe to pass through: a deterministic, read-only config lookup.
             'anthropic',
+            # The OpenAI SDK defers importing its large generated resource tree until a model constructor
+            # accesses `client.chat.completions` or `client.responses`. Without passthrough, Temporal reloads
+            # that tree in every isolated workflow sandbox. Pass through the whole SDK so resource classes and
+            # their base classes come from one coherent module graph. Pydantic AI does not use the SDK's global
+            # client configuration: it creates per-model clients and invokes their request methods in activities.
+            'openai',
             # The `google-genai` SDK lazily imports `google.auth` submodules (e.g.
             # `google.auth.aio.credentials`) while constructing its client, which Temporal flags as
             # "imported after initial workflow load" when a `gateway/google-cloud:` (or `google-*:`)
