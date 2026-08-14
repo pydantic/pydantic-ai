@@ -159,7 +159,22 @@ cap = NativeOrLocalTool(native=CodeExecutionTool(), local=my_local_executor)
 
 ## Pydantic AI Harness
 
-[**Pydantic AI Harness**](https://pydantic.dev/docs/ai/harness/) is the official capability library for Pydantic AI -- standalone capabilities like memory, guardrails, context management, and [code mode](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/code_mode) live there rather than in core. See [What goes where?](https://pydantic.dev/docs/ai/harness/#what-goes-where) for the full breakdown, or jump to the [capability matrix](https://github.com/pydantic/pydantic-ai-harness#capability-matrix).
+[**Pydantic AI Harness**](https://pydantic.dev/docs/ai/harness/) is the official capability library and harness for Pydantic AI: 30+ capabilities that compose with the built-ins above, and complete agents assembled from them. Its [capability index](https://pydantic.dev/docs/ai/harness/#capabilities) covers both packages in one categorized view; these are the Harness entries:
+
+| Category | Capabilities |
+|---|---|
+| Harnesses | [Coder](https://pydantic.dev/docs/ai/harness/coder/), [Researcher](https://pydantic.dev/docs/ai/harness/researcher/) — complete agent stacks as regular combined capabilities |
+| Execution environments | [FileSystem](https://pydantic.dev/docs/ai/harness/filesystem/), [Shell](https://pydantic.dev/docs/ai/harness/shell/), [Modal Sandbox](https://pydantic.dev/docs/ai/harness/modal-sandbox/) |
+| Tools & native abilities | [StackOne](https://pydantic.dev/docs/ai/harness/stackone/), [LocalStack](https://pydantic.dev/docs/ai/harness/localstack/), [Macroscope](https://pydantic.dev/docs/ai/harness/macroscope/) |
+| Web & research | [Exa Search](https://pydantic.dev/docs/ai/harness/exa-search/), [Exa Agent](https://pydantic.dev/docs/ai/harness/exa-search/), [Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) |
+| Reasoning, planning & delegation | [Planning](https://pydantic.dev/docs/ai/harness/planning/), [Subagents](https://pydantic.dev/docs/ai/harness/subagents/), [Dynamic Workflow](https://pydantic.dev/docs/ai/harness/dynamic-workflow/), [Advisor](https://pydantic.dev/docs/ai/harness/advisor/) |
+| Context management | [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/), [Compaction strategies](https://pydantic.dev/docs/ai/harness/compaction/), [Tool Output Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/), [Warn On Cache Busts](https://pydantic.dev/docs/ai/harness/warn-on-cache-busts/) |
+| Knowledge & memory | [Memory](https://pydantic.dev/docs/ai/harness/memory/), [Conversation Search](https://pydantic.dev/docs/ai/harness/conversation-search/), [Skills](https://pydantic.dev/docs/ai/harness/skills/), [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/), [Pydantic AI Docs](https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/) |
+| Control & safety | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), [Spend Limits](https://pydantic.dev/docs/ai/harness/spend/), [System Reminders](https://pydantic.dev/docs/ai/harness/system-reminders/) |
+| Self-extension | [Capability Creation](https://pydantic.dev/docs/ai/harness/capability-creation/) |
+| Execution runtime | [Step Persistence](https://pydantic.dev/docs/ai/harness/step-persistence/), [Managed Prompt](https://pydantic.dev/docs/ai/harness/managed-prompt/) |
+
+The categories are shared with the built-in capabilities above — the same scheme orders the Harness section of the sidebar — and [ACP](https://pydantic.dev/docs/ai/harness/acp/) *(experimental)* serves any agent to ACP editors like Zed.
 
 ## Third-party capabilities
 
