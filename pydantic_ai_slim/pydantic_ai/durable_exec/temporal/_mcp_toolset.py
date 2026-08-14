@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from temporalio import activity, workflow
@@ -42,6 +42,8 @@ def temporalize_mcp_toolset(
     deps_type: type[AgentDepsT],
     run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
+    get_tools_operation: Callable[[RunContext[AgentDepsT]], Awaitable[dict[str, ToolDefinition]]] | None = None,
+    get_tools_registration: Callable[..., Any] | None = None,
 ) -> DurableMCPToolset[AgentDepsT]:
     for tool_name, config in tool_activity_config.items():
         if config is False:
@@ -95,13 +97,21 @@ def temporalize_mcp_toolset(
             )
         return config
 
-    async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
-        config: ActivityConfig = {'summary': f'get tools: {toolset.id}', **activity_config}
-        return await execute_activity(
-            activity=get_tools_activity_def,
-            args=[GetToolsParams(serialized_run_context=run_context_type.serialize_run_context(ctx)), ctx.deps],
-            **config,
-        )
+    durable_get_tools_operation = get_tools_operation
+    if durable_get_tools_operation is None:
+
+        async def default_get_tools_operation(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
+            config: ActivityConfig = {'summary': f'get tools: {toolset.id}', **activity_config}
+            return await execute_activity(
+                activity=get_tools_activity_def,
+                args=[GetToolsParams(serialized_run_context=run_context_type.serialize_run_context(ctx)), ctx.deps],
+                **config,
+            )
+
+        durable_get_tools_operation = default_get_tools_operation
+    else:
+        assert get_tools_registration is not None
+        get_tools_activity_def = get_tools_registration
 
     async def get_instructions_operation(
         ctx: RunContext[AgentDepsT],
@@ -143,7 +153,7 @@ def temporalize_mcp_toolset(
     return DurableMCPToolset(
         toolset,
         in_durable_context=workflow.in_workflow,
-        get_tools_operation=get_tools_operation,
+        get_tools_operation=durable_get_tools_operation,
         get_instructions_operation=get_instructions_operation,
         call_tool_operation=call_tool_operation,
         resolve_tool_config=resolve_tool_config,

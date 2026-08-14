@@ -26,6 +26,7 @@ from pydantic_ai.durable_exec._base import (
     ModelRequestOperationParams,
     ToolsetKind,
     _CallToolParams,  # pyright: ignore[reportPrivateUsage]
+    _GetToolsParams,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._operation import DurableOperationId
@@ -37,7 +38,7 @@ from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, infer_model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
@@ -48,6 +49,7 @@ from ._operation_backend import TemporalOperationBackend
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     CallToolParams,
+    GetToolsParams,
     TemporalWrapperToolset,
     resolve_tool_activity_config,
     temporalize_toolset as _default_temporalize_toolset,
@@ -95,6 +97,24 @@ class _FunctionCallTransport:
                 'Removing or renaming tools during an agent run is not supported with Temporal.'
             ) from exc
         return _CallToolParams(params.name, params.tool_args, ctx, tool)
+
+
+class _GetToolsTransport:
+    wire_type = GetToolsParams
+    result_type = dict[str, ToolDefinition]
+
+    def __init__(self, durability: TemporalDurability[Any]) -> None:
+        self._durability = durability
+
+    def dump(self, params: _GetToolsParams) -> tuple[GetToolsParams, Any]:
+        return (
+            GetToolsParams(serialized_run_context=self._durability.run_context_type.serialize_run_context(params.ctx)),
+            params.ctx.deps,
+        )
+
+    def load(self, payload: tuple[GetToolsParams, Any], *, runtime: object) -> _GetToolsParams:
+        params, deps = payload
+        return _GetToolsParams(self._durability.deserialize_operation_run_context(params.serialized_run_context, deps))
 
 
 @dataclass
@@ -470,6 +490,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def _wrap_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         if isinstance(ts, FunctionToolset):
             return self._build_function_toolset(ts)
+        try:
+            from pydantic_ai.mcp import MCPToolset
+        except ImportError:  # pragma: no cover
+            pass
+        else:
+            if isinstance(ts, MCPToolset):
+                return self._build_temporal_mcp_toolset(ts)
         ts_id = ts.id
         toolset_activity_config = self.activity_config.copy()
         if ts_id is not None:
@@ -486,6 +513,28 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._agent,
         )
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
+
+    def _build_temporal_mcp_toolset(self, toolset: Any) -> DurableToolsetBase[AgentDepsT]:
+        from ._mcp_toolset import temporalize_mcp_toolset
+
+        base_config = self._toolset_operation_config('mcp', cast(str, toolset.id))
+        get_tools = self._bind_mcp_get_tools_operation(toolset)
+
+        async def get_tools_operation(ctx: RunContext[AgentDepsT]):
+            return await get_tools(_GetToolsParams(ctx), config=base_config)
+
+        assert self._deps_type is not None
+        return temporalize_mcp_toolset(
+            toolset,
+            activity_name_prefix=f'agent__{self.name}',
+            activity_config=base_config,
+            tool_activity_config={},
+            deps_type=self._deps_type,
+            run_context_type=self.run_context_type,
+            agent=self._agent,
+            get_tools_operation=get_tools_operation,
+            get_tools_registration=get_tools.registration,
+        )
 
     def _build_operation_backend(self) -> TemporalOperationBackend:
         backend = self._operation_backend
@@ -525,6 +574,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _function_call_parameter_transport(self, toolset: FunctionToolset[AgentDepsT]) -> _FunctionCallTransport:
         return _FunctionCallTransport(self, toolset)
+
+    def _get_tools_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _GetToolsTransport:
+        return _GetToolsTransport(self)
 
     def _bound_operation_registrations(self, *operations: object) -> list[Callable[..., Any]]:
         return [cast(Any, operation).registration for operation in operations]

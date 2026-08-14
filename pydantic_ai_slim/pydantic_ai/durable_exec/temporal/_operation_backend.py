@@ -191,9 +191,10 @@ class TemporalOperationBackend(RegisteredOperationBackend[ActivityConfig]):
 
     def adopt_registrations(self, registrations: Sequence[Callable[..., object]]) -> None:
         """Adopt already-decorated toolset activities without changing their identity."""
-        self._registrations.extend(
-            registration for registration in registrations if registration not in self._registrations
-        )
+        for registration in registrations:
+            if registration in self._registrations:
+                self._registrations.remove(registration)
+            self._registrations.append(registration)
 
     def move_registration_to_end(self, registration: Callable[..., object]) -> None:
         self._registrations.remove(registration)
