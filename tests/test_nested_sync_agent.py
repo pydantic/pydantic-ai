@@ -23,8 +23,7 @@ def make_tool_delegate(inner_agent: Agent[None, str], *, stream: bool = False) -
     @agent.tool_plain
     def delegate(prompt: str) -> str:
         if stream:
-            with inner_agent.run_stream_sync(prompt) as result:
-                return result.get_output()
+            return inner_agent.run_stream_sync(prompt).get_output()
         return inner_agent.run_sync(prompt).output
 
     return agent
