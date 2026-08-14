@@ -65,6 +65,7 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -375,6 +376,26 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     """
     supported_tool_addition_modes: ClassVar[frozenset[ToolAdditionMode]] = frozenset()
     """`tool_addition_mode` values this adapter's renderer implements. See `supported_tool_deferral_modes`."""
+    compaction_requires_encrypted_content: ClassVar[bool] = False
+    """Whether this adapter's API only honors a [`CompactionPart`][pydantic_ai.messages.CompactionPart]
+    that carries encrypted content.
+
+    When set, a part without it isn't a wire boundary: the adapter would omit it, so letting it hide
+    the earlier history would send nothing in its place.
+
+    Declared by the adapter rather than the model profile: how an API carries compaction state is a
+    property of the API, not of the model behind it — the same model reached through OpenAI's Chat
+    Completions and Responses APIs answers differently, and eight providers route a profile of their
+    own through `OpenAIResponsesModel`. Independent of `compaction_retains_standing_prompt`, which
+    today's two adapters happen to answer the same way."""
+    compaction_retains_standing_prompt: ClassVar[bool] = False
+    """Whether this adapter's compaction item keeps serving the leading system items of the window
+    it replaced.
+
+    When set, re-sending the standing prompt after the boundary would duplicate it. When not (the
+    default), the standing prompt travels in a per-request channel rebuilt from those items, so the
+    trim has to re-insert them or it is silently dropped from every subsequent request. See
+    `compaction_requires_encrypted_content` for why this is declared here and not on the profile."""
 
     _provider: Provider[InterfaceClient]
     _profile: ModelProfileSpec | None = None
@@ -454,6 +475,32 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """The effective tool-addition mode: the profile's claim, if this adapter renders it."""
         mode = self.profile.get('tool_addition_mode')
         return mode if mode in self.supported_tool_addition_modes else None
+
+    def _trim_before_compaction(
+        self,
+        messages: list[ModelMessage],
+        *,
+        standing_prompt_retained: bool | None = None,
+    ) -> list[ModelMessage]:
+        """Drop history before the latest compaction boundary this adapter's API honors.
+
+        Called only by adapters that render `CompactionPart`s on the wire, and the one place their
+        declared `compaction_*` facts are turned into trim behavior — so an adapter states what its
+        API does rather than what to do about it. See `_trim_messages_before_compaction` for what
+        the trim preserves.
+
+        `standing_prompt_retained` defaults to `compaction_retains_standing_prompt`. A caller passes
+        an explicit value where its window is not an ordinary one: re-compaction plants the standing
+        prompt afresh, since retention decays across a second compaction.
+        """
+        return _trim_messages_before_compaction(
+            messages,
+            self.system,
+            requires_encrypted_content=self.compaction_requires_encrypted_content,
+            standing_prompt_retained=self.compaction_retains_standing_prompt
+            if standing_prompt_retained is None
+            else standing_prompt_retained,
+        )
 
     @abstractmethod
     async def request(
@@ -1954,7 +2001,7 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
     return count
 
 
-def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
+def _trim_messages_before_compaction(
     messages: list[ModelMessage],
     system: str,
     *,
@@ -1963,13 +2010,15 @@ def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
 ) -> list[ModelMessage]:
     """Drop history before the latest same-provider compaction part the request will send.
 
-    Shared by the adapters that honor [`CompactionPart`][pydantic_ai.messages.CompactionPart]s on
-    the wire — each calls it from its own `_map_messages`, since whether a compaction part is
-    honored at all is provider semantics. Anthropic ignores (and doesn't bill) pre-boundary blocks,
+    Reached through [`Model._trim_before_compaction`][pydantic_ai.models.Model._trim_before_compaction],
+    which derives both flags from the adapter's declarations; adapters call that from their own
+    message-prep step, since where in a request build the trim belongs is provider mechanics.
+    Anthropic ignores (and doesn't bill) pre-boundary blocks,
     so there the trim only saves request size; the OpenAI Responses API processes and bills
     replayed items that precede a compaction item (live-verified), so there it is what makes
-    compaction actually compact. `requires_encrypted_content` mirrors OpenAI's render condition: a
-    part it wouldn't send must not act as a boundary either.
+    compaction actually compact. `requires_encrypted_content` is this caller's own render condition,
+    passed to the shared wire-boundary predicate: a part the adapter would omit must not act as a
+    boundary either, or the history is dropped with nothing sent to stand in for it.
 
     The standing prompt survives via `_standing_prompt_request`; nothing else from the prefix does.
     `standing_prompt_retained` mirrors where the calling API carries the standing prompt: on
@@ -1999,10 +2048,8 @@ def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
             continue
         for part_index in range(len(message.parts) - 1, -1, -1):
             part = message.parts[part_index]
-            if not isinstance(part, CompactionPart) or part.provider_name != system:
-                continue
-            if requires_encrypted_content and not (
-                part.provider_details and 'encrypted_content' in part.provider_details
+            if not isinstance(part, CompactionPart) or not _compaction_part_is_wire_boundary(
+                part, system, requires_encrypted_content=requires_encrypted_content
             ):
                 continue
             tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]

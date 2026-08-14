@@ -111,6 +111,11 @@ def create_api_app(
 ) -> Starlette:
     """Create API app for the web chat UI.
 
+    This sub-app carries no `Host` validation of its own: `create_web_app()` applies
+    `HostValidationMiddleware` to the outer app it mounts this into. Serving it directly, or
+    re-mounting `create_web_app(...).router` (which drops application middleware), exposes the chat
+    endpoint to any `Host` — mount the app `create_web_app()` returns instead.
+
     Args:
         agent: Agent instance.
         models: Models to make available in the UI. Can be:

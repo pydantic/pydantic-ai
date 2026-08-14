@@ -3922,8 +3922,7 @@ async def test_model_calling_a_withheld_tool_is_refused_and_reveals_nothing() ->
     retries = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
     assert [str(part.content) for part in retries] == snapshot(
         [
-            "Tool 'hidden_tool' is not available yet: search for it first, then call it once the "
-            'search result has shown you its schema.'
+            "Tool 'hidden_tool' is not available yet: search for it first, then call it again once you've seen its schema."
         ]
     )
     deltas = [

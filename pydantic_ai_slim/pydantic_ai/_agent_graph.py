@@ -34,16 +34,22 @@ from pydantic_ai.models import (
 from pydantic_ai.native_tools import AbstractNativeTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.toolsets._tool_search import parse_discovered_tools
+from pydantic_ai.toolsets._tool_search import (
+    _discovered_tool_names_in_order,  # pyright: ignore[reportPrivateUsage]
+    parse_discovered_tools,
+)
 from pydantic_graph import BaseNode, End, Graph, GraphBuilder, GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import _enqueue, _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from ._cancel import RunCancellation
 from ._cost import best_effort_price, fill_response_cost
-from ._deferred_capabilities import parse_loaded_capabilities
+from ._deferred_capabilities import (
+    _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
+    parse_loaded_capabilities,
+)
 from ._instructions import normalize_toolset_instructions
-from ._run_context import set_current_run_context
+from ._run_context import AnchoredEvidence, set_current_run_context
 from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
@@ -2072,14 +2078,32 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         _refresh_discovered_tool_names(ctx)
 
         run_context = build_run_context(ctx)
+        evidence_window = _messages._post_compaction_window_for_response(  # pyright: ignore[reportPrivateUsage]
+            ctx.state.message_history, self.model_response
+        )
+        # Held in a local because it lands in two places below.
+        anchored_evidence = AnchoredEvidence(
+            discovered_tool_names=frozenset(_discovered_tool_names_in_order(evidence_window))
+            - ctx.deps.discovered_tool_names,
+            loaded_capability_ids=frozenset(_parse_loaded_capabilities(evidence_window))
+            - ctx.deps.loaded_capability_ids,
+        )
         run_context = replace(
             run_context,
             retry=ctx.state.output_retries_used,
             max_retries=ctx.deps.tool_manager.default_max_retries,
+            _anchored_evidence=anchored_evidence,
         )
 
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+        # The manager was already prepared for this same run step before the model request, so
+        # `for_run_step` deliberately returns it unchanged, keeping the retries it accumulated —
+        # which is why the evidence lands field by field rather than by swapping in `run_context`.
+        # Only the retrospective evidence is carried: replacing the prospective shared sets would
+        # affect the next request's reveal pruning and search ranking.
+        assert ctx.deps.tool_manager.ctx is not None
+        ctx.deps.tool_manager.ctx._anchored_evidence = anchored_evidence  # pyright: ignore[reportPrivateUsage]
 
         # Under `end_strategy='early'`, `response_output` holds the response's `(text, files)`. If it carries a
         # valid non-tool output (schema-validated text, or an image) and every co-emitted tool call is a plain

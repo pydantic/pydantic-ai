@@ -84,6 +84,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 try:
     from prefect import flow, task
     from prefect.context import FlowRunContext, TaskRunContext
+    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
     from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import (
@@ -169,8 +170,13 @@ def setup_logfire_instrumentation() -> Iterator[None]:
 @pytest.fixture(autouse=True, scope='session')
 def setup_prefect_test_harness() -> Iterator[None]:
     """Set up Prefect test harness for all tests."""
-    with prefect_test_harness(server_startup_timeout=60):
-        yield
+    # The task-run recorder is a background writer against the same sqlite file the flows write to.
+    # Prefect PRAGMAs a 60s `busy_timeout` onto every connection, and under CI contention the
+    # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
+    # here reads what it records: task run states reach the API through the task engine.
+    with temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}):
+        with prefect_test_harness(server_startup_timeout=60):
+            yield
 
 
 @pytest.fixture(autouse=True)
