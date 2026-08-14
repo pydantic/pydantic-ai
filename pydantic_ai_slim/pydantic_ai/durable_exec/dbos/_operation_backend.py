@@ -7,12 +7,12 @@ from dbos import DBOS
 
 from pydantic_ai import ToolsetTool, messages as _messages
 from pydantic_ai.durable_exec._base import (
+    CancelSuspendedResponseOperationParams,
+    EventStreamHandlerOperationParams,
+    ModelRequestOperationParams,
     _CallToolParams,  # pyright: ignore[reportPrivateUsage]
-    _CancelSuspendedResponseParams,  # pyright: ignore[reportPrivateUsage]
     _DynamicCallToolParams,  # pyright: ignore[reportPrivateUsage]
-    _EventStreamHandlerParams,  # pyright: ignore[reportPrivateUsage]
     _GetToolsParams,  # pyright: ignore[reportPrivateUsage]
-    _ModelRequestParams,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.durable_exec._operation import (
     CallToolId,
@@ -120,7 +120,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     model_request_parameters: ModelRequestParameters,
                     run_context: RunContext[Any],
                 ) -> object:
-                    params = _ModelRequestParams(
+                    params = ModelRequestOperationParams(
                         model_id, messages, model_settings, model_request_parameters, run_context
                     )
                     return operation.result_codec.dump(await operation.handler(cast(P, params)))
@@ -128,7 +128,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                 step = DBOS.step(name=name, **step_config)(model_step)
 
                 async def dispatch_model(step: Callable[..., Any], params: P) -> R:
-                    model_params = cast(_ModelRequestParams, params)
+                    model_params = cast(ModelRequestOperationParams, params)
                     payload = await step(
                         model_params.model_id,
                         model_params.messages,
@@ -145,13 +145,13 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                 async def cancel_step(
                     model_id: str | None, response: ModelResponse, run_context: RunContext[Any]
                 ) -> object:
-                    params = _CancelSuspendedResponseParams(model_id, response, run_context)
+                    params = CancelSuspendedResponseOperationParams(model_id, response, run_context)
                     return operation.result_codec.dump(await operation.handler(cast(P, params)))
 
                 step = DBOS.step(name=name, **step_config)(cancel_step)
 
                 async def dispatch_cancel(step: Callable[..., Any], params: P) -> R:
-                    cancel_params = cast(_CancelSuspendedResponseParams, params)
+                    cancel_params = cast(CancelSuspendedResponseOperationParams, params)
                     payload = await step(cancel_params.model_id, cancel_params.response, cancel_params.run_context)
                     return operation.result_codec.load(payload)
 
@@ -160,13 +160,13 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
             case EventStreamHandlerId():
 
                 async def event_step(event: _messages.AgentStreamEvent, run_context: RunContext[Any]) -> object:
-                    params = _EventStreamHandlerParams(event, run_context)
+                    params = EventStreamHandlerOperationParams(event, run_context)
                     return operation.result_codec.dump(await operation.handler(cast(P, params)))
 
                 step = DBOS.step(name=name, **step_config)(event_step)
 
                 async def dispatch_event(step: Callable[..., Any], params: P) -> R:
-                    event_params = cast(_EventStreamHandlerParams, params)
+                    event_params = cast(EventStreamHandlerOperationParams, params)
                     payload = await step(event_params.event, event_params.run_context)
                     return operation.result_codec.load(payload)
 

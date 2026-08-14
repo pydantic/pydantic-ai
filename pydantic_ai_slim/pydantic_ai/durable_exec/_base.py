@@ -95,7 +95,7 @@ _MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
 
 @dataclass(frozen=True)
-class _ModelRequestParams:
+class ModelRequestOperationParams:
     model_id: str | None
     messages: list[ModelMessage]
     model_settings: ModelSettings | None
@@ -104,14 +104,14 @@ class _ModelRequestParams:
 
 
 @dataclass(frozen=True)
-class _CancelSuspendedResponseParams:
+class CancelSuspendedResponseOperationParams:
     model_id: str | None
     response: ModelResponse
-    run_context: RunContext[Any]
+    run_context: RunContext[Any] | None
 
 
 @dataclass(frozen=True)
-class _EventStreamHandlerParams:
+class EventStreamHandlerOperationParams:
     event: AgentStreamEvent
     run_context: RunContext[Any]
 
@@ -136,8 +136,8 @@ class _DynamicCallToolParams:
     ctx: RunContext[Any]
 
 
-class _ModelRequestCacheIdentity(CacheIdentity[_ModelRequestParams]):
-    def project(self, params: _ModelRequestParams) -> tuple[object, ...]:
+class _ModelRequestCacheIdentity(CacheIdentity[ModelRequestOperationParams]):
+    def project(self, params: ModelRequestOperationParams) -> tuple[object, ...]:
         return (
             params.model_id,
             params.messages,
@@ -147,13 +147,13 @@ class _ModelRequestCacheIdentity(CacheIdentity[_ModelRequestParams]):
         )
 
 
-class _CancelSuspendedResponseCacheIdentity(CacheIdentity[_CancelSuspendedResponseParams]):
-    def project(self, params: _CancelSuspendedResponseParams) -> tuple[object, ...]:
+class _CancelSuspendedResponseCacheIdentity(CacheIdentity[CancelSuspendedResponseOperationParams]):
+    def project(self, params: CancelSuspendedResponseOperationParams) -> tuple[object, ...]:
         return (params.model_id, params.response, params.run_context)
 
 
-class _EventStreamHandlerCacheIdentity(CacheIdentity[_EventStreamHandlerParams]):
-    def project(self, params: _EventStreamHandlerParams) -> tuple[object, ...]:
+class _EventStreamHandlerCacheIdentity(CacheIdentity[EventStreamHandlerOperationParams]):
+    def project(self, params: EventStreamHandlerOperationParams) -> tuple[object, ...]:
         return (params.event,)
 
 
@@ -1049,6 +1049,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         if not self.in_durable_context:
             return await handler(request_context)
 
+        self._validate_model_request_parameters(request_context.model_request_parameters)
         model_id = self._model_id_for_request(ctx, request_context)
         model_name = request_context.model.model_name
         backend = self._build_operation_backend()
@@ -1059,7 +1060,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
             return await request_operation(
-                _ModelRequestParams(
+                ModelRequestOperationParams(
                     model_id,
                     request.messages,
                     request.model_settings,
@@ -1070,7 +1071,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
             result = await request_stream_operation(
-                _ModelRequestParams(
+                ModelRequestOperationParams(
                     model_id,
                     request.messages,
                     request.model_settings,
@@ -1081,7 +1082,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return await self._load_streamed_activity_result(result, request.model_request_parameters)
 
         async def cancel_suspended_response_segment(response: ModelResponse) -> None:
-            await cancel_suspended_response_operation(_CancelSuspendedResponseParams(model_id, response, ctx))
+            await cancel_suspended_response_operation(CancelSuspendedResponseOperationParams(model_id, response, ctx))
 
         request_context.model = DurableModel(
             request_context.model,
@@ -1101,7 +1102,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             DurableOperation(
                 operation_id=ModelRequestId(model_id, False, model_name),
                 handler=self._model_request_operation,
-                parameter_transport=IdentityParameterTransport[_ModelRequestParams](),
+                parameter_transport=self._model_request_parameter_transport(ModelResponse),
                 cache_identity=_ModelRequestCacheIdentity(),
                 result_codec=self._legacy_result_codec(ModelResponse),
                 config_role=OperationConfigRole.MODEL,
@@ -1111,7 +1112,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             DurableOperation(
                 operation_id=ModelRequestId(model_id, True, model_name),
                 handler=self._model_request_stream_operation,
-                parameter_transport=IdentityParameterTransport[_ModelRequestParams](),
+                parameter_transport=self._model_request_parameter_transport(StreamedActivityResult),
                 cache_identity=_ModelRequestCacheIdentity(),
                 result_codec=self._legacy_result_codec(StreamedActivityResult),
                 config_role=OperationConfigRole.MODEL,
@@ -1121,7 +1122,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             DurableOperation(
                 operation_id=CancelSuspendedResponseId(model_id, model_name),
                 handler=self._cancel_suspended_response_operation,
-                parameter_transport=IdentityParameterTransport[_CancelSuspendedResponseParams](),
+                parameter_transport=self._cancel_suspended_response_parameter_transport(),
                 cache_identity=_CancelSuspendedResponseCacheIdentity(),
                 result_codec=self._legacy_result_codec(type(None)),
                 config_role=OperationConfigRole.MODEL,
@@ -1130,13 +1131,19 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         return request_operation, request_stream_operation, cancel_suspended_response_operation
 
-    async def _model_request_operation(self, params: _ModelRequestParams) -> ModelResponse:
+    def _model_request_parameter_transport(self, result_type: object) -> Any:
+        return IdentityParameterTransport[ModelRequestOperationParams]()
+
+    def _cancel_suspended_response_parameter_transport(self) -> Any:
+        return IdentityParameterTransport[CancelSuspendedResponseOperationParams]()
+
+    async def _model_request_operation(self, params: ModelRequestOperationParams) -> ModelResponse:
         async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
             response = await model.request(params.messages, params.model_settings, params.model_request_parameters)
         self._stamp_response(response, params.messages)
         return response
 
-    async def _model_request_stream_operation(self, params: _ModelRequestParams) -> StreamedActivityResult:
+    async def _model_request_stream_operation(self, params: ModelRequestOperationParams) -> StreamedActivityResult:
         async with self._durable_model_scope(params.model_id, params.run_context) as (model, durable_ctx):
             async with model.request_stream(
                 params.messages, params.model_settings, params.model_request_parameters, durable_ctx
@@ -1150,9 +1157,20 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._stamp_response(response, params.messages)
         return StreamedActivityResult(response=response, events=events)
 
-    async def _cancel_suspended_response_operation(self, params: _CancelSuspendedResponseParams) -> None:
+    async def _cancel_suspended_response_operation(self, params: CancelSuspendedResponseOperationParams) -> None:
+        if params.run_context is None:
+            await self._cancel_suspended_response_without_run_context(params.model_id, params.response)
+            return
         async with self._durable_model_scope(params.model_id, params.run_context) as (model, _):
             await model.cancel_suspended_response(params.response)
+
+    async def _cancel_suspended_response_without_run_context(
+        self, model_id: str | None, response: ModelResponse
+    ) -> None:
+        raise RuntimeError('Cancelling a suspended response requires a serialized run context')
+
+    def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
+        """Validate engine-specific model request restrictions before durable dispatch."""
 
     def _model_id_suffix(self, model_id: str | None) -> str:
         """Suffix non-default model units while keeping the agent's default model names stable."""
@@ -1202,20 +1220,23 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         family forces.
         """
         bound_operation = self._bound_event_operation or self._bind_event_operation(self._build_operation_backend())
-        await bound_operation(_EventStreamHandlerParams(event, ctx))
+        await bound_operation(EventStreamHandlerOperationParams(event, ctx))
 
     def _bind_event_operation(self, backend: Any) -> Any:
         operation = DurableOperation(
             operation_id=EventStreamHandlerId(),
             handler=self._event_stream_handler_operation,
-            parameter_transport=IdentityParameterTransport[_EventStreamHandlerParams](),
+            parameter_transport=self._event_stream_handler_parameter_transport(),
             cache_identity=_EventStreamHandlerCacheIdentity(),
             result_codec=self._legacy_result_codec(type(None)),
             config_role=OperationConfigRole.EVENT,
         )
         return backend.bind(operation)
 
-    async def _event_stream_handler_operation(self, params: _EventStreamHandlerParams) -> None:
+    def _event_stream_handler_parameter_transport(self) -> Any:
+        return IdentityParameterTransport[EventStreamHandlerOperationParams]()
+
+    async def _event_stream_handler_operation(self, params: EventStreamHandlerOperationParams) -> None:
         handler = self._effective_event_stream_handler()
         assert handler is not None
         with self._durable_run_context_scope(params.run_context) as durable_ctx:

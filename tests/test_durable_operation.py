@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Literal, cast
 
@@ -301,6 +301,12 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
 
     from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._durability import (
+        _CancelParams,  # pyright: ignore[reportPrivateUsage]
+        _EventStreamHandlerParams,  # pyright: ignore[reportPrivateUsage]
+        _RequestParams,  # pyright: ignore[reportPrivateUsage]
+        _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal._toolset import toolset_temporal_activities
 
     agent = Agent(
@@ -334,6 +340,19 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
         return definition.name, inspect.signature(fn)
 
     assert [sdk_definition(item) for item in registrations] == [sdk_definition(item) for item in legacy_registrations]
+
+    expected_signatures = {
+        durability.request_activity: (_RequestParams, ModelResponse),
+        durability.request_stream_activity: (_RequestParams, _StreamedActivityPayload),
+        durability.event_stream_handler_activity: (_EventStreamHandlerParams, type(None)),
+        durability.cancel_suspended_response_activity: (_CancelParams, type(None)),
+    }
+    for activity_fn, (params_type, result_type) in expected_signatures.items():
+        signature = inspect.signature(activity_fn)
+        assert signature.parameters['params'].annotation is params_type
+        assert signature.parameters['deps'].annotation == agent.deps_type | None
+        assert signature.parameters['deps'].default is None
+        assert signature.return_annotation == result_type
 
 
 async def test_temporal_backend_binds_existing_positional_activity() -> None:
@@ -372,6 +391,47 @@ async def test_temporal_backend_binds_existing_positional_activity() -> None:
     assert await bound.operation.handler(('payload', 42)) == 'payload:42'
     assert await bound(('payload', 42)) == 'payload:42'
     assert backend.config_for_tool(bound.operation, None, 'tool') is tool_config
+
+
+async def test_temporal_backend_dispatches_cancel_with_legacy_contextless_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip('temporalio')
+    from pydantic_ai.durable_exec._base import CancelSuspendedResponseOperationParams
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._durability import _CancelParams  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(TestModel(), name='cancel-dispatch', capabilities=[TemporalDurability()])
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+
+    dispatched: list[tuple[Callable[..., object], Sequence[object], object]] = []
+
+    async def execute_activity(activity: Callable[..., object], *, args: Sequence[object], **config: object) -> None:
+        dispatched.append((activity, args, config['summary']))
+
+    monkeypatch.setattr(
+        'pydantic_ai.durable_exec.temporal._operation_backend.execute_activity',
+        execute_activity,
+    )
+    operations = durability._bound_model_operations  # pyright: ignore[reportPrivateUsage]
+    assert operations is not None
+    cancel_operation = operations[2]
+    response = ModelResponse(parts=[TextPart('cancel')])
+    await cancel_operation(CancelSuspendedResponseOperationParams(None, response, None))
+
+    assert dispatched == [
+        (
+            durability.cancel_suspended_response_activity,
+            (_CancelParams(response=response), None),
+            'cancel suspended response: test:test',
+        )
+    ]
+
+    with pytest.raises(RuntimeError, match='requires a serialized run context'):
+        await JournalDurability()._cancel_suspended_response_operation(  # pyright: ignore[reportPrivateUsage]
+            CancelSuspendedResponseOperationParams(None, response, None)
+        )
 
 
 def _exhaustive_identity(operation_id: DurableOperationId) -> str:

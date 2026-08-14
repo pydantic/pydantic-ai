@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, cast
@@ -13,39 +12,26 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai import messages as _messages
 from pydantic_ai._agent_graph import set_agent_graph_sleep
-from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
-    WrapModelRequestHandler,
     WrapRunHandler,
 )
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability, ToolsetKind
-from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
-from pydantic_ai.durable_exec._operation import (
-    CancelSuspendedResponseId,
-    EventStreamHandlerId,
-    ModelRequestId,
-    OperationConfigRole,
+from pydantic_ai.durable_exec._base import (
+    BaseDurabilityCapability,
+    CancelSuspendedResponseOperationParams,
+    EventStreamHandlerOperationParams as _SemanticEventStreamHandlerParams,
+    ModelRequestOperationParams,
+    ToolsetKind,
 )
+from pydantic_ai.durable_exec._codec import IDENTITY_CODEC
 from pydantic_ai.durable_exec._runtime_toolsets import RuntimeToolsetKind
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase, Lifecycle
-from pydantic_ai.durable_exec._utils import (
-    DurableModel,
-    StreamedActivityResult,
-    capture_event_stream,
-    disable_threads,
-)
+from pydantic_ai.durable_exec._utils import StreamedActivityResult, disable_threads
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
-from pydantic_ai.models import (
-    CompletedStreamedResponse,
-    Model,
-    ModelRequestContext,
-    ModelRequestParameters,
-    infer_model,
-)
+from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, infer_model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -54,13 +40,10 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 if TYPE_CHECKING:
     pass
 
-from ._activity_execution import execute_activity
 from ._operation_backend import TemporalOperationBackend
 from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     TemporalWrapperToolset,
-    heartbeating,
-    model_response_payload_errors,
     temporalize_toolset as _default_temporalize_toolset,
     toolset_temporal_activities,
     validate_activity_config,
@@ -99,6 +82,93 @@ class _EventStreamHandlerParams:
 # stream activity returned the bare response. Remove it (and the workflow-side event synthesis
 # in `request_stream_segment`) once those histories have aged out, along with `TemporalAgent`.
 _StreamedActivityPayload: TypeAlias = StreamedActivityResult | ModelResponse
+
+
+class _ModelRequestTransport:
+    wire_type = _RequestParams
+
+    def __init__(self, durability: TemporalDurability[Any], *, result_type: object) -> None:
+        self._durability = durability
+        self.result_type = result_type
+
+    def dump(self, params: ModelRequestOperationParams) -> tuple[_RequestParams, Any]:
+        ctx = params.run_context
+        return (
+            _RequestParams(
+                messages=params.messages,
+                model_settings=cast(dict[str, Any] | None, params.model_settings),
+                model_request_parameters=params.model_request_parameters,
+                serialized_run_context=self._durability.run_context_type.serialize_run_context(ctx),
+                model_id=params.model_id,
+            ),
+            ctx.deps,
+        )
+
+    def load(self, payload: tuple[_RequestParams, Any], *, runtime: object) -> ModelRequestOperationParams:
+        request, deps = payload
+        ctx = self._durability.deserialize_operation_run_context(request.serialized_run_context, deps)
+        return ModelRequestOperationParams(
+            request.model_id,
+            request.messages,
+            cast(ModelSettings | None, request.model_settings),
+            request.model_request_parameters,
+            ctx,
+        )
+
+
+class _CancelTransport:
+    wire_type = _CancelParams
+    result_type = type(None)
+
+    def __init__(self, durability: TemporalDurability[Any]) -> None:
+        self._durability = durability
+
+    def dump(self, params: CancelSuspendedResponseOperationParams) -> tuple[_CancelParams, Any]:
+        ctx = params.run_context
+        return (
+            _CancelParams(
+                response=params.response,
+                model_id=params.model_id,
+                serialized_run_context=(
+                    self._durability.run_context_type.serialize_run_context(ctx) if ctx is not None else None
+                ),
+            ),
+            ctx.deps if ctx is not None else None,
+        )
+
+    def load(self, payload: tuple[_CancelParams, Any], *, runtime: object) -> CancelSuspendedResponseOperationParams:
+        params, deps = payload
+        ctx = (
+            self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
+            if params.serialized_run_context is not None
+            else None
+        )
+        return CancelSuspendedResponseOperationParams(params.model_id, params.response, ctx)
+
+
+class _EventStreamHandlerTransport:
+    wire_type = _EventStreamHandlerParams
+    result_type = type(None)
+
+    def __init__(self, durability: TemporalDurability[Any]) -> None:
+        self._durability = durability
+
+    def dump(self, params: _SemanticEventStreamHandlerParams) -> tuple[_EventStreamHandlerParams, Any]:
+        ctx = params.run_context
+        return (
+            _EventStreamHandlerParams(
+                event=params.event,
+                serialized_run_context=self._durability.run_context_type.serialize_run_context(ctx),
+            ),
+            ctx.deps,
+        )
+
+    def load(
+        self, payload: tuple[_EventStreamHandlerParams, Any], *, runtime: object
+    ) -> _SemanticEventStreamHandlerParams:
+        params, deps = payload
+        ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
+        return _SemanticEventStreamHandlerParams(params.event, ctx)
 
 
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
@@ -309,6 +379,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 'Construct the agent at module level (or in worker setup code) and reference it from the workflow.'
             )
 
+    def deserialize_operation_run_context(self, serialized_run_context: Any, deps: Any) -> RunContext[AgentDepsT]:
+        return deserialize_run_context(self.run_context_type, serialized_run_context, deps=deps, agent=self._agent)
+
     def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         # Discover the deps type from the agent unless explicitly configured.
         if self._deps_type is None:
@@ -321,103 +394,26 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             model_config=self._model_activity_config,
             event_config=self._event_stream_handler_activity_config,
             tool_config=self.activity_config,
+            runtime=self,
         )
         self._register_activities(agent)
 
     def _register_activities(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
-        """Register all Temporal activities for model requests, event streaming, and toolsets."""
-        assert self._deps_type is not None  # set by `for_agent` before activities are registered
-        run_context_type = self.run_context_type
+        """Bind common model/event operations and adopt the existing toolset activities."""
         backend = self._operation_backend
         assert backend is not None
 
-        def register_activity(
-            fn: Callable[..., Any], *, operation_id: ModelRequestId | CancelSuspendedResponseId | EventStreamHandlerId
-        ) -> Callable[..., Any]:
-            role = (
-                OperationConfigRole.EVENT
-                if isinstance(operation_id, EventStreamHandlerId)
-                else OperationConfigRole.MODEL
-            )
-            return backend.register_activity(fn, operation_id=operation_id, config_role=role).registration
-
-        # --- Model request activities ---
-
-        async def request_activity(params: _RequestParams, deps: Any | None = None) -> ModelResponse:
-            run_context = deserialize_run_context(
-                run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
-            )
-            model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
-            async with heartbeating():
-                with set_current_run_context(run_context):
-                    return await model_for_request.request(
-                        params.messages,
-                        cast(ModelSettings | None, params.model_settings),
-                        params.model_request_parameters,
-                    )
-
-        self.request_activity = register_activity(request_activity, operation_id=ModelRequestId(None, False, 'default'))
-
-        async def request_stream_activity(params: _RequestParams, deps: Any) -> _StreamedActivityPayload:
-            run_context = deserialize_run_context(
-                run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
-            )
-            model_for_request = await self._resolve_model_for_request(params.model_id, run_context)
-            async with heartbeating():
-                with set_current_run_context(run_context):
-                    async with model_for_request.request_stream(
-                        params.messages,
-                        cast(ModelSettings | None, params.model_settings),
-                        params.model_request_parameters,
-                        run_context,
-                    ) as streamed_response:
-                        events = await capture_event_stream(
-                            run_context=run_context,
-                            stream=streamed_response,
-                            handler=self._event_stream_handler,
-                        )
-                return StreamedActivityResult(response=streamed_response.get(), events=events)
-
-        self.request_stream_activity = register_activity(
-            request_stream_activity, operation_id=ModelRequestId(None, True, 'default')
-        )
+        default_model = self._models_by_id.get('default')
+        model_name = self._default_model_id or (default_model.model_id if default_model is not None else 'default')
+        self._bound_model_operations = self._bind_model_operations(backend, model_id=None, model_name=model_name)
+        self.request_activity = self._bound_model_operations[0].registration
+        self.request_stream_activity = self._bound_model_operations[1].registration
+        self.cancel_suspended_response_activity = self._bound_model_operations[2].registration
 
         if self._event_stream_handler is not None:
-            handler = self._event_stream_handler
-
-            async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: Any) -> None:
-                async with heartbeating():
-                    run_context = deserialize_run_context(
-                        run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
-                    )
-                    await handler(run_context, self._single_event_stream(params.event))
-
-            self.event_stream_handler_activity = register_activity(
-                event_stream_handler_activity, operation_id=EventStreamHandlerId()
-            )
-
-        async def cancel_suspended_response_activity(params: _CancelParams, deps: Any = None) -> None:
-            if params.serialized_run_context is None:
-                model = self._models_by_id.get(params.model_id or 'default')
-                if model is None:
-                    assert params.model_id is not None
-                    model = infer_model(params.model_id)
-                run_context = None
-            else:
-                run_context = deserialize_run_context(
-                    run_context_type, params.serialized_run_context, deps=deps, agent=self._agent
-                )
-                model = await self._resolve_model_for_request(params.model_id, run_context)
-            # The cancel activity shares `_model_activity_config`, whose default `heartbeat_timeout`
-            # would otherwise fail a slow provider-teardown call for missed heartbeats.
-            async with heartbeating():
-                with nullcontext() if run_context is None else set_current_run_context(run_context):
-                    await model.cancel_suspended_response(params.response)
-
-        self.cancel_suspended_response_activity = register_activity(
-            cancel_suspended_response_activity,
-            operation_id=CancelSuspendedResponseId(None, 'default'),
-        )
+            self._bound_event_operation = self._bind_event_operation(backend)
+            self.event_stream_handler_activity = self._bound_event_operation.registration
+            backend.move_registration_to_end(self.cancel_suspended_response_activity)
 
         # --- Toolset wrapping ---
         self._register_toolsets(agent)
@@ -460,21 +456,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return workflow.in_workflow()
 
-    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
-        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        config: ActivityConfig = {
-            'summary': f'handle event: {event.event_kind}',
-            **self._event_stream_handler_activity_config,
-        }
-        await execute_activity(
-            activity=self.event_stream_handler_activity,
-            args=[
-                _EventStreamHandlerParams(event=event, serialized_run_context=serialized_run_context),
-                ctx.deps,
-            ],
-            **config,
-        )
-
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],
@@ -515,85 +496,37 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 'can register the activities for the toolsets they contribute.'
             )
 
-    async def wrap_model_request(
-        self,
-        ctx: RunContext[AgentDepsT],
-        *,
-        request_context: ModelRequestContext,
-        handler: WrapModelRequestHandler,
-    ) -> ModelResponse:
-        """Route model requests through Temporal activities when inside a workflow."""
-        if not self.in_durable_context:
-            return await handler(request_context)
+    def _model_request_parameter_transport(self, result_type: object) -> _ModelRequestTransport:
+        if result_type is StreamedActivityResult:
+            result_type = _StreamedActivityPayload
+        return _ModelRequestTransport(self, result_type=result_type)
 
-        self._validate_model_request_parameters(request_context.model_request_parameters)
+    def _cancel_suspended_response_parameter_transport(self) -> _CancelTransport:
+        return _CancelTransport(self)
 
-        # Prefer the run's original model-id string (provenance) as the selection token;
-        # a model swapped in by an outer capability falls back to `_find_model_id` on
-        # `request_context.model` (which an outer instrumentation capability may have
-        # already unwrapped — instances are unwrap-matched by identity).
-        model_id = self._model_id_for_request(ctx, request_context)
-        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        model_name = model_id or request_context.model.model_id
-        deps = ctx.deps
+    def _event_stream_handler_parameter_transport(self) -> _EventStreamHandlerTransport:
+        return _EventStreamHandlerTransport(self)
 
-        def params(request: ModelRequestContext) -> _RequestParams:
-            return _RequestParams(
-                request.messages,
-                cast(dict[str, Any] | None, request.model_settings),
-                request.model_request_parameters,
-                serialized_run_context,
-                model_id,
+    async def _load_streamed_activity_result(
+        self, result: object, model_request_parameters: ModelRequestParameters
+    ) -> StreamedActivityResult:
+        if isinstance(result, ModelResponse):
+            stream = CompletedStreamedResponse(
+                result,
+                model_request_parameters=model_request_parameters,
+                replay_events=True,
             )
+            return StreamedActivityResult(response=result, events=[event async for event in stream])
+        return cast(StreamedActivityResult, result)
 
-        async def request_segment(request: ModelRequestContext) -> ModelResponse:
-            config: ActivityConfig = {'summary': f'request model: {model_name}', **self._model_activity_config}
-            with model_response_payload_errors(model_name):
-                return await execute_activity(activity=self.request_activity, args=[params(request), deps], **config)
-
-        async def request_stream_segment(request: ModelRequestContext) -> StreamedActivityResult:
-            config: ActivityConfig = {
-                'summary': f'request model: {model_name} (stream)',
-                **self._model_activity_config,
-            }
-            with model_response_payload_errors(model_name):
-                result = await execute_activity(
-                    activity=self.request_stream_activity, args=[params(request), deps], **config
-                )
-            if isinstance(result, ModelResponse):
-                stream = CompletedStreamedResponse(
-                    result,
-                    model_request_parameters=request.model_request_parameters,
-                    replay_events=True,
-                )
-                return StreamedActivityResult(response=result, events=[event async for event in stream])
-            return result
-
-        async def cancel_suspended_response_segment(response: ModelResponse) -> None:
-            config: ActivityConfig = {
-                'summary': f'cancel suspended response: {model_name}',
-                **self._model_activity_config,
-            }
-            await execute_activity(
-                activity=self.cancel_suspended_response_activity,
-                args=[
-                    _CancelParams(
-                        response=response,
-                        model_id=model_id,
-                        serialized_run_context=serialized_run_context,
-                    ),
-                    deps,
-                ],
-                **config,
-            )
-
-        request_context.model = DurableModel(
-            request_context.model,
-            request_segment=request_segment,
-            request_stream_segment=request_stream_segment,
-            cancel_suspended_response_segment=cancel_suspended_response_segment,
-        )
-        return await handler(request_context)
+    async def _cancel_suspended_response_without_run_context(
+        self, model_id: str | None, response: ModelResponse
+    ) -> None:
+        model = self._models_by_id.get(model_id or 'default')
+        if model is None:
+            assert model_id is not None
+            model = infer_model(model_id)
+        await model.cancel_suspended_response(response)
 
     def _validate_model_request_parameters(self, model_request_parameters: ModelRequestParameters) -> None:
         if model_request_parameters.allow_image_output:
