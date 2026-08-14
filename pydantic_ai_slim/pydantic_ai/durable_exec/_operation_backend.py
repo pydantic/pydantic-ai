@@ -11,32 +11,35 @@ P = TypeVar('P')
 W = TypeVar('W')
 R = TypeVar('R')
 ConfigT = TypeVar('ConfigT')
-P_contra = TypeVar('P_contra', contravariant=True)
-R_co = TypeVar('R_co', covariant=True)
+P_bound = TypeVar('P_bound')
+W_bound = TypeVar('W_bound')
+R_bound = TypeVar('R_bound')
 
 
-class BoundDurableOperation(Generic[P_contra, R_co], Protocol):
+class BoundDurableOperation(Generic[P_bound, W_bound, R_bound], Protocol):
     @property
     @abstractmethod
-    def operation(self) -> object: ...
+    def operation(self) -> DurableOperation[P_bound, W_bound, R_bound]: ...
 
     @abstractmethod
-    async def __call__(self, params: P_contra, *, config: object | None = None) -> R_co: ...
+    async def __call__(self, params: P_bound, *, config: object | None = None) -> R_bound: ...
 
 
 class DurableOperationBackend(Protocol):
-    def bind(self, operation: DurableOperation[P, W, R]) -> BoundDurableOperation[P, R]: ...
+    def bind(self, operation: DurableOperation[P, W, R]) -> BoundDurableOperation[P, W, R]: ...
 
     def registrations(self) -> Sequence[Callable[..., object]]: ...
 
 
 class _CallableBoundOperation(Generic[P, R]):
-    def __init__(self, operation: object, dispatch: Callable[[P, object | None], Awaitable[R]]) -> None:
+    def __init__(
+        self, operation: DurableOperation[P, P, R], dispatch: Callable[[P, object | None], Awaitable[R]]
+    ) -> None:
         self._operation = operation
         self._dispatch = dispatch
 
     @property
-    def operation(self) -> object:
+    def operation(self) -> DurableOperation[P, P, R]:
         return self._operation
 
     async def __call__(self, params: P, *, config: object | None = None) -> R:
@@ -48,7 +51,7 @@ class CallableOperationBackend(ABC, Generic[ConfigT]):
         self._namer = namer
         self._config = config
 
-    def bind(self, operation: DurableOperation[P, P, R]) -> BoundDurableOperation[P, R]:
+    def bind(self, operation: DurableOperation[P, P, R]) -> BoundDurableOperation[P, P, R]:
         async def dispatch(params: P, explicit_config: object | None) -> R:
             invocation_name = self._namer.invocation_name(operation.operation_id, params)
             resolved_config = (
@@ -80,6 +83,39 @@ class CallableOperationBackend(ABC, Generic[ConfigT]):
         *,
         name: str,
         body: Callable[[], Awaitable[object]],
-        cache_key: object,
+        cache_key: tuple[object, ...],
         config: object,
     ) -> object: ...
+
+
+class LegacyDurableCapability(Protocol):
+    async def run_durable_unit(
+        self,
+        name: str,
+        fn: Callable[[], Awaitable[object]],
+        *,
+        inputs: tuple[object, ...],
+        config: object,
+    ) -> object: ...
+
+
+class LegacyCallableBackend(CallableOperationBackend[ConfigT]):
+    def __init__(
+        self,
+        capability: LegacyDurableCapability,
+        *,
+        namer: DurableOperationNamer,
+        config: DurableOperationConfig[ConfigT],
+    ) -> None:
+        super().__init__(namer=namer, config=config)
+        self._capability = capability
+
+    async def _execute(
+        self,
+        *,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: object,
+    ) -> object:
+        return await self._capability.run_durable_unit(name, body, inputs=cache_key, config=config)

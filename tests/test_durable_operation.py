@@ -27,7 +27,7 @@ from pydantic_ai.durable_exec._operation import (
     TypedResultCodec,
     ValidateToolArgumentsId,
 )
-from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend
+from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend, LegacyCallableBackend
 from pydantic_ai.durable_exec._operation_names import (
     DBOSOperationNamer,
     DurableOperationNamer,
@@ -99,6 +99,8 @@ TEMPORAL_ACTIVITY_NAMES = {
 
 class JournalDurability(BaseDurabilityCapability[Any]):
     engine_name = 'Journal operation test stub'
+    _durable_unit_noun = 'unit'
+    _durable_container_noun = 'journal'
     _codec: ClassVar = JSON_CODEC
     _unsupported_runtime_toolset_kinds: ClassVar = frozenset()
     _wrapped_toolset_kinds: ClassVar = frozenset({'function', 'mcp', 'dynamic'})
@@ -112,9 +114,14 @@ class JournalDurability(BaseDurabilityCapability[Any]):
     def in_durable_context(self) -> bool:
         return True
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.calls: list[tuple[str, tuple[Any, ...], Any]] = []
+
     async def run_durable_unit(
         self, name: str, fn: Callable[[], Awaitable[Any]], *, inputs: tuple[Any, ...], config: Any
     ) -> Any:
+        self.calls.append((name, inputs, config))
         return await fn()
 
 
@@ -402,7 +409,7 @@ class _Config:
 
 
 class _CacheIdentity(CacheIdentity[int]):
-    def project(self, params: int) -> object:
+    def project(self, params: int) -> tuple[object, ...]:
         return ('cache', params)
 
 
@@ -412,10 +419,265 @@ class _RecordingBackend(CallableOperationBackend[dict[str, str]]):
         self.calls: list[tuple[str, object, object]] = []
 
     async def _execute(
-        self, *, name: str, body: Callable[[], Awaitable[object]], cache_key: object, config: object
+        self, *, name: str, body: Callable[[], Awaitable[object]], cache_key: tuple[object, ...], config: object
     ) -> object:
         self.calls.append((name, cache_key, config))
         return await body()
+
+
+class _RecordingLegacyCapability:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple[object, ...], object, object]] = []
+
+    async def run_durable_unit(
+        self,
+        name: str,
+        fn: Callable[[], Awaitable[object]],
+        *,
+        inputs: tuple[object, ...],
+        config: object,
+    ) -> object:
+        payload = await fn()
+        self.calls.append((name, inputs, config, payload))
+        return payload
+
+
+@dataclass(frozen=True)
+class _DispatchParams:
+    inputs: tuple[object, ...]
+    name: str = ''
+
+
+class _LogicalInputs(CacheIdentity[_DispatchParams]):
+    def project(self, params: _DispatchParams) -> tuple[object, ...]:
+        return params.inputs
+
+
+@dataclass(frozen=True)
+class _LegacyCase:
+    operation_id: DurableOperationId
+    role: OperationConfigRole
+    params: _DispatchParams
+    result: object
+    result_type: object
+
+
+_CTX = object()
+_TOOL = object()
+_MODEL_MESSAGES = ['request']
+_MODEL_SETTINGS = {'temperature': 0}
+_MODEL_PARAMETERS = {'allow_text_output': True}
+_MODEL_RESPONSE = ModelResponse(parts=[TextPart('hello')])
+_TOOL_ARGS = {'value': 1}
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        _LegacyCase(
+            ModelRequestId(None, False, 'test'),
+            OperationConfigRole.MODEL,
+            _DispatchParams((None, _MODEL_MESSAGES, _MODEL_SETTINGS, _MODEL_PARAMETERS, _CTX)),
+            _MODEL_RESPONSE,
+            ModelResponse,
+        ),
+        _LegacyCase(
+            ModelRequestId(None, True, 'test'),
+            OperationConfigRole.MODEL,
+            _DispatchParams((None, _MODEL_MESSAGES, _MODEL_SETTINGS, _MODEL_PARAMETERS, _CTX)),
+            {'response': 'streamed', 'events': []},
+            object,
+        ),
+        _LegacyCase(
+            CancelSuspendedResponseId(None, 'test'),
+            OperationConfigRole.MODEL,
+            _DispatchParams((None, _MODEL_RESPONSE, _CTX)),
+            None,
+            type(None),
+        ),
+        _LegacyCase(
+            EventStreamHandlerId(),
+            OperationConfigRole.EVENT,
+            _DispatchParams(({'event': 'part-start'},)),
+            None,
+            type(None),
+        ),
+        _LegacyCase(
+            CallToolId('function', 'functions'),
+            OperationConfigRole.TOOL_CALL,
+            _DispatchParams(('function_tool', _TOOL_ARGS, _CTX, _TOOL), 'function_tool'),
+            _ToolReturn('ok'),
+            CallToolResult,
+        ),
+        _LegacyCase(
+            GetToolsId('dynamic', 'dynamic'),
+            OperationConfigRole.TOOL_DISCOVERY,
+            _DispatchParams((_CTX,)),
+            {'tool': 'definition'},
+            object,
+        ),
+        _LegacyCase(
+            CallToolId('dynamic', 'dynamic'),
+            OperationConfigRole.TOOL_CALL,
+            _DispatchParams(('dynamic_tool', _TOOL_ARGS, _CTX), 'dynamic_tool'),
+            _ToolReturn('ok'),
+            CallToolResult,
+        ),
+        _LegacyCase(
+            GetToolsId('mcp', 'mcp'),
+            OperationConfigRole.TOOL_DISCOVERY,
+            _DispatchParams((_CTX,)),
+            {'mcp_tool': 'definition'},
+            object,
+        ),
+        _LegacyCase(
+            GetInstructionsId('mcp'),
+            OperationConfigRole.TOOL_DISCOVERY,
+            _DispatchParams((_CTX,)),
+            'instructions',
+            str | None,
+        ),
+        _LegacyCase(
+            CallToolId('mcp', 'mcp'),
+            OperationConfigRole.TOOL_CALL,
+            _DispatchParams(('mcp_tool', _TOOL_ARGS, _CTX, _TOOL), 'mcp_tool'),
+            _ToolReturn('ok'),
+            CallToolResult,
+        ),
+    ],
+    ids=[
+        'model-request',
+        'model-request-stream',
+        'cancel-suspended-response',
+        'event-stream-handler',
+        'function-tool-call',
+        'dynamic-get-tools',
+        'dynamic-call',
+        'mcp-get-tools',
+        'mcp-get-instructions',
+        'mcp-call',
+    ],
+)
+async def test_legacy_callable_backend_dispatch_parity(case: _LegacyCase) -> None:
+    handled: list[_DispatchParams] = []
+
+    async def handler(params: _DispatchParams) -> object:
+        handled.append(params)
+        return case.result
+
+    config = _Config()
+    capability = _RecordingLegacyCapability()
+    namer = JournalOperationNamer('compat')
+    operation = DurableOperation(
+        operation_id=case.operation_id,
+        handler=handler,
+        parameter_transport=IdentityParameterTransport[_DispatchParams](),
+        cache_identity=_LogicalInputs(),
+        result_codec=TypedResultCodec[object](
+            case.result_type, mode='identity' if case.result_type is object else 'json'
+        ),
+        config_role=case.role,
+    )
+    bound = LegacyCallableBackend(capability, namer=namer, config=config).bind(operation)
+
+    assert bound.operation is operation
+    assert await bound(case.params) == case.result
+    name = namer.invocation_name(case.operation_id, case.params).operation_name
+    assert capability.calls == [(name, case.params.inputs, {'source': 'role-default'}, capability.calls[0][3])]
+    assert handled == [case.params]
+    assert config.base_calls == [(case.role, case.operation_id)]
+    if isinstance(case.operation_id, CallToolId):
+        assert capability.calls[0][3] == {'result': 'ok', 'kind': 'tool_return'}
+
+    assert await bound(case.params, config={'source': 'explicit'}) == case.result
+    assert capability.calls[-1][0:3] == (name, case.params.inputs, {'source': 'explicit'})
+    assert len(config.base_calls) == 1
+
+
+async def test_legacy_callable_backend_preserves_handler_exception() -> None:
+    error = RuntimeError('handler failed')
+
+    async def handler(params: _DispatchParams) -> None:
+        raise error
+
+    operation = DurableOperation(
+        operation_id=EventStreamHandlerId(),
+        handler=handler,
+        parameter_transport=IdentityParameterTransport[_DispatchParams](),
+        cache_identity=_LogicalInputs(),
+        result_codec=TypedResultCodec[None](type(None)),
+        config_role=OperationConfigRole.EVENT,
+    )
+    backend = LegacyCallableBackend(
+        _RecordingLegacyCapability(), namer=JournalOperationNamer('compat'), config=_Config()
+    )
+
+    with pytest.raises(RuntimeError, match='handler failed') as exc_info:
+        await backend.bind(operation)(_DispatchParams((object(),)))
+    assert exc_info.value is error
+
+
+class _NoneConfig:
+    def base(self, role: OperationConfigRole, operation_id: DurableOperationId) -> None:
+        return None
+
+    def for_tool(
+        self, role: OperationConfigRole, operation_id: DurableOperationId, tool: object | None, tool_name: str
+    ) -> Literal[False]:
+        return False
+
+
+async def test_legacy_callable_backend_matches_live_production_assembly_inputs() -> None:
+    async def function_tool() -> str:
+        return 'function'
+
+    async def dynamic_tool() -> str:
+        return 'dynamic'
+
+    function_toolset = FunctionToolset(tools=[function_tool], id='functions')
+    dynamic_toolset = DynamicToolset(lambda _: FunctionToolset(tools=[dynamic_tool]), id='dynamic')
+    agent = Agent(
+        TestModel(),
+        name='compat',
+        toolsets=[function_toolset, dynamic_toolset],
+        capabilities=[JournalDurability(event_stream_handler=_event_handler)],
+    )
+
+    await agent.run('Call every tool')
+
+    production = JournalDurability.from_agent(agent)
+    assert production is not None
+    assert production.calls
+    operation_ids: dict[str, DurableOperationId] = {
+        'compat__model.request_stream': ModelRequestId(None, True, 'test'),
+        'compat__event_stream_handler': EventStreamHandlerId(),
+        'compat__function_toolset__functions.call_tool:function_tool': CallToolId('function', 'functions'),
+        'compat__dynamic_toolset__dynamic.get_tools': GetToolsId('dynamic', 'dynamic'),
+        'compat__dynamic_toolset__dynamic.call_tool:dynamic_tool': CallToolId('dynamic', 'dynamic'),
+    }
+    comparable = [call for call in production.calls if call[0] in operation_ids]
+    assert set(operation_ids) <= {name for name, _, _ in comparable}
+
+    declaration_capability = _RecordingLegacyCapability()
+    backend = LegacyCallableBackend(declaration_capability, namer=JournalOperationNamer('compat'), config=_NoneConfig())
+    for name, inputs, config in comparable:
+
+        async def handler(params: _DispatchParams) -> None:
+            return None
+
+        operation_id = operation_ids[name]
+        operation = DurableOperation(
+            operation_id=operation_id,
+            handler=handler,
+            parameter_transport=IdentityParameterTransport[_DispatchParams](),
+            cache_identity=_LogicalInputs(),
+            result_codec=TypedResultCodec[None](type(None)),
+            config_role=OperationConfigRole.TOOL_CALL,
+        )
+        tool_name = inputs[0] if isinstance(operation_id, CallToolId) and isinstance(inputs[0], str) else ''
+        await backend.bind(operation)(_DispatchParams(inputs, tool_name), config=config)
+
+    assert [(name, inputs, config) for name, inputs, config, _ in declaration_capability.calls] == comparable
 
 
 async def test_callable_operation_backend_resolves_and_round_trips() -> None:
@@ -452,7 +714,7 @@ def test_trivial_transport_cache_and_invocation_helpers() -> None:
     transport = IdentityParameterTransport[object]()
     assert transport.dump(value) is value
     assert transport.load(value, runtime=object()) is value
-    assert NoCacheIdentity[object]().project(value) is None
+    assert NoCacheIdentity[object]().project(value) == ()
     invocation = OperationInvocation(params=value, config='config')
     assert invocation.params is value
     assert invocation.config == 'config'

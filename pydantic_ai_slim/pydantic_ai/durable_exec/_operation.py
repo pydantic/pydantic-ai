@@ -86,7 +86,7 @@ class ParameterTransport(Generic[P, W], Protocol):
 
 class CacheIdentity(Generic[P_contra], Protocol):
     @abstractmethod
-    def project(self, params: P_contra) -> object: ...
+    def project(self, params: P_contra) -> tuple[object, ...]: ...
 
 
 class ResultCodec(Generic[R], Protocol):
@@ -138,8 +138,8 @@ class IdentityParameterTransport(Generic[P]):
 
 
 class NoCacheIdentity(Generic[P]):
-    def project(self, params: P) -> None:
-        return None
+    def project(self, params: P) -> tuple[()]:
+        return ()
 
 
 class TypedResultCodec(Generic[R]):
