@@ -116,12 +116,15 @@ async def resolve_sourced_instructions(
     """
     parts: list[InstructionPart] = []
     group: list[InstructionPart] = []
+    pending_parts: list[InstructionPart] = []
     group_key: str | None = None
 
     def flush_group() -> None:
         if content := InstructionPart.join(group):
             parts.append(InstructionPart(content=content, id=group[0].id))
         group.clear()
+        parts.extend(pending_parts)
+        pending_parts.clear()
 
     for sourced in instructions:
         instruction = sourced.instruction
@@ -139,10 +142,12 @@ async def resolve_sourced_instructions(
             group_key = sourced.id
             group.append(InstructionPart(content=content, id=sourced.id))
         else:
-            flush_group()
-            group_key = None
             if content := await _system_prompt.SystemPromptRunner[AgentDepsT](instruction).run(run_context):
-                parts.append(InstructionPart(content=content, id=sourced.id, dynamic=sourced.dynamic))
+                part = InstructionPart(content=content, id=sourced.id, dynamic=sourced.dynamic)
+                if group:
+                    pending_parts.append(part)
+                else:
+                    parts.append(part)
     flush_group()
     return parts
 

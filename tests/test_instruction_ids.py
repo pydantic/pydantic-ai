@@ -795,6 +795,18 @@ async def test_a_callable_between_literals_does_not_split_the_agent_block():
     ]
 
 
+async def test_an_instruction_part_between_literals_keeps_each_block_independent():
+    """An authored `InstructionPart` remains a boundary between surrounding literals."""
+
+    agent = Agent(instructions=['Literal one.', InstructionPart(content='Authored part.'), 'Literal two.'])
+
+    assert await run_and_capture(agent) == [
+        InstructionPart(content='Literal one.', id='agent'),
+        InstructionPart(content='Authored part.', id='agent'),
+        InstructionPart(content='Literal two.', id='agent'),
+    ]
+
+
 async def test_resuming_does_not_stamp_instructions_onto_a_mock_request():
     """The rewrite lands on the message the echoed instructions came from, not on the trailing request.
 
