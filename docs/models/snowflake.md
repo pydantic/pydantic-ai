@@ -2,6 +2,8 @@
 
 ## Install
 
+
+Snowflake Cortex rejects [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] with an error rather than ignoring it, so leave that setting unset on Snowflake models.
 To use [`SnowflakeModel`][pydantic_ai.models.snowflake.SnowflakeModel], you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `snowflake` optional group:
 
 ```bash
