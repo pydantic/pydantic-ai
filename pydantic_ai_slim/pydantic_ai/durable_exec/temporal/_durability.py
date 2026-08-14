@@ -519,9 +519,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         base_config = self._toolset_operation_config('mcp', cast(str, toolset.id))
         get_tools = self._bind_mcp_get_tools_operation(toolset)
+        get_instructions = self._bind_mcp_get_instructions_operation(toolset)
 
         async def get_tools_operation(ctx: RunContext[AgentDepsT]):
             return await get_tools(_GetToolsParams(ctx), config=base_config)
+
+        async def get_instructions_operation(ctx: RunContext[AgentDepsT]):
+            return await get_instructions(_GetToolsParams(ctx), config=base_config)
 
         assert self._deps_type is not None
         return temporalize_mcp_toolset(
@@ -534,6 +538,8 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             agent=self._agent,
             get_tools_operation=get_tools_operation,
             get_tools_registration=get_tools.registration,
+            get_instructions_operation=get_instructions_operation,
+            get_instructions_registration=get_instructions.registration,
         )
 
     def _build_operation_backend(self) -> TemporalOperationBackend:
@@ -576,6 +582,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         return _FunctionCallTransport(self, toolset)
 
     def _get_tools_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _GetToolsTransport:
+        return _GetToolsTransport(self)
+
+    def _get_instructions_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _GetToolsTransport:
         return _GetToolsTransport(self)
 
     def _bound_operation_registrations(self, *operations: object) -> list[Callable[..., Any]]:

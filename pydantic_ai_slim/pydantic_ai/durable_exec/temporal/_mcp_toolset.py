@@ -10,6 +10,7 @@ from pydantic_ai import ToolsetTool
 from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableMCPToolset,
+    Instructions,
     ToolConfig,
     unwrap_tool_call_result,
     wrap_tool_call_result,
@@ -44,6 +45,8 @@ def temporalize_mcp_toolset(
     agent: AbstractAgent[AgentDepsT, Any] | None = None,
     get_tools_operation: Callable[[RunContext[AgentDepsT]], Awaitable[dict[str, ToolDefinition]]] | None = None,
     get_tools_registration: Callable[..., Any] | None = None,
+    get_instructions_operation: Callable[[RunContext[AgentDepsT]], Awaitable[Instructions]] | None = None,
+    get_instructions_registration: Callable[..., Any] | None = None,
 ) -> DurableMCPToolset[AgentDepsT]:
     for tool_name, config in tool_activity_config.items():
         if config is False:
@@ -113,15 +116,21 @@ def temporalize_mcp_toolset(
         assert get_tools_registration is not None
         get_tools_activity_def = get_tools_registration
 
-    async def get_instructions_operation(
-        ctx: RunContext[AgentDepsT],
-    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
-        config: ActivityConfig = {'summary': f'get instructions: {toolset.id}', **activity_config}
-        return await execute_activity(
-            activity=get_instructions_activity_def,
-            args=[GetToolsParams(serialized_run_context=run_context_type.serialize_run_context(ctx)), ctx.deps],
-            **config,
-        )
+    durable_get_instructions_operation = get_instructions_operation
+    if durable_get_instructions_operation is None:
+
+        async def default_get_instructions_operation(ctx: RunContext[AgentDepsT]) -> Instructions:
+            config: ActivityConfig = {'summary': f'get instructions: {toolset.id}', **activity_config}
+            return await execute_activity(
+                activity=get_instructions_activity_def,
+                args=[GetToolsParams(serialized_run_context=run_context_type.serialize_run_context(ctx)), ctx.deps],
+                **config,
+            )
+
+        durable_get_instructions_operation = default_get_instructions_operation
+    else:
+        assert get_instructions_registration is not None
+        get_instructions_activity_def = get_instructions_registration
 
     async def call_tool_operation(
         name: str,
@@ -154,7 +163,7 @@ def temporalize_mcp_toolset(
         toolset,
         in_durable_context=workflow.in_workflow,
         get_tools_operation=durable_get_tools_operation,
-        get_instructions_operation=get_instructions_operation,
+        get_instructions_operation=durable_get_instructions_operation,
         call_tool_operation=call_tool_operation,
         resolve_tool_config=resolve_tool_config,
         lifecycle='enter-outside-durable',
