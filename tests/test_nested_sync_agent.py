@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, UserError, _utils
+from pydantic_ai import Agent, RunContext, UserError, _utils
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -69,6 +69,19 @@ async def test_run_sync_from_sync_callback_is_rejected(
 
     with pytest.raises(UserError, match=NESTED_RUN_SYNC_ERROR):
         await outer_agent.run('delegate')
+
+
+async def test_run_sync_from_metadata_callback_is_rejected() -> None:
+    inner_agent = Agent(FunctionModel(return_inner_result))
+
+    def metadata(_: RunContext) -> dict[str, Any]:
+        inner_agent.run_sync('delegate')
+        return {}
+
+    outer_agent = Agent(FunctionModel(return_inner_result), metadata=metadata)
+
+    with pytest.raises(UserError, match=NESTED_RUN_SYNC_ERROR):
+        await outer_agent.run('outer')
 
 
 def test_run_sync_from_sync_callback_is_rejected_with_sync_outer_run() -> None:

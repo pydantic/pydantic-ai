@@ -1179,6 +1179,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
+    @_utils.with_agent_run_context
     @asynccontextmanager
     async def iter(  # noqa: C901
         self,
@@ -1789,8 +1790,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 graph_deps.cancellation.release_issued()
 
         async with AsyncExitStack() as stack:
-            stack.enter_context(_utils.agent_run_context())
-
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
 

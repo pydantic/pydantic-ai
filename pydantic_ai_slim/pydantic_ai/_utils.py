@@ -19,7 +19,7 @@ from collections.abc import (
     Iterator,
 )
 from concurrent.futures import Executor
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar, copy_context
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from datetime import datetime, timezone
@@ -106,6 +106,21 @@ def agent_run_context() -> Generator[None]:
     finally:
         state.active = False
         _agent_run_state.reset(token)
+
+
+def with_agent_run_context(
+    func: Callable[_P, AbstractAsyncContextManager[_R]],
+) -> Callable[_P, AbstractAsyncContextManager[_R]]:
+    """Mark an async context manager's complete lifetime as running an agent."""
+
+    @functools.wraps(func)
+    @asynccontextmanager
+    async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> AsyncGenerator[_R]:
+        with agent_run_context():
+            async with func(*args, **kwargs) as value:
+                yield value
+
+    return wrapper
 
 
 def run_until_complete(coro: Awaitable[_R]) -> _R:
