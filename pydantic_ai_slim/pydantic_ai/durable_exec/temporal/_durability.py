@@ -117,6 +117,38 @@ class _GetToolsTransport:
         return _GetToolsParams(self._durability.deserialize_operation_run_context(params.serialized_run_context, deps))
 
 
+class _MCPCallTransport:
+    wire_type = CallToolParams
+    result_type = CallToolResult
+
+    def __init__(self, durability: TemporalDurability[Any], toolset: Any) -> None:
+        self._durability = durability
+        self._toolset = toolset
+
+    def dump(self, params: _CallToolParams) -> tuple[CallToolParams, Any]:
+        assert params.tool is not None
+        return (
+            CallToolParams(
+                name=params.name,
+                tool_args=params.tool_args,
+                serialized_run_context=self._durability.run_context_type.serialize_run_context(params.ctx),
+                tool_def=params.tool.tool_def,
+            ),
+            params.ctx.deps,
+        )
+
+    def load(self, payload: tuple[CallToolParams, Any], *, runtime: object) -> _CallToolParams:
+        params, deps = payload
+        ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
+        assert params.tool_def is not None
+        return _CallToolParams(
+            params.name,
+            params.tool_args,
+            ctx,
+            self._toolset.tool_for_tool_def(params.tool_def, ctx=ctx),
+        )
+
+
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _RequestParams:
@@ -496,7 +528,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             pass
         else:
             if isinstance(ts, MCPToolset):
-                return self._build_temporal_mcp_toolset(ts)
+                return self._build_mcp_toolset(ts)
         ts_id = ts.id
         toolset_activity_config = self.activity_config.copy()
         if ts_id is not None:
@@ -513,34 +545,6 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             self._agent,
         )
         return wrapped if isinstance(wrapped, (TemporalWrapperToolset, DurableToolsetBase)) else None
-
-    def _build_temporal_mcp_toolset(self, toolset: Any) -> DurableToolsetBase[AgentDepsT]:
-        from ._mcp_toolset import temporalize_mcp_toolset
-
-        base_config = self._toolset_operation_config('mcp', cast(str, toolset.id))
-        get_tools = self._bind_mcp_get_tools_operation(toolset)
-        get_instructions = self._bind_mcp_get_instructions_operation(toolset)
-
-        async def get_tools_operation(ctx: RunContext[AgentDepsT]):
-            return await get_tools(_GetToolsParams(ctx), config=base_config)
-
-        async def get_instructions_operation(ctx: RunContext[AgentDepsT]):
-            return await get_instructions(_GetToolsParams(ctx), config=base_config)
-
-        assert self._deps_type is not None
-        return temporalize_mcp_toolset(
-            toolset,
-            activity_name_prefix=f'agent__{self.name}',
-            activity_config=base_config,
-            tool_activity_config={},
-            deps_type=self._deps_type,
-            run_context_type=self.run_context_type,
-            agent=self._agent,
-            get_tools_operation=get_tools_operation,
-            get_tools_registration=get_tools.registration,
-            get_instructions_operation=get_instructions_operation,
-            get_instructions_registration=get_instructions.registration,
-        )
 
     def _build_operation_backend(self) -> TemporalOperationBackend:
         backend = self._operation_backend
@@ -569,6 +573,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         base_config = self._toolset_operation_config('function', toolset_id)
         config = resolve_tool_activity_config(cast(ToolsetTool[Any] | None, tool), name, {})
         if config is False:
+            from pydantic_ai.mcp import MCPToolset
+
+            if isinstance(cast(ToolsetTool[Any], tool).toolset, MCPToolset):
+                raise UserError(
+                    f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled), '
+                    'but MCP tools require the use of IO and so cannot be run outside of an activity.'
+                )
             assert isinstance(tool, FunctionToolsetTool)
             if not tool.is_async:
                 raise UserError(
@@ -586,6 +597,15 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _get_instructions_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _GetToolsTransport:
         return _GetToolsTransport(self)
+
+    def _mcp_call_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> _MCPCallTransport:
+        return _MCPCallTransport(self, toolset)
+
+    def _mcp_discovery_registrations(
+        self, get_tools: object, get_instructions: object | None
+    ) -> list[Callable[..., Any]]:
+        assert get_instructions is not None
+        return [cast(Any, get_instructions).registration, cast(Callable[..., Any], get_tools)]
 
     def _bound_operation_registrations(self, *operations: object) -> list[Callable[..., Any]]:
         return [cast(Any, operation).registration for operation in operations]

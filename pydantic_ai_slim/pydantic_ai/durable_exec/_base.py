@@ -832,6 +832,17 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _get_instructions_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> Any:
         return IdentityParameterTransport[_GetToolsParams]()
 
+    def _mcp_call_parameter_transport(self, toolset: AbstractToolset[AgentDepsT]) -> Any:
+        return IdentityParameterTransport[_CallToolParams]()
+
+    def _mcp_discovery_registrations(
+        self, get_tools: object, get_instructions: object | None
+    ) -> list[Callable[..., Any]]:
+        return [
+            *self._bound_operation_registrations(get_tools),
+            *(self._bound_operation_registrations(get_instructions) if get_instructions is not None else []),
+        ]
+
     def _bound_operation_registrations(self, *operations: object) -> list[Callable[..., Any]]:
         """Return engine registrations contributed by bound operations, if any."""
         return []
@@ -976,7 +987,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
 
     def _build_mcp_toolset(self, toolset: Any) -> DurableMCPToolset[AgentDepsT]:
-        base_config = self._toolset_base_config('mcp')
+        base_config = self._toolset_operation_config('mcp', cast(str, toolset.id))
 
         if self._journal_discovery:
             get_tools = self._bind_mcp_get_tools_operation(toolset)
@@ -998,7 +1009,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
     def _bind_mcp_get_tools_operation(self, toolset: Any) -> Any:
         async def get_tools_handler(params: _GetToolsParams) -> dict[str, ToolDefinition]:
-            with self._durable_run_context_scope(params.ctx) as durable_ctx:
+            with self._tool_run_context_scope(params.ctx) as durable_ctx:
                 tools = await toolset.get_tools(durable_ctx)
             return {name: tool.tool_def for name, tool in tools.items()}
 
@@ -1031,10 +1042,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             base_config=base_config,
             get_tools_operation=get_tools_operation,
             get_instructions_operation=get_instructions_operation,
-            discovery_registrations=[
-                *get_tools_registration,
-                *(self._bound_operation_registrations(get_instructions) if get_instructions is not None else []),
-            ],
+            discovery_registrations=(
+                self._mcp_discovery_registrations(get_tools_registration[0], get_instructions)
+                if get_tools_registration
+                else []
+            ),
         )
 
     def _bind_mcp_get_instructions_operation(self, toolset: Any) -> Any:
@@ -1068,6 +1080,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         discovery_registrations: list[Callable[..., Any]],
     ) -> DurableMCPToolset[AgentDepsT]:
         async def call_tool_handler(params: _CallToolParams) -> CallToolResult:
+            assert params.tool is not None
             with self._durable_run_context_scope(params.ctx) as durable_ctx:
                 return await wrap_tool_call_result(
                     toolset.call_tool(params.name, params.tool_args, durable_ctx, params.tool)
@@ -1077,7 +1090,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         call_operation = DurableOperation(
             operation_id=CallToolId('mcp', cast(str, toolset.id)),
             handler=call_tool_handler,
-            parameter_transport=IdentityParameterTransport[_CallToolParams](),
+            parameter_transport=self._mcp_call_parameter_transport(toolset),
             cache_identity=_FunctionCallToolCacheIdentity(),
             result_codec=self._legacy_result_codec(CallToolResult),
             config_role=OperationConfigRole.TOOL_CALL,
@@ -1094,7 +1107,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             tool: ToolsetTool[AgentDepsT],
             config: Any,
         ) -> Any:
-            payload = await call_tool(_CallToolParams(name, tool_args, ctx, tool), config=config)
+            with self._tool_call_payload_errors(name):
+                payload = await call_tool(_CallToolParams(name, tool_args, ctx, tool), config=config)
             return self._unwrap_tool_result(payload)
 
         return DurableMCPToolset(
@@ -1106,7 +1120,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             call_tool_operation=call_tool_operation,
             resolve_tool_config=resolve_tool_config,
             lifecycle=self._toolset_lifecycles['mcp'],
-            durable_registrations=discovery_registrations,
+            durable_registrations=[*discovery_registrations, *self._bound_operation_registrations(call_tool)],
             durable_config=base_config,
         )
 
