@@ -1,19 +1,72 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
+from pydantic_ai.images import (
+    ImageDimensions,
+    ImageGenerationAspectRatio,
+    ImageGenerationModel,
+    ImageGenerationSettings,
+    ImageGenerator,
+)
+from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import KnownModelName, Model
-from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName, ImageGenerationTool
-from pydantic_ai.tools import AgentDepsT, RunContext, Tool
+from pydantic_ai.native_tools import (
+    SUPPORTED_NATIVE_TOOLS,
+    ImageAspectRatio,
+    ImageGenerationModelName,
+    ImageGenerationTool,
+    ImageSize,
+)
+from pydantic_ai.tools import AgentDepsT, RunContext, Tool, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from .native_or_local import NativeOrLocalTool
 
 if TYPE_CHECKING:
     from pydantic_ai.common_tools.image_generation import ImageGenerationFallbackModel
+
+# Derived from the native tool's own aliases so widening either can't silently start dropping values.
+_NATIVE_IMAGE_SIZES = frozenset(get_args(ImageSize))
+_NATIVE_IMAGE_ASPECT_RATIOS = frozenset(get_args(ImageAspectRatio))
+
+
+@dataclass(kw_only=True)
+class _DirectImageGenerationTool:
+    """Local capability tool backed directly by the image generation API."""
+
+    generator: ImageGenerator | ImageGenerationModel
+    settings: ImageGenerationSettings
+    action: Literal['generate', 'edit', 'auto'] | None
+    image_model: ImageGenerationModelName | None
+
+    async def __call__(self, prompt: str) -> BinaryImage:
+        if self.action == 'edit':
+            raise UserError(
+                'The direct `ImageGeneration` fallback cannot honor `action="edit"` because the '
+                '`generate_image` tool does not receive reference images. Use '
+                '`ImageGenerator.generate(..., images=...)` directly for image editing.'
+            )
+        if self.image_model is not None:
+            warnings.warn(
+                'Direct `ImageGeneration` fallback ignored `image_model`; `local` already selects the direct image model',
+                UserWarning,
+                stacklevel=2,
+            )
+
+        result = await self.generator.generate(prompt, settings=self.settings)
+        if len(result.images) != 1:
+            raise UnexpectedModelBehavior(
+                f'Direct image generation fallback returned {len(result.images)} images; expected exactly one. '
+                'If the generator asks for more than one image per call through a provider-specific '
+                'image count setting, call `ImageGenerator.generate()` directly instead.'
+            )
+        return result.images[0].content
 
 
 @dataclass(init=False)
@@ -21,14 +74,16 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     """Image generation capability.
 
     Uses the model's native image generation when available. When the model doesn't
-    support it and `fallback_model` is provided, falls back to a local tool that
-    delegates to a subagent running the specified image-capable model.
+    support it, pass an `ImageGenerator` or `ImageGenerationModel` to `local` to use
+    the direct image generation API as a fallback.
 
-    Image generation settings (`quality`, `size`, etc.) are forwarded to the
-    [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] used by
-    both the native and the local fallback subagent. When passing a custom `native`
-    instance, its settings are also used for the fallback subagent; capability-level
-    fields override any `native` instance settings.
+    The existing `fallback_model` path delegates to a subagent running an
+    image-capable conversational model and is preserved for backwards compatibility.
+
+    Portable `dimensions` and `aspect_ratio` settings are applied to the direct fallback
+    using `ImageGenerationSettings`. Other fields configure the native
+    `ImageGenerationTool`; configure provider-specific direct settings on an explicit
+    `ImageGenerator` or `ImageGenerationModel`.
     """
 
     fallback_model: ImageGenerationFallbackModel
@@ -57,7 +112,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     background: Literal['transparent', 'opaque', 'auto'] | None
     """Background type for the generated image.
 
-    Supported by: OpenAI Responses. `'transparent'` only supported for `'png'` and `'webp'`.
+    Supported by: OpenAI Responses.
     """
 
     input_fidelity: Literal['high', 'low'] | None
@@ -96,17 +151,32 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     Supported by: OpenAI Responses.
     """
 
-    size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None
-    """Size of the generated image.
+    size: ImageSize | None
+    """Size of the generated image for the native tool.
 
-    Supported by: OpenAI Responses (`'auto'`, `'1024x1024'`, `'1024x1536'`, `'1536x1024'`),
-    Google (`'512'`, `'1K'`, `'2K'`, `'4K'`).
+    Direct image APIs use provider-prefixed size or resolution settings.
     """
 
-    aspect_ratio: ImageAspectRatio | None
+    dimensions: ImageDimensions | None
+    """Exact direct-model output dimensions as `(width, height)` in pixels.
+
+    This is mutually exclusive with `aspect_ratio`. Only the direct `local` generator can apply it,
+    so pass `native=False` to guarantee it takes effect: with the default `native=True` the direct
+    generator is dropped whenever the conversational model generates images natively, and the
+    native tool has no equivalent — that request warns. The `fallback_model` path ignores it with a
+    warning. Supported shapes are model-specific; see the
+    [Image Generation guide](../image-generation.md#supported-exact-dimensions).
+    """
+
+    aspect_ratio: ImageGenerationAspectRatio | None
     """Aspect ratio for generated images.
 
-    Supported by: Google (Gemini), OpenAI Responses (maps `'1:1'`, `'2:3'`, `'3:2'` to sizes).
+    Direct adapters map this to a canonical geometry supported by the selected model. Ratios the
+    native tool also accepts apply on either path; the rest need the direct generator, so pass
+    `native=False` to guarantee them, as for `dimensions`, and a request that takes the native path
+    instead warns. Ratios outside the native vocabulary are ignored by the `fallback_model` path
+    with a warning. See the
+    [ratio-to-dimensions matrix](../image-generation.md#canonical-dimensions-for-aspect_ratio).
     """
 
     def __init__(
@@ -115,7 +185,13 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         native: ImageGenerationTool
         | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None]
         | bool = True,
-        local: Tool[AgentDepsT] | Callable[..., Any] | Literal[False] | None = None,
+        local: Tool[AgentDepsT]
+        | Callable[..., Any]
+        | ImageGenerator
+        | ImageGenerationModel
+        | str
+        | Literal[False]
+        | None = None,
         fallback_model: Model
         | KnownModelName
         | str
@@ -129,8 +205,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         output_compression: int | None = None,
         output_format: Literal['png', 'webp', 'jpeg'] | None = None,
         quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
-        size: Literal['auto', '1024x1024', '1024x1536', '1536x1024', '512', '1K', '2K', '4K'] | None = None,
-        aspect_ratio: ImageAspectRatio | None = None,
+        size: ImageSize | None = None,
+        dimensions: ImageDimensions | None = None,
+        aspect_ratio: ImageGenerationAspectRatio | None = None,
         id: str | None = None,
         defer_loading: bool = False,
         description: str | None = None,
@@ -144,7 +221,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                 'use `fallback_model` for the default subagent fallback, or `local` for a custom tool'
             )
         self.native = native
-        self.local = local
         self.fallback_model = fallback_model
         self.action = action
         self.background = background
@@ -155,36 +231,217 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         self.output_format = output_format
         self.quality = quality
         self.size = size
+        self.dimensions = dimensions
         self.aspect_ratio = aspect_ratio
+        # A direct generator applies the geometry settings the native tool can't, so `_image_gen_kwargs`
+        # must not report them as ignored. An already-converted tool counts too: `dataclasses.replace`
+        # re-enters `__init__` with the converted `local`, and would otherwise clear the flag.
+        self._has_direct_generator = isinstance(local, (ImageGenerator, ImageGenerationModel, str)) or (
+            isinstance(local, Tool)
+            and isinstance(
+                getattr(local.function, '__self__', None),  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                _DirectImageGenerationTool,
+            )
+        )
+        if isinstance(local, (ImageGenerator, ImageGenerationModel)):
+            # user → `__init__` → helper → `warn`.
+            local = self._direct_local_tool(local, stacklevel=3)
+        self.local = local
         self.__post_init__()
 
-    def _image_gen_kwargs(self) -> dict[str, Any]:
-        """Collect non-None ImageGenerationTool config fields."""
+    def __post_init__(self) -> None:
+        # The native tool's kwargs are collected once for the default native tool and again for the
+        # `fallback_model` subagent's copy, so the notice lives here to fire exactly once.
+        ignored: list[str] = []
+        if self.native is True or (self.local is None and self.fallback_model is not None):
+            _, ignored = self._native_geometry()
+        super().__post_init__()
+        if ignored:
+            # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
+            warnings.warn(
+                'The legacy `ImageGeneration` native/fallback_model path ignored direct-only '
+                f'setting(s): {", ".join(ignored)}. Use `native=False` with '
+                "`local='provider:image-model'` or an `ImageGenerator` to apply them.",
+                UserWarning,
+                stacklevel=3,
+            )
+
+    @classmethod
+    def from_spec(
+        cls,
+        *,
+        native: ImageGenerationTool | bool = True,
+        local: str | Literal[False] | None = None,
+        fallback_model: KnownModelName | str | None = None,
+        action: Literal['generate', 'edit', 'auto'] | None = None,
+        background: Literal['transparent', 'opaque', 'auto'] | None = None,
+        input_fidelity: Literal['high', 'low'] | None = None,
+        moderation: Literal['auto', 'low'] | None = None,
+        image_model: ImageGenerationModelName | None = None,
+        output_compression: int | None = None,
+        output_format: Literal['png', 'webp', 'jpeg'] | None = None,
+        quality: Literal['low', 'medium', 'high', 'auto'] | None = None,
+        size: ImageSize | None = None,
+        dimensions: ImageDimensions | None = None,
+        aspect_ratio: ImageGenerationAspectRatio | None = None,
+        id: str | None = None,
+        defer_loading: bool = False,
+        description: str | None = None,
+    ) -> ImageGeneration[AgentDepsT]:
+        """Construct from the JSON/YAML-serializable subset of the runtime API.
+
+        Runtime objects accepted by `local`, such as `ImageGenerator`, `ImageGenerationModel`,
+        `Tool`, and callables, can be passed to `ImageGeneration(...)` directly but cannot be
+        represented in an agent spec. A direct image model name is serializable and can be passed
+        as `local='provider:model'`.
+        """
+        if isinstance(dimensions, list):
+            if len(dimensions) != 2:
+                raise UserError('Image generation `dimensions` must contain exactly two integers')
+            dimensions = (dimensions[0], dimensions[1])
+
+        return cls(
+            native=native,
+            local=local,
+            fallback_model=fallback_model,
+            action=action,
+            background=background,
+            input_fidelity=input_fidelity,
+            moderation=moderation,
+            image_model=image_model,
+            output_compression=output_compression,
+            output_format=output_format,
+            quality=quality,
+            size=size,
+            dimensions=dimensions,
+            aspect_ratio=aspect_ratio,
+            id=id,
+            defer_loading=defer_loading,
+            description=description,
+        )
+
+    def _direct_image_settings(self) -> ImageGenerationSettings:
+        """Collect portable settings for direct image generation."""
+        settings: ImageGenerationSettings = {}
+        if self.dimensions is not None:
+            settings['dimensions'] = self.dimensions
+        if self.aspect_ratio is not None:
+            settings['aspect_ratio'] = self.aspect_ratio
+        return settings
+
+    def _direct_only_geometry(self) -> list[str]:
+        """Geometry settings the native tool has no way to express."""
+        direct_only: list[str] = []
+        if self.dimensions is not None:
+            direct_only.append('dimensions')
+        if self.aspect_ratio is not None and self.aspect_ratio not in _NATIVE_IMAGE_ASPECT_RATIOS:
+            direct_only.append('aspect_ratio')
+        return direct_only
+
+    def _native_geometry(self) -> tuple[dict[str, Any], list[str]]:
+        """The geometry settings the native tool can express, and the ones it can't.
+
+        `dimensions` and `aspect_ratio` are only reported as ignored when no direct generator is
+        configured, since `_direct_image_settings` forwards both. `size` has no direct counterpart,
+        so it is dropped whichever path runs.
+
+        That suppression is a construction-time approximation: this runs from `__post_init__`, before
+        a model exists, while native-vs-local is decided per request in `Model._resolve_native_tool_swap`.
+        Warning here regardless would fire on every configuration whose model has no native image
+        generation, where the settings *are* applied. The case it misses — `native=True` plus a natively
+        capable model, which drops the direct generator — is warned about per request instead, from the
+        prepare function `get_toolset` installs.
+
+        Split out of `_image_gen_kwargs` only to keep that method under the complexity limit.
+        """
         kwargs: dict[str, Any] = {}
-        if self.action is not None:
-            kwargs['action'] = self.action
+        ignored: list[str] = []
+        if self.size is not None:
+            if self.size in _NATIVE_IMAGE_SIZES:
+                kwargs['size'] = self.size
+            else:
+                ignored.append('size')
+        if self.aspect_ratio is not None and self.aspect_ratio in _NATIVE_IMAGE_ASPECT_RATIOS:
+            kwargs['aspect_ratio'] = self.aspect_ratio
+        if not self._has_direct_generator:
+            ignored.extend(self._direct_only_geometry())
+        return kwargs, ignored
+
+    def _image_gen_kwargs(self) -> dict[str, Any]:
+        """Collect settings supported by the legacy `ImageGenerationTool` path."""
+        kwargs: dict[str, Any] = {}
         if self.background is not None:
             kwargs['background'] = self.background
         if self.input_fidelity is not None:
             kwargs['input_fidelity'] = self.input_fidelity
         if self.moderation is not None:
             kwargs['moderation'] = self.moderation
-        if self.image_model is not None:
-            kwargs['model'] = self.image_model
         if self.output_compression is not None:
             kwargs['output_compression'] = self.output_compression
         if self.output_format is not None:
             kwargs['output_format'] = self.output_format
         if self.quality is not None:
             kwargs['quality'] = self.quality
-        if self.size is not None:
-            kwargs['size'] = self.size
-        if self.aspect_ratio is not None:
-            kwargs['aspect_ratio'] = self.aspect_ratio
+
+        geometry, _ = self._native_geometry()
+        kwargs.update(geometry)
+
+        if self.action is not None:
+            kwargs['action'] = self.action
+        if self.image_model is not None:
+            kwargs['model'] = self.image_model
         return kwargs
 
     def _default_native(self) -> ImageGenerationTool:
         return ImageGenerationTool(**self._image_gen_kwargs())
+
+    def _resolve_local_strategy(self, name: str | bool) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT]:
+        if isinstance(name, str):
+            # user → `__init__` → `__post_init__` → `NativeOrLocalTool.__post_init__` → here → helper → `warn`.
+            return self._direct_local_tool(ImageGenerator(name), stacklevel=6)
+        return super()._resolve_local_strategy(name)
+
+    def _direct_local_tool(self, generator: ImageGenerator | ImageGenerationModel, *, stacklevel: int) -> Tool[Any]:
+        """Wrap a direct generator in the `generate_image` tool, warning about native-only settings.
+
+        `stacklevel` selects the frame the warning points at, since the two paths that get here sit
+        at different depths: a generator instance is converted straight from `__init__`, while a
+        `local='provider:model'` name is resolved several frames deeper, from `__post_init__`. Both
+        count from a direct `ImageGeneration(...)` call, so `from_spec` lands one frame short.
+        """
+        ignored: list[str] = []
+        if self.background is not None:
+            ignored.append('background')
+        if self.input_fidelity is not None:
+            ignored.append('input_fidelity')
+        if self.moderation is not None:
+            ignored.append('moderation')
+        if self.output_compression is not None:
+            ignored.append('output_compression')
+        if self.output_format is not None:
+            ignored.append('output_format')
+        if self.quality is not None:
+            ignored.append('quality')
+        if self.size is not None:
+            ignored.append('size')
+        if ignored:
+            warnings.warn(
+                'The direct `ImageGeneration` fallback ignored native-tool setting(s): '
+                f'{", ".join(ignored)}. Configure provider-specific direct settings on the '
+                '`ImageGenerator` or `ImageGenerationModel` instead.',
+                UserWarning,
+                stacklevel=stacklevel,
+            )
+        return Tool[Any](
+            _DirectImageGenerationTool(
+                generator=generator,
+                settings=self._direct_image_settings(),
+                action=self.action,
+                image_model=self.image_model,
+            ).__call__,
+            name='generate_image',
+            description='Generate an image based on the given prompt.',
+        )
 
     def _native_unique_id(self) -> str:
         return ImageGenerationTool.kind
@@ -203,3 +460,33 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         from pydantic_ai.common_tools.image_generation import image_generation_tool
 
         return image_generation_tool(model=self.fallback_model, native_tool=self._resolved_native())
+
+    def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
+        toolset = super().get_toolset()
+        # A callable `native` is resolved per request by the framework, so whether it yields a tool
+        # that supersedes the generator can't be known here without invoking it a second time.
+        if toolset is None or not isinstance(self.native, ImageGenerationTool) or not self._has_direct_generator:
+            return toolset
+
+        direct_only = self._direct_only_geometry()
+        if not direct_only:
+            return toolset
+
+        async def _warn_when_native_supersedes_direct(
+            ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+        ) -> list[ToolDefinition]:
+            # `ctx.model` is an `AbstractModel`, and only a regular `Model` carries the profile that
+            # says whether the native tool supersedes the generator.
+            model = ctx.model
+            if isinstance(model, Model) and ImageGenerationTool in model.profile.get(
+                'supported_native_tools', SUPPORTED_NATIVE_TOOLS
+            ):
+                warnings.warn(
+                    f'The `ImageGeneration` native tool supersedes the direct generator on {ctx.model.model_name}, '
+                    f'so direct-only setting(s) go unapplied: {", ".join(direct_only)}. '
+                    'Pass `native=False` to guarantee them.',
+                    UserWarning,
+                )
+            return tool_defs
+
+        return PreparedToolset(wrapped=toolset, prepare_func=_warn_when_native_supersedes_direct)

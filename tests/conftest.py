@@ -25,7 +25,7 @@ from vcr import VCR, request as vcr_request
 from vcr.record_mode import RecordMode
 
 import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
+from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, ImageGenerator
 from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
@@ -576,6 +576,7 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
     Embedder.instrument_all(False)
+    ImageGenerator.instrument_all(False)
 
 
 try:

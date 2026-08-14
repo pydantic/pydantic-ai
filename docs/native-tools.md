@@ -24,7 +24,7 @@ These tools are passed to the agent's `capabilities` list, wrapped in [`NativeTo
     If a provider supports a native tool that is not currently supported by Pydantic AI, please file an issue.
 
 !!! tip "Provider-adaptive capabilities"
-    For a higher-level, model-agnostic approach, consider the [provider-adaptive tool capabilities](capabilities/overview.md#provider-adaptive-tools): [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP]. These automatically use the model's native tool when supported and fall back to a local implementation, so your agent works across providers without code changes.
+    For a higher-level, model-agnostic approach, consider the [provider-adaptive tool capabilities](capabilities/overview.md#provider-adaptive-tools): [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP]. These use the model's native tool when supported and fall back to the local implementation you enable via `local=`, so your agent works across providers without code changes.
 
 ### Google tool combinations
 
@@ -75,7 +75,7 @@ print(result.output)
 ## Web Search Tool
 
 !!! tip
-    For a model-agnostic approach with automatic local fallback, see the [`WebSearch`][pydantic_ai.capabilities.WebSearch] [capability](capabilities/overview.md#provider-adaptive-tools).
+    For a model-agnostic approach with an optional local fallback via `local='duckduckgo'`, see the [`WebSearch`][pydantic_ai.capabilities.WebSearch] [capability](capabilities/overview.md#provider-adaptive-tools).
 
 The [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] allows your agent to search the web,
 making it ideal for queries that require up-to-date data.
@@ -419,7 +419,10 @@ For details on file management, container lifecycle, and persistence behavior, s
 ## Image Generation Tool
 
 !!! tip
-    For a model-agnostic approach with automatic local fallback, see the [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] [capability](capabilities/overview.md#provider-adaptive-tools).
+    For application-controlled generation and editing with dedicated image models, see the
+    [direct image-generation API](image-generation.md). For an agent tool that uses the model's native image
+    generation and falls back to a direct image model you pass as `local=`, see the
+    [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration] [capability](capabilities/image-generation.md).
 
 The [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] enables your agent to generate images.
 
@@ -594,7 +597,7 @@ For more details, check the [API documentation][pydantic_ai.native_tools.ImageGe
 ## Web Fetch Tool
 
 !!! tip
-    For a model-agnostic approach with automatic local fallback, see the [`WebFetch`][pydantic_ai.capabilities.WebFetch] [capability](capabilities/overview.md#provider-adaptive-tools).
+    For a model-agnostic approach with an optional local fallback via `local=True`, see the [`WebFetch`][pydantic_ai.capabilities.WebFetch] [capability](capabilities/overview.md#provider-adaptive-tools).
 
 The [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] enables your agent to pull URL contents into its context,
 allowing it to pull up-to-date information from the web.

@@ -112,11 +112,11 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
     AbstractNativeTool,
     CodeExecutionTool,
-    ImageGenerationTool,
     MCPServerTool,
     WebFetchTool,
     WebSearchTool,
@@ -150,13 +150,16 @@ from .capability_models import (
     tool_calling_model,
     tool_calling_stream_function,
 )
-from .conftest import IsDatetime, IsInstance, IsStr, iter_message_parts, message, remove_schema_descriptions
+from .conftest import IsDatetime, IsStr, iter_message_parts, message, remove_schema_descriptions, try_import
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
 pytestmark = [
     pytest.mark.anyio,
 ]
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
 
 
 def test_capability_types() -> None:
@@ -186,6 +189,32 @@ def test_instrumentation_default_settings() -> None:
 
     instr = Instrumentation()
     assert isinstance(instr.settings, InstrumentationSettings)
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+async def test_instrumentation_removes_binary_content_from_nested_lists(
+    allow_model_requests: None, capfire: CaptureLogfire
+):
+    def image_list() -> list[BinaryImage]:
+        return [BinaryImage(data=b'secret', media_type='image/png')]
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[TextPart(content='done')])
+        return ModelResponse(parts=[ToolCallPart(tool_name='image_list', args={})])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        tools=[image_list],
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=False))],
+    )
+    await agent.run('Generate images')
+
+    spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
+    tool_span = next(span for span in spans if span['name'] == 'execute_tool image_list')
+    assert tool_span['attributes']['gen_ai.tool.call.result'] == snapshot(
+        [{'media_type': 'image/png', 'vendor_metadata': None, 'kind': 'binary', 'identifier': IsStr()}]
+    )
 
 
 def test_agent_from_spec_basic():
@@ -219,6 +248,38 @@ def test_agent_from_spec_image_generation():
     children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
     cap = next(c for c in children if isinstance(c, ImageGeneration))
     assert cap.local is False
+
+
+def test_agent_from_spec_direct_image_generation():
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [
+                {
+                    'ImageGeneration': {
+                        'native': False,
+                        'local': 'openai:gpt-image-1.5',
+                        'dimensions': [1280, 720],
+                    }
+                }
+            ],
+        }
+    )
+    children = agent._root_capability.capabilities  # pyright: ignore[reportPrivateUsage]
+    cap = next(c for c in children if isinstance(c, ImageGeneration))
+    assert cap.dimensions == (1280, 720)
+    assert isinstance(cap.dimensions, tuple)
+    assert cap.get_toolset() is not None
+
+
+def test_agent_from_spec_rejects_invalid_image_dimensions_length():
+    with pytest.raises(ValueError, match='`dimensions` must contain exactly two integers'):
+        Agent.from_spec(
+            {
+                'model': 'test',
+                'capabilities': [{'ImageGeneration': {'local': False, 'dimensions': [1280]}}],
+            }
+        )
 
 
 def test_agent_from_spec_web_fetch():
@@ -677,7 +738,12 @@ def test_model_json_schema_with_capabilities():
                         'model': {
                             'anyOf': [
                                 {
-                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'enum': [
+                                        'gpt-image-2',
+                                        'gpt-image-1.5',
+                                        'gpt-image-1',
+                                        'gpt-image-1-mini',
+                                    ],
                                     'type': 'string',
                                 },
                                 {'type': 'string'},
@@ -1378,6 +1444,7 @@ def test_model_json_schema_with_capabilities():
                         'xai:grok-4.3-latest',
                         'xai:grok-4.5',
                         'xai:grok-4.5-latest',
+                        'xai:grok-build-0.1',
                         'xai:grok-code-fast-1',
                         'zai:autoglm-phone-multilingual',
                         'zai:glm-4-32b-0414-128k',
@@ -1855,7 +1922,10 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'$ref': '#/$defs/ImageGenerationTool'}, {'type': 'boolean'}],
                             'title': 'Native',
                         },
-                        'local': {'anyOf': [{'const': False, 'type': 'boolean'}, {'type': 'null'}], 'title': 'Local'},
+                        'local': {
+                            'anyOf': [{'type': 'string'}, {'const': False, 'type': 'boolean'}, {'type': 'null'}],
+                            'title': 'Local',
+                        },
                         'fallback_model': {
                             'anyOf': [{'$ref': '#/$defs/KnownModelName'}, {'type': 'string'}, {'type': 'null'}],
                             'title': 'Fallback Model',
@@ -1879,7 +1949,12 @@ def test_model_json_schema_with_capabilities():
                         'image_model': {
                             'anyOf': [
                                 {
-                                    'enum': ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'],
+                                    'enum': [
+                                        'gpt-image-2',
+                                        'gpt-image-1.5',
+                                        'gpt-image-1',
+                                        'gpt-image-1-mini',
+                                    ],
                                     'type': 'string',
                                 },
                                 {'type': 'string'},
@@ -1909,10 +1984,43 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Size',
                         },
+                        'dimensions': {
+                            'anyOf': [
+                                {
+                                    'maxItems': 2,
+                                    'minItems': 2,
+                                    'prefixItems': [{'type': 'integer'}, {'type': 'integer'}],
+                                    'type': 'array',
+                                },
+                                {'type': 'null'},
+                            ],
+                            'title': 'Dimensions',
+                        },
                         'aspect_ratio': {
                             'anyOf': [
                                 {
-                                    'enum': ['21:9', '16:9', '4:3', '3:2', '1:1', '9:16', '3:4', '2:3', '5:4', '4:5'],
+                                    'enum': [
+                                        '1:1',
+                                        '1:2',
+                                        '1:4',
+                                        '1:8',
+                                        '2:1',
+                                        '2:3',
+                                        '3:2',
+                                        '3:4',
+                                        '4:1',
+                                        '4:3',
+                                        '4:5',
+                                        '5:4',
+                                        '8:1',
+                                        '9:16',
+                                        '9:19.5',
+                                        '9:20',
+                                        '16:9',
+                                        '19.5:9',
+                                        '20:9',
+                                        '21:9',
+                                    ],
                                     'type': 'string',
                                 },
                                 {'type': 'null'},
@@ -8188,458 +8296,6 @@ class TestWebFetchCapability:
 
         cap = WebFetch(local=my_fetch)
         assert isinstance(cap.local, Tool)
-
-
-class TestImageGenerationCapability:
-    def test_image_gen_init_params_match_builtin_tool(self):
-        """ImageGeneration.__init__ accepts all ImageGenerationTool configurable fields."""
-        import dataclasses
-        import inspect
-
-        # partial_images is excluded — not useful for subagent fallback (no streaming).
-        # optional is excluded — applies to wire-side dropping, not local-fallback config.
-        builtin_fields = {
-            f.name
-            for f in dataclasses.fields(ImageGenerationTool)
-            if f.name not in ('kind', 'optional', 'partial_images')
-        }
-        builtin_fields.remove('model')
-        builtin_fields.add('image_model')
-        # Subtract framework-inherited kw-only params from `AbstractCapability`
-        # (forwarded so `dataclasses.replace` round-trips through the custom `__init__`).
-        init_params = set(inspect.signature(ImageGeneration.__init__).parameters.keys()) - {
-            'self',
-            'native',
-            'local',
-            'fallback_model',
-            'id',
-            'defer_loading',
-            'description',
-        }
-        assert init_params == builtin_fields
-
-    def test_image_generation_default(self):
-        """ImageGeneration() provides only builtin, no local fallback."""
-        cap = ImageGeneration()
-        builtins = cap.get_native_tools()
-        assert len(builtins) == 1
-        assert isinstance(builtins[0], ImageGenerationTool)
-        # No default local
-        assert cap.local is None
-        assert cap.get_toolset() is None
-
-    def test_image_generation_with_custom_local(self):
-        """ImageGeneration(local=custom) → provides custom local fallback."""
-        from pydantic_ai.tools import Tool
-
-        def my_gen(prompt: str) -> str:
-            return 'image_url'  # pragma: no cover
-
-        cap = ImageGeneration(local=my_gen)
-        assert isinstance(cap.local, Tool)
-        assert cap.get_toolset() is not None
-
-    def test_image_generation_with_fallback_model(self):
-        """ImageGeneration(fallback_model=...) creates a local fallback tool."""
-        from pydantic_ai.tools import Tool
-
-        cap = ImageGeneration(fallback_model='openai-responses:gpt-5.4')
-        assert isinstance(cap.local, Tool)
-        assert cap.get_toolset() is not None
-        builtins = cap.get_native_tools()
-        assert len(builtins) == 1
-        assert isinstance(builtins[0], ImageGenerationTool)
-
-    def test_image_generation_forwards_config_to_builtin(self):
-        """ImageGeneration config fields are forwarded to the ImageGenerationTool builtin."""
-        cap = ImageGeneration(
-            action='generate',
-            background='opaque',
-            input_fidelity='high',
-            moderation='low',
-            image_model='gpt-image-2',
-            output_compression=80,
-            output_format='jpeg',
-            quality='high',
-            size='1024x1024',
-            aspect_ratio='16:9',
-        )
-        builtins = cap.get_native_tools()
-        assert len(builtins) == 1
-        tool = builtins[0]
-        assert isinstance(tool, ImageGenerationTool)
-        assert tool.action == 'generate'
-        assert tool.background == 'opaque'
-        assert tool.input_fidelity == 'high'
-        assert tool.moderation == 'low'
-        assert tool.model == 'gpt-image-2'
-        assert tool.output_compression == 80
-        assert tool.output_format == 'jpeg'
-        assert tool.quality == 'high'
-        assert tool.size == '1024x1024'
-        assert tool.aspect_ratio == '16:9'
-
-    def test_image_generation_fallback_merges_custom_native_with_overrides(self):
-        """Custom native tool settings are merged with capability-level overrides for the fallback."""
-        from pydantic_ai.tools import Tool
-
-        custom_native = ImageGenerationTool(quality='high', size='1024x1024')
-        cap = ImageGeneration(
-            native=custom_native,
-            fallback_model='openai-responses:gpt-5.4',
-            output_format='jpeg',  # capability-level override
-        )
-        # The local fallback should exist and contain the merged config
-        assert isinstance(cap.local, Tool)
-        assert cap.get_toolset() is not None
-
-    def test_image_generation_callable_native_with_fallback(self):
-        """When native is a callable, the fallback local tool still gets created."""
-        from pydantic_ai.tools import Tool
-
-        cap = ImageGeneration(
-            native=lambda ctx: ImageGenerationTool(quality='high'),
-            fallback_model='openai-responses:gpt-5.4',
-        )
-        # Callable native can't be resolved at init time, but local fallback is still created
-        assert isinstance(cap.local, Tool)
-        assert cap.get_toolset() is not None
-
-    def test_image_generation_fallback_model_and_local_conflict(self):
-        """ImageGeneration(fallback_model=..., local=func) raises UserError."""
-
-        def my_gen(prompt: str) -> str:
-            return 'image_url'  # pragma: no cover
-
-        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
-            ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=my_gen)
-
-    def test_image_generation_fallback_model_with_local_false(self):
-        """ImageGeneration(fallback_model=..., local=False) raises UserError."""
-        with pytest.raises(UserError, match='cannot specify both `fallback_model` and `local`'):
-            ImageGeneration(fallback_model='openai-responses:gpt-5.4', local=False)
-
-    async def test_image_generation_callable_fallback_model(self, allow_model_requests: None):
-        """ImageGeneration with async callable fallback_model resolves the model per-run."""
-        from pydantic_ai.messages import BinaryImage, FilePart
-
-        image_data = b'\x89PNG\r\n\x1a\n'  # minimal PNG header
-
-        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[FilePart(content=BinaryImage(data=image_data, media_type='image/png'))])
-
-        inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supports_image_output=True))
-
-        async def model_factory(ctx: RunContext) -> FunctionModel:
-            return inner_model
-
-        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
-                return ModelResponse(parts=[TextPart(content='done')])
-            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
-
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
-        result = await agent.run('Generate a test image')
-        assert result.output == 'done'
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='generate_image',
-                            args='{"prompt": "test"}',
-                            tool_call_id=IsStr(),
-                        )
-                    ],
-                    usage=RequestUsage(input_tokens=54, output_tokens=5),
-                    model_name='function:outer_model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='generate_image',
-                            content=BinaryImage(data=b'\x89PNG\r\n\x1a\n', media_type='image/png'),
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='done')],
-                    usage=RequestUsage(input_tokens=54, output_tokens=6),
-                    model_name='function:outer_model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-    async def test_image_generation_callable_returns_image_only_model(self, allow_model_requests: None):
-        """Callable fallback_model returning an image-only model name is caught at call time."""
-
-        def model_factory(ctx: RunContext) -> str:
-            return 'openai-responses:gpt-image-1'
-
-        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
-
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=model_factory)])
-        with pytest.raises(UserError, match="'gpt-image-1' is a dedicated image generation model"):
-            await agent.run('Generate a test image')
-
-    async def test_image_generation_subagent_error_becomes_model_retry(self, allow_model_requests: None):
-        """UnexpectedModelBehavior from subagent becomes a retry prompt to the outer model."""
-
-        # FunctionModel that returns text but no image — triggers UnexpectedModelBehavior
-        def no_image_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='No image generated.')])
-
-        inner_model = FunctionModel(no_image_model_fn, profile=ModelProfile(supports_image_output=True))
-
-        call_count = 0
-
-        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
-            return ModelResponse(parts=[TextPart(content='gave up')])
-
-        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
-        result = await agent.run('Generate a test image')
-        assert result.output == 'gave up'
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[UserPromptPart(content='Generate a test image', timestamp=IsDatetime())],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='generate_image',
-                            args='{"prompt": "test"}',
-                            tool_call_id=IsStr(),
-                        )
-                    ],
-                    usage=RequestUsage(input_tokens=54, output_tokens=5),
-                    model_name='function:outer_model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        RetryPromptPart(
-                            content='Exceeded maximum output retries (1)',
-                            tool_name='generate_image',
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='gave up')],
-                    usage=RequestUsage(input_tokens=66, output_tokens=7),
-                    model_name='function:outer_model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-    @pytest.mark.parametrize(
-        'provider, model_name, suggestion',
-        [
-            ('openai-responses', 'gpt-image-2', 'openai-responses:gpt-5.5'),
-            ('openai-responses', 'gpt-image-1.5', 'openai-responses:gpt-5.5'),
-            ('openai-responses', 'gpt-image-1', 'openai-responses:gpt-5.4'),
-            ('openai-responses', 'gpt-image-1-mini', 'openai-responses:gpt-5.4'),
-            ('google', 'imagen-3.0-generate-002', 'google:gemini-3-pro-image'),
-            ('google', 'imagen-3.0-fast-generate-001', 'google:gemini-3-pro-image'),
-        ],
-    )
-    def test_image_generation_rejects_image_only_model(self, provider: str, model_name: str, suggestion: str):
-        """Using a dedicated image model raises a clear error with a conversational alternative."""
-        with pytest.raises(
-            UserError,
-            match=re.escape(
-                f'{model_name!r} is a dedicated image generation model that cannot be used as '
-                f'`fallback_model` directly. Use a conversational model with image generation '
-                f'support instead, e.g. {suggestion!r}.'
-            ),
-        ):
-            ImageGeneration(fallback_model=f'{provider}:{model_name}')
-
-    @pytest.mark.vcr()
-    async def test_image_generation_local_fallback(self, allow_model_requests: None, openai_api_key: str):
-        """ImageGeneration(fallback_model=...) with non-supporting outer model uses subagent fallback."""
-        from pydantic_ai.messages import BinaryImage
-        from pydantic_ai.models.openai import OpenAIResponsesModel
-        from pydantic_ai.providers.openai import OpenAIProvider
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            # If we see a tool return, the image was generated — return final text
-            if any(
-                isinstance(part, ToolReturnPart)
-                for msg in messages
-                if isinstance(msg, ModelRequest)
-                for part in msg.parts
-            ):
-                return ModelResponse(parts=[TextPart(content='Here is the generated image.')])
-
-            # First call: invoke the generate_image tool
-            assert info.function_tools, 'Expected generate_image tool to be available'
-            tool = info.function_tools[0]
-            return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
-
-        inner_model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key=openai_api_key))
-        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(
-            outer_model,
-            capabilities=[
-                ImageGeneration(fallback_model=inner_model),
-            ],
-        )
-        result = await agent.run('Generate an image of a cute baby sea otter')
-        assert result.output == 'Here is the generated image.'
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(content='Generate an image of a cute baby sea otter', timestamp=IsDatetime())
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='generate_image',
-                            args='{"prompt": "A cute baby sea otter"}',
-                            tool_call_id=IsStr(),
-                        )
-                    ],
-                    usage=RequestUsage(input_tokens=59, output_tokens=9),
-                    model_name='function:model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='generate_image',
-                            content=IsInstance(BinaryImage),
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='Here is the generated image.')],
-                    usage=RequestUsage(input_tokens=59, output_tokens=15),
-                    model_name='function:model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-    @pytest.mark.vcr()
-    async def test_image_generation_local_fallback_google(self, allow_model_requests: None, gemini_api_key: str):
-        """ImageGeneration fallback with Google image model."""
-        pytest.importorskip('google.genai', reason='google extra not installed')
-        from pydantic_ai.messages import BinaryImage
-        from pydantic_ai.models.google import GoogleModel
-        from pydantic_ai.providers.google import GoogleProvider
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
-                return ModelResponse(parts=[TextPart(content='Here is the generated image.')])
-            assert info.function_tools, 'Expected generate_image tool to be available'
-            tool = info.function_tools[0]
-            return ModelResponse(parts=[ToolCallPart(tool_name=tool.name, args='{"prompt": "A cute baby sea otter"}')])
-
-        inner_model = GoogleModel('gemini-3-pro-image', provider=GoogleProvider(api_key=gemini_api_key))
-        outer_model = FunctionModel(model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
-        agent = Agent(outer_model, capabilities=[ImageGeneration(fallback_model=inner_model)])
-        result = await agent.run('Generate an image of a cute baby sea otter')
-        assert result.output == 'Here is the generated image.'
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[
-                        UserPromptPart(content='Generate an image of a cute baby sea otter', timestamp=IsDatetime())
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            tool_name='generate_image',
-                            args='{"prompt": "A cute baby sea otter"}',
-                            tool_call_id=IsStr(),
-                        )
-                    ],
-                    usage=RequestUsage(input_tokens=59, output_tokens=9),
-                    model_name='function:model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='generate_image',
-                            content=IsInstance(BinaryImage),
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='Here is the generated image.')],
-                    usage=RequestUsage(input_tokens=59, output_tokens=15),
-                    model_name='function:model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
 
 
 has_mcp = find_spec('mcp') is not None

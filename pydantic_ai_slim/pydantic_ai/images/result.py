@@ -1,0 +1,105 @@
+from collections.abc import Sequence
+from dataclasses import KW_ONLY, dataclass, field
+from datetime import datetime
+
+from genai_prices import types as genai_types
+
+from pydantic_ai._cost import calculate_price_for_usage
+from pydantic_ai._utils import now_utc as _now_utc
+from pydantic_ai.messages import BinaryImage
+from pydantic_ai.usage import RequestUsage
+
+from .settings import ImageGenerationSettings
+
+
+@dataclass
+class GeneratedImage:
+    """One generated image with normalized content and provider metadata."""
+
+    content: BinaryImage
+    """The generated image as normalized binary content."""
+
+    _: KW_ONLY
+
+    revised_prompt: str | None = None
+    """Provider-revised or enhanced prompt, if available."""
+
+    size: str | None = None
+    """Generated image size, if reported by the provider."""
+
+    quality: str | None = None
+    """Generated image quality, if reported by the provider."""
+
+    output_format: str | None = None
+    """Generated image output format, if reported by the provider."""
+
+    background: str | None = None
+    """Generated image background mode, if reported by the provider."""
+
+    provider_details: dict[str, object] | None = None
+    """Provider-specific details for this generated image."""
+
+    provider_image_id: str | None = None
+    """Provider-specific identifier for this image, if available."""
+
+
+@dataclass
+class ImageGenerationResult:
+    """The result of an image generation operation."""
+
+    images: Sequence[GeneratedImage]
+    """Generated images."""
+
+    _: KW_ONLY
+
+    prompt: str
+    """The input prompt used for generation."""
+
+    model_name: str
+    """The name of the model that generated the images."""
+
+    provider_name: str
+    """The name of the provider."""
+
+    timestamp: datetime = field(default_factory=_now_utc)
+    """When the image generation request was made."""
+
+    usage: RequestUsage = field(default_factory=RequestUsage)
+    """Usage statistics for this request."""
+
+    settings: ImageGenerationSettings | None = None
+    """The normalized settings used for this request, if available."""
+
+    provider_details: dict[str, object] | None = None
+    """Provider-specific details from the response."""
+
+    provider_response_id: str | None = None
+    """Unique identifier for this response from the provider, if available."""
+
+    provider_url: str | None = None
+    """Provider API URL, if available."""
+
+    def cost(self) -> genai_types.PriceCalculation:
+        """Calculate the cost of the image generation request.
+
+        Uses [`genai-prices`](https://github.com/pydantic/genai-prices) for pricing data.
+
+        Token-priced image models (GPT Image, Gemini image) are covered. Models priced per
+        generated image rather than per token are not yet in the pricing data and raise
+        `LookupError`; see [genai-prices#185](https://github.com/pydantic/genai-prices/issues/185)
+        and [genai-prices#410](https://github.com/pydantic/genai-prices/issues/410).
+
+        Returns:
+            A price calculation object with `total_price`, `input_price`, and other cost details.
+
+        Raises:
+            LookupError: If pricing data is not available for this model/provider.
+        """
+        assert self.model_name, 'Model name is required to calculate price'
+        return calculate_price_for_usage(
+            self.usage,
+            model_name=self.model_name,
+            provider_api_url=self.provider_url,
+            provider_name=self.provider_name,
+            genai_request_timestamp=self.timestamp,
+        )

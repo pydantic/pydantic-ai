@@ -45,6 +45,8 @@ from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.embeddings import EmbeddingModel, infer_embedding_model
 from pydantic_ai.embeddings.test import TestEmbeddingModel
 from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.images import ImageGenerationModel, infer_image_generation_model
+from pydantic_ai.images.test import TestImageGenerationModel
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -79,10 +81,16 @@ code_examples: dict[str, CodeExample] = {}
 
 
 @pytest.fixture(autouse=True)
-def blockbuster_enabled(example: CodeExample) -> bool:
-    """Skip the detector for pytest-examples' synchronous output-file reader."""
-    if example.prefix_settings().get('title') == 'voyageai_embeddings.py':
-        return False
+def blockbuster_enabled(request: pytest.FixtureRequest) -> bool:
+    """Skip the detector for pytest-examples' synchronous output-file reader.
+
+    Not every test in this file is a parametrized example test, so the `example`
+    fixture is looked up dynamically rather than required.
+    """
+    if 'example' in request.fixturenames:
+        example = request.getfixturevalue('example')
+        if isinstance(example, CodeExample) and example.prefix_settings().get('title') == 'voyageai_embeddings.py':
+            return False
     return True
 
 
@@ -232,6 +240,7 @@ def test_docs_examples(
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai.embeddings.infer_embedding_model', side_effect=mock_infer_embedding_model)
+    mocker.patch('pydantic_ai.images.infer_image_generation_model', side_effect=mock_infer_image_generation_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
     mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
 
@@ -1246,6 +1255,20 @@ def mock_infer_embedding_model(model: EmbeddingModel | str) -> EmbeddingModel:
     }
     dimensions = dimensions_map.get(model_name, 8)
     return TestEmbeddingModel(model_name, provider_name=provider_name, dimensions=dimensions)
+
+
+def mock_infer_image_generation_model(model: ImageGenerationModel | str) -> ImageGenerationModel:
+    """Mock image generation model inference while validating the provider and model name."""
+    if isinstance(model, ImageGenerationModel):
+        return model
+
+    actual_model = infer_image_generation_model(model)
+    return TestImageGenerationModel(actual_model.model_name, provider_name=actual_model.system)
+
+
+def test_mock_infer_image_generation_model_preserves_instance():
+    model = TestImageGenerationModel()
+    assert mock_infer_image_generation_model(model) is model
 
 
 def mock_infer_model(model: Model | KnownModelName) -> Model:

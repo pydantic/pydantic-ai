@@ -52,6 +52,16 @@ from .exceptions import (
     UserError,
 )
 from .format_prompt import format_as_xml
+from .images import (
+    GeneratedImage,
+    ImageDimensions,
+    ImageGenerationAspectRatio,
+    ImageGenerationInput,
+    ImageGenerationModel,
+    ImageGenerationResult,
+    ImageGenerationSettings,
+    ImageGenerator,
+)
 from .messages import (
     AgentStreamEvent,
     AudioFormat,
@@ -197,6 +207,15 @@ __all__ = (
     'EmbeddingModel',
     'EmbeddingSettings',
     'EmbeddingResult',
+    # images
+    'ImageGenerator',
+    'ImageGenerationInput',
+    'ImageGenerationModel',
+    'ImageGenerationSettings',
+    'ImageGenerationAspectRatio',
+    'ImageGenerationResult',
+    'GeneratedImage',
+    'ImageDimensions',
     # concurrency
     'AbstractConcurrencyLimiter',
     'AnyConcurrencyLimit',

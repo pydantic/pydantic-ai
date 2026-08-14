@@ -514,6 +514,11 @@ navigation:
         slug: "guides/web"
         aliases:
           - "web"
+      - page: "Image Generation"
+        path: "image-generation.md"
+        slug: "guides/image-generation"
+        aliases:
+          - "image-generation"
       - page: "Embeddings"
         path: "embeddings.md"
         slug: "guides/embeddings"
@@ -837,6 +842,11 @@ navigation:
             slug: "api/pydantic-ai/embeddings"
             aliases:
               - "api/embeddings"
+          - page: "images"
+            path: "api/images.md"
+            slug: "api/pydantic-ai/images"
+            aliases:
+              - "api/images"
           - page: "exceptions"
             path: "api/exceptions.md"
             slug: "api/pydantic-ai/exceptions"

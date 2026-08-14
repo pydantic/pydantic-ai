@@ -100,6 +100,32 @@ agent = Agent(model)
 ...
 ```
 
+## Image generation
+
+Use [`ImageGenerator`][pydantic_ai.images.ImageGenerator] with an `openai:` image model for direct generation and
+reference-image editing. This uses OpenAI's Images API rather than a conversational Responses model:
+
+```python {title="openai_image_generation.py"}
+from pydantic_ai import ImageGenerator
+from pydantic_ai.images.openai import OpenAIImageGenerationSettings
+
+generator = ImageGenerator(
+    'openai:gpt-image-2',
+    settings=OpenAIImageGenerationSettings(
+        dimensions=(1280, 720),
+        openai_quality='low',
+        openai_output_format='jpeg',
+    ),
+)
+```
+
+OpenAI accepts [`BinaryImage`][pydantic_ai.messages.BinaryImage] and
+[`ImageUrl`][pydantic_ai.messages.ImageUrl] reference inputs. Its image-edit endpoint requires file content and does not
+accept an [`UploadedFile`][pydantic_ai.messages.UploadedFile] provider file ID. Transparent-background support varies
+by model and requires PNG or WebP output. Provider-specific settings are forwarded to OpenAI so newly supported values
+are not blocked by stale client-side checks. See the [image-generation guide](../image-generation.md) for generation,
+editing, geometry, and normalized settings.
+
 ## Model settings
 
 You can customize model behavior using [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]:
