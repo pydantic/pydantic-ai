@@ -45,17 +45,15 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
 
 ## What are you building?
 
-From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered. To run the examples below, [install](install.md) with [`uv`](https://docs.astral.sh/uv/); each example notes anything extra it needs:
-
-```bash
-uv add pydantic-ai
-```
-
-That includes every model provider; to pick and choose dependencies yourself, use [`pydantic-ai-slim`](install.md#slim-install) with extras instead.
+From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered.
 
 === "Coding agent"
 
     A complete coding agent in your terminal: workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions. Here with [web search](capabilities/web-search.md) and a second-opinion [advisor](https://pydantic.dev/docs/ai/harness/advisor/) snapped on alongside:
+
+    ```bash
+    uv add pydantic-ai pydantic-ai-harness
+    ```
 
     ```python {test="skip" lint="skip"}
     from pydantic_ai import Agent
@@ -82,7 +80,7 @@ That includes every model provider; to pick and choose dependencies yourself, us
     ]
     ```
 
-    Install both packages (`uv add pydantic-ai pydantic-ai-harness`), run the file, and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/#api-reference) with [`clai`](cli.md#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
+    Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/#api-reference) with [`clai`](cli.md#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
     ```bash
     uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
@@ -93,6 +91,10 @@ That includes every model provider; to pick and choose dependencies yourself, us
 === "Data extraction"
 
     Give the agent an [output type](output.md) and [tools](tools.md), and every run comes back validated and typed:
+
+    ```bash
+    uv add pydantic-ai
+    ```
 
     ```python {title="review_sentiment.py"}
     from typing import Literal
@@ -129,6 +131,10 @@ That includes every model provider; to pick and choose dependencies yourself, us
 
     Put the same agent on a live voice session, [tools](realtime/tools.md) and [capabilities](realtime/capabilities.md) included:
 
+    ```bash
+    uv add "pydantic-ai[openai-realtime]"
+    ```
+
     ```python {test="skip" lint="skip"}
     import asyncio
 
@@ -152,13 +158,17 @@ That includes every model provider; to pick and choose dependencies yourself, us
             print(f'{part.speaker}: {part.transcript}')
     ```
 
-    The model calls your tools mid-conversation while it keeps talking, and every session is [instrumented](logfire.md); voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice. This example needs the realtime extra: `uv add "pydantic-ai[openai-realtime]"`.
+    The model calls your tools mid-conversation while it keeps talking, and every session is [instrumented](logfire.md); voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
 
     **Build this →** [Realtime Voice](realtime/overview.md), starting from the [voice assistant example](examples/realtime-voice.md)
 
 === "Durable background agent"
 
     Attach [`TemporalDurability`](durable_execution/temporal.md) and the same agent runs inside a [Temporal](durable_execution/temporal.md) workflow: every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
+
+    ```bash
+    uv add "pydantic-ai[temporal]"
+    ```
 
     ```python {title="durable_research.py"}
     from temporalio import workflow
@@ -185,13 +195,17 @@ That includes every model provider; to pick and choose dependencies yourself, us
             return result.output
     ```
 
-    [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, Kitaru, and Airflow](durable_execution/overview.md) integrations besides. This example needs the Temporal extra: `uv add "pydantic-ai[temporal]"`.
+    [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, Kitaru, and Airflow](durable_execution/overview.md) integrations besides.
 
     **Build this →** [Durable Execution](durable_execution/overview.md)
 
 === "Image generation"
 
     Ask for an image and make it the run's typed [output](output.md):
+
+    ```bash
+    uv add pydantic-ai
+    ```
 
     ```python {title="logo_generation.py"}
     from pathlib import Path
