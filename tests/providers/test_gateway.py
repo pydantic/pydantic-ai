@@ -10,6 +10,7 @@ import httpx2
 import pytest
 
 from pydantic_ai import Agent, UserError
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 
 from .._inline_snapshot import raises, snapshot
 from ..conftest import TestEnv, try_import
@@ -212,6 +213,30 @@ async def test_init_with_http_client_replaces_existing_gateway_hook():
 
         assert request.headers['X-Existing-Request-Hook'] == 'kept'
         assert request.headers['Authorization'] == 'Bearer second'
+
+
+@pytest.mark.parametrize('provider_name', ['openai', 'google-cloud'])
+async def test_gateway_provider_hooks_a_caller_owned_legacy_http_client(
+    provider_name: Literal['openai', 'google-cloud'],
+):
+    # Unit (not VCR): the OpenAI and Google routes default to HTTPX2 but still accept the deprecated
+    # `httpx.AsyncClient` through v2, and a missing auth hook on it would fail silently (every gateway
+    # request 401s) rather than at construction. Invoking the hooks directly pins that they were installed;
+    # cassette playback wouldn't exercise hook installation.
+    async with httpx.AsyncClient() as http_client:
+        with pytest.warns(PydanticAIDeprecationWarning, match=r'`httpx\.AsyncClient` support .* is deprecated'):
+            provider = gateway_provider(
+                provider_name, http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL
+            )
+
+        request = httpx.Request('GET', provider.base_url)
+        for hook in http_client.event_hooks['request']:
+            await hook(request)
+        assert request.headers['Authorization'] == 'Bearer gw-key'
+
+        async with provider:
+            pass
+        assert not http_client.is_closed
 
 
 async def test_non_openai_gateway_provider_recreates_owned_http_client():

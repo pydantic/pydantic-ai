@@ -2,12 +2,12 @@
 
 This module provides HTTP transport wrappers and wait strategies that integrate with
 the tenacity library to add retry capabilities to HTTP requests. The transports can be
-used with HTTP clients that support custom transports (such as httpx), while the wait
+used with HTTP clients that support custom transports (such as `httpx2`), while the wait
 strategies can be used with any tenacity retry decorator.
 
 The module includes:
-- HTTPX2TenacityTransport: Synchronous httpx2 transport with retry capabilities
-- AsyncHTTPX2TenacityTransport: Asynchronous httpx2 transport with retry capabilities
+- HTTPX2TenacityTransport: Synchronous `httpx2` transport with retry capabilities
+- AsyncHTTPX2TenacityTransport: Asynchronous `httpx2` transport with retry capabilities
 - wait_retry_after: Wait strategy that respects HTTP Retry-After headers
 """
 
@@ -17,15 +17,22 @@ import warnings
 from types import TracebackType
 
 import httpx2
-from httpx import (
-    AsyncBaseTransport,
-    AsyncHTTPTransport,
-    BaseTransport,
-    HTTPStatusError,
-    HTTPTransport,
-    Request,
-    Response,
-)
+
+try:
+    from httpx import (
+        AsyncBaseTransport,
+        AsyncHTTPTransport,
+        BaseTransport,
+        HTTPStatusError,
+        HTTPTransport,
+        Request,
+        Response,
+    )
+except ImportError as _import_error:
+    raise ImportError(
+        'Please install `httpx` to use the retries utilities, '
+        'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`'
+    ) from _import_error
 
 try:
     from tenacity import RetryCallState, RetryError, retry, wait_exponential
@@ -125,8 +132,49 @@ class RetryConfig(TypedDict, total=False):
     Tenacity's default for this argument is `None`."""
 
 
+# TODO(v3): once `TenacityTransport` and `AsyncTenacityTransport` are removed, consider renaming
+# `HTTPX2TenacityTransport` and `AsyncHTTPX2TenacityTransport` back to those names: the `HTTPX2` qualifier
+# only exists to tell them apart from transports that will no longer exist.
 class HTTPX2TenacityTransport(httpx2.BaseTransport):
-    """Synchronous httpx2 transport with Tenacity-based retry functionality."""
+    """Synchronous `httpx2` transport with Tenacity-based retry functionality.
+
+    This transport wraps another `httpx2` transport and adds retry capabilities using the tenacity library.
+    It can be configured to retry requests based on various conditions such as specific exception types,
+    response status codes, or custom validation logic.
+
+    The transport works by intercepting HTTP requests and responses, allowing the tenacity controller
+    to determine when and how to retry failed requests. The validate_response function can be used
+    to convert HTTP responses into exceptions that trigger retries.
+
+    Args:
+        config: The arguments to use for the tenacity `retry` decorator, including retry conditions,
+            wait strategy, stop conditions, etc. See the tenacity docs for more info.
+        wrapped: The underlying transport to wrap and add retry functionality to.
+            Defaults to a new `httpx2.HTTPTransport`.
+        validate_response: Optional callable that takes a Response and can raise an exception
+            to be handled by the controller if the response should trigger a retry.
+            Common use case is to raise exceptions for certain HTTP status codes.
+            If None, no response validation is performed.
+
+    Example:
+        ```python
+        from httpx2 import Client, HTTPStatusError
+        from tenacity import retry_if_exception_type, stop_after_attempt
+
+        from pydantic_ai.retries import HTTPX2TenacityTransport, RetryConfig, wait_retry_after
+
+        transport = HTTPX2TenacityTransport(
+            RetryConfig(
+                retry=retry_if_exception_type(HTTPStatusError),
+                wait=wait_retry_after(max_wait=120),
+                stop=stop_after_attempt(5),
+                reraise=True
+            ),
+            validate_response=lambda r: r.raise_for_status()
+        )
+        client = Client(transport=transport)
+        ```
+    """
 
     def __init__(
         self,
@@ -170,7 +218,49 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
 
 
 class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
-    """Asynchronous httpx2 transport with Tenacity-based retry functionality."""
+    """Asynchronous `httpx2` transport with Tenacity-based retry functionality.
+
+    This transport wraps another async `httpx2` transport and adds retry capabilities using the tenacity library.
+    It can be configured to retry requests based on various conditions such as specific exception types,
+    response status codes, or custom validation logic.
+
+    The transport works by intercepting HTTP requests and responses, allowing the tenacity controller
+    to determine when and how to retry failed requests. The validate_response function can be used
+    to convert HTTP responses into exceptions that trigger retries.
+
+    Args:
+        config: The arguments to use for the tenacity `retry` decorator, including retry conditions,
+            wait strategy, stop conditions, etc. See the tenacity docs for more info.
+        wrapped: The underlying async transport to wrap and add retry functionality to.
+            Defaults to a new `httpx2.AsyncHTTPTransport`.
+        validate_response: Optional callable that takes a Response and can raise an exception
+            to be handled by the controller if the response should trigger a retry.
+            Common use case is to raise exceptions for certain HTTP status codes.
+            If None, no response validation is performed.
+
+    Example:
+        ```python
+        from httpx2 import AsyncClient, HTTPStatusError
+        from tenacity import retry_if_exception_type, stop_after_attempt
+
+        from pydantic_ai.retries import (
+            AsyncHTTPX2TenacityTransport,
+            RetryConfig,
+            wait_retry_after,
+        )
+
+        transport = AsyncHTTPX2TenacityTransport(
+            RetryConfig(
+                retry=retry_if_exception_type(HTTPStatusError),
+                wait=wait_retry_after(max_wait=120),
+                stop=stop_after_attempt(5),
+                reraise=True
+            ),
+            validate_response=lambda r: r.raise_for_status()
+        )
+        client = AsyncClient(transport=transport)
+        ```
+    """
 
     def __init__(
         self,
@@ -213,6 +303,7 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
         await self.wrapped.aclose()
 
 
+# TODO(v3): remove `TenacityTransport`, superseded by `HTTPX2TenacityTransport`.
 class TenacityTransport(BaseTransport):
     """Deprecated synchronous HTTPX transport with Tenacity-based retry functionality.
 
@@ -298,6 +389,7 @@ class TenacityTransport(BaseTransport):
         self.wrapped.close()  # pragma: no cover
 
 
+# TODO(v3): remove `AsyncTenacityTransport`, superseded by `AsyncHTTPX2TenacityTransport`.
 class AsyncTenacityTransport(AsyncBaseTransport):
     """Deprecated asynchronous HTTPX transport with Tenacity-based retry functionality.
 

@@ -5,11 +5,13 @@ from __future__ import annotations as _annotations
 import os
 import re
 import weakref
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx2
+from typing_extensions import TypeVar
 
-from pydantic_ai._http import create_httpx2_client
+from pydantic_ai._http import create_async_httpx2_client
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 
@@ -25,6 +27,9 @@ if TYPE_CHECKING:
 
 
 _gateway_providers: weakref.WeakSet[Provider[Any]] = weakref.WeakSet()
+
+_ProviderT = TypeVar('_ProviderT', bound='Provider[Any]')
+_HTTPClientT = TypeVar('_HTTPClientT', bound='httpx.AsyncClient | httpx2.AsyncClient')
 
 
 @overload
@@ -176,83 +181,90 @@ def gateway_provider(
     if canonical in ('openai', 'openai-chat', 'openai-responses'):
         from .openai import OpenAIProvider
 
-        own_http_client = http_client is None
-        openai_http_client = http_client or create_httpx2_client()
-        _add_request_hook(openai_http_client, _GatewayRequestHook(api_key))
-
-        def _openai_http_client_factory() -> httpx2.AsyncClient:
-            client = create_httpx2_client()
-            _add_request_hook(client, _GatewayRequestHook(api_key))
-            return client
-
-        provider = OpenAIProvider(api_key=api_key, base_url=base_url, http_client=openai_http_client)
-        if own_http_client:
-            provider._own_http_client = openai_http_client  # pyright: ignore[reportPrivateUsage]
-            provider._http_client_factory = _openai_http_client_factory  # pyright: ignore[reportPrivateUsage]
-        _gateway_providers.add(provider)
-        return provider
+        return _build_gateway_provider(
+            lambda client: OpenAIProvider(api_key=api_key, base_url=base_url, http_client=client),
+            api_key=api_key,
+            http_client=http_client,
+            create_http_client=create_async_httpx2_client,
+        )
 
     if canonical == 'google-cloud':
-        return _google_gateway_provider(api_key=api_key, base_url=base_url, http_client=http_client)
+        # `gateway/google` is a convenience alias for `gateway/google-cloud` — the Gateway
+        # server only exposes the Google Cloud (Vertex) route today.
+        from .google_cloud import GoogleCloudProvider
+
+        def build_google_provider(client: httpx.AsyncClient | httpx2.AsyncClient) -> GoogleCloudProvider:
+            provider = GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=client)
+            _set_google_ws_gateway_auth(provider.client, api_key)
+            return provider
+
+        return _build_gateway_provider(
+            build_google_provider,
+            api_key=api_key,
+            http_client=http_client,
+            create_http_client=create_async_httpx2_client,
+        )
 
     if isinstance(http_client, httpx2.AsyncClient):
         raise UserError('`httpx2.AsyncClient` is only supported for OpenAI and Google Gateway routes.')
 
-    own_http_client = http_client is None
-    http_client = http_client or create_async_http_client()
-    _add_request_hook(http_client, _GatewayRequestHook(api_key))
-
-    def _http_client_factory() -> httpx.AsyncClient:
-        client = create_async_http_client()
-        _add_request_hook(client, _GatewayRequestHook(api_key))
-        return client
-
-    def _with_http_client(provider: Provider[Any]) -> Provider[Any]:
-        if own_http_client:
-            provider._own_http_client = http_client  # pyright: ignore[reportPrivateUsage]
-            provider._http_client_factory = _http_client_factory  # pyright: ignore[reportPrivateUsage]
-        _gateway_providers.add(provider)
-        return provider
-
     if canonical == 'groq':
         from .groq import GroqProvider
 
-        return _with_http_client(GroqProvider(api_key=api_key, base_url=base_url, http_client=http_client))
+        return _build_gateway_provider(
+            lambda client: GroqProvider(api_key=api_key, base_url=base_url, http_client=client),
+            api_key=api_key,
+            http_client=http_client,
+            create_http_client=create_async_http_client,
+        )
     elif canonical == 'anthropic':
         from anthropic import AsyncAnthropic
 
         from .anthropic import AnthropicProvider
 
-        return _with_http_client(
-            AnthropicProvider(
-                anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=http_client)
-            )
+        return _build_gateway_provider(
+            lambda client: AnthropicProvider(
+                anthropic_client=AsyncAnthropic(auth_token=api_key, base_url=base_url, http_client=client)
+            ),
+            api_key=api_key,
+            http_client=http_client,
+            create_http_client=create_async_http_client,
         )
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
 
 
-def _google_gateway_provider(
-    *, api_key: str, base_url: str, http_client: httpx.AsyncClient | httpx2.AsyncClient | None
-) -> Provider[GoogleClient]:
-    # `gateway/google` is a convenience alias for `gateway/google-cloud` — the Gateway
-    # server only exposes the Google Cloud (Vertex) route today.
-    from .google_cloud import GoogleCloudProvider
+def _build_gateway_provider(
+    build_provider: Callable[[_HTTPClientT], _ProviderT],
+    *,
+    api_key: str,
+    http_client: _HTTPClientT | None,
+    create_http_client: Callable[[], _HTTPClientT],
+) -> _ProviderT:
+    """Build a provider on an HTTP client that carries the Gateway's auth hook.
 
-    own_http_client = http_client is None
-    google_http_client = http_client or create_httpx2_client()
-    _add_request_hook(google_http_client, _GatewayRequestHook(api_key))
+    Shared by every Gateway route that speaks HTTP (all but Bedrock, which goes through botocore): a
+    caller-provided client is hooked in place and stays the caller's to close, while a client we create is
+    owned by the provider, which recreates it — hook included — when it is re-entered after being closed.
+    """
 
-    def _google_http_client_factory() -> httpx2.AsyncClient:
-        client = create_httpx2_client()
+    def create_hooked_http_client() -> _HTTPClientT:
+        client = create_http_client()
         _add_request_hook(client, _GatewayRequestHook(api_key))
         return client
 
-    provider = GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=google_http_client)
-    _set_google_ws_gateway_auth(provider.client, api_key)
+    own_http_client = http_client is None
+    if http_client is None:
+        http_client = create_hooked_http_client()
+    else:
+        _add_request_hook(http_client, _GatewayRequestHook(api_key))
+
+    provider = build_provider(http_client)
     if own_http_client:
-        provider._own_http_client = google_http_client  # pyright: ignore[reportPrivateUsage]
-        provider._http_client_factory = _google_http_client_factory  # pyright: ignore[reportPrivateUsage]
+        # `Provider` declares these as the legacy HTTPX client type; the OpenAI and Google providers
+        # widen them to accept an HTTPX2 client as well, which the base declaration can't express.
+        provider._own_http_client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+        provider._http_client_factory = create_hooked_http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
     _gateway_providers.add(provider)
     return provider
 

@@ -6,7 +6,7 @@ DeepSeek exposes a Responses endpoint at `https://api.deepseek.com/responses`, c
 continuation is not available and is not exercised here.
 
 Each case snapshots both the resulting messages and the bodies that actually went out, captured by an
-HTTPX2 event hook so the wire assertions run against what the client built rather than what the
+`httpx2` event hook so the wire assertions run against what the client built rather than what the
 cassette happens to hold. The request bodies are what pin the facts this pairing rests on:
 
 - the `openai_reasoning_effort` setting reaching DeepSeek as `reasoning.effort`

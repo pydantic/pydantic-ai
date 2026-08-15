@@ -1,9 +1,8 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import TYPE_CHECKING, overload
 
-import httpx
 from typing_extensions import deprecated
 
 from pydantic_ai import ModelProfile
@@ -18,6 +17,9 @@ from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
 from pydantic_ai.providers import Provider
+
+if TYPE_CHECKING:
+    import httpx
 
 try:
     from openai import AsyncOpenAI
@@ -121,7 +123,15 @@ class GitHubProvider(Provider[AsyncOpenAI]):
                 http_client=http_client,  # pyright: ignore[reportArgumentType]
             )
         else:
-            http_client = create_async_http_client()
+            # This provider is not migrated to HTTPX2, and `openai` no longer depends on legacy HTTPX,
+            # so the only client it can build may be unavailable at runtime.
+            try:
+                http_client = create_async_http_client()
+            except ImportError as _import_error:  # pragma: no cover
+                raise ImportError(
+                    'Please install `httpx` to use the GitHub Models provider, '
+                    'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`'
+                ) from _import_error
             self._own_http_client = http_client
             self._http_client_factory = create_async_http_client
             self._client = AsyncOpenAI(

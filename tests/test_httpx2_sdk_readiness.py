@@ -2,12 +2,11 @@ from __future__ import annotations as _annotations
 
 import subprocess
 import sys
-import textwrap
 
 import httpx2
 import pytest
 
-from pydantic_ai._http import create_httpx2_client
+from pydantic_ai._http import create_async_httpx2_client
 
 from .conftest import try_import
 
@@ -24,7 +23,9 @@ with try_import() as google_imports_successful:
 with try_import() as mistral_imports_successful:
     from mistralai.client import Mistral
 
-_HTTPX_FREE_CORE = """
+# Prepended to every subprocess script below: legacy HTTPX is installed in the test environment, so the
+# scripts have to make it unimportable to stand in for an install that never had it.
+_BLOCK_HTTPX = """
 import sys
 
 
@@ -35,7 +36,11 @@ class BlockHttpx:
 
 
 sys.meta_path.insert(0, BlockHttpx())
+"""
 
+_HTTPX_FREE_CORE = (
+    _BLOCK_HTTPX
+    + """
 import asyncio
 import typing
 
@@ -63,25 +68,19 @@ async def break_out_of_stream():
 asyncio.run(break_out_of_stream())
 assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'the SDK-less core imported httpx'
 """
+)
 
-_HTTPX_FREE_OPENAI = """
-import sys
-
-
-class BlockHttpx:
-    def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'httpx' or fullname.startswith('httpx.'):
-            raise ImportError('httpx is not installed')
-
-
-sys.meta_path.insert(0, BlockHttpx())
-
+_HTTPX_FREE_OPENAI = (
+    _BLOCK_HTTPX
+    + """
 import asyncio
+import warnings
 
 import httpx2
 
 from pydantic_ai.providers.gateway import gateway_provider
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.github import GitHubProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 
 
@@ -98,13 +97,26 @@ async def construct_providers():
 
 
 asyncio.run(construct_providers())
+
+# The deprecated GitHub Models provider is not migrated to HTTPX2, so it stays importable but says
+# what to install instead of dying on `openai`'s dropped legacy HTTPX dependency.
+with warnings.catch_warnings():
+    warnings.simplefilter('ignore')
+    try:
+        GitHubProvider(api_key='test')
+    except ImportError as exc:
+        assert 'Please install `httpx` to use the GitHub Models provider' in str(exc), exc
+    else:
+        raise AssertionError('`GitHubProvider` built a client without legacy httpx')
+
 assert not any(name == 'httpx' or name.startswith('httpx.') for name in sys.modules), 'OpenAI providers imported httpx'
 """
+)
 
 
 def test_core_runs_without_httpx() -> None:
     result = subprocess.run(
-        [sys.executable, '-W', 'error', '-c', textwrap.dedent(_HTTPX_FREE_CORE)],
+        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_CORE],
         capture_output=True,
         text=True,
     )
@@ -114,7 +126,7 @@ def test_core_runs_without_httpx() -> None:
 
 def test_openai_providers_run_without_httpx() -> None:
     result = subprocess.run(
-        [sys.executable, '-W', 'error', '-c', textwrap.dedent(_HTTPX_FREE_OPENAI)],
+        [sys.executable, '-W', 'error', '-c', _HTTPX_FREE_OPENAI],
         capture_output=True,
         text=True,
     )
@@ -122,10 +134,15 @@ def test_openai_providers_run_without_httpx() -> None:
     assert result.stderr == ''
 
 
-@pytest.mark.anyio
 async def test_httpx2_client_constructs_without_blocking() -> None:
-    client = create_httpx2_client()
-    assert isinstance(client, httpx2.AsyncClient)
+    """`_http.py` preloads `httpcore2` at import so client construction can't block the event loop.
+
+    The assertion that nothing blocks is the autouse `blockbuster` fixture, which raises `BlockingError`
+    on a blocking call inside a scanned library frame — so this test is the regression guard for that
+    preload only on the CI lanes that enable BlockBuster. Elsewhere it asserts construction alone.
+    """
+    async with create_async_httpx2_client() as client:
+        assert isinstance(client, httpx2.AsyncClient)
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')

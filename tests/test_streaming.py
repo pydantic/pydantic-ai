@@ -6534,8 +6534,8 @@ async def test_testmodel_stream_cancel_reports_interrupted():
     """Cancelling a `TestModel` sub-stream mid-iteration simulates the transport tear-down and reports interrupted.
 
     Driven directly against `model.request_stream` (not the continuation composite, which tears segments
-    down via `close_stream` rather than `cancel`) so the stream's own `cancel()` fires the simulated
-    `httpx.StreamClosed`, which the cancel-guard suppresses, leaving `get()` reporting `'interrupted'`.
+    down via `close_stream` rather than `cancel`) so the stream's own `cancel()` makes the next chunk pull
+    raise `_StreamCancelled`, which the cancel-guard suppresses, leaving `get()` reporting `'interrupted'`.
     """
     model = TestModel(custom_output_text='hello world')
     params = models.ModelRequestParameters()
@@ -6544,7 +6544,7 @@ async def test_testmodel_stream_cancel_reports_interrupted():
         iterator = stream.__aiter__()
         await iterator.__anext__()
         await stream.cancel()
-        async for _ in iterator:  # the next pull raises the simulated `StreamClosed`, suppressed by the guard
+        async for _ in iterator:  # the next pull raises `_StreamCancelled`, suppressed by the guard
             pass
 
     assert stream.get().state == 'interrupted'

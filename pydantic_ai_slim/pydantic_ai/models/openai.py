@@ -124,6 +124,8 @@ from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 if TYPE_CHECKING:
     from httpx import Timeout
 else:
+    # Legacy HTTPX is optional: without it `_normalize_openai_timeout`'s `isinstance` check falls back
+    # to the HTTPX2 type the SDK already accepts, so the conversion just rebuilds an equivalent value.
     try:
         from httpx import Timeout
     except ImportError:

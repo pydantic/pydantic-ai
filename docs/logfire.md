@@ -134,7 +134,7 @@ print(result.output)
 
 1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] for more details. `capture_all=True` means both headers and body are captured for both the request and response.
 
-    `httpx2` instrumentation requires `opentelemetry-instrumentation-httpx>=0.65b0`. If another installed SDK constrains an older OpenTelemetry version, Logfire emits a warning and continues tracing Pydantic AI model calls without the lower-level `httpx2` spans.
+    `httpx2` instrumentation requires `opentelemetry-instrumentation-httpx>=0.65b0`, which the [`logfire` extra](install.md#slim-install) installs for you. If you pin OpenTelemetry yourself and end up below that version, `logfire.instrument_httpx()` reports the missing requirement and emits no `httpx2` spans.
 
 ![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
 

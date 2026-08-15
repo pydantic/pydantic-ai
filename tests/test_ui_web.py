@@ -1202,7 +1202,7 @@ def test_chat_app_index_file_not_found(tmp_path: Path):
 
 
 def test_chat_app_index_http_error(monkeypatch: pytest.MonkeyPatch):
-    """Test that index endpoint raises httpx2 HTTPStatusError when CDN fetch fails."""
+    """Test that index endpoint raises `httpx2.HTTPStatusError` when CDN fetch fails."""
 
     class MockResponse:
         status_code = 500

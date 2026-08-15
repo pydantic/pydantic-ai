@@ -8,7 +8,7 @@ import httpx
 import httpx2
 
 from pydantic_ai import ModelProfile
-from pydantic_ai._http import create_httpx2_client, warn_if_legacy_httpx_client
+from pydantic_ai._http import create_async_httpx2_client, warn_if_legacy_httpx_client
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -113,10 +113,11 @@ class MistralProvider(Provider[Mistral]):
                     ' to use the Mistral provider.'
                 )
             if http_client is None:
-                http_client = create_httpx2_client()
+                http_client = create_async_httpx2_client()
                 self._own_http_client = http_client  # pyright: ignore[reportIncompatibleVariableOverride]
-                self._http_client_factory = create_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
+                self._http_client_factory = create_async_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
             else:
+                # 2 frames up from the helper: this `__init__` and the user's `MistralProvider(...)` call.
                 warn_if_legacy_httpx_client(http_client, consumer='the Mistral provider', stacklevel=2)
 
             # Mistral's runtime-checkable client protocol accepts httpx2, but its annotations name legacy httpx types.

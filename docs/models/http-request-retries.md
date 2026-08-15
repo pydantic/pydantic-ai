@@ -265,8 +265,9 @@ client = create_custom_retry_client()
 
 ## Using with `httpx2`-Compatible Providers
 
-The retry transports work with providers that accept an `httpx2` client, including OpenAI and OpenAI-compatible
-providers:
+The retry transports work with any provider whose `http_client` argument accepts an `httpx2.AsyncClient`. See each
+[provider's docs](overview.md) for the client type it takes; [Bedrock](#aws-bedrock) uses boto3 and configures retries
+its own way.
 
 ### OpenAI
 

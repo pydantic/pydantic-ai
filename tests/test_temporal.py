@@ -2468,7 +2468,7 @@ async def test_model_construction_in_workflow_passes_sandbox(
     assert result == expected_model_class
 
 
-# Regression test for the HTTPX2 stack passthrough entries in `_workflow_runner`.
+# Regression test for the `httpx2` stack passthrough entries in `_workflow_runner`.
 # `ModelResponse.cost()` lazily imports genai-prices on first call; inside a workflow that trips the
 # sandbox unless those modules are passed through (see #6215).
 @workflow.defn

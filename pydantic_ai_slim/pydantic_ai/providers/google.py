@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal, overload
 import httpx2
 
 from pydantic_ai import ModelProfile
-from pydantic_ai._http import create_httpx2_client, warn_if_legacy_httpx_client
+from pydantic_ai._http import create_async_httpx2_client, warn_if_legacy_httpx_client
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, get_user_agent
 from pydantic_ai.profiles.google import google_model_profile, google_realtime_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
@@ -77,10 +77,12 @@ class BaseGoogleProvider(Provider[Client], ABC):
         ownership wiring consistent.
         """
         if http_client is None:
-            http_client = create_httpx2_client()
+            http_client = create_async_httpx2_client()
             self._own_http_client = http_client  # pyright: ignore[reportIncompatibleVariableOverride]
-            self._http_client_factory = create_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
+            self._http_client_factory = create_async_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
         else:
+            # 3 frames up from the helper: this method, the provider `__init__` calling it, and the
+            # user's `GoogleProvider(...)` call, which is where the warning should land.
             warn_if_legacy_httpx_client(http_client, consumer='Google providers', stacklevel=3)
         # google-genai's `HttpOptions.timeout` defaults to None, which makes the SDK pass
         # `timeout=None` to httpx and override any timeout on the supplied client. Pin the timeout

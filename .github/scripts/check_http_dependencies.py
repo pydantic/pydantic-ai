@@ -66,6 +66,19 @@ for requirement in google_requirements:
 google_dependencies = [Requirement(value) for value in requires('google-genai') or []]
 assert any(requirement.name == 'httpx' for requirement in google_dependencies)
 
+# `pydantic_ai.mcp` imports legacy HTTPX at module level, and the `mcp` extra never declares it: the
+# module is importable only because `fastmcp-slim[client]` pulls HTTPX in transitively. Assert that
+# transitive dependency still exists, so `mcp.py` losing its HTTP client fails here rather than at import.
+fastmcp_requirements = [requirement for requirement in slim if requirement.name == 'fastmcp-slim']
+assert fastmcp_requirements
+assert all(requirement.extras == {'client'} for requirement in fastmcp_requirements)
+
+fastmcp_dependencies = [Requirement(value) for value in requires('fastmcp-slim') or []]
+assert any(
+    requirement.name == 'httpx' and str(requirement.marker) == 'extra == "client"'
+    for requirement in fastmcp_dependencies
+)
+
 root_slim = [requirement for requirement in root if requirement.name == 'pydantic-ai-slim']
 assert root_slim
 assert all('retries' not in requirement.extras for requirement in root_slim if requirement.marker is None)

@@ -783,7 +783,7 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
     """
     cache: _HttpClientCache = {}
     original_httpx = pydantic_ai.models.create_async_http_client
-    original_httpx2 = pydantic_ai._http.create_httpx2_client
+    original_httpx2 = pydantic_ai._http.create_async_httpx2_client
 
     def cached_per_test(**kwargs: Any) -> httpx.AsyncClient:
         key = ('httpx', kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
@@ -809,8 +809,8 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
         mod_dict: dict[str, object] = getattr(mod, '__dict__', None) or {}
         if mod_dict.get('create_async_http_client', None) is original_httpx:
             monkeypatch.setattr(mod, 'create_async_http_client', cached_per_test)
-        if mod_dict.get('create_httpx2_client', None) is original_httpx2:
-            monkeypatch.setattr(mod, 'create_httpx2_client', cached_httpx2_per_test)
+        if mod_dict.get('create_async_httpx2_client', None) is original_httpx2:
+            monkeypatch.setattr(mod, 'create_async_httpx2_client', cached_httpx2_per_test)
 
     yield cache
 

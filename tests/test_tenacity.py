@@ -32,14 +32,15 @@ with try_import() as imports_successful:
         wait_retry_after,
     )
 
-pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='install tenacity to run tenacity tests'),
-    pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.PydanticAIDeprecationWarning'),
-]
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='install tenacity to run tenacity tests')
+
+# Only the classes that construct the deprecated transports may silence their warning; the `httpx2` classes
+# run under the repo-wide `filterwarnings = ["error"]` so a deprecation escaping into them fails the test.
+ignore_deprecation = pytest.mark.filterwarnings('ignore::pydantic_ai._warnings.PydanticAIDeprecationWarning')
 
 
 class TestHTTPX2TenacityTransport:
-    """HTTPX2 retry transports use the same Tenacity configuration as their HTTPX predecessors."""
+    """`httpx2` retry transports use the same Tenacity configuration as their `httpx` predecessors."""
 
     def test_sync_transport_passes_response_without_validator_and_closes_wrapped_transport(self):
         request = httpx2.Request('GET', 'https://example.com')
@@ -155,6 +156,7 @@ class TestLegacyHTTPXTransports:
             AsyncTenacityTransport(RetryConfig())
 
 
+@ignore_deprecation
 class TestTenacityTransport:
     """Tests for the synchronous TenacityTransport."""
 
@@ -315,6 +317,7 @@ class TestTenacityTransport:
         mock_response_success.raise_for_status.assert_called_once()
 
 
+@ignore_deprecation
 class TestAsyncTenacityTransport:
     """Tests for the asynchronous AsyncTenacityTransport."""
 
@@ -739,6 +742,7 @@ class TestWaitRetryAfter:
         fallback.assert_not_called()
 
 
+@ignore_deprecation
 class TestIntegration:
     """Integration tests combining transports with wait strategies."""
 
@@ -820,6 +824,7 @@ class TestIntegration:
         assert sleep_calls == [0.1]
 
 
+@ignore_deprecation
 class TestConnectionPool:
     class AlwaysReturnHTTP429Handler(BaseHTTPRequestHandler):
         def do_GET(self):

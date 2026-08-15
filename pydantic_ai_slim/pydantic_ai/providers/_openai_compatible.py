@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import httpx2
 from openai import AsyncOpenAI
 
-from pydantic_ai._http import create_httpx2_client, warn_if_legacy_httpx_client
+from pydantic_ai._http import create_async_httpx2_client, warn_if_legacy_httpx_client
 from pydantic_ai.providers import Provider
 
 if TYPE_CHECKING:
@@ -22,12 +22,18 @@ class OpenAICompatibleProvider(Provider[AsyncOpenAI]):
     _http_client_factory: Callable[[], OpenAIHTTPClient] | None = None
 
     def _get_http_client(
-        self, http_client: OpenAIHTTPClient | None, *, warning_stacklevel: int = 3
+        self,
+        http_client: OpenAIHTTPClient | None,
+        *,
+        # Frames to skip so the warning lands on the user's `SomeProvider(...)` call: this method,
+        # the provider `__init__` calling it, and the user's call site. Callers that add a frame in
+        # between pass a higher value.
+        warning_stacklevel: int = 3,
     ) -> OpenAIHTTPClient:
         if http_client is None:
-            http_client = create_httpx2_client()
+            http_client = create_async_httpx2_client()
             self._own_http_client = http_client  # pyright: ignore[reportIncompatibleVariableOverride]
-            self._http_client_factory = create_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
+            self._http_client_factory = create_async_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
         else:
             warn_if_legacy_httpx_client(
                 http_client, consumer='OpenAI-compatible providers', stacklevel=warning_stacklevel
@@ -42,6 +48,8 @@ class OpenAICompatibleProvider(Provider[AsyncOpenAI]):
         http_client: OpenAIHTTPClient | None,
         default_headers: Mapping[str, str] | None = None,
     ) -> AsyncOpenAI:
+        # One frame more than the default: this method sits between `_get_http_client` and the
+        # provider `__init__`, and the warning still targets the user's `SomeProvider(...)` call.
         http_client = self._get_http_client(http_client, warning_stacklevel=4)
         # OpenAI 3 keeps legacy HTTPX as a runtime-only escape hatch, outside its public type annotations.
         return AsyncOpenAI(

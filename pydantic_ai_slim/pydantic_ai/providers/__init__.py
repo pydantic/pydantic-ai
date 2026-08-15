@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
     from ..realtime import RealtimeModelProfile
 else:
+    # Legacy HTTPX is optional, so the client-lifecycle annotations below degrade to `object` when
+    # it isn't installed; subclasses that hold an `httpx2.AsyncClient` widen them anyway.
     try:
         from httpx import AsyncClient
     except ImportError:

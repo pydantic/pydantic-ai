@@ -10,6 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import httpx
 import httpx2
 import pytest
 from pydantic import BaseModel
@@ -62,6 +63,7 @@ from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
@@ -466,6 +468,35 @@ async def test_openai_responses_reasoning_mode_omitted_when_unsupported(
     await Agent(model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_mode='pro')).run('Hello')
 
     assert get_mock_responses_kwargs(mock_client)[0].get('reasoning') == expected_reasoning
+
+
+async def test_legacy_timeout_normalized(allow_model_requests: None) -> None:
+    """Not a VCR test: the SDK-bound `timeout` never reaches the wire, so only the kwargs show the conversion.
+
+    `ModelSettings.timeout` still takes a legacy `httpx.Timeout`, which the OpenAI SDK's HTTPX2 client
+    rejects, so the Responses path converts it the same way the Chat path does.
+    """
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    await Agent(model).run(
+        'hello', model_settings=ModelSettings(timeout=httpx.Timeout(connect=1, read=2, write=3, pool=4))
+    )
+
+    timeout = get_mock_responses_kwargs(mock_client)[0]['timeout']
+    assert isinstance(timeout, httpx2.Timeout)
+    assert (timeout.connect, timeout.read, timeout.write, timeout.pool) == (1, 2, 3, 4)
 
 
 @pytest.mark.parametrize(

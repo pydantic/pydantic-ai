@@ -94,6 +94,9 @@ if TYPE_CHECKING:
     from ..agent.abstract import AbstractAgent
     from ..usage import RunUsage
 else:
+    # Legacy HTTPX is optional, so this module has to import without it. The annotation then degrades
+    # to `object`, dropping static checking of what `create_async_http_client` hands back — the client
+    # its caller owns and closes. Calling it without legacy HTTPX still raises (see its body).
     try:
         from httpx import AsyncClient
     except ImportError:
@@ -1103,10 +1106,10 @@ class StreamedResponse(ABC):
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         """Return transport errors caused by `cancel()` tearing down the stream.
 
-        The default covers model classes whose SDKs iterate `httpx` responses
+        The default covers model classes whose SDKs iterate HTTP responses
         directly (Anthropic, OpenAI, Groq, Mistral, Google GenAI, HuggingFace,
-        and the custom Gemini client), since they let bare `httpx` errors
-        propagate from chunk reads. Model classes that use other transports
+        and the custom Gemini client), since they let bare `httpx2` (or legacy
+        `httpx`) errors propagate from chunk reads. Model classes that use other transports
         (for example gRPC or botocore) should override this method.
         """
         try:
@@ -1615,7 +1618,14 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     """
-    import httpx
+    try:
+        import httpx
+    except ImportError as _import_error:
+        raise ImportError(
+            'Please install `httpx` to create a legacy HTTPX client with this factory, '
+            'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`. '
+            'Providers otherwise build their own `httpx2.AsyncClient`, which you can also pass in yourself.'
+        ) from _import_error
 
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),

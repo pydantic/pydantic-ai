@@ -11,6 +11,12 @@ pip/uv-add pydantic-ai
 This installs the `pydantic_ai` package, core dependencies, and libraries required to use the OpenAI, Anthropic, and Google models, plus the [CLI](cli.md), [MCP](mcp/client.md), [Evals](evals.md), [Web UI](ui/overview.md), and [Logfire](logfire.md) integrations.
 To use any other models or integrations, add the relevant extras to your install command, e.g. `pydantic-ai[bedrock,temporal]`. Alternatively, you can install the [`pydantic-ai-slim`](#slim-install) package with only the extras you need.
 
+## TLS certificates
+
+Pydantic AI makes its HTTP requests with [`httpx2`](https://httpx2.pydantic.dev/), which verifies TLS certificates against the operating system trust store rather than shipping its own `certifi` bundle.
+Minimal container images and corporate proxies that rely on a private CA therefore need those certificates installed in the image (for example the `ca-certificates` package, plus your proxy's root CA).
+Alternatively, pass a provider an `httpx2.AsyncClient` you configured yourself through its `http_client` argument — see the [provider docs](models/overview.md) for the client each one accepts.
+
 ## Use with Pydantic Logfire
 
 Pydantic AI has an excellent (but completely optional) integration with [Pydantic Logfire](https://pydantic.dev/logfire) to help you view and understand agent runs.

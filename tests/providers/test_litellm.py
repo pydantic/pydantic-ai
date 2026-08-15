@@ -123,7 +123,7 @@ async def test_create_http_client_usage(mocker: MockerFixture):
     # Create a real AsyncClient for the mock
     async with httpx2.AsyncClient() as mock_client:
         mock_create_func = mocker.patch(
-            'pydantic_ai.providers._openai_compatible.create_httpx2_client', return_value=mock_client
+            'pydantic_ai.providers._openai_compatible.create_async_httpx2_client', return_value=mock_client
         )
 
         provider = LiteLLMProvider(api_key='test-key')

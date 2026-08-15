@@ -344,7 +344,6 @@ class TestModel(Model):
                 )
 
 
-@dataclass
 class _StreamCancelled(Exception):
     pass
 
