@@ -17,6 +17,9 @@
   <a href="https://github.com/pydantic/pydantic-ai/blob/main/LICENSE"><img src="https://img.shields.io/github/license/pydantic/pydantic-ai.svg?v" alt="license"></a>
   <a href="https://logfire.pydantic.dev/docs/join-slack/"><img src="https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack" alt="Join Slack" /></a>
 </div>
+<p align="center">
+  Agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end.
+</p>
 
 ---
 
