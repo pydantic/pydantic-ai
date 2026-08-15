@@ -221,8 +221,6 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Image Generation](capabilities/image-generation.md)
 
-<!-- Embeddings tab parked (bd54): restore by removing this comment.
-
 === "Embeddings"
 
     Embed documents and queries for semantic search or a [RAG pipeline](examples/rag.md):
@@ -239,8 +237,6 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     Seven providers behind one typed API, [instrumented](logfire.md) like everything else. It lives next to the agent that will use the results.
 
     **Build this →** [Embeddings](embeddings.md), then the [RAG example](examples/rag.md)
-
--->
 
 !!! tip "No API key yet?"
     You don't need a provider API key to try any of this. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel) (`Agent('test')`), which runs entirely offline without calling an LLM, so you can exercise your agent, tools, and outputs first. When you're ready for a real model, see [Models and Providers](models/overview.md) to pick a provider and set its API key.
