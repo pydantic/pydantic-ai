@@ -131,7 +131,7 @@ result = agent.run_sync('Generate a minimalist logo for a coffee shop called Ext
 Path('logo.png').write_bytes(result.output.data)
 ```
 
-Ask for an image and the run's typed output *is* the image: [provider-native generation](https://ai.pydantic.dev/native-tools#image-generation-tool) where the model supports it, a subagent fallback everywhere else, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way. **Build this →** [Image Generation](https://ai.pydantic.dev/capabilities/image-generation/)
+Ask for an image and the run's typed output *is* the image: [provider-native generation](https://ai.pydantic.dev/native-tools#image-generation-tool) on models that support it (like this one), a [subagent fallback](https://ai.pydantic.dev/capabilities/image-generation/) you can configure for the rest, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way. **Build this →** [Image Generation](https://ai.pydantic.dev/capabilities/image-generation/)
 
 ### Embeddings
 

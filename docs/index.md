@@ -159,7 +159,7 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
     Path('logo.png').write_bytes(result.output.data)
     ```
 
-    Ask for an image and the run's typed output *is* the image: [provider-native generation](native-tools.md#image-generation-tool) where the model supports it, a subagent fallback everywhere else, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way.
+    Ask for an image and the run's typed output *is* the image: [provider-native generation](native-tools.md#image-generation-tool) on models that support it (like this one), a [subagent fallback](capabilities/image-generation.md) you can configure for the rest, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way.
 
     **Build this →** [Image Generation](capabilities/image-generation.md)
 
