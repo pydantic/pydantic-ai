@@ -692,13 +692,13 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
-    'When is the next Python feature release due?': ToolCallPart(
+    'What was the mass of the largest meteorite found this year?': ToolCallPart(
         tool_name='final_result',
-        args={
-            'version': '3.15.0',
-            'release_month': 'October 2026',
-            'source_url': 'https://peps.python.org/pep-0790/',
-        },
+        args={'mass_kg': 7.6, 'location': 'Sahara Desert'},
+    ),
+    'The new release fixed everything I complained about!': ToolCallPart(
+        tool_name='final_result',
+        args={'label': 'positive', 'score': 0.9},
     ),
     'Find recent papers about transformer architectures': (
         'Here are some recent papers about transformer architectures from arxiv.org:\n'
@@ -916,6 +916,12 @@ async def model_logic(  # noqa: C901
                 ]
             )
         elif m.content == 'Generate an image of an axolotl.':
+            return ModelResponse(
+                parts=[
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
+                ]
+            )
+        elif m.content == 'Generate a minimalist logo for a coffee shop called Extract.':
             return ModelResponse(
                 parts=[
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
