@@ -68,7 +68,7 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
     agent.to_cli_sync()
     ```
 
-    [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) is a regular combined capability, not a black box: use it whole, or use the blocks it bundles directly; the two are equivalent:
+    [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) is a regular [combined capability](capabilities/custom.md#composition-and-middleware-semantics), not a black box: use it whole, or use the blocks it bundles directly; the two are equivalent:
 
     ```python {test="skip" lint="skip"}
     capabilities = [

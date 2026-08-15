@@ -53,7 +53,7 @@ agent = Agent(
 agent.to_cli_sync()
 ```
 
-[`Coder`](https://pydantic.dev/docs/ai/harness/coder/) is a regular combined capability, not a black box: use it whole, or use the blocks it bundles directly; the two are equivalent:
+[`Coder`](https://pydantic.dev/docs/ai/harness/coder/) is a regular [combined capability](https://ai.pydantic.dev/capabilities/custom/#composition-and-middleware-semantics), not a black box: use it whole, or use the blocks it bundles directly; the two are equivalent:
 
 ```python
 capabilities = [
