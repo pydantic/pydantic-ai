@@ -48,19 +48,6 @@ if TYPE_CHECKING:
     GoogleProviderFactory = Callable[[httpx.AsyncClient | httpx2.AsyncClient | None], BaseGoogleProvider]
 
 
-def _google_provider(http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None) -> BaseGoogleProvider:
-    return GoogleProvider(api_key='test-key', http_client=http_client)
-
-
-def _google_cloud_provider(http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None) -> BaseGoogleProvider:
-    return GoogleCloudProvider(api_key='test-key', http_client=http_client)
-
-
-@pytest.fixture(params=[_google_provider, _google_cloud_provider], ids=['google', 'google-cloud'])
-def provider_factory(request: pytest.FixtureRequest) -> GoogleProviderFactory:
-    return request.param
-
-
 # `retry_options` only changes behavior on transient 429/5xx responses, which a recorded cassette
 # can't reliably reproduce, so these unit tests assert the resolved HTTP config directly via the
 # SDK's `get_read_only_http_options()` accessor rather than running an agent against a cassette.
@@ -111,6 +98,19 @@ def test_google_cloud_provider_no_retry_options():
     provider = GoogleCloudProvider(project='pydantic-ai', location='us-central1')
     opts = provider.client._api_client.get_read_only_http_options()  # pyright: ignore[reportPrivateUsage]
     assert opts['retry_options'] is None
+
+
+def _google_provider(http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None) -> BaseGoogleProvider:
+    return GoogleProvider(api_key='test-key', http_client=http_client)
+
+
+def _google_cloud_provider(http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None) -> BaseGoogleProvider:
+    return GoogleCloudProvider(api_key='test-key', http_client=http_client)
+
+
+@pytest.fixture(params=[_google_provider, _google_cloud_provider], ids=['google', 'google-cloud'])
+def provider_factory(request: pytest.FixtureRequest) -> GoogleProviderFactory:
+    return request.param
 
 
 async def test_google_provider_owned_httpx2_client_lifecycle(provider_factory: GoogleProviderFactory) -> None:

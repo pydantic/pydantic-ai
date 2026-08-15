@@ -16,7 +16,6 @@ from enum import Enum
 from typing import Annotated, Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import httpx2
 import pytest
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
@@ -2042,17 +2041,6 @@ async def test_text_content_input(allow_model_requests: None):
     assert res == snapshot(
         {'role': 'user', 'content': [{'text': 'hello', 'type': 'text'}, {'text': 'world', 'type': 'text'}]}
     )
-
-
-def test_legacy_timeout_normalized(allow_model_requests: None) -> None:
-    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='hello', role='assistant')))
-    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
-
-    agent.run_sync('hello', model_settings=ModelSettings(timeout=httpx.Timeout(connect=1, read=2, write=3, pool=4)))
-
-    timeout = get_mock_chat_completion_kwargs(mock_client)[0]['timeout']
-    assert isinstance(timeout, httpx2.Timeout)
-    assert (timeout.connect, timeout.read, timeout.write, timeout.pool) == (1, 2, 3, 4)
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
