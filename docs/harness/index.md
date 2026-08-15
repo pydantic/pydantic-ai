@@ -7,6 +7,8 @@ description: The official capability library and harness for Pydantic AI -- 30+ 
 
 **The official capability library and harness for Pydantic AI**
 
+[![Join Slack](https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack)](https://logfire.pydantic.dev/docs/join-slack/)
+
 Every [Pydantic AI](/ai/) agent already has a light harness: the typed agent loop, [any model](/ai/models/overview/), your own tools, structured output. For simple agents that's enough. But set an agent loose on complex, long-running work — fix a codebase, research a question, run for hours unattended — and what it needs around the model grows: a [workspace](filesystem.md) to act in, a [plan](planning.md) it keeps current, [memory](memory.md) that carries across sessions, [sub-agents](subagents.md) to hand work to, [context management](compaction.md) that holds up in hour ten, and [durable execution](/ai/capabilities/durable_execution/overview/) that survives a restart. **Pydantic AI Harness** ships that harness.
 
 Everything here is one primitive: a [capability](/ai/capabilities/overview/), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [30+ of them](#capabilities), and complete agents like [Coder](coder.md) and [Researcher](researcher.md) are themselves capabilities combined — they come apart the way they went together. Snap on a single block, compose your own stack, or start from the whole coding agent and take it apart later.

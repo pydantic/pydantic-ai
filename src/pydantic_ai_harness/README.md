@@ -4,6 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/pydantic-ai-harness.svg)](https://pypi.python.org/pypi/pydantic-ai-harness)
 [![versions](https://img.shields.io/pypi/pyversions/pydantic-ai-harness.svg)](https://github.com/pydantic/pydantic-ai-harness)
 [![license](https://img.shields.io/github/license/pydantic/pydantic-ai-harness.svg)](https://github.com/pydantic/pydantic-ai-harness/blob/main/LICENSE)
+[![Join Slack](https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack)](https://logfire.pydantic.dev/docs/join-slack/)
 
 **The official capability library and harness for Pydantic AI**
 
@@ -290,23 +291,7 @@ Everything is observable: `logfire.instrument_pydantic_ai()` gives you [a full t
 uv add pydantic-ai-harness
 ```
 
-Some capabilities need an extra for their optional dependencies:
-
-```bash
-uv add "pydantic-ai-harness[codemode]"          # Code Mode (adds the Monty sandbox)
-uv add "pydantic-ai-harness[dynamic-workflow]"  # Dynamic Workflow (adds the Monty sandbox)
-uv add "pydantic-ai-harness[researcher]"        # Researcher (local search + page-fetch fallbacks)
-uv add "pydantic-ai-harness[modal]"             # Modal Sandbox (adds the Modal SDK)
-uv add "pydantic-ai-harness[logfire]"           # Managed Prompt (Logfire-managed prompts)
-uv add "pydantic-ai-harness[exa]"               # Exa Search + Exa Agent (web research via the Exa API)
-uv add "pydantic-ai-harness[skills]"            # Skills (loads SKILL.md frontmatter)
-uv add "pydantic-ai-harness[browser-use]"       # Browser Use (autonomous web tasks; Python 3.11+)
-uv add "pydantic-ai-harness[stackone]"          # StackOne (actions on linked business applications)
-uv add "pydantic-ai-harness[acp]"               # ACP (serve an agent to editors)
-uv add "pydantic-ai-harness[mongodb]"           # MongoDB backends for step persistence + media
-```
-
-The `code-mode` extra is also supported as an alias. Requires Python 3.10+ and `pydantic-ai-slim>=2.18.0`.
+This installs [`pydantic-ai-slim`](https://ai.pydantic.dev/install/) with it, so it works on its own — you don't need to install Pydantic AI separately. Model providers and the CLI come via extras that pass through to Pydantic AI: `pydantic-ai-harness[anthropic]`, `[cli]`. Some capabilities need their own extra for optional dependencies — each capability's page gives its exact install line. Requires Python 3.10+.
 
 ## Build your own
 
