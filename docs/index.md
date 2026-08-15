@@ -1,6 +1,6 @@
 ---
 title: Pydantic AI
-description: How Python does AI — agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end.
+description: "How Python does AI: agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end."
 ---
 
 # Pydantic AI {.hide}
@@ -36,20 +36,20 @@ description: How Python does AI — agents, realtime voice, image generation, em
 </p>
 
 <p style="text-align: center; font-size: 1.15em">
-  Agents, realtime voice, image generation, embeddings — every model, every interface, typed end to end.
+  Agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end.
 </p>
 
-**Pydantic AI** is the Python AI SDK: a typed, [instrumented](logfire.md) agent loop, [every model](models/overview.md) behind one Python API, and [every interface](interfaces.md) — [terminal](cli.md), [web](web.md), [your own frontend](ui/overview.md), even [voice](realtime/overview.md). It does [embeddings](embeddings.md) and [image generation](capabilities/image-generation.md) too. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** is its official capability library and harness: everything an agent needs for complex, long-running work, [capabilities](capabilities/overview.md) you snap on — from [web search](capabilities/web-search.md) and [MCP](capabilities/mcp.md) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+**Pydantic AI** is the Python AI SDK: a typed, extensible agent loop, [every model](models/overview.md) behind one Python API, and [every interface](interfaces.md) ([terminal](cli.md), [web](web.md), [your own frontend](ui/overview.md), and [voice](realtime/overview.md)). It does [embeddings](embeddings.md) and [image generation](capabilities/image-generation.md) too. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** is its official capability library and harness: everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/) and [compaction](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
-Whatever you came to build — a one-off LLM call extracting typed data in a script, an AI feature inside your SaaS, a realtime voice agent you can talk to, or your very own coding agent in your terminal — you've come to the right place.
+Whatever you came to build: a one-off LLM call [extracting typed data](output.md) in a script, an agent embedded deep inside your SaaS, a [realtime voice agent](realtime/overview.md) that talks back, or your own [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in the terminal. You've come to the right place.
 
 ## What are you building?
 
-Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have you covered:
+Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have you covered. These aren't paths to pick between: it's the same [`Agent`](agent.md) underneath, and the pieces combine freely.
 
 === "Coding agent"
 
-    A complete coding agent in your terminal — workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions — here with [web search](capabilities/web-search.md) and cross-session [memory](https://pydantic.dev/docs/ai/harness/memory/) snapped on alongside:
+    A complete coding agent in your terminal: workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions. Here with [web search](capabilities/web-search.md) and cross-session [memory](https://pydantic.dev/docs/ai/harness/memory/) snapped on alongside:
 
     ```python {test="skip" lint="skip"}
     from pydantic_ai import Agent
@@ -60,7 +60,7 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
     agent = Agent(
         'anthropic:claude-fable-5',
         capabilities=[
-            Coder(),
+            Coder(),  # files, shell, repo context, planning, sub-agents, context management
             WebSearch(),  # look up docs and error messages on the web
             Memory(FileStore('.agent-memory')),  # remembers across sessions
         ],
@@ -68,7 +68,7 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
     agent.to_cli_sync()
     ```
 
-    And [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) is a regular combined capability, not a black box — use it whole, or use the blocks it bundles directly; the two are equivalent:
+    [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) is a regular combined capability, not a black box: use it whole, or use the blocks it bundles directly; the two are equivalent:
 
     ```python {test="skip" lint="skip"}
     capabilities = [
@@ -85,7 +85,7 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
 
     **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
 
-=== "Structured output & tools"
+=== "Data extraction & tools"
 
     ```python {title="review_sentiment.py"}
     from typing import Literal
@@ -114,7 +114,7 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
     #> label='positive' score=0.9
     ```
 
-    The [`@agent.tool`](tools.md) function's signature and docstring become the tool schema, its arguments are [validated](tools.md#function-tools-and-schema) before your code runs, and the run is guaranteed to return a `Sentiment` — your IDE, type checker, and the LLM all agree on the shape.
+    The [`@agent.tool`](tools.md) function's signature and docstring become the tool schema, its arguments are [validated](tools.md#function-tools-and-schema) before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape. Remote [MCP servers](capabilities/mcp.md) plug in just as easily: `capabilities=[MCP('https://api.githubcopilot.com/mcp/')]` hands the agent GitHub's tools.
 
     **Build this →** [Agents](agent.md), [Function Tools](tools.md), and [Structured Output](output.md)
 
@@ -143,7 +143,7 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
             print(f'{part.speaker}: {part.transcript}')
     ```
 
-    The model calls your [tools](realtime/tools.md) mid-conversation while it keeps talking, [capabilities](realtime/capabilities.md) attach the same way as in any run, and every session is [instrumented](logfire.md) — voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
+    The model calls your [tools](realtime/tools.md) mid-conversation while it keeps talking, [capabilities](realtime/capabilities.md) attach the same way as in any run, and every session is [instrumented](logfire.md); voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
 
     **Build this →** [Realtime Voice](realtime/overview.md), starting from the [voice assistant example](examples/realtime-voice.md)
 
@@ -174,28 +174,28 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
     #> 1536
     ```
 
-    Embedding your documents for semantic search or a [RAG pipeline](examples/rag.md)? Seven providers behind one typed API, [instrumented](logfire.md) like everything else — and it lives next to the agent that will use the results.
+    Embedding your documents for semantic search or a [RAG pipeline](examples/rag.md)? Seven providers behind one typed API, [instrumented](logfire.md) like everything else. It lives next to the agent that will use the results.
 
     **Build this →** [Embeddings](embeddings.md), then the [RAG example](examples/rag.md)
 
 !!! tip "No API key yet?"
-    You don't need a provider API key to try any of this. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel) — `Agent('test')` — which runs entirely offline without calling an LLM, so you can exercise your agent, tools, and outputs first. When you're ready for a real model, see [Models and Providers](models/overview.md) to pick a provider and set its API key.
+    You don't need a provider API key to try any of this. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel) (`Agent('test')`), which runs entirely offline without calling an LLM, so you can exercise your agent, tools, and outputs first. When you're ready for a real model, see [Models and Providers](models/overview.md) to pick a provider and set its API key.
 
 ## Why Pydantic AI
 
-- **Any model, one Python API.** [Virtually every model and provider](models/overview.md) — OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more — swappable with a string, or through the [Pydantic AI Gateway](gateway.md): one key for all of them, with failover and cost monitoring built in. No flagship feature is locked to one vendor.
+- **Any model, one Python API.** [Virtually every model and provider](models/overview.md) (OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more), swappable with a string, or through the [Pydantic AI Gateway](gateway.md): one key for all of them, with failover and cost monitoring built in. No flagship feature is locked to one vendor.
 
-- **Typed end to end.** [Structured outputs](output.md), typed [dependency injection](dependencies.md), typed tools: your IDE, type checker, and AI coding agent all know what your agent returns, moving whole classes of errors from runtime to write-time. When plain control flow isn't enough, [Pydantic Graph](graph.md) brings the same typing to graph-based workflows.
+- **Typed end to end.** [Structured outputs](output.md), typed [dependency injection](dependencies.md), [typed tools](tools.md): your IDE, type checker, and coding agent all know what your agent returns, moving whole classes of errors from runtime to write-time. When plain control flow isn't enough, [Pydantic Graph](graph.md) brings the same typing to graph-based workflows.
 
-- **Measured, not vibes.** OpenTelemetry-native [instrumentation](logfire.md) works with any OTel backend — one line lights up [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, tracing, and cost tracking backed by [genai-prices](https://github.com/pydantic/genai-prices) — and [Pydantic Evals](evals.md) tests agent behavior the way pytest tests code.
+- **Measured, not vibes.** OpenTelemetry-native [instrumentation](logfire.md) works with any OTel backend; one line lights up [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, tracing, and cost tracking backed by [genai-prices](https://github.com/pydantic/genai-prices). [Pydantic Evals](evals.md) tests agent behavior the way pytest tests code.
 
-- **Batteries, composably.** One primitive — the [capability](capabilities/overview.md) — bundles [tools](tools.md), [instructions](agent.md#instructions), [hooks](hooks.md), and [model settings](agent.md#model-run-settings) into reusable units. Core ships the fundamentals; the [Harness](https://pydantic.dev/docs/ai/harness/) ships everything else — code execution, memory, sub-agents, guardrails, compaction — plus complete harnesses like [Coder](https://pydantic.dev/docs/ai/harness/coder/) and [Researcher](https://pydantic.dev/docs/ai/harness/researcher/) that are themselves just capabilities composed, so you can take them apart. Or skip code entirely with [YAML/JSON agent specs](agent-spec.md).
+- **Batteries, composably.** One primitive, the [capability](capabilities/overview.md), bundles [tools](tools.md), [instructions](agent.md#instructions), [hooks](hooks.md), and [model settings](agent.md#model-run-settings) into reusable units. Core ships the fundamentals, the [Harness](https://pydantic.dev/docs/ai/harness/) ships everything else, and complete agents like [Coder](https://pydantic.dev/docs/ai/harness/coder/) and [Researcher](https://pydantic.dev/docs/ai/harness/researcher/) are just capabilities composed: they come apart the way they went together. Or skip code entirely with [YAML/JSON agent specs](agent-spec.md).
 
-- **[Every interface](interfaces.md).** One agent definition runs as a [CLI](cli.md), a [built-in web chat](web.md), [your own frontend](ui/overview.md) (AG-UI and Vercel AI protocols), an [editor agent](https://pydantic.dev/docs/ai/harness/acp/) *(experimental)*, or a [voice agent](realtime/overview.md).
+- **[Every interface](interfaces.md).** One agent definition runs as a [CLI](cli.md), a [built-in web chat](web.md), or [realtime speech](realtime/overview.md); [UI event streams](ui/overview.md) (AG-UI, Vercel AI) connect it to your own frontend or anything else; and [ACP](https://pydantic.dev/docs/ai/harness/acp/) *(experimental)* serves it as an editor agent.
 
-- **Durable by choice.** First-party, co-maintained [durable execution](durable_execution/overview.md) on Temporal, DBOS, or Prefect — agents that survive restarts and run for days, on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
+- **Durable execution.** First-party, co-maintained [durable execution](durable_execution/overview.md) on Temporal, DBOS, or Prefect, with [Restate, Kitaru, and Airflow](durable_execution/overview.md) integrations and more coming. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
 
-Built by the [Pydantic](https://docs.pydantic.dev) team: Pydantic Validation is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem — and the foundation FastAPI was built on. Pydantic AI brings that same feeling to agents.
+Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents.
 
 **Sign up for our newsletter, *The Pydantic Stack*, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:**
 
@@ -217,16 +217,15 @@ Built by the [Pydantic](https://docs.pydantic.dev) team: Pydantic Validation is 
       <button type="submit" class="md-button md-button--primary">Subscribe</button>
   </form>
 
-## Tools & Dependency Injection Example
+## Putting it together: a bank support agent
 
-Here is a concise example using Pydantic AI to build a support agent for a bank, with the customer-facing behavior packaged as a [capability](capabilities/overview.md):
+Here's a support agent for a bank, showing several features working together: [dependency injection](dependencies.md) carrying a database connection into instructions and tools, [function tools](tools.md) the model calls, [structured output](output.md) validated on every run, a reusable [capability](capabilities/overview.md) bundling the customer context, and an [on-demand capability](capabilities/on-demand.md) the model loads only when the conversation calls for it:
 
 ```python {title="bank_support.py"}
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import Capability
+from pydantic_ai import Agent, Capability, RunContext
 
 from bank_database import DatabaseConn
 
@@ -320,30 +319,29 @@ async def main():
 1. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [instructions](agent.md#instructions) and [tool](tools.md) functions. Pydantic AI's system of [dependency injection](dependencies.md) provides a [type-safe](agent.md#static-type-checking) way to customise the behavior of your agents, and can be especially useful when running [unit tests](testing.md) and evals.
 2. This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
 3. This [Pydantic](https://docs.pydantic.dev) model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
-4. A [`Capability`][pydantic_ai.capabilities.Capability] bundles related instructions and tools into one reusable unit — the same primitive behind [built-in capabilities](capabilities/overview.md) like [web search](capabilities/web-search.md) and everything in the [Harness](https://pydantic.dev/docs/ai/harness/). This one carries the customer context; you could drop it into any other agent's `capabilities` list as-is.
+4. A [`Capability`][pydantic_ai.capabilities.Capability] bundles related instructions and tools into one reusable unit: the same primitive behind [built-in capabilities](capabilities/overview.md) like [web search](capabilities/web-search.md) and everything in the [Harness](https://pydantic.dev/docs/ai/harness/). This one carries the customer context; you could drop it into any other agent's `capabilities` list as-is.
 5. Dynamic [instructions](agent.md#instructions) can make use of dependency injection. Dependencies are carried via the [`RunContext`][pydantic_ai.tools.RunContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
 6. The [`tool`](tools.md) decorator registers a function whose signature becomes a tool the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`][pydantic_ai.tools.RunContext]; any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
 7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](tools.md#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
-8. `defer_loading=True` makes this an [on-demand capability](capabilities/on-demand.md) — the same shape as an [Agent Skill](capabilities/on-demand.md#loading-skills-from-markdown-files). It collapses to a one-line catalog entry in the prompt, and its tools stay hidden until the model decides it's relevant and loads it with the framework-managed `load_capability` tool.
+8. `defer_loading=True` makes this an [on-demand capability](capabilities/on-demand.md), the same shape as an [Agent Skill](capabilities/on-demand.md#loading-skills-from-markdown-files). It collapses to a one-line catalog entry in the prompt, and its tools stay hidden until the model decides it's relevant and loads it with the framework-managed `load_capability` tool.
 9. This [agent](agent.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
 10. Here we configure the agent to use [OpenAI's GPT-5.6 Sol](api/models/openai.md) model; you can also set the model when running the agent.
 11. The response from the agent will be guaranteed to be a `SupportOutput`. Since the agent is generic, it'll also be typed as a `SupportOutput` to aid with static type checking. If validation fails, the agent is [prompted to try again](agent.md#reflection-and-self-correction).
-12. Mount the capabilities on the agent. More [capabilities](capabilities/overview.md) — [web search](capabilities/web-search.md), or anything from the [Harness](https://pydantic.dev/docs/ai/harness/) — snap on alongside them in the same list.
+12. Mount the capabilities on the agent. More [capabilities](capabilities/overview.md), like [web search](capabilities/web-search.md) or anything from the [Harness](https://pydantic.dev/docs/ai/harness/), snap on alongside them in the same list.
 13. In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
 14. [Run the agent](agent.md#running-agents) asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.
-15. This turn exercises the deferred capability: the model sees the `refunds` catalog entry, calls `load_capability` with `id='refunds'`, and only then gets the `refund_status` tool to answer with — [on-demand loading](capabilities/on-demand.md) in action.
+15. This turn exercises the deferred capability: the model sees the `refunds` catalog entry, calls `load_capability` with `id='refunds'`, and only then gets the `refund_status` tool to answer with: [on-demand loading](capabilities/on-demand.md) in action.
 
-The [dependencies](dependencies.md) dataclass carries the database connection into [instructions](agent.md#instructions) and [tools](tools.md) with full type safety — swap in a test double and the same agent runs in [unit tests](testing.md) and evals. And because the customer context is a [capability](capabilities/overview.md), it composes: the same unit drops into a voice agent or a web app unchanged.
+The [dependencies](dependencies.md) dataclass carries the database connection into [instructions](agent.md#instructions) and [tools](tools.md) with full type safety: swap in a test double and the same agent runs in [unit tests](testing.md) and evals. And because the customer context is a [capability](capabilities/overview.md), it composes: the same unit drops into a voice agent or a web app unchanged.
 
 !!! tip "Complete `bank_support.py` example"
     The code included here is incomplete for the sake of brevity (the definition of `DatabaseConn` is missing); you can find the complete `bank_support.py` example [here](examples/bank-support.md).
 
 ## Instrumentation with Pydantic Logfire
 
-Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code.
-To understand the flow of the above runs, we can watch the agent in action using Pydantic Logfire.
+Pydantic AI is [OpenTelemetry](https://opentelemetry.io/)-native: the [Instrumentation](capabilities/instrumentation.md) capability emits standard OTel spans for every model call and tool call, and [any OTLP backend works](logfire.md#alternative-observability-backends). The easiest setup is the [`logfire` SDK](logfire.md#using-logfire), which speaks plain OpenTelemetry and can point at [Pydantic Logfire](https://pydantic.dev/logfire) or any other backend.
 
-To do this, we need to [set up Logfire](logfire.md#using-logfire), and add the following to our code:
+Even a simple agent with just a handful of tools can result in a lot of back-and-forth with the LLM, making it nearly impossible to be confident of what's going on just from reading the code. To watch the runs above in action, [set up Logfire](logfire.md#using-logfire) and add the following to the code:
 
 ```python {title="bank_support_with_logfire.py" hl_lines="6-10" test="skip" lint="skip"}
 ...
@@ -382,7 +380,7 @@ That's enough to get the following view of your agent in action:
     title: 'Logfire instrumentation for the bank agent'
 ///
 
-See [Monitoring and Performance](logfire.md) to learn more. It's standard OpenTelemetry, so [any OTLP backend works](logfire.md#alternative-observability-backends) — Logfire is simply the easiest way to see it during development.
+See [Monitoring and Performance](logfire.md) to learn more.
 
 ## `llms.txt`
 
@@ -402,15 +400,15 @@ As of today, these files are not automatically leveraged by IDEs or coding agent
 
 ## Next steps
 
-**Run something right now.** One command puts a complete coding agent in your terminal:
+**Run something right now.** One command puts a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal:
 
 ```bash
 uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
 ```
 
-Or [install Pydantic AI](install.md), pick a [model](models/overview.md), and run the [examples](examples/setup.md) on your own machine.
+Or [install Pydantic AI](install.md), pick a [model](models/overview.md), and put your own coding agent to work: install the [Pydantic AI skill](coding-agent-skills.md) to give it up-to-date framework knowledge, point it at the [examples](examples/setup.md) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build.
 
-**See what your agent did.** [Instrument it](logfire.md) — one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: Logfire is the easiest way to look, any OTLP backend works.
+**See what your agent did.** [Instrument it](logfire.md): one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: [Pydantic Logfire](https://pydantic.dev/logfire) is the easiest way to look, any OTLP backend works.
 
 **Go deeper.** The [Agents guide](agent.md) is the core walkthrough; the [API Reference](api/agent.md) covers the full interface; the [Harness](https://pydantic.dev/docs/ai/harness/) has the batteries.
 

@@ -12,11 +12,11 @@ Capabilities can provide any combination of:
 
 This makes them the primary extension point for Pydantic AI. Whether you're building a memory system, a guardrail, a cost tracker, or an approval workflow, a capability is the right abstraction.
 
-Capabilities can be always-on or [loaded by the model on demand](on-demand.md). The [capability index below](#available-capabilities) spans Pydantic AI itself and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/), [third-party packages](third-party.md) provide many more, and you can define your own — [declaratively](#bundling-behavior-with-capability) or by [subclassing](custom.md). To run agents durably across failures, restarts, and long waits, see [Durable Execution](../durable_execution/overview.md).
+Capabilities can be always-on or [loaded by the model on demand](on-demand.md). The [capability index below](#available-capabilities) spans Pydantic AI itself and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/), [third-party packages](third-party.md) provide many more, and you can define your own, [declaratively](#bundling-behavior-with-capability) or by [subclassing](custom.md). To run agents durably across failures, restarts, and long waits, see [Durable Execution](../durable_execution/overview.md).
 
 ## Available capabilities
 
-Capabilities come from two packages, and they all compose — with each other and with your own. Core (`pydantic-ai`) ships the capabilities that require model or framework support: provider-native tools, provider APIs, and deep loop integration. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** — the official capability library and harness for Pydantic AI — ships everything else, from single capabilities to [complete agents](https://pydantic.dev/docs/ai/harness/coder/). The **Package** column says which; every entry links to its documentation.
+Capabilities come from two packages, and they all compose, with each other and with your own. Core (`pydantic-ai`) ships the capabilities that require model or framework support: provider-native tools, provider APIs, and deep loop integration. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)**, the official capability library and harness for Pydantic AI, ships everything else, from single capabilities to [complete agents](https://pydantic.dev/docs/ai/harness/coder/). The **Package** column says which; every entry links to its documentation.
 
 ### Harnesses
 
@@ -29,11 +29,11 @@ Complete agent stacks as regular combined capabilities: one import gives you a w
 
 ### Execution environments
 
-The workspace the agent acts in — the files it edits and the commands it runs, local or isolated.
+The workspace the agent acts in: the files it edits and the commands it runs, local or isolated.
 
 | Capability | Package | What it does |
 |---|---|---|
-| [FileSystem](https://pydantic.dev/docs/ai/harness/filesystem/) | Harness | Read, write, edit, search files under a root — path-traversal and symlink safe, secrets read-only |
+| [FileSystem](https://pydantic.dev/docs/ai/harness/filesystem/) | Harness | Read, write, edit, search files under a root; path-traversal and symlink safe, secrets read-only |
 | [Shell](https://pydantic.dev/docs/ai/harness/shell/) | Harness | Command execution with allowlists, denylists, timeouts, and credential-stripping |
 | [Modal Sandbox](https://pydantic.dev/docs/ai/harness/modal-sandbox/) | Harness | Commands and files in an isolated [Modal](https://modal.com) cloud sandbox |
 
@@ -43,8 +43,8 @@ Connections to systems outside the agent's workspace, and abilities the provider
 
 | Capability | Package | What it does |
 |---|---|---|
-| [MCP](mcp.md) | Core | Connect any MCP server's tools — local by default, provider-native connectors opt-in |
-| [Image Generation](image-generation.md) | Core | Generate and edit images — provider-native where supported, sub-agent fallback elsewhere |
+| [MCP](mcp.md) | Core | Connect any MCP server's tools; local by default, provider-native connectors opt-in |
+| [Image Generation](image-generation.md) | Core | Generate and edit images; provider-native where supported, sub-agent fallback elsewhere |
 | [Native Tool](../native-tools.md) | Core | Register any provider-native tool with the agent |
 | [StackOne](https://pydantic.dev/docs/ai/harness/stackone/) | Harness | Act on linked SaaS accounts (HRIS, ATS, CRM, …) via [StackOne](https://www.stackone.com) |
 | [LocalStack](https://pydantic.dev/docs/ai/harness/localstack/) | Harness | An emulated AWS environment with AWS CLI tools |
@@ -57,8 +57,8 @@ Finding and reading things on the open web.
 | Capability | Package | What it does |
 |---|---|---|
 | [Web Search](web-search.md) | Core | Provider-native search where available, local DuckDuckGo fallback everywhere |
-| [Web Fetch](web-fetch.md) | Core | Fetch and read URLs — native or local |
-| [X Search](x-search.md) | Core | Search X — native on xAI, subagent fallback elsewhere |
+| [Web Fetch](web-fetch.md) | Core | Fetch and read URLs, native or local |
+| [X Search](x-search.md) | Core | Search X; native on xAI, subagent fallback elsewhere |
 | [Exa Search](https://pydantic.dev/docs/ai/harness/exa-search/) | Harness | Web research via [Exa](https://exa.ai): excerpted search, full-page reads, opt-in cited deep search |
 | [Exa Agent](https://pydantic.dev/docs/ai/harness/exa-search/) | Harness | Delegate open-ended research to the Exa Agent API |
 | [Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
@@ -72,30 +72,30 @@ How the agent thinks and divides the work.
 | [Thinking](thinking.md) | Core | Provider-adaptive extended thinking at configurable effort |
 | [Planning](https://pydantic.dev/docs/ai/harness/planning/) | Harness | Model-owned task plans with a cache-safe live reminder |
 | [Subagents](https://pydantic.dev/docs/ai/harness/subagents/) | Harness | Delegate self-contained tasks to named child agents |
-| [Dynamic Workflow](https://pydantic.dev/docs/ai/harness/dynamic-workflow/) | Harness | The model orchestrates sub-agents from one Python script — fan-out, chain, vote in a single tool call, with hard `max_agent_calls` budgets |
+| [Dynamic Workflow](https://pydantic.dev/docs/ai/harness/dynamic-workflow/) | Harness | The model orchestrates sub-agents from one Python script: fan-out, chain, vote in a single tool call, with hard `max_agent_calls` budgets |
 | [Advisor](https://pydantic.dev/docs/ai/harness/advisor/) | Harness | Let an executor consult a stronger model mid-run |
 
 ### Context management
 
-How the agent spends its context window — the difference between an agent that degrades over a long run and one that doesn't, and between paying for tokens N times or once.
+How the agent spends its context window: the difference between an agent that degrades over a long run and one that doesn't, and between paying for tokens N times or once.
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox — one round-trip instead of N, and intermediate results never enter the context window |
+| [Code Mode](https://pydantic.dev/docs/ai/harness/code-mode/) | Harness | The model writes one Python script that calls many tools inside a [Monty](https://github.com/pydantic/monty) sandbox: one round-trip instead of N, and intermediate results never enter the context window |
 | [Tool Search](tool-search.md) | Core | Load tool definitions on demand instead of carrying hundreds in every prompt |
-| [Compaction](compaction.md) | Core | Provider-native compaction on OpenAI and Anthropic — the provider summarizes history server-side |
-| [Compaction](https://pydantic.dev/docs/ai/harness/compaction/) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered — all window-relative, with live usage reporting |
+| [Compaction](compaction.md) | Core | Provider-native compaction on OpenAI and Anthropic; the provider summarizes history server-side |
+| [Compaction](https://pydantic.dev/docs/ai/harness/compaction/) | Harness | Model-agnostic strategies: tool-result clearing, sliding-window trimming, LLM summarization, tiered; all window-relative, with live usage reporting |
 | [Tool Output Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/) | Harness | Truncate, spill to a queryable file, or summarize oversized tool returns at the source |
 | [Warn On Cache Busts](https://pydantic.dev/docs/ai/harness/warn-on-cache-busts/) | Harness | Detect prompt-cache prefix collapses between requests, from the provider's own numbers |
 
 ### Knowledge & memory
 
-What the agent knows and remembers — loaded when relevant instead of carried in every prompt.
+What the agent knows and remembers, loaded when relevant instead of carried in every prompt.
 
 | Capability | Package | What it does |
 |---|---|---|
 | [Memory](https://pydantic.dev/docs/ai/harness/memory/) | Harness | A persistent, namespaced notebook: bounded prompt injection, on-demand search; in-memory/file/Postgres stores |
-| [Conversation Search](https://pydantic.dev/docs/ai/harness/conversation-search/) | Harness | BM25 search over stored history — including turns compaction dropped |
+| [Conversation Search](https://pydantic.dev/docs/ai/harness/conversation-search/) | Harness | BM25 search over stored history, including turns compaction dropped |
 | [Skills](https://pydantic.dev/docs/ai/harness/skills/) | Harness | Load [Agent Skill](on-demand.md) (`SKILL.md`) instructions on demand |
 | [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
 | [Pydantic AI Docs](https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/) | Harness | On-demand Pydantic AI documentation lookup |
@@ -106,7 +106,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) | Harness | Validate/block/redact user input, tool calls, tool results, and output — including secret masking and parallel async guards |
+| [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) | Harness | Validate/block/redact user input, tool calls, tool results, and output, including secret masking and parallel async guards |
 | [Spend Limits](https://pydantic.dev/docs/ai/harness/spend/) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
 | [Tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
 | [Handle Deferred Tool Calls](handle-deferred-tool-calls.md) | Core | Resolve approval-deferred tool calls programmatically |
@@ -116,7 +116,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 
 | Capability | Package | What it does |
 |---|---|---|
-| [Capability Creation](https://pydantic.dev/docs/ai/harness/capability-creation/) | Harness | The agent writes, validates, and persists *new capabilities* during a run, loaded on the next run — self-extension with typed, inspectable units instead of arbitrary code |
+| [Capability Creation](https://pydantic.dev/docs/ai/harness/capability-creation/) | Harness | The agent writes, validates, and persists *new capabilities* during a run, loaded on the next run: self-extension with typed, inspectable units instead of arbitrary code |
 
 ### Execution runtime
 
@@ -126,8 +126,8 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 |---|---|---|
 | [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures on [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), or [Prefect](../durable_execution/prefect.md), with [Restate](../durable_execution/restate.md), [Kitaru](../durable_execution/kitaru.md), and [Airflow](../durable_execution/airflow.md) integrations |
 | [Step Persistence](https://pydantic.dev/docs/ai/harness/step-persistence/) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
-| [Instrumentation](instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call — the raw material for [Logfire](https://pydantic.dev/logfire) traces |
-| [Managed Prompt](https://pydantic.dev/docs/ai/harness/managed-prompt/) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt — version and roll out without redeploying |
+| [Instrumentation](instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
+| [Managed Prompt](https://pydantic.dev/docs/ai/harness/managed-prompt/) | Harness | Back instructions with a [Logfire](https://pydantic.dev/logfire)-managed prompt; version and roll out without redeploying |
 | [Thread Executor](thread-executor.md) | Core | Run sync tools on a shared thread pool |
 
 ### Loop customization
@@ -148,7 +148,7 @@ Core also ships capabilities for customizing the agent loop itself, mostly for p
 | [Process History](process-history.md) | Core | Wrap a [history processor](../message-history.md#processing-message-history) |
 | [Process Event Stream](process-event-stream.md) | Core | Forward [agent stream events](process-event-stream.md) to a handler function |
 
-The authoring primitives — [`Capability`][pydantic_ai.capabilities.Capability] for [bundling behavior without subclassing](#bundling-behavior-with-capability) and [`Toolset`][pydantic_ai.capabilities.Toolset] for wrapping an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] — are covered below. [ACP](https://pydantic.dev/docs/ai/harness/acp/) *(experimental, Harness)* serves any agent to editors like Zed over the [Agent Client Protocol](https://agentclientprotocol.com). Capabilities that can be declared in [YAML/JSON agent specs](../agent-spec.md#capability-spec-syntax) are listed there.
+The authoring primitives, [`Capability`][pydantic_ai.capabilities.Capability] for [bundling behavior without subclassing](#bundling-behavior-with-capability) and [`Toolset`][pydantic_ai.capabilities.Toolset] for wrapping an [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset], are covered below. [ACP](https://pydantic.dev/docs/ai/harness/acp/) *(experimental, Harness)* serves any agent to editors like Zed over the [Agent Client Protocol](https://agentclientprotocol.com). Capabilities that can be declared in [YAML/JSON agent specs](../agent-spec.md#capability-spec-syntax) are listed there.
 
 ```python {title="native_capabilities.py"}
 from pydantic_ai import Agent
