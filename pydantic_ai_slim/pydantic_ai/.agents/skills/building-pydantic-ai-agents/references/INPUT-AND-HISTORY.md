@@ -71,7 +71,7 @@ Rules of thumb:
 - Pass `run_id=` when your app mints an id before the run starts (e.g. one created, stored, or handed out to a client first) and you want `ctx.run_id` / stamps / OTel to match it.
 - Do **not** pass `run_id=''`, or reuse a `run_id` that already appears on `message_history` — both raise `UserError` because they break `new_messages()` boundary detection. Correlate pause/resume and multi-turn work with `conversation_id` instead. When retrying a failed run with the same `run_id`, rebuild `message_history` without the failed attempt's messages.
 - Pass `conversation_id='new'` to fork a thread off existing history; `'new'` is **not** a sentinel for `run_id`.
-- UI adapters auto-wire protocol thread/chat ids into `conversation_id`. Protocol run ids (e.g. AG-UI `runId`) are **not** mapped into agent `run_id` — pass `run_id=` on the adapter/`Agent.run` if you need them aligned.
+- UI adapters auto-wire protocol thread/chat ids into `conversation_id`. Protocol run ids (e.g. AG-UI `runId`) are **not** mapped into agent `run_id` — pass `run_id=` on the adapter/`Agent.run` if you need them aligned. A `UIEventStream` used standalone (no adapter, e.g. encoding events out of a durable execution workflow or a queue) has no protocol ids to wire: `AGUIEventStream(thread_id=..., run_id=...)` takes them directly, and defaults each to a fresh UUID that matches nothing agent-side, so pass the run's own `conversation_id`/`run_id` to keep them aligned.
 - AG-UI live failed tool outcomes round-trip through a namespaced payload on `ReasoningEncryptedValueEvent.encrypted_value` with `ag-ui-protocol >= 0.1.13`. Earlier event streams have no outcome carrier, so reloading them reconstructs the tool result as successful.
 
 ## Manage Context Size
