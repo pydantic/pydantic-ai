@@ -35,6 +35,7 @@ from pydantic_ai import (
     NativeToolReturnPart,
     RetryPromptPart,
     TextPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     ToolsetTool,
@@ -105,8 +106,15 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     root_dir = Path(__file__).parent.parent
     os.chdir(root_dir)
 
-    for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
+    for ex in find_examples('README.md', 'docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if '.agents' in ex.path.parts:
+            continue
+        if ex.path.name == 'README.md' and (
+            'pydantic_ai_harness' in ex.source or 'agent.realtime(' in ex.source or 'ClearToolResults(' in ex.source
+        ):
+            # README fences stay bare so GitHub renders them; snippets that can't run here
+            # (harness imports, the Coder blocks-equivalence fragment, interactive realtime
+            # sessions) are excluded by content instead.
             continue
         if ex.path.name != '_utils.py':
             try:
@@ -523,6 +531,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         'The first known use of "hello, world" was in a 1974 textbook about the C programming language.'
     ),
     'What is my balance?': ToolCallPart(tool_name='customer_balance', args={'include_pending': True}),
+    'Was I refunded for the duplicate charge on my last statement?': ToolCallPart(
+        tool_name='load_capability', args={'id': 'refunds'}
+    ),
     'I just lost my card!': ToolCallPart(
         tool_name='final_result',
         args={
@@ -700,14 +711,15 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
+    'How are people feeling about the Extract app?': ToolCallPart(
+        tool_name='recent_reviews',
+        args={'product': 'Extract'},
+    ),
     'Find recent papers about transformer architectures': (
         'Here are some recent papers about transformer architectures from arxiv.org:\n'
         '\n'
         '1. "Attention Is All You Need" - The foundational paper on the Transformer model.\n'
         '2. "FlashAttention: Fast and Memory-Efficient Exact Attention" - Proposes an IO-aware attention algorithm.'
-    ),
-    'What was the mass of the largest meteorite found this year?': (
-        'The largest meteorite recovered this year weighed approximately 7.6 kg, found in the Sahara Desert in January.'
     ),
     'Write a long essay about Python': (
         'Python is a versatile, high-level programming language known for its readability and simplicity. '
@@ -924,6 +936,12 @@ async def model_logic(  # noqa: C901
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
                 ]
             )
+        elif m.content == 'Generate a minimalist logo for a coffee shop called Extract.':
+            return ModelResponse(
+                parts=[
+                    FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
+                ]
+            )
         elif m.content == 'Generate a wide illustration of an axolotl city skyline.':
             return ModelResponse(
                 parts=[
@@ -1016,6 +1034,29 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'customer_balance':
         args = {
             'support_advice': 'Hello John, your current account balance, including pending transactions, is $123.45.',
+            'block_card': False,
+            'risk': 1,
+        }
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif isinstance(m, ToolAvailabilityDeltaPart) and 'refund_status' in m.tools_added:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='refund_status', args={}, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'recent_reviews':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'label': 'positive', 'score': 0.9},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'refund_status':
+        args = {
+            'support_advice': 'Good news, John: the duplicate charge on your last statement was refunded on 2026-05-01.',
             'block_card': False,
             'risk': 1,
         }
