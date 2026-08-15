@@ -148,6 +148,10 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
     to determine when and how to retry failed requests. The validate_response function can be used
     to convert HTTP responses into exceptions that trigger retries.
 
+    Requests whose body is a non-replayable stream cannot be retried: the first attempt consumes the
+    stream, so a further attempt raises `httpx2.StreamConsumed`. Use a replayable body (e.g. bytes)
+    for requests that should be retried.
+
     Args:
         config: The arguments to use for the tenacity `retry` decorator, including retry conditions,
             wait strategy, stop conditions, etc. See the tenacity docs for more info.
@@ -242,6 +246,10 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
     The transport works by intercepting HTTP requests and responses, allowing the tenacity controller
     to determine when and how to retry failed requests. The validate_response function can be used
     to convert HTTP responses into exceptions that trigger retries.
+
+    Requests whose body is a non-replayable stream cannot be retried: the first attempt consumes the
+    stream, so a further attempt raises `httpx2.StreamConsumed`. Use a replayable body (e.g. bytes)
+    for requests that should be retried.
 
     Args:
         config: The arguments to use for the tenacity `retry` decorator, including retry conditions,
