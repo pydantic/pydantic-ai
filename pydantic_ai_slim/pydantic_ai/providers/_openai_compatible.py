@@ -1,39 +1,31 @@
-from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
 
-import httpx2
 from openai import AsyncOpenAI
 
-from pydantic_ai._http import create_async_httpx2_client, warn_if_legacy_httpx_client
+from pydantic_ai._http import (
+    AsyncHTTPClient as AsyncHTTPClient,
+    create_async_httpx2_client,
+    warn_if_legacy_httpx_client,
+)
 from pydantic_ai.providers import Provider
-
-if TYPE_CHECKING:
-    import httpx
-
-    OpenAIHTTPClient = httpx.AsyncClient | httpx2.AsyncClient
-else:
-    OpenAIHTTPClient = httpx2.AsyncClient
 
 
 class OpenAICompatibleProvider(Provider[AsyncOpenAI]):
     """Shared HTTP client lifecycle for providers backed by the OpenAI SDK."""
 
-    _own_http_client: OpenAIHTTPClient | None = None
-    _http_client_factory: Callable[[], OpenAIHTTPClient] | None = None
-
     def _get_http_client(
         self,
-        http_client: OpenAIHTTPClient | None,
+        http_client: AsyncHTTPClient | None,
         *,
         # Frames to skip so the warning lands on the user's `SomeProvider(...)` call: this method,
         # the provider `__init__` calling it, and the user's call site. Callers that add a frame in
         # between pass a higher value.
         warning_stacklevel: int = 3,
-    ) -> OpenAIHTTPClient:
+    ) -> AsyncHTTPClient:
         if http_client is None:
             http_client = create_async_httpx2_client()
-            self._own_http_client = http_client  # pyright: ignore[reportIncompatibleVariableOverride]
-            self._http_client_factory = create_async_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
+            self._own_http_client = http_client
+            self._http_client_factory = create_async_httpx2_client
         else:
             warn_if_legacy_httpx_client(
                 http_client, consumer='OpenAI-compatible providers', stacklevel=warning_stacklevel
@@ -45,7 +37,7 @@ class OpenAICompatibleProvider(Provider[AsyncOpenAI]):
         *,
         base_url: str | None,
         api_key: str | None,
-        http_client: OpenAIHTTPClient | None,
+        http_client: AsyncHTTPClient | None,
         default_headers: Mapping[str, str] | None = None,
     ) -> AsyncOpenAI:
         # One frame more than the default: this method sits between `_get_http_client` and the
@@ -59,6 +51,5 @@ class OpenAICompatibleProvider(Provider[AsyncOpenAI]):
             default_headers=default_headers,
         )
 
-    # The generic Provider currently only knows the legacy HTTPX client type.
-    def _set_http_client(self, http_client: OpenAIHTTPClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]

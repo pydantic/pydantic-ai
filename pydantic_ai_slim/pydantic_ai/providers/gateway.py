@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 import httpx2
 from typing_extensions import TypeVar
 
-from pydantic_ai._http import create_async_httpx2_client
+from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 _gateway_providers: weakref.WeakSet[Provider[Any]] = weakref.WeakSet()
 
 _ProviderT = TypeVar('_ProviderT', bound='Provider[Any]')
-_HTTPClientT = TypeVar('_HTTPClientT', bound='httpx.AsyncClient | httpx2.AsyncClient')
+_HTTPClientT = TypeVar('_HTTPClientT', bound=AsyncHTTPClient)
 
 
 @overload
@@ -40,7 +40,7 @@ def gateway_provider(
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None,
+    http_client: AsyncHTTPClient | None = None,
 ) -> Provider[AsyncOpenAI]: ...
 
 
@@ -87,7 +87,7 @@ def gateway_provider(
     route: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
-    http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None,
+    http_client: AsyncHTTPClient | None = None,
 ) -> Provider[GoogleClient]: ...
 
 
@@ -133,7 +133,7 @@ def gateway_provider(
     api_key: str | None = None,
     base_url: str | None = None,
     # OpenAI, Groq, Anthropic & Gemini - Only Bedrock doesn't have an HTTPX client.
-    http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None,
+    http_client: AsyncHTTPClient | None = None,
 ) -> Provider[Any]:
     """Create a new Gateway provider.
 
@@ -193,7 +193,7 @@ def gateway_provider(
         # server only exposes the Google Cloud (Vertex) route today.
         from .google_cloud import GoogleCloudProvider
 
-        def build_google_provider(client: httpx.AsyncClient | httpx2.AsyncClient) -> GoogleCloudProvider:
+        def build_google_provider(client: AsyncHTTPClient) -> GoogleCloudProvider:
             provider = GoogleCloudProvider(api_key=api_key, base_url=base_url, http_client=client)
             _set_google_ws_gateway_auth(provider.client, api_key)
             return provider
@@ -261,10 +261,8 @@ def _build_gateway_provider(
 
     provider = build_provider(http_client)
     if own_http_client:
-        # `Provider` declares these as the legacy HTTPX client type; the OpenAI and Google providers
-        # widen them to accept an HTTPX2 client as well, which the base declaration can't express.
-        provider._own_http_client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
-        provider._http_client_factory = create_hooked_http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+        provider._own_http_client = http_client  # pyright: ignore[reportPrivateUsage]
+        provider._http_client_factory = create_hooked_http_client  # pyright: ignore[reportPrivateUsage]
     _gateway_providers.add(provider)
     return provider
 
@@ -334,7 +332,7 @@ class _GatewayRequestHook:
         return request
 
 
-def _add_request_hook(http_client: httpx.AsyncClient | httpx2.AsyncClient, hook: _GatewayRequestHook) -> None:
+def _add_request_hook(http_client: AsyncHTTPClient, hook: _GatewayRequestHook) -> None:
     """Add a request hook without replacing caller-provided HTTPX hooks."""
     request_hooks = [
         existing_hook

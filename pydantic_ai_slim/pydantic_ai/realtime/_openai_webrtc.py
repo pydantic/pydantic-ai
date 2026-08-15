@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlparse
 from pydantic import BaseModel, ConfigDict, StrictInt, ValidationError
 from pydantic_core import to_json
 
+from .._http import AsyncHTTPClient
 from ..exceptions import ModelHTTPError, UnexpectedModelBehavior
 from .model import RealtimeClientSecret, WebRTCAnswer, WebRTCSession
 
@@ -78,7 +79,7 @@ def _raise_for_status(response: httpx.Response | httpx2.Response, model_name: st
 
 async def mint_client_secret(
     *,
-    http_client: httpx.AsyncClient | httpx2.AsyncClient,
+    http_client: AsyncHTTPClient,
     client_secrets_url: str,
     headers: dict[str, str],
     model_name: str,
@@ -144,7 +145,7 @@ def _webrtc_answer_from_response(
 
 async def answer_webrtc_offer(
     *,
-    http_client: httpx.AsyncClient | httpx2.AsyncClient,
+    http_client: AsyncHTTPClient,
     calls_url: str,
     headers: dict[str, str],
     provider_name: str,
@@ -173,7 +174,7 @@ async def answer_webrtc_offer(
 
 async def relay_sdp_offer(
     *,
-    http_client: httpx.AsyncClient | httpx2.AsyncClient,
+    http_client: AsyncHTTPClient,
     calls_url: str,
     ephemeral_token: str,
     provider_name: str,

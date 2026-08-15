@@ -14,20 +14,12 @@ from typing import TYPE_CHECKING, Any, Generic
 import anyio
 from typing_extensions import Self, TypeVar
 
+from .._http import AsyncHTTPClient
 from ..exceptions import UserError
 from ..profiles import ModelProfile
 
 if TYPE_CHECKING:
-    from httpx import AsyncClient
-
     from ..realtime import RealtimeModelProfile
-else:
-    # Legacy HTTPX is optional, so the client-lifecycle annotations below degrade to `object` when
-    # it isn't installed; subclasses that hold an `httpx2.AsyncClient` widen them anyway.
-    try:
-        from httpx import AsyncClient
-    except ImportError:
-        AsyncClient = object
 
 InterfaceClient = TypeVar('InterfaceClient', default=Any)
 
@@ -61,8 +53,8 @@ class Provider(ABC, Generic[InterfaceClient]):
     """
 
     _client: InterfaceClient
-    _own_http_client: AsyncClient | None = None
-    _http_client_factory: Callable[[], AsyncClient] | None = None
+    _own_http_client: AsyncHTTPClient | None = None
+    _http_client_factory: Callable[[], AsyncHTTPClient] | None = None
     _entered_count: int = 0
 
     @functools.cached_property
@@ -106,7 +98,7 @@ class Provider(ABC, Generic[InterfaceClient]):
         """The realtime model profile for the named model, if available."""
         return None
 
-    def _set_http_client(self, http_client: AsyncClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
         """Update the SDK client's internal HTTP client reference.
 
         Subclasses that manage their own HTTP client should override this to inject

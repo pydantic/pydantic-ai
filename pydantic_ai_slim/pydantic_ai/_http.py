@@ -1,8 +1,9 @@
-"""Shared HTTP client helpers for the HTTPX2 clients Pydantic AI creates and owns."""
+"""Shared HTTP client types and helpers for the HTTPX2 clients Pydantic AI creates and owns."""
 
 from __future__ import annotations
 
 import warnings
+from typing import TYPE_CHECKING, TypeAlias
 
 # Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
 # I/O if that happens inside the event loop.
@@ -10,7 +11,35 @@ import httpcore2  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import httpx2
 
 from ._warnings import PydanticAIDeprecationWarning
-from .models import DEFAULT_HTTP_TIMEOUT, get_user_agent
+
+__all__ = (
+    'DEFAULT_HTTP_TIMEOUT',
+    'AsyncHTTPClient',
+    'create_async_httpx2_client',
+    'legacy_httpx',
+    'warn_if_legacy_httpx_client',
+)
+
+DEFAULT_HTTP_TIMEOUT: int = 600
+"""Default HTTP timeout in seconds for API requests.
+
+This matches the default timeout used by OpenAI's Python client.
+See https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9
+"""
+
+try:
+    import httpx as legacy_httpx
+except ImportError:
+    legacy_httpx = None
+
+if TYPE_CHECKING:
+    import httpx
+
+    AsyncHTTPClient: TypeAlias = httpx.AsyncClient | httpx2.AsyncClient
+elif legacy_httpx is not None:
+    AsyncHTTPClient = legacy_httpx.AsyncClient | httpx2.AsyncClient
+else:
+    AsyncHTTPClient = httpx2.AsyncClient
 
 
 def create_async_httpx2_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx2.AsyncClient:
@@ -19,6 +48,8 @@ def create_async_httpx2_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: 
     Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
     the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
     """
+    from .models import get_user_agent
+
     return httpx2.AsyncClient(
         timeout=httpx2.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
@@ -38,12 +69,10 @@ def warn_if_legacy_httpx_client(http_client: object, *, consumer: str, stackleve
             adds 1 to account for its own frame. Callers pick the value that lands the warning on the
             user's provider-constructor call site.
     """
-    try:
-        import httpx
-    except ImportError:
+    if legacy_httpx is None:
         return
 
-    if isinstance(http_client, httpx.AsyncClient):
+    if isinstance(http_client, legacy_httpx.AsyncClient):
         warnings.warn(
             f'`httpx.AsyncClient` support for {consumer} is deprecated and will be removed in v3; '
             'use `httpx2.AsyncClient` instead.',

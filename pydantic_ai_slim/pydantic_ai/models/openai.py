@@ -25,6 +25,7 @@ from pydantic_core import to_json
 from typing_extensions import Never, Protocol, TypedDict, assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._http import legacy_httpx
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
@@ -126,10 +127,7 @@ if TYPE_CHECKING:
 else:
     # Legacy HTTPX is optional: without it `_normalize_openai_timeout`'s `isinstance` check falls back
     # to the HTTPX2 type the SDK already accepts, so the conversion just rebuilds an equivalent value.
-    try:
-        from httpx import Timeout
-    except ImportError:
-        Timeout = HTTPX2Timeout
+    Timeout = legacy_httpx.Timeout if legacy_httpx is not None else HTTPX2Timeout
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
 

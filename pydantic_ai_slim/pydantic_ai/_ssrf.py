@@ -16,12 +16,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx2
 
-try:
-    import httpx as _legacy_httpx
-except ImportError:
-    _legacy_httpx = None
-
-from ._http import create_async_httpx2_client
+from ._http import create_async_httpx2_client, legacy_httpx as _legacy_httpx
 from ._utils import run_in_executor
 
 __all__ = ['safe_download']

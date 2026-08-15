@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, overload
 from typing_extensions import deprecated
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._http import AsyncHTTPClient, legacy_httpx
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
@@ -140,5 +141,6 @@ class GitHubProvider(Provider[AsyncOpenAI]):
                 http_client=http_client,  # pyright: ignore[reportArgumentType]
             )
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        assert legacy_httpx is not None and isinstance(http_client, legacy_httpx.AsyncClient)
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]

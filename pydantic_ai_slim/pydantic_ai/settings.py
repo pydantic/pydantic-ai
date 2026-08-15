@@ -5,15 +5,14 @@ from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from typing_extensions import TypedDict
 
+from ._http import legacy_httpx
+
 if TYPE_CHECKING:
     from httpx import Timeout
 else:
     # Legacy HTTPX is optional: without it no `Timeout` instance can reach `ModelSettings`, so the
     # union member collapses onto the numeric one it already allows.
-    try:
-        from httpx import Timeout
-    except ImportError:
-        Timeout = float
+    Timeout = legacy_httpx.Timeout if legacy_httpx is not None else float
 
 ThinkingEffort: TypeAlias = Literal['minimal', 'low', 'medium', 'high', 'xhigh']
 """The string effort levels for thinking/reasoning configuration."""

@@ -20,8 +20,8 @@ except ImportError as _import_error:
     ) from _import_error
 
 from ._openai_compatible import (
+    AsyncHTTPClient as _OpenAIHTTPClient,
     OpenAICompatibleProvider as _OpenAICompatibleProvider,
-    OpenAIHTTPClient as _OpenAIHTTPClient,
 )
 
 

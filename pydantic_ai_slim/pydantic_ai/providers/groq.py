@@ -4,6 +4,7 @@ import os
 from typing import overload
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._http import AsyncHTTPClient
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
@@ -150,5 +151,6 @@ class GroqProvider(Provider[AsyncGroq]):
                 self._http_client_factory = create_async_http_client
                 self._client = AsyncGroq(base_url=base_url, api_key=api_key, http_client=http_client)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        assert isinstance(http_client, httpx.AsyncClient)
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

@@ -1,16 +1,9 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import TYPE_CHECKING, Literal, cast
+from typing import Literal, cast
 
-import httpx2
-
-if TYPE_CHECKING:
-    import httpx
-
-    _GoogleCloudHTTPClient = httpx.AsyncClient | httpx2.AsyncClient
-else:
-    _GoogleCloudHTTPClient = httpx2.AsyncClient
+from pydantic_ai._http import AsyncHTTPClient
 
 try:
     from google.auth import credentials as google_auth_credentials
@@ -41,7 +34,7 @@ class GoogleCloudProvider(BaseGoogleProvider):
         project: str | None = None,
         location: GoogleCloudLocation | Literal['global', 'us', 'eu'] | str | None = None,
         client: Client | None = None,
-        http_client: _GoogleCloudHTTPClient | None = None,
+        http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
         retry_options: HttpRetryOptions | None = None,
     ) -> None:

@@ -1,13 +1,10 @@
 from __future__ import annotations as _annotations
 
 import os
-from collections.abc import Callable
 from typing import overload
 
-import httpx2
-
 from pydantic_ai import ModelProfile
-from pydantic_ai._http import create_async_httpx2_client, warn_if_legacy_httpx_client
+from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client, warn_if_legacy_httpx_client
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
@@ -20,10 +17,6 @@ except ImportError as e:
         'Please install the `mistral` package to use the Mistral provider, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
     ) from e
-
-# Below the guard on purpose: `mistralai` requires `httpx`, so without the extra the error above
-# is what users should see, not `ModuleNotFoundError: httpx`.
-import httpx
 
 # Models with adjustable reasoning via `reasoning_effort` (opt-in, unlike always-on `magistral`):
 # the Mistral Small 4 and Medium 3.5 families. Older `mistral-small-*` / `mistral-medium-*`
@@ -51,14 +44,9 @@ _ADJUSTABLE_REASONING_MODELS = frozenset(
     }
 )
 
-_MistralHTTPClient = httpx.AsyncClient | httpx2.AsyncClient
-
 
 class MistralProvider(Provider[Mistral]):
     """Provider for Mistral API."""
-
-    _own_http_client: _MistralHTTPClient | None = None
-    _http_client_factory: Callable[[], _MistralHTTPClient] | None = None
 
     @property
     def name(self) -> str:
@@ -83,7 +71,7 @@ class MistralProvider(Provider[Mistral]):
     def __init__(self, *, mistral_client: Mistral | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str | None = None, http_client: _MistralHTTPClient | None = None) -> None: ...
+    def __init__(self, *, api_key: str | None = None, http_client: AsyncHTTPClient | None = None) -> None: ...
 
     def __init__(
         self,
@@ -91,7 +79,7 @@ class MistralProvider(Provider[Mistral]):
         api_key: str | None = None,
         mistral_client: Mistral | None = None,
         base_url: str | None = None,
-        http_client: _MistralHTTPClient | None = None,
+        http_client: AsyncHTTPClient | None = None,
     ) -> None:
         """Create a new Mistral provider.
 
@@ -117,8 +105,8 @@ class MistralProvider(Provider[Mistral]):
                 )
             if http_client is None:
                 http_client = create_async_httpx2_client()
-                self._own_http_client = http_client  # pyright: ignore[reportIncompatibleVariableOverride]
-                self._http_client_factory = create_async_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
+                self._own_http_client = http_client
+                self._http_client_factory = create_async_httpx2_client
             else:
                 # 2 frames up from the helper: this `__init__` and the user's `MistralProvider(...)` call.
                 warn_if_legacy_httpx_client(http_client, consumer='the Mistral provider', stacklevel=2)
@@ -130,6 +118,5 @@ class MistralProvider(Provider[Mistral]):
                 server_url=base_url,
             )
 
-    # The generic Provider currently only knows the legacy HTTPX client type.
-    def _set_http_client(self, http_client: _MistralHTTPClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
         self._client.sdk_configuration.async_client = http_client  # pyright: ignore[reportAttributeAccessIssue]

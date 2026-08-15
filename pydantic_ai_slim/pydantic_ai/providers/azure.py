@@ -30,8 +30,8 @@ else:
     from pydantic_ai.providers.openai import OpenAIProvider
 
     from ._openai_compatible import (
+        AsyncHTTPClient as _OpenAIHTTPClient,
         OpenAICompatibleProvider as _OpenAICompatibleProvider,
-        OpenAIHTTPClient as _OpenAIHTTPClient,
     )
 
 try:

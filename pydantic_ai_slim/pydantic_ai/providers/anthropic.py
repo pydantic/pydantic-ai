@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TypeAlias, overload
 
 from pydantic_ai import ModelProfile
+from pydantic_ai._http import AsyncHTTPClient
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile, anthropic_model_profile
@@ -166,7 +167,8 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                 self._http_client_factory = create_async_http_client
                 self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
 
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
+        assert isinstance(http_client, httpx.AsyncClient)
         self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
 
 

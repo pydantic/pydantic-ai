@@ -2,25 +2,21 @@ from __future__ import annotations as _annotations
 
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal, overload
 
-import httpx2
-
 from pydantic_ai import ModelProfile
-from pydantic_ai._http import create_async_httpx2_client, warn_if_legacy_httpx_client
-from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, get_user_agent
+from pydantic_ai._http import (
+    DEFAULT_HTTP_TIMEOUT,
+    AsyncHTTPClient,
+    create_async_httpx2_client,
+    warn_if_legacy_httpx_client,
+)
+from pydantic_ai.models import get_user_agent
 from pydantic_ai.profiles.google import google_model_profile, google_realtime_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
 if TYPE_CHECKING:
-    import httpx
-
     from pydantic_ai.realtime import RealtimeModelProfile
-
-    _GoogleHTTPClient = httpx.AsyncClient | httpx2.AsyncClient
-else:
-    _GoogleHTTPClient = httpx2.AsyncClient
 
 try:
     from google.genai.client import Client
@@ -40,9 +36,6 @@ class BaseGoogleProvider(Provider[Client], ABC):
     Google Cloud. Subclasses share `base_url`, `client`, `_set_http_client`, and model-profile
     lookup; each subclass owns its own `Client` construction.
     """
-
-    _own_http_client: _GoogleHTTPClient | None = None
-    _http_client_factory: Callable[[], _GoogleHTTPClient] | None = None
 
     @property
     @abstractmethod
@@ -67,7 +60,7 @@ class BaseGoogleProvider(Provider[Client], ABC):
     def _build_http_options(
         self,
         *,
-        http_client: _GoogleHTTPClient | None,
+        http_client: AsyncHTTPClient | None,
         base_url: str | None,
         retry_options: HttpRetryOptions | None = None,
     ) -> HttpOptions:
@@ -78,8 +71,8 @@ class BaseGoogleProvider(Provider[Client], ABC):
         """
         if http_client is None:
             http_client = create_async_httpx2_client()
-            self._own_http_client = http_client  # pyright: ignore[reportIncompatibleVariableOverride]
-            self._http_client_factory = create_async_httpx2_client  # pyright: ignore[reportIncompatibleVariableOverride]
+            self._own_http_client = http_client
+            self._http_client_factory = create_async_httpx2_client
         else:
             # 3 frames up from the helper: this method, the provider `__init__` calling it, and the
             # user's `GoogleProvider(...)` call, which is where the warning should land.
@@ -97,8 +90,7 @@ class BaseGoogleProvider(Provider[Client], ABC):
             retry_options=retry_options,
         )
 
-    # The generic Provider currently only knows the legacy HTTPX client type.
-    def _set_http_client(self, http_client: _GoogleHTTPClient) -> None:
+    def _set_http_client(self, http_client: AsyncHTTPClient) -> None:
         api_client = self._client._api_client  # pyright: ignore[reportPrivateUsage]
         api_client._async_httpx_client = http_client  # pyright: ignore[reportPrivateUsage]
         api_client._http_options.httpx_async_client = http_client  # pyright: ignore[reportPrivateUsage]
@@ -117,7 +109,7 @@ class GoogleProvider(BaseGoogleProvider):
         self,
         *,
         api_key: str,
-        http_client: _GoogleHTTPClient | None = None,
+        http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
         retry_options: HttpRetryOptions | None = None,
     ) -> None: ...
@@ -130,7 +122,7 @@ class GoogleProvider(BaseGoogleProvider):
         *,
         api_key: str | None = None,
         client: Client | None = None,
-        http_client: _GoogleHTTPClient | None = None,
+        http_client: AsyncHTTPClient | None = None,
         base_url: str | None = None,
         retry_options: HttpRetryOptions | None = None,
     ) -> None:
