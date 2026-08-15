@@ -45,7 +45,11 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
 
 ## What are you building?
 
-From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered.
+From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered. To run the examples below, [install](install.md) both with [`uv`](https://docs.astral.sh/uv/):
+
+```bash
+uv add pydantic-ai pydantic-ai-harness
+```
 
 === "Coding agent"
 

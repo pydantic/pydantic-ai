@@ -20,17 +20,19 @@
 
 ---
 
-**Documentation**: [ai.pydantic.dev](https://ai.pydantic.dev/)
-
----
-
 **Pydantic AI** is the Python AI SDK: a typed, [extensible](https://ai.pydantic.dev/extensibility) agent loop with [every model](https://ai.pydantic.dev/models/overview) a string swap away. The same agent [runs everywhere you need it](https://ai.pydantic.dev/interfaces): behind a [web frontend](https://ai.pydantic.dev/ui/overview), in the [terminal](https://ai.pydantic.dev/cli), on a [voice call](https://ai.pydantic.dev/realtime), on a [durable background queue](https://ai.pydantic.dev/durable_execution/overview/), or as a plain object you call [`run()`](https://ai.pydantic.dev/agents/#running-agents) on. [Image generation](https://ai.pydantic.dev/capabilities/image-generation/) and [embeddings](https://ai.pydantic.dev/embeddings) come in the same box.
 
 **[Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](https://ai.pydantic.dev/capabilities/overview/), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
+View the complete documentation at [ai.pydantic.dev](https://ai.pydantic.dev/).
+
 ## What are you building?
 
-From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) have got you covered.
+From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) have got you covered. To run the examples below, [install](https://ai.pydantic.dev/install) both with [`uv`](https://docs.astral.sh/uv/):
+
+```bash
+uv add pydantic-ai pydantic-ai-harness
+```
 
 ### Coding agent
 
