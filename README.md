@@ -220,6 +220,19 @@ async def customer_balance(
     )
 
 
+refunds = Capability[SupportDependencies](  # deferred: loads on demand, like a skill
+    id='refunds',
+    description='Refund eligibility and refund status.',
+    defer_loading=True,
+)
+
+
+@refunds.tool
+async def refund_status(ctx: RunContext[SupportDependencies]) -> str:
+    """Look up the refund status for the customer's most recent charge."""
+    return await ctx.deps.db.refund_status(id=ctx.deps.customer_id)
+
+
 support_agent = Agent(
     'openai:gpt-5.6-sol',
     deps_type=SupportDependencies,
@@ -228,7 +241,7 @@ support_agent = Agent(
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query.'
     ),
-    capabilities=[customer_context],
+    capabilities=[customer_context, refunds],
 )
 
 
@@ -244,6 +257,14 @@ async def main():
     print(result.output)
     """
     support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
+    """
+
+    result = await support_agent.run(  # the model loads `refunds` on demand, then answers
+        'Was I refunded for the duplicate charge on my last statement?', deps=deps
+    )
+    print(result.output)
+    """
+    support_advice='Good news, John: the duplicate charge on your last statement was refunded on 2026-05-01.' block_card=False risk=1
     """
 ```
 

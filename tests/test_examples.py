@@ -35,6 +35,7 @@ from pydantic_ai import (
     NativeToolReturnPart,
     RetryPromptPart,
     TextPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     ToolsetTool,
@@ -519,6 +520,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         'The first known use of "hello, world" was in a 1974 textbook about the C programming language.'
     ),
     'What is my balance?': ToolCallPart(tool_name='customer_balance', args={'include_pending': True}),
+    'Was I refunded for the duplicate charge on my last statement?': ToolCallPart(
+        tool_name='load_capability', args={'id': 'refunds'}
+    ),
     'I just lost my card!': ToolCallPart(
         tool_name='final_result',
         args={
@@ -1023,6 +1027,19 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'customer_balance':
         args = {
             'support_advice': 'Hello John, your current account balance, including pending transactions, is $123.45.',
+            'block_card': False,
+            'risk': 1,
+        }
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif isinstance(m, ToolAvailabilityDeltaPart) and 'refund_status' in m.tools_added:
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='refund_status', args={}, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'refund_status':
+        args = {
+            'support_advice': 'Good news, John: the duplicate charge on your last statement was refunded on 2026-05-01.',
             'block_card': False,
             'risk': 1,
         }

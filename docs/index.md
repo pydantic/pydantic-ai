@@ -39,7 +39,7 @@ description: How Python does AI — agents, realtime voice, image generation, em
   Agents, realtime voice, image generation, embeddings — every model, every interface, typed end to end.
 </p>
 
-**Pydantic AI** is the Python agent framework: a typed agent loop, [every model](models/overview.md) behind one Python API, and [every interface](interfaces.md) — [terminal](cli.md), [web](web.md), [your own frontend](ui/overview.md), even [voice](realtime/overview.md). **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** is its official capability library and harness: everything an agent needs for complex, long-running work, [capabilities](capabilities/overview.md) you snap on — from [web search](capabilities/web-search.md) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+**Pydantic AI** is the Python agent framework: a typed agent loop, [every model](models/overview.md) behind one Python API, [every interface](interfaces.md) — [terminal](cli.md), [web](web.md), [your own frontend](ui/overview.md), even [voice](realtime/overview.md) — and [OpenTelemetry-native observability](logfire.md) throughout. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** is its official capability library and harness: everything an agent needs for complex, long-running work, [capabilities](capabilities/overview.md) you snap on — from [web search](capabilities/web-search.md) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
 Whatever you came to build — a one-off LLM call in a script, typed data extraction, an AI feature inside your SaaS, a voice agent, or your very own coding agent — you've come to the right place.
 
@@ -171,15 +171,15 @@ print(result.output)
 
 ## Why Pydantic AI
 
-- **Any model, one API.** [Virtually every model and provider](models/overview.md) — OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more — swappable with a string. No flagship feature is locked to one vendor.
+- **Any model, one API.** [Virtually every model and provider](models/overview.md) — OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more — swappable with a string, or through the [Pydantic AI Gateway](gateway.md): one key for all of them, with failover and cost monitoring built in. No flagship feature is locked to one vendor.
 
-- **Typed end to end.** [Structured outputs](output.md), typed [dependency injection](dependencies.md), typed tools: your IDE, type checker, and AI coding agent all know what your agent returns, moving whole classes of errors from runtime to write-time.
+- **Typed end to end.** [Structured outputs](output.md), typed [dependency injection](dependencies.md), typed tools: your IDE, type checker, and AI coding agent all know what your agent returns, moving whole classes of errors from runtime to write-time. When plain control flow isn't enough, [Pydantic Graph](graph.md) brings the same typing to graph-based workflows.
+
+- **Measured, not vibes.** OpenTelemetry-native [instrumentation](logfire.md) works with any OTel backend — one line lights up [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, tracing, and cost tracking backed by [genai-prices](https://github.com/pydantic/genai-prices) — and [Pydantic Evals](evals.md) tests agent behavior the way pytest tests code.
 
 - **Batteries, composably.** One primitive — the [capability](capabilities/overview.md) — bundles [tools](tools.md), [instructions](agent.md#instructions), [hooks](hooks.md), and [model settings](agent.md#model-run-settings) into reusable units. Core ships the fundamentals; the [Harness](https://pydantic.dev/docs/ai/harness/) ships everything else — code execution, memory, sub-agents, guardrails, compaction — plus complete harnesses like [Coder](https://pydantic.dev/docs/ai/harness/coder/) and [Researcher](https://pydantic.dev/docs/ai/harness/researcher/) that are themselves just capabilities composed, so you can take them apart. Or skip code entirely with [YAML/JSON agent specs](agent-spec.md).
 
 - **[Every interface](interfaces.md).** One agent definition runs as a [CLI](cli.md), a [built-in web chat](web.md), [your own frontend](ui/overview.md) (AG-UI and Vercel AI protocols), an [editor agent](https://pydantic.dev/docs/ai/harness/acp/) *(experimental)*, or a [voice agent](realtime/overview.md).
-
-- **Measured, not vibes.** OpenTelemetry-native [instrumentation](logfire.md) works with any OTel backend — one line lights up [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, tracing, and cost tracking — and [Pydantic Evals](evals.md) tests agent behavior the way pytest tests code.
 
 - **Durable by choice.** First-party, co-maintained [durable execution](durable_execution/overview.md) on Temporal, DBOS, or Prefect — agents that survive restarts and run for days, on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
 
@@ -254,24 +254,37 @@ async def customer_balance(
     )
 
 
-support_agent = Agent(  # (8)!
-    'openai:gpt-5.6-sol',  # (9)!
+refunds = Capability[SupportDependencies](  # (8)!
+    id='refunds',
+    description='Refund eligibility and refund status.',
+    defer_loading=True,
+)
+
+
+@refunds.tool
+async def refund_status(ctx: RunContext[SupportDependencies]) -> str:
+    """Look up the refund status for the customer's most recent charge."""
+    return await ctx.deps.db.refund_status(id=ctx.deps.customer_id)
+
+
+support_agent = Agent(  # (9)!
+    'openai:gpt-5.6-sol',  # (10)!
     deps_type=SupportDependencies,
-    output_type=SupportOutput,  # (10)!
+    output_type=SupportOutput,  # (11)!
     instructions=(
         'You are a support agent in our bank, give the '
         'customer support and judge the risk level of their query.'
     ),
-    capabilities=[customer_context],  # (11)!
+    capabilities=[customer_context, refunds],  # (12)!
 )
 
 
-...  # (12)!
+...  # (13)!
 
 
 async def main():
     deps = SupportDependencies(customer_id=123, db=DatabaseConn())
-    result = await support_agent.run('What is my balance?', deps=deps)  # (13)!
+    result = await support_agent.run('What is my balance?', deps=deps)  # (14)!
     print(result.output)
     """
     support_advice='Hello John, your current account balance, including pending transactions, is $123.45.' block_card=False risk=1
@@ -282,6 +295,14 @@ async def main():
     """
     support_advice="I'm sorry to hear that, John. We are temporarily blocking your card to prevent unauthorized transactions." block_card=True risk=8
     """
+
+    result = await support_agent.run(  # (15)!
+        'Was I refunded for the duplicate charge on my last statement?', deps=deps
+    )
+    print(result.output)
+    """
+    support_advice='Good news, John: the duplicate charge on your last statement was refunded on 2026-05-01.' block_card=False risk=1
+    """
 ```
 
 1. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [instructions](agent.md#instructions) and [tool](tools.md) functions. Pydantic AI's system of [dependency injection](dependencies.md) provides a [type-safe](agent.md#static-type-checking) way to customise the behavior of your agents, and can be especially useful when running [unit tests](testing.md) and evals.
@@ -291,12 +312,14 @@ async def main():
 5. Dynamic [instructions](agent.md#instructions) can make use of dependency injection. Dependencies are carried via the [`RunContext`][pydantic_ai.tools.RunContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
 6. The [`tool`](tools.md) decorator registers a function whose signature becomes a tool the LLM may call while responding to a user. Again, dependencies are carried via [`RunContext`][pydantic_ai.tools.RunContext]; any other arguments become the tool schema passed to the LLM. Pydantic is used to validate these arguments, and errors are passed back to the LLM so it can retry.
 7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](tools.md#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
-8. This [agent](agent.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
-9. Here we configure the agent to use [OpenAI's GPT-5.6 Sol](api/models/openai.md) model; you can also set the model when running the agent.
-10. The response from the agent will be guaranteed to be a `SupportOutput`. Since the agent is generic, it'll also be typed as a `SupportOutput` to aid with static type checking. If validation fails, the agent is [prompted to try again](agent.md#reflection-and-self-correction).
-11. Mount the capability on the agent. More [capabilities](capabilities/overview.md) — [web search](capabilities/web-search.md), or anything from the [Harness](https://pydantic.dev/docs/ai/harness/) — snap on alongside it in the same list.
-12. In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
-13. [Run the agent](agent.md#running-agents) asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.
+8. `defer_loading=True` makes this an [on-demand capability](capabilities/on-demand.md) — the same shape as an [Agent Skill](capabilities/on-demand.md#loading-skills-from-markdown-files). It collapses to a one-line catalog entry in the prompt, and its tools stay hidden until the model decides it's relevant and loads it with the framework-managed `load_capability` tool.
+9. This [agent](agent.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
+10. Here we configure the agent to use [OpenAI's GPT-5.6 Sol](api/models/openai.md) model; you can also set the model when running the agent.
+11. The response from the agent will be guaranteed to be a `SupportOutput`. Since the agent is generic, it'll also be typed as a `SupportOutput` to aid with static type checking. If validation fails, the agent is [prompted to try again](agent.md#reflection-and-self-correction).
+12. Mount the capabilities on the agent. More [capabilities](capabilities/overview.md) — [web search](capabilities/web-search.md), or anything from the [Harness](https://pydantic.dev/docs/ai/harness/) — snap on alongside them in the same list.
+13. In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
+14. [Run the agent](agent.md#running-agents) asynchronously, conducting a conversation with the LLM until a final response is reached. Even in this fairly simple case, the agent will exchange multiple messages with the LLM as tools are called to retrieve an output.
+15. This turn exercises the deferred capability: the model sees the `refunds` catalog entry, calls `load_capability` with `id='refunds'`, and only then gets the `refund_status` tool to answer with — [on-demand loading](capabilities/on-demand.md) in action.
 
 The [dependencies](dependencies.md) dataclass carries the database connection into [instructions](agent.md#instructions) and [tools](tools.md) with full type safety — swap in a test double and the same agent runs in [unit tests](testing.md) and evals. And because the customer context is a [capability](capabilities/overview.md), it composes: the same unit drops into a voice agent or a web app unchanged.
 
