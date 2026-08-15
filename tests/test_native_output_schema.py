@@ -119,6 +119,21 @@ async def test_prompted_output_template_false():
     assert params.prompted_output_instructions is None
 
 
+async def test_prompted_output_template_with_literal_braces():
+    """Test that literal JSON braces in a template are preserved, not interpreted as format fields."""
+    model = TestModel(custom_output_text='{"name": "Paris", "population": 9000000}')
+    template = 'Return JSON like {"name": "x"} matching {schema}'
+    agent = Agent(model, output_type=PromptedOutput(City, template=template))
+
+    await agent.run('Paris')
+
+    params = model.last_model_request_parameters
+    assert params
+    assert params.prompted_output_instructions is not None
+    assert '{"name": "x"}' in params.prompted_output_instructions
+    assert 'City' in params.prompted_output_instructions
+
+
 async def test_native_output_template_false():
     """Test that `template=False` on `NativeOutput` disables the schema prompt,
     even when the profile would normally inject one."""
