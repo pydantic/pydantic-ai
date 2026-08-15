@@ -28,38 +28,47 @@
 
 Whatever you came to build: a one-off LLM call [extracting typed data](https://ai.pydantic.dev/output) in a script, an agent embedded deep inside your product, a [realtime voice agent](https://ai.pydantic.dev/realtime) that talks back, or your own [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in the terminal. You've come to the right place.
 
-The simplest agent is three lines:
+## What are you building?
+
+Pydantic AI and [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) have you covered: it's the same [`Agent`](https://ai.pydantic.dev/agents/) underneath, and the pieces combine freely.
+
+### Coding agent
+
+A complete coding agent in your terminal: workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions. Here with [web search](https://ai.pydantic.dev/capabilities/web-search/) and cross-session [memory](https://pydantic.dev/docs/ai/harness/memory/) snapped on alongside:
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import WebSearch
+from pydantic_ai_harness import Coder, Memory
+from pydantic_ai_harness.memory import FileStore
 
-agent = Agent('anthropic:claude-fable-5', instructions='Be concise.')
-result = agent.run_sync('Where does "hello world" come from?')
-print(result.output)
-"""
-The first known use of "hello, world" was in a 1974 textbook about the C programming language.
-"""
-```
-
-A full coding agent in your terminal is five:
-
-```python
-from pydantic_ai import Agent
-from pydantic_ai_harness import Coder
-
-agent = Agent('anthropic:claude-fable-5', capabilities=[Coder()])
+agent = Agent(
+    'anthropic:claude-fable-5',
+    capabilities=[
+        Coder(),  # files, shell, repo context, planning, sub-agents, context management
+        WebSearch(),  # look up docs and error messages on the web
+        Memory(FileStore('.agent-memory')),  # remembers across sessions
+    ],
+)
 agent.to_cli_sync()
 ```
 
-Run that file and you're chatting with it in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/) with [`clai`](https://ai.pydantic.dev/cli#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
+[`Coder`](https://pydantic.dev/docs/ai/harness/coder/) is a regular combined capability, not a black box: use it whole, or use the blocks it bundles directly; the two are equivalent:
+
+```python
+capabilities = [
+    FileSystem('.'), Shell(cwd='.'), RepoContext(), Planning(), SubAgents(...),
+    ClearToolResults(), WarnNearLimits(), ToolOutputLimits(),
+]
+```
+
+Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/) with [`clai`](https://ai.pydantic.dev/cli#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
 ```bash
 uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
 ```
 
-## What are you building?
-
-A coding agent is the five lines above, and Pydantic AI and [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) have the rest covered too: it's the same [`Agent`](https://ai.pydantic.dev/agents/) underneath, and the pieces combine freely.
+**Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
 
 ### Data extraction & tools
 
@@ -68,7 +77,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 
 
 class Sentiment(BaseModel):
@@ -79,8 +88,8 @@ class Sentiment(BaseModel):
 agent = Agent('openai:gpt-5.6-sol', output_type=Sentiment)
 
 
-@agent.tool_plain
-def recent_reviews(product: str) -> list[str]:
+@agent.tool
+def recent_reviews(ctx: RunContext[None], product: str) -> list[str]:
     """Fetch recent review snippets for a product."""
     return ['The new release fixed everything I complained about!']
 
@@ -90,7 +99,7 @@ print(result.output)
 #> label='positive' score=0.9
 ```
 
-The [`@agent.tool`](https://ai.pydantic.dev/tools) function's signature and docstring become the tool schema, its arguments are validated before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape. Remote [MCP servers](https://ai.pydantic.dev/capabilities/mcp/) plug in just as easily: `capabilities=[MCP('https://api.githubcopilot.com/mcp/')]` hands the agent GitHub's tools. **Build this →** [Agents](https://ai.pydantic.dev/agents/), [Function Tools](https://ai.pydantic.dev/tools), and [Structured Output](https://ai.pydantic.dev/output)
+The [`@agent.tool`](https://ai.pydantic.dev/tools) function receives a [`RunContext`](https://ai.pydantic.dev/dependencies) that carries your dependencies in; the rest of its signature and its docstring become the tool schema, arguments are validated before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape. Remote [MCP servers](https://ai.pydantic.dev/capabilities/mcp/) plug in just as easily: `capabilities=[MCP('https://api.githubcopilot.com/mcp/')]` hands the agent GitHub's tools. **Build this →** [Agents](https://ai.pydantic.dev/agents/), [Function Tools](https://ai.pydantic.dev/tools), and [Structured Output](https://ai.pydantic.dev/output)
 
 ### Realtime voice
 

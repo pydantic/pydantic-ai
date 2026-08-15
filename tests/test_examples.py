@@ -101,9 +101,12 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     for ex in find_examples('README.md', 'docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if '.agents' in ex.path.parts:
             continue
-        if ex.path.name == 'README.md' and ('pydantic_ai_harness' in ex.source or 'agent.realtime(' in ex.source):
+        if ex.path.name == 'README.md' and (
+            'pydantic_ai_harness' in ex.source or 'agent.realtime(' in ex.source or 'ClearToolResults(' in ex.source
+        ):
             # README fences stay bare so GitHub renders them; snippets that can't run here
-            # (harness import, interactive realtime session) are excluded by content instead.
+            # (harness imports, the Coder blocks-equivalence fragment, interactive realtime
+            # sessions) are excluded by content instead.
             continue
         if ex.path.name != '_utils.py':
             try:

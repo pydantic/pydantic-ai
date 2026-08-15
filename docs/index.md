@@ -92,7 +92,7 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
 
     from pydantic import BaseModel, Field
 
-    from pydantic_ai import Agent
+    from pydantic_ai import Agent, RunContext
 
 
     class Sentiment(BaseModel):
@@ -103,8 +103,8 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
     agent = Agent('openai:gpt-5.6-sol', output_type=Sentiment)
 
 
-    @agent.tool_plain
-    def recent_reviews(product: str) -> list[str]:
+    @agent.tool
+    def recent_reviews(ctx: RunContext[None], product: str) -> list[str]:
         """Fetch recent review snippets for a product."""
         return ['The new release fixed everything I complained about!']
 
@@ -114,7 +114,7 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
     #> label='positive' score=0.9
     ```
 
-    The [`@agent.tool`](tools.md) function's signature and docstring become the tool schema, its arguments are [validated](tools.md#function-tools-and-schema) before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape. Remote [MCP servers](capabilities/mcp.md) plug in just as easily: `capabilities=[MCP('https://api.githubcopilot.com/mcp/')]` hands the agent GitHub's tools.
+    The [`@agent.tool`](tools.md) function receives a [`RunContext`][pydantic_ai.tools.RunContext] that carries your [dependencies](dependencies.md) in; the rest of its signature and its docstring become the tool schema, arguments are [validated](tools.md#function-tools-and-schema) before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape. Remote [MCP servers](capabilities/mcp.md) plug in just as easily: `capabilities=[MCP('https://api.githubcopilot.com/mcp/')]` hands the agent GitHub's tools.
 
     **Build this →** [Agents](agent.md), [Function Tools](tools.md), and [Structured Output](output.md)
 

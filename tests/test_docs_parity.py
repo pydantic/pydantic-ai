@@ -13,6 +13,8 @@ ROOT = Path(__file__).parent.parent
 # Each marker identifies one example that must stay code-identical between the
 # docs index and the README (comments and annotation markers excluded).
 MIRRORED_EXAMPLE_MARKERS = [
+    "Memory(FileStore('.agent-memory'))",
+    'ClearToolResults(), WarnNearLimits(), ToolOutputLimits()',
     'class Sentiment(BaseModel):',
     'output_type=BinaryImage',
     "Embedder('openai:text-embedding-3-small')",

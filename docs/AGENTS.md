@@ -62,7 +62,7 @@
 The docs index and the repository README are one story on two surfaces. Whenever one changes, mirror the other in the same PR (enforced by `tests/test_docs_parity.py`):
 
 - `docs/index.md` uses relative links, tabs (`=== "..."`), numbered annotations (`(1)!`), and MkDocs-only markup. `README.md` uses absolute links (`https://ai.pydantic.dev/...` for core, `https://pydantic.dev/docs/ai/harness/...` for Harness), `###` sections instead of tabs, and plain one-line `#` comments instead of annotations (GitHub renders annotation markers literally).
-- The mirrored code examples (data extraction, realtime voice, image generation, embeddings, `bank_support.py`) must stay code-identical across both surfaces; only comments/annotations and fence attributes may differ. The coding-agent examples intentionally differ (README keeps the five-liner contrast; the index tab shows the richer composition).
+- The mirrored code examples (coding agent, data extraction, realtime voice, image generation, embeddings, `bank_support.py`) must stay code-identical across both surfaces; only comments/annotations and fence attributes may differ.
 - `README.md` is included in `tests/test_examples.py`'s `find_examples`, so its snippets are tested and linted. Snippets that cannot run here (`pydantic_ai_harness` imports, interactive realtime sessions) are excluded by content match in `find_filter_examples`, not by fence attributes, so README fences stay bare for GitHub rendering.
 - Wording that appears on both surfaces (paragraph one, the whatever-you-came-to-build line, the Why bullets, section intros) must match word for word modulo link form.
 - No em dashes anywhere in these files; use colons, semicolons, commas, parentheses, or sentence breaks instead.
