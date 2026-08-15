@@ -28,11 +28,13 @@ View the complete documentation at [ai.pydantic.dev](https://ai.pydantic.dev/).
 
 ## What are you building?
 
-From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) have got you covered. To run the examples below, [install](https://ai.pydantic.dev/install) both with [`uv`](https://docs.astral.sh/uv/):
+From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) have got you covered. To run the examples below, [install](https://ai.pydantic.dev/install) with [`uv`](https://docs.astral.sh/uv/); each example notes anything extra it needs:
 
 ```bash
-uv add pydantic-ai pydantic-ai-harness
+uv add pydantic-ai
 ```
+
+That includes every model provider; to pick and choose dependencies yourself, use [`pydantic-ai-slim`](https://ai.pydantic.dev/install#slim-install) with extras instead.
 
 ### Coding agent
 
@@ -63,7 +65,7 @@ capabilities = [
 ]
 ```
 
-Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/) with [`clai`](https://ai.pydantic.dev/cli#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
+Install both packages (`uv add pydantic-ai pydantic-ai-harness`), run the file, and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/) with [`clai`](https://ai.pydantic.dev/cli#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
 ```bash
 uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
@@ -102,7 +104,7 @@ print(result.output)
 #> label='positive' score=0.9
 ```
 
-The [`@agent.tool`](https://ai.pydantic.dev/tools) function receives a [`RunContext`](https://ai.pydantic.dev/dependencies) that carries your dependencies in; the rest of its signature and its docstring become the tool schema, arguments are validated before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape. Remote [MCP servers](https://ai.pydantic.dev/capabilities/mcp/) plug in just as easily: `capabilities=[MCP('https://api.githubcopilot.com/mcp/')]` hands the agent GitHub's tools.
+The [`@agent.tool`](https://ai.pydantic.dev/tools) function receives a [`RunContext`](https://ai.pydantic.dev/dependencies) that carries your dependencies in; the rest of its signature and its docstring become the tool schema, arguments are validated before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape.
 
 **Build this →** [Agents](https://ai.pydantic.dev/agents/), [Function Tools](https://ai.pydantic.dev/tools), and [Structured Output](https://ai.pydantic.dev/output)
 
@@ -133,7 +135,7 @@ async with agent.realtime('openai:gpt-realtime-2.1').session() as session:
         print(f'{part.speaker}: {part.transcript}')
 ```
 
-The model calls your tools mid-conversation while it keeps talking, and every session is [instrumented](https://ai.pydantic.dev/logfire); voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
+The model calls your tools mid-conversation while it keeps talking, and every session is [instrumented](https://ai.pydantic.dev/logfire); voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice. This example needs the realtime extra: `uv add "pydantic-ai[openai-realtime]"`.
 
 **Build this →** [Realtime Voice](https://ai.pydantic.dev/realtime)
 
@@ -166,7 +168,7 @@ class ResearchWorkflow(PydanticAIWorkflow):
         return result.output
 ```
 
-[DBOS](https://ai.pydantic.dev/durable_execution/dbos/) and [Prefect](https://ai.pydantic.dev/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, Kitaru, and Airflow](https://ai.pydantic.dev/durable_execution/overview/) integrations besides.
+[DBOS](https://ai.pydantic.dev/durable_execution/dbos/) and [Prefect](https://ai.pydantic.dev/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, Kitaru, and Airflow](https://ai.pydantic.dev/durable_execution/overview/) integrations besides. This example needs the Temporal extra: `uv add "pydantic-ai[temporal]"`.
 
 **Build this →** [Durable Execution](https://ai.pydantic.dev/durable_execution/overview/)
 
@@ -217,7 +219,7 @@ Seven providers behind one typed API, [instrumented](https://ai.pydantic.dev/log
 
 - **Measured, not vibes.** OpenTelemetry-native [instrumentation](https://ai.pydantic.dev/logfire) works with any OTel backend; one line lights up [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, tracing, and cost tracking backed by [genai-prices](https://github.com/pydantic/genai-prices). [Pydantic Evals](https://ai.pydantic.dev/evals) tests agent behavior the way pytest tests code.
 
-- **Batteries, composably.** One primitive, the [capability](https://ai.pydantic.dev/capabilities/overview/), bundles [tools](https://ai.pydantic.dev/tools), [instructions](https://ai.pydantic.dev/agents/#instructions), [hooks](https://ai.pydantic.dev/hooks), and [model settings](https://ai.pydantic.dev/agents/#model-run-settings) into reusable units. Core ships the fundamentals, the [Harness](https://github.com/pydantic/pydantic-ai-harness) ships everything else, and complete agents like [Coder](https://pydantic.dev/docs/ai/harness/coder/) and [Researcher](https://pydantic.dev/docs/ai/harness/researcher/) are just capabilities composed: they come apart the way they went together. Or skip code entirely with [YAML/JSON agent specs](https://ai.pydantic.dev/agent-spec).
+- **Batteries, composably.** One primitive, the [capability](https://ai.pydantic.dev/capabilities/overview/), bundles [tools](https://ai.pydantic.dev/tools), [instructions](https://ai.pydantic.dev/agents/#instructions), [hooks](https://ai.pydantic.dev/hooks), and [model settings](https://ai.pydantic.dev/agents/#model-run-settings) into reusable units. Core ships fundamentals like [MCP](https://ai.pydantic.dev/capabilities/mcp/) and [web search](https://ai.pydantic.dev/capabilities/web-search/), the [Harness](https://github.com/pydantic/pydantic-ai-harness) ships everything else, and complete agents like [Coder](https://pydantic.dev/docs/ai/harness/coder/) and [Researcher](https://pydantic.dev/docs/ai/harness/researcher/) are just capabilities composed: they come apart the way they went together. Or skip code entirely with [YAML/JSON agent specs](https://ai.pydantic.dev/agent-spec).
 
 - **[Every interface](https://ai.pydantic.dev/interfaces).** One agent definition runs as a [CLI](https://ai.pydantic.dev/cli), a [built-in web chat](https://ai.pydantic.dev/web), or [realtime speech](https://ai.pydantic.dev/realtime) (OpenAI Realtime, Gemini Live, Azure, xAI Grok Voice); [UI event streams](https://ai.pydantic.dev/ui/overview) (AG-UI, Vercel AI) connect it to your own frontend or anything else; and [ACP](https://pydantic.dev/docs/ai/harness/acp/) *(experimental)* serves it as an editor agent.
 
