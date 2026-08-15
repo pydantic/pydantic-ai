@@ -50,6 +50,9 @@ class ReasoningCase:
     supports_context: bool = False
     """The Responses API accepts `reasoning.context='all_turns'`."""
 
+    supports_chat_tools_with_reasoning: bool = True
+    """The Chat Completions API accepts function tools with reasoning enabled."""
+
 
 # The `enabled_by_default` and `can_be_disabled` cells were verified against the live Responses API
 # (2026-07): "enabled by default" = sampling params rejected with no `reasoning.effort` set;
@@ -76,14 +79,34 @@ REASONING_CASES = [
     ReasoningCase(model='gpt-5.3-codex', can_be_disabled=True),
     ReasoningCase(model='gpt-5.3-mini', can_be_disabled=True),
     # gpt-5.4 family: opt-in reasoning, and accepts `reasoning.context='all_turns'`
-    ReasoningCase(model='gpt-5.4', can_be_disabled=True, supports_context=True),
-    ReasoningCase(model='gpt-5.4-mini', can_be_disabled=True, supports_context=True),
-    ReasoningCase(model='gpt-5.4-nano', can_be_disabled=True, supports_context=True),
+    ReasoningCase(
+        model='gpt-5.4',
+        can_be_disabled=True,
+        supports_context=True,
+        supports_chat_tools_with_reasoning=False,
+    ),
+    ReasoningCase(
+        model='gpt-5.4-mini',
+        can_be_disabled=True,
+        supports_context=True,
+        supports_chat_tools_with_reasoning=False,
+    ),
+    ReasoningCase(
+        model='gpt-5.4-nano',
+        can_be_disabled=True,
+        supports_context=True,
+        supports_chat_tools_with_reasoning=False,
+    ),
     # -pro and gpt-5.1 codex variants: always reason, no `effort='none'`
     ReasoningCase(model='gpt-5.1-codex', enabled_by_default=True),
     ReasoningCase(model='gpt-5.1-codex-max', enabled_by_default=True),
     ReasoningCase(model='gpt-5.2-pro', enabled_by_default=True),
-    ReasoningCase(model='gpt-5.4-pro', enabled_by_default=True, supports_context=True),
+    ReasoningCase(
+        model='gpt-5.4-pro',
+        enabled_by_default=True,
+        supports_context=True,
+        supports_chat_tools_with_reasoning=False,
+    ),
     ReasoningCase(model='gpt-5.5-pro', enabled_by_default=True, supports_context=True),
     # gpt-5.1+ chat variants: always reason at a fixed 'medium' effort (sampling params rejected)
     ReasoningCase(model='gpt-5.1-chat-latest', enabled_by_default=True),
@@ -140,6 +163,10 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('openai_supports_minimal_reasoning_effort', True) is case.supports_minimal_reasoning_effort
     assert profile.get('openai_responses_supports_reasoning_mode', False) is case.supports_mode
     assert profile.get('openai_responses_supports_reasoning_context', False) is case.supports_context
+    assert (
+        profile.get('openai_chat_supports_function_tools_with_reasoning', True)
+        is case.supports_chat_tools_with_reasoning
+    )
     assert profile.get('supports_thinking', False) is supports_reasoning
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
 

@@ -6478,3 +6478,58 @@ def test_model_construction_preloads_lazy_dependencies():
     env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
     process = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=120, env=env)
     assert process.returncode == 0, f'lazy-dependency preload check failed:\n{process.stderr}'
+
+
+async def test_openai_gpt_5_4_chat_model_rejects_tools_with_reasoning(allow_model_requests: None):
+    """GPT-5.4 rejects function tools with reasoning on OpenAIChatModel."""
+    c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_capital(country: str) -> str:
+        return 'Paris'
+
+    with pytest.raises(
+        UserError,
+        match=r"Function tools with reasoning are not supported with `OpenAIChatModel` and model 'gpt-5.4'.*OpenAIResponsesModel",
+    ):
+        await agent.run(
+            'What is the capital of France?',
+            model_settings=OpenAIChatModelSettings(openai_reasoning_effort='medium'),
+        )
+
+
+async def test_openai_gpt_5_4_chat_model_allows_tools_when_reasoning_disabled(allow_model_requests: None):
+    """GPT-5.4 allows function tools on OpenAIChatModel when reasoning_effort is 'none'."""
+    c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_capital(country: str) -> str:
+        return 'Paris'
+
+    result = await agent.run(
+        'What is the capital of France?',
+        model_settings=OpenAIChatModelSettings(openai_reasoning_effort='none'),
+    )
+    assert result.output == 'Paris.'
+    assert len(get_mock_chat_completion_kwargs(mock_client)) == 1
+
+
+async def test_openai_gpt_5_4_chat_model_allows_reasoning_when_no_tools(allow_model_requests: None):
+    """GPT-5.4 allows reasoning on OpenAIChatModel when no tools are present."""
+    c = completion_message(ChatCompletionMessage(content='Paris.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(
+        'What is the capital of France?',
+        model_settings=OpenAIChatModelSettings(openai_reasoning_effort='medium'),
+    )
+    assert result.output == 'Paris.'
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['reasoning_effort'] == 'medium'

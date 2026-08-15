@@ -1012,6 +1012,26 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
                 f'Please use `OpenAIResponsesModel` instead.'
             )
+
+        if not self.profile.get('openai_chat_supports_function_tools_with_reasoning', True) and (
+            model_request_parameters.function_tools or model_request_parameters.output_mode == 'tool'
+        ):
+            reasoning_effort = (
+                model_settings.get('openai_reasoning_effort') if isinstance(model_settings, dict) else None
+            )
+            thinking = model_request_parameters.thinking
+            if reasoning_effort is not None:
+                reasoning_active = reasoning_effort != 'none'
+            elif thinking is not None:
+                reasoning_active = thinking is not False
+            else:
+                reasoning_active = self.profile.get('openai_reasoning_enabled_by_default', False)
+            if reasoning_active:
+                raise UserError(
+                    f'Function tools with reasoning are not supported with `OpenAIChatModel` and model {self.model_name!r}. '
+                    f'Please use `OpenAIResponsesModel` instead.'
+                )
+
         return super().prepare_request(model_settings, model_request_parameters)
 
     async def request(

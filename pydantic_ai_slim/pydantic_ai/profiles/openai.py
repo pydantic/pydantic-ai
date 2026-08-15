@@ -217,6 +217,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_chat_supports_web_search: bool
     """Whether the model supports web search in Chat Completions API. Default: `False`."""
 
+    openai_chat_supports_function_tools_with_reasoning: bool
+    """Whether the Chat Completions API supports function tools when reasoning is enabled for this model. Default: `True`."""
+
     openai_chat_audio_input_encoding: Literal['base64', 'uri']
     """The encoding to use for audio input in Chat Completions requests. Default: `'base64'`.
 
@@ -370,6 +373,10 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # known versions rather than matching open-endedly.
     # See https://developers.openai.com/api/docs/guides/prompt-caching#prompt-cache-breakpoints.
     supports_prompt_cache_breakpoints = model_name.startswith('gpt-5.6')
+    # Function tools with reasoning are not supported on the Chat Completions API for GPT-5.4 models
+    # (requests must use the Responses API instead).
+    supports_chat_tools_with_reasoning = not model_name.startswith('gpt-5.4')
+
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18,
     # and gpt-4o-2024-08-06 model snapshots and later. We leave it in here for all models because the
     # `default_structured_output_mode` is `'tool'`, so `native` is only used when the user specifically uses
@@ -384,6 +391,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         thinking_always_enabled=reasoning.always_enabled,
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
+        openai_chat_supports_function_tools_with_reasoning=supports_chat_tools_with_reasoning,
         openai_supports_encrypted_reasoning_content=reasoning.supported,
         openai_supports_reasoning=reasoning.supported,
         openai_reasoning_enabled_by_default=reasoning.enabled_by_default,
