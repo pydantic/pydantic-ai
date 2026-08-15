@@ -178,6 +178,8 @@ Path('logo.png').write_bytes(result.output.data)
 
 [Provider-native generation](https://ai.pydantic.dev/native-tools#image-generation-tool) on models that support it (like this one), a [subagent fallback](https://ai.pydantic.dev/capabilities/image-generation/) you can configure for the rest, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way. **Build this →** [Image Generation](https://ai.pydantic.dev/capabilities/image-generation/)
 
+<!-- Embeddings section parked (bd54): restore by removing this comment.
+
 ### Embeddings
 
 Embed documents and queries for semantic search or a [RAG pipeline](https://ai.pydantic.dev/examples/rag):
@@ -192,6 +194,8 @@ print(len(result.embeddings[0]))
 ```
 
 Seven providers behind one typed API, [instrumented](https://ai.pydantic.dev/logfire) like everything else. It lives next to the agent that will use the results. **Build this →** [Embeddings](https://ai.pydantic.dev/embeddings)
+
+-->
 
 ## Why Pydantic AI
 
