@@ -285,6 +285,8 @@ agent = Agent(model)
 ...
 ```
 
+The Google providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
+
 ## HTTP Retries
 
 !!! note

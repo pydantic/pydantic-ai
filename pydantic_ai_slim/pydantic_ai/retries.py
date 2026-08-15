@@ -187,6 +187,19 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
         self.validate_response = validate_response
 
     def handle_request(self, request: httpx2.Request) -> httpx2.Response:
+        """Handle an HTTP request with retry logic.
+
+        Args:
+            request: The HTTP request to handle.
+
+        Returns:
+            The HTTP response.
+
+        Raises:
+            RuntimeError: If the retry controller did not make any attempts.
+            Exception: Any exception raised by the wrapped transport or validation function.
+        """
+
         @retry(**self.config)
         def handle_request(req: httpx2.Request) -> httpx2.Response:
             response = self.wrapped.handle_request(req)
@@ -273,6 +286,19 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
         self.validate_response = validate_response
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        """Handle an async HTTP request with retry logic.
+
+        Args:
+            request: The HTTP request to handle.
+
+        Returns:
+            The HTTP response.
+
+        Raises:
+            RuntimeError: If the retry controller did not make any attempts.
+            Exception: Any exception raised by the wrapped transport or validation function.
+        """
+
         @retry(**self.config)
         async def handle_async_request(req: httpx2.Request) -> httpx2.Response:
             response = await self.wrapped.handle_async_request(req)

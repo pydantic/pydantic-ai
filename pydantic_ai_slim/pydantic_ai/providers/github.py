@@ -127,7 +127,7 @@ class GitHubProvider(Provider[AsyncOpenAI]):
             # so the only client it can build may be unavailable at runtime.
             try:
                 http_client = create_async_http_client()
-            except ImportError as _import_error:  # pragma: no cover
+            except ImportError as _import_error:
                 raise ImportError(
                     'Please install `httpx` to use the GitHub Models provider, '
                     'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`'

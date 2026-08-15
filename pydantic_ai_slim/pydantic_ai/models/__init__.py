@@ -1610,13 +1610,19 @@ def infer_model(  # noqa: C901
 
 
 def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> AsyncClient:
-    """Create an HTTPX async client.
+    """Create a legacy HTTPX async client.
+
+    This factory serves the providers whose SDKs still require a legacy `httpx.AsyncClient`;
+    providers migrated to `httpx2` build their own `httpx2.AsyncClient` instead.
 
     Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
     the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
+
+    Raises:
+        ImportError: If legacy `httpx` is not installed.
     """
     try:
         import httpx

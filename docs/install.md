@@ -13,9 +13,10 @@ To use any other models or integrations, add the relevant extras to your install
 
 ## TLS certificates
 
-Pydantic AI makes its HTTP requests with [`httpx2`](https://httpx2.pydantic.dev/), which verifies TLS certificates against the operating system trust store rather than shipping its own `certifi` bundle.
+Pydantic AI's own HTTP requests, and those of providers migrated to [`httpx2`](https://httpx2.pydantic.dev/), verify TLS certificates against the operating system trust store rather than shipping a `certifi` bundle.
 Minimal container images and corporate proxies that rely on a private CA therefore need those certificates installed in the image (for example the `ca-certificates` package, plus your proxy's root CA).
-Alternatively, pass a provider an `httpx2.AsyncClient` you configured yourself through its `http_client` argument — see the [provider docs](models/overview.md) for the client each one accepts.
+Alternatively, pass such a provider an `httpx2.AsyncClient` you configured yourself through its `http_client` argument — see the [provider docs](models/overview.md) for the client each one accepts.
+Providers whose SDKs still use legacy `httpx` (such as Anthropic and Cohere) keep its `certifi`-based verification and take a legacy `httpx.AsyncClient` instead.
 
 ## Use with Pydantic Logfire
 
