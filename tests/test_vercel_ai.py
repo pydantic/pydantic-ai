@@ -1617,6 +1617,40 @@ async def test_tool_call_start_args_are_emitted_raw():
     )
 
 
+async def test_event_stream_without_run_input():
+    """The Vercel AI stream is a pure encoder: it never reads the run input, so it doesn't need one.
+
+    A durable execution workflow, a queue, or a websocket fan-out encodes events where no HTTP
+    request exists, and fabricating a `SubmitMessage` to satisfy the constructor was the only way
+    to get there. See #6970.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+
+    event_stream = VercelAIEventStream()
+    assert event_stream.run_input is None
+
+    chunks = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        if '[DONE]' not in event
+    ]
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (text_id := IsSameStr())},
+            {'type': 'text-delta', 'id': text_id, 'delta': 'Hello'},
+            {'type': 'text-end', 'id': text_id},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    )
+
+
 async def test_tool_call_delta_dict_args_are_serialized_compactly():
     """Exercise the UI serialization boundary directly.
 

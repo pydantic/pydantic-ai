@@ -100,7 +100,15 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     This class is responsible for transforming Pydantic AI events into protocol-specific events.
     """
 
-    run_input: RunInputT
+    run_input: RunInputT | None = None
+    """The protocol-specific run input object the stream was built from, if any.
+
+    `None` when the stream is used as a standalone encoder, transforming events that reached it
+    over a transport of their own — a durable execution workflow, a queue, a websocket fan-out —
+    rather than over the HTTP request a [`UIAdapter`][pydantic_ai.ui.UIAdapter] serves. A subclass
+    that needs a value the run input carries takes it as a field of its own, overwritten by the run
+    input's value when one is given.
+    """
 
     accept: str | None = None
     """The `Accept` header value of the request, used to determine how to encode the protocol-specific events for the streaming response."""
