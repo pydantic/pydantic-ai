@@ -1282,7 +1282,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         `__aexit__`.
         """
         if self.cache_tools and self._cached_tools is not None:
-            return self._cached_tools
+            return list(self._cached_tools)
         async with self:
             tools = await self.client.list_tools()
             if self.cache_tools:
@@ -1486,7 +1486,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             MCPError: If the server returns an error.
         """
         if self.cache_prompts and self._cached_prompts is not None:
-            return self._cached_prompts
+            return list(self._cached_prompts)
         async with self:
             if not self.capabilities.prompts:
                 return []
@@ -1541,7 +1541,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             MCPError: If the server returns an error.
         """
         if self.cache_resources and self._cached_resources is not None:
-            return self._cached_resources
+            return list(self._cached_resources)
         async with self:
             if not self.capabilities.resources:
                 return []
