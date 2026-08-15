@@ -39,30 +39,29 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
   Agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end.
 </p>
 
-**Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) a string swap away. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](cli.md), on a [voice call](realtime/overview.md), on a [durable background queue](durable_execution/overview.md), or as a plain object you call [`run()`](agent.md#running-agents) on. [Embeddings](embeddings.md) and [image generation](capabilities/image-generation.md) come in the same box. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+**Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) a string swap away. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](cli.md), on a [voice call](realtime/overview.md), on a [durable background queue](durable_execution/overview.md), or as a plain object you call [`run()`](agent.md#running-agents) on. [Image generation](capabilities/image-generation.md) and [embeddings](embeddings.md) come in the same box.
 
-Whatever you came to build: typed [data extraction](output.md), an agent inside your [FastAPI app](examples/chat-app.md), a [durable](durable_execution/overview.md) agent working in the background, or your own coding agent in the terminal. You've come to the right place.
+**[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
 ## What are you building?
 
-Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have you covered: it's the same [`Agent`](agent.md) underneath, and the pieces combine freely.
+Whatever you came to build, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have you covered: it's the same [`Agent`](agent.md) underneath, and you can go as big or as small as you like.
 
 === "Coding agent"
 
-    A complete coding agent in your terminal: workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions. Here with [web search](capabilities/web-search.md) and cross-session [memory](https://pydantic.dev/docs/ai/harness/memory/) snapped on alongside:
+    A complete coding agent in your terminal: workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions. Here with [web search](capabilities/web-search.md) and a second-opinion [advisor](https://pydantic.dev/docs/ai/harness/advisor/) snapped on alongside:
 
     ```python {test="skip" lint="skip"}
     from pydantic_ai import Agent
     from pydantic_ai.capabilities import WebSearch
-    from pydantic_ai_harness import Coder, Memory
-    from pydantic_ai_harness.memory import FileStore
+    from pydantic_ai_harness import Advisor, Coder
 
     agent = Agent(
         'anthropic:claude-fable-5',
         capabilities=[
             Coder(),  # files, shell, repo context, planning, sub-agents, context management
             WebSearch(),  # look up docs and error messages on the web
-            Memory(FileStore('.agent-memory')),  # remembers across sessions
+            Advisor('openai:gpt-5.6-sol'),  # a second opinion from another model when stuck
         ],
     )
     agent.to_cli_sync()
@@ -86,6 +85,8 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
     **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
 
 === "Data extraction & tools"
+
+    Give the agent an [output type](output.md) and [tools](tools.md), and every run comes back validated and typed:
 
     ```python {title="review_sentiment.py"}
     from typing import Literal
@@ -117,6 +118,37 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
     The [`@agent.tool`](tools.md) function receives a [`RunContext`][pydantic_ai.tools.RunContext] that carries your [dependencies](dependencies.md) in; the rest of its signature and its docstring become the tool schema, arguments are [validated](tools.md#function-tools-and-schema) before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape. Remote [MCP servers](capabilities/mcp.md) plug in just as easily: `capabilities=[MCP('https://api.githubcopilot.com/mcp/')]` hands the agent GitHub's tools.
 
     **Build this →** [Agents](agent.md), [Function Tools](tools.md), and [Structured Output](output.md)
+
+=== "Realtime voice"
+
+    Put the same agent on a live voice session, [tools](realtime/tools.md) and [capabilities](realtime/capabilities.md) included:
+
+    ```python {test="skip" lint="skip"}
+    import asyncio
+
+    from pydantic_ai import Agent
+    from pydantic_ai.capabilities import MCP
+
+    agent = Agent(
+        instructions='You are a helpful voice assistant.',
+        capabilities=[MCP('https://internal.example.com/mcp')],  # capabilities work in voice too
+    )
+
+    @agent.tool_plain
+    def order_status(order_id: str) -> str:
+        """Look up the status of an order."""
+        return f'Order {order_id}: shipped, arriving Thursday.'
+
+    async with agent.realtime('openai:gpt-realtime-2.1').session() as session:
+        microphone = asyncio.create_task(stream_microphone(session))  # chunks → session.send_audio()
+        speaker = asyncio.create_task(play_audio(session.stream_audio()))  # model audio → your speaker
+        async for part in session.stream_transcripts():
+            print(f'{part.speaker}: {part.transcript}')
+    ```
+
+    The model calls your tools mid-conversation while it keeps talking, and every session is [instrumented](logfire.md); voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
+
+    **Build this →** [Realtime Voice](realtime/overview.md), starting from the [voice assistant example](examples/realtime-voice.md)
 
 === "Durable background agent"
 
@@ -150,36 +182,9 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
 
     **Build this →** [Durable Execution](durable_execution/overview.md)
 
-=== "Realtime voice"
-
-    ```python {test="skip" lint="skip"}
-    import asyncio
-
-    from pydantic_ai import Agent
-    from pydantic_ai.capabilities import MCP
-
-    agent = Agent(
-        instructions='You are a helpful voice assistant.',
-        capabilities=[MCP('https://internal.example.com/mcp')],  # capabilities work in voice too
-    )
-
-    @agent.tool_plain
-    def order_status(order_id: str) -> str:
-        """Look up the status of an order."""
-        return f'Order {order_id}: shipped, arriving Thursday.'
-
-    async with agent.realtime('openai:gpt-realtime-2.1').session() as session:
-        microphone = asyncio.create_task(stream_microphone(session))  # chunks → session.send_audio()
-        speaker = asyncio.create_task(play_audio(session.stream_audio()))  # model audio → your speaker
-        async for part in session.stream_transcripts():
-            print(f'{part.speaker}: {part.transcript}')
-    ```
-
-    The model calls your [tools](realtime/tools.md) mid-conversation while it keeps talking, [capabilities](realtime/capabilities.md) attach the same way as in any run, and every session is [instrumented](logfire.md); voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
-
-    **Build this →** [Realtime Voice](realtime/overview.md), starting from the [voice assistant example](examples/realtime-voice.md)
-
 === "Image generation"
+
+    Ask for an image and make it the run's typed [output](output.md):
 
     ```python {title="logo_generation.py"}
     from pathlib import Path
@@ -191,11 +196,13 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
     Path('logo.png').write_bytes(result.output.data)
     ```
 
-    Ask for an image and the run's typed output *is* the image: [provider-native generation](native-tools.md#image-generation-tool) on models that support it (like this one), a [subagent fallback](capabilities/image-generation.md) you can configure for the rest, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way.
+    [Provider-native generation](native-tools.md#image-generation-tool) on models that support it (like this one), a [subagent fallback](capabilities/image-generation.md) you can configure for the rest, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way.
 
     **Build this →** [Image Generation](capabilities/image-generation.md)
 
 === "Embeddings"
+
+    Embed documents and queries for semantic search or a [RAG pipeline](examples/rag.md):
 
     ```python {title="embeddings_quickstart.py"}
     from pydantic_ai import Embedder
@@ -206,7 +213,7 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
     #> 1536
     ```
 
-    Embedding your documents for semantic search or a [RAG pipeline](examples/rag.md)? Seven providers behind one typed API, [instrumented](logfire.md) like everything else. It lives next to the agent that will use the results.
+    Seven providers behind one typed API, [instrumented](logfire.md) like everything else. It lives next to the agent that will use the results.
 
     **Build this →** [Embeddings](embeddings.md), then the [RAG example](examples/rag.md)
 
