@@ -285,7 +285,10 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
 def _get_include_options(
     model_settings: XaiModelSettings, model_request_parameters: ModelRequestParameters
 ) -> list[chat_pb2.IncludeOption]:
-    """Build the xAI `include` options for a request."""
+    """Build the xAI `include` options for a request.
+
+    Extracted from `XaiModel._create_chat` to keep that method under the complexity limit.
+    """
     include: list[chat_pb2.IncludeOption] = []
     if model_settings.get('xai_include_code_execution_output'):
         include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT)
