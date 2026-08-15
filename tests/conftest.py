@@ -348,6 +348,11 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # https://github.com/cbornet/blockbuster/pull/63 is released in a compatible version.
     ('os.stat', 'coverage/python.py', 'get_python_source'),
     ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source'),
+    # pytest-examples locates the source line of a captured `print()` with `Path.samefile`, so an
+    # example printing from inside a running event loop trips the detector on the harness's own
+    # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
+    # code detectable.
+    ('os.stat', 'pytest_examples/run_code.py', '__call__'),
     # `load_mcp_toolsets` is a sync config-file loader; reading the file is its documented job.
     ('os.stat', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
     ('io.BufferedReader.read', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
