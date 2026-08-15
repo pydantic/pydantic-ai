@@ -98,3 +98,7 @@ keep-in-sync comment naming the surfaces.
 Style inside blown-out blocks: `capabilities=[...]` lists are always written one entry per line
 (never collapsed to a single line, including sub-agents'), and every entry in the main agent's
 list carries a short trailing comment saying what it contributes.
+
+## No em dashes
+
+Do not use em dashes anywhere in docs, READMEs, code comments, commit messages, or PR text. Replace them with a colon, semicolon, comma, parentheses, or a sentence break, choosing whichever reads best case by case. This includes the version-promise blockquote: its canonical wording uses a semicolon ("may change between minor releases; when it does, ...").

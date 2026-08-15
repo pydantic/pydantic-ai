@@ -29,17 +29,17 @@ uvx --with 'pydantic-ai-harness[researcher]' clai -a pydantic_ai_harness.researc
 
 It is literally these capabilities combined, in this order:
 
-- Concise default research instructions (`DEFAULT_RESEARCHER_INSTRUCTIONS`) — pass `instructions='...'` to replace them, or `instructions=None` to disable
-- Core [`WebSearch(local=True)`](https://pydantic.dev/docs/ai/capabilities/web-search/) — the provider's native web search when the model supports it, with a local DuckDuckGo fallback when it doesn't
-- Core [`WebFetch(local=True)`](https://pydantic.dev/docs/ai/capabilities/web-fetch/) — read the pages behind the results, native where supported with a local fallback, so claims can be checked against their sources
-- [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) — delegation, with a focused web `researcher` sub-agent by default
-- [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) — bounds how much context any single tool result can consume
+- Concise default research instructions (`DEFAULT_RESEARCHER_INSTRUCTIONS`): pass `instructions='...'` to replace them, or `instructions=None` to disable
+- Core [`WebSearch(local=True)`](https://pydantic.dev/docs/ai/capabilities/web-search/): the provider's native web search when the model supports it, with a local DuckDuckGo fallback when it doesn't
+- Core [`WebFetch(local=True)`](https://pydantic.dev/docs/ai/capabilities/web-fetch/): read the pages behind the results, native where supported with a local fallback, so claims can be checked against their sources
+- [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/): delegation, with a focused web `researcher` sub-agent by default
+- [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/): bounds how much context any single tool result can consume
 
 Pass `subagents=[]` to disable delegation, or supply your own `SubAgent` entries.
 
 ## Blown-out equivalent
 
-<!-- Keep this in sync with pydantic_ai_harness/researcher — it intentionally shows the complete picture. -->
+<!-- Keep this in sync with pydantic_ai_harness/researcher; it intentionally shows the complete picture. -->
 
 ```python
 from pydantic_ai import Agent
@@ -74,4 +74,4 @@ agent = Agent(
 )
 ```
 
-See the [source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/researcher/). While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade; see the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
+See the [source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/researcher/). While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade; see the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).

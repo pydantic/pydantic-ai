@@ -7,7 +7,7 @@ description: Warn when a run's prompt-cache hit collapses between model requests
 
 Warn when a run's prompt cache hit collapses between model requests, so a moved cacheable prefix or an expired provider cache surfaces instead of quietly re-charging tokens it could have served from cache.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ## What it watches
 

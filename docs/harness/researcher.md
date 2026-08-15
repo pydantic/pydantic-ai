@@ -8,7 +8,7 @@ description: A complete Pydantic AI web-research harness with source-backed answ
 `Researcher` gives a Pydantic AI agent a compact stack for broad web research with source-backed answers.
 It is a regular [combined capability](https://pydantic.dev/docs/ai/capabilities/custom/#composition-and-middleware-semantics) made from the [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) below, so you can use it as-is or take it apart.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ## Usage
 
@@ -42,11 +42,11 @@ uvx --with 'pydantic-ai-harness[researcher]' clai -a pydantic_ai_harness.researc
 
 It is literally these capabilities combined, in this order:
 
-- Concise default research instructions — see [Instructions](#instructions) below
-- Core [`WebSearch(local=True)`](https://pydantic.dev/docs/ai/capabilities/web-search/) — the provider's native web search when the model supports it, with a local DuckDuckGo fallback when it doesn't
-- Core [`WebFetch(local=True)`](https://pydantic.dev/docs/ai/capabilities/web-fetch/) — read the pages behind the results, native where supported with a local fallback, so claims can be checked against their sources
-- [`SubAgents`](subagents.md) — delegation, with a focused web `researcher` sub-agent by default
-- [`ToolOutputLimits`](tool-output-limits.md) — bounds how much context any single tool result can consume
+- Concise default research instructions: see [Instructions](#instructions) below
+- Core [`WebSearch(local=True)`](https://pydantic.dev/docs/ai/capabilities/web-search/): the provider's native web search when the model supports it, with a local DuckDuckGo fallback when it doesn't
+- Core [`WebFetch(local=True)`](https://pydantic.dev/docs/ai/capabilities/web-fetch/): read the pages behind the results, native where supported with a local fallback, so claims can be checked against their sources
+- [`SubAgents`](subagents.md): delegation, with a focused web `researcher` sub-agent by default
+- [`ToolOutputLimits`](tool-output-limits.md): bounds how much context any single tool result can consume
 
 Pass `subagents=[]` to disable delegation, or supply your own `SubAgent` entries.
 
@@ -56,13 +56,13 @@ Pass `subagents=[]` to disable delegation, or supply your own `SubAgent` entries
 
 ### Making it more powerful
 
-- **Research in a specific format**: give the agent a typed [`output_type`](https://pydantic.dev/docs/ai/output/) — a Pydantic model of findings, each with its source link — and the researcher returns structured data instead of prose.
+- **Research in a specific format**: give the agent a typed [`output_type`](https://pydantic.dev/docs/ai/output/): a Pydantic model of findings, each with its source link, and the researcher returns structured data instead of prose.
 - **Higher-quality search**: swap in [`Exa Search`](exa-search.md) as the search backend.
 - **Fan out**: add [`Dynamic Workflow`](dynamic-workflow.md) so the agent can spawn typed researcher sub-agents in parallel and combine their structured results.
 
 ## Blown-out equivalent
 
-<!-- Keep this in sync with pydantic_ai_harness/researcher — it intentionally shows the complete picture. -->
+<!-- Keep this in sync with pydantic_ai_harness/researcher; it intentionally shows the complete picture. -->
 
 ```python
 from pydantic_ai import Agent

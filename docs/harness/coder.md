@@ -8,7 +8,7 @@ description: A complete Pydantic AI coding-agent harness assembled from transpar
 `Coder` gives a Pydantic AI agent a complete, opinionated stack for working in a local codebase.
 It is a regular [combined capability](https://pydantic.dev/docs/ai/capabilities/custom/#composition-and-middleware-semantics) made from the [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) below, so you can use it as-is or take it apart.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — and when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
 ## Usage
 
@@ -37,33 +37,33 @@ uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m 
 
 It is literally these capabilities combined, in this order:
 
-- [`FileSystem`](filesystem.md) — read, write, edit, and search tools rooted at the workspace, path-traversal and symlink safe
-- [`Shell`](shell.md) — allowlisted commands rooted at the workspace (a guardrail, not a security boundary), with common LLM provider API-key variables filtered from inherited command environments
-- [`RepoContext`](repo-context.md) — repository instructions and structure
-- [`Planning`](planning.md) — a plan the agent creates and keeps current during multi-step work
-- [`SubAgents`](subagents.md) — delegation, with a read-only `explorer` sub-agent by default
-- [`ClearToolResults`](compaction.md) — clears stale tool results at 70% of the model context window
-- [`WarnNearLimits`](compaction.md) — warns the agent at 90% of the model context window
-- [`ToolOutputLimits`](tool-output-limits.md) — bounds how much context any single tool result can consume
+- [`FileSystem`](filesystem.md): read, write, edit, and search tools rooted at the workspace, path-traversal and symlink safe
+- [`Shell`](shell.md): allowlisted commands rooted at the workspace (a guardrail, not a security boundary), with common LLM provider API-key variables filtered from inherited command environments
+- [`RepoContext`](repo-context.md): repository instructions and structure
+- [`Planning`](planning.md): a plan the agent creates and keeps current during multi-step work
+- [`SubAgents`](subagents.md): delegation, with a read-only `explorer` sub-agent by default
+- [`ClearToolResults`](compaction.md): clears stale tool results at 70% of the model context window
+- [`WarnNearLimits`](compaction.md): warns the agent at 90% of the model context window
+- [`ToolOutputLimits`](tool-output-limits.md): bounds how much context any single tool result can consume
 
 Pass `subagents=[]` to disable delegation, or supply your own `SubAgent` entries.
 
 ### Instructions
 
-`Coder` ships with **no default instructions**: modern models don't need procedural coaching ("work step by step", "run the tests"), and each composed capability already contributes its own tool guidance. Pass `instructions='...'` to add your own — identity, tone, or house rules — and it becomes a regular instructions capability at the front of the composition. The exported `coder_agent` separately carries the identity instruction `You are a coding agent built on Pydantic AI.`
+`Coder` ships with **no default instructions**: modern models don't need procedural coaching ("work step by step", "run the tests"), and each composed capability already contributes its own tool guidance. Pass `instructions='...'` to add your own (identity, tone, or house rules) and it becomes a regular instructions capability at the front of the composition. The exported `coder_agent` separately carries the identity instruction `You are a coding agent built on Pydantic AI.`
 
 The command allowlist is a guardrail against accidents, not a security boundary. Validation checks only the first token, and allowlisted commands such as `python`, `git`, `uv`, and `make` can spawn arbitrary processes, so a model that wants to work around the allowlist can. For untrusted work, run the agent inside an OS-level sandbox such as [`ModalSandbox`](modal-sandbox.md) or a container.
 
 ### Not included by default
 
-Other capabilities pair well with `Coder` — add them alongside it in `capabilities`:
+Other capabilities pair well with `Coder`; add them alongside it in `capabilities`:
 
-- [Web Search](https://pydantic.dev/docs/ai/capabilities/web-search/) and [Web Fetch](https://pydantic.dev/docs/ai/capabilities/web-fetch/) (core) — look up docs and error messages on the web
-- [Skills](skills.md) — reusable procedure documents the agent loads on demand
-- [Memory](memory.md) — persistent memory across conversations
-- [Conversation Search](conversation-search.md) — let the agent search earlier sessions
-- [Guardrails](guardrails.md) — validate what the agent does before and after it acts
-- [Dynamic Workflow](dynamic-workflow.md) — let the agent author multi-step workflows; best activated on demand
+- [Web Search](https://pydantic.dev/docs/ai/capabilities/web-search/) and [Web Fetch](https://pydantic.dev/docs/ai/capabilities/web-fetch/) (core): look up docs and error messages on the web
+- [Skills](skills.md): reusable procedure documents the agent loads on demand
+- [Memory](memory.md): persistent memory across conversations
+- [Conversation Search](conversation-search.md): let the agent search earlier sessions
+- [Guardrails](guardrails.md): validate what the agent does before and after it acts
+- [Dynamic Workflow](dynamic-workflow.md): let the agent author multi-step workflows; best activated on demand
 
 ```python
 from pydantic_ai import Agent

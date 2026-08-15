@@ -24,20 +24,20 @@ uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m 
 
 It is literally these capabilities combined, in this order:
 
-- [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) — read, write, edit, and search tools rooted at the workspace, path-traversal and symlink safe
-- [`Shell`](https://pydantic.dev/docs/ai/harness/shell/) — allowlisted commands rooted at the workspace (a guardrail, not a security boundary), with common LLM provider API-key variables filtered from inherited command environments
-- [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/) — repository instructions and structure
-- [`Planning`](https://pydantic.dev/docs/ai/harness/planning/) — a plan the agent creates and keeps current during multi-step work
-- [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/) — delegation, with a read-only `explorer` sub-agent by default
-- [`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/) — clears stale tool results at 70% of the model context window
-- [`WarnNearLimits`](https://pydantic.dev/docs/ai/harness/compaction/) — warns the agent at 90% of the model context window
-- [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/) — bounds how much context any single tool result can consume
+- [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/): read, write, edit, and search tools rooted at the workspace, path-traversal and symlink safe
+- [`Shell`](https://pydantic.dev/docs/ai/harness/shell/): allowlisted commands rooted at the workspace (a guardrail, not a security boundary), with common LLM provider API-key variables filtered from inherited command environments
+- [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/): repository instructions and structure
+- [`Planning`](https://pydantic.dev/docs/ai/harness/planning/): a plan the agent creates and keeps current during multi-step work
+- [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/): delegation, with a read-only `explorer` sub-agent by default
+- [`ClearToolResults`](https://pydantic.dev/docs/ai/harness/compaction/): clears stale tool results at 70% of the model context window
+- [`WarnNearLimits`](https://pydantic.dev/docs/ai/harness/compaction/): warns the agent at 90% of the model context window
+- [`ToolOutputLimits`](https://pydantic.dev/docs/ai/harness/tool-output-limits/): bounds how much context any single tool result can consume
 
 Pass `subagents=[]` to disable delegation, or supply your own `SubAgent` entries.
 
-`Coder` ships with **no default instructions**: modern models don't need procedural coaching, and each composed capability already contributes its own tool guidance. Pass `instructions='...'` to add your own — identity, tone, or house rules. The exported `coder_agent` separately carries the identity instruction `You are a coding agent built on Pydantic AI.`
+`Coder` ships with **no default instructions**: modern models don't need procedural coaching, and each composed capability already contributes its own tool guidance. Pass `instructions='...'` to add your own: identity, tone, or house rules. The exported `coder_agent` separately carries the identity instruction `You are a coding agent built on Pydantic AI.`
 
-Other capabilities pair well with `Coder` — add them alongside it in `capabilities`: core [Web Search](https://pydantic.dev/docs/ai/capabilities/web-search/) and [Web Fetch](https://pydantic.dev/docs/ai/capabilities/web-fetch/) to look up docs and error messages, [Skills](https://pydantic.dev/docs/ai/harness/skills/), [Memory](https://pydantic.dev/docs/ai/harness/memory/), [Conversation Search](https://pydantic.dev/docs/ai/harness/conversation-search/), [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), and [Dynamic Workflow](https://pydantic.dev/docs/ai/harness/dynamic-workflow/).
+Other capabilities pair well with `Coder`; add them alongside it in `capabilities`: core [Web Search](https://pydantic.dev/docs/ai/capabilities/web-search/) and [Web Fetch](https://pydantic.dev/docs/ai/capabilities/web-fetch/) to look up docs and error messages, [Skills](https://pydantic.dev/docs/ai/harness/skills/), [Memory](https://pydantic.dev/docs/ai/harness/memory/), [Conversation Search](https://pydantic.dev/docs/ai/harness/conversation-search/), [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), and [Dynamic Workflow](https://pydantic.dev/docs/ai/harness/dynamic-workflow/).
 
 The command allowlist is a guardrail against accidents, not a security boundary. Validation checks only the first token, and allowlisted commands such as `python`, `git`, `uv`, and `make` can spawn arbitrary processes, so a model that wants to work around the allowlist can. For untrusted work, run the agent inside an OS-level sandbox such as [`ModalSandbox`](https://pydantic.dev/docs/ai/harness/modal-sandbox/) or a container.
 
@@ -102,4 +102,4 @@ agent = Agent(
 )
 ```
 
-See the [source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/coder/). While Pydantic AI Harness is on 0.x releases, the API may change between minor releases — deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade; see the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
+See the [source](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/coder/). While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade; see the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).

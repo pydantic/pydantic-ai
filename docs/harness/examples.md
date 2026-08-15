@@ -17,7 +17,7 @@ code and tweak it, without chasing imports.
 | `research_agent.py` | A web-research agent that cites every claim, built from the blocks that make up [`Researcher`](researcher.md) |
 
 If you just want the assembled version, every packaged harness ([`Coder`](coder.md),
-[`Researcher`](researcher.md), …) is one import — or zero, via the
+[`Researcher`](researcher.md), …) is one import, or zero, via the
 [CLI](https://pydantic.dev/docs/ai/cli/#custom-agents):
 
 ```bash
@@ -35,7 +35,7 @@ uv run examples/coding_agent.py
 
 Each example states its default model at the top and reads the corresponding API key
 from the environment (e.g. `ANTHROPIC_API_KEY`). Set `PYDANTIC_AI_MODEL=provider:model`
-to run it against a different model — you'll then need that provider's key instead. See
+to run it against a different model; you'll then need that provider's key instead. See
 the [model configuration docs](https://pydantic.dev/docs/ai/models/overview/) for
 provider setup.
 
