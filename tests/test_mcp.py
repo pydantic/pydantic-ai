@@ -1028,14 +1028,22 @@ class TestMCPToolsetIntegration:
         async with toolset:
             first = await toolset.list_prompts()
             assert toolset._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
+            first.clear()
             second = await toolset.list_prompts()
-        assert first == second
+        assert second
 
     async def test_list_prompts_no_caching_when_disabled(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server, cache_prompts=False)
         async with toolset:
             await toolset.list_prompts()
             assert toolset._cached_prompts is None  # pyright: ignore[reportPrivateUsage]
+
+    async def test_list_prompts_cache_returns_new_list(self, fastmcp_server: FastMCP[None]):
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            first = await toolset.list_prompts()
+            second = await toolset.list_prompts()
+        assert first is not second
 
     async def test_prompts_cache_invalidation_on_notification(self, fastmcp_server: FastMCP[None]):
         from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
