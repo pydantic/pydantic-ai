@@ -39,7 +39,7 @@ try:
     )
     from fastmcp.exceptions import ToolError
     from fastmcp.mcp_config import infer_transport_type_from_url
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the fastmcp client to use `MCPToolset` — '
         '`pip install "pydantic-ai-slim[mcp]"` pulls `fastmcp-slim[client]`, '
