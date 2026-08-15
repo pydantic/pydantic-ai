@@ -305,6 +305,34 @@ async def test_event_stream_back_to_back_text():
     )
 
 
+async def test_event_stream_without_run_input():
+    """A `UIEventStream` encodes events on its own, with no run input to build it from.
+
+    Transports that carry native events out of band — a durable execution workflow, a queue, a
+    websocket fan-out — encode them where no HTTP request exists. See #6970.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+
+    event_stream = DummyUIEventStream[None, str]()
+    assert event_stream.run_input is None
+
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hello',
+            '</text followed_by_text=False>',
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
 async def test_event_stream_close_finalizes_native_stream_without_protocol_trailer():
     """A disconnected consumer cannot receive protocol trailers, but its native stream must be closed."""
     finalized = anyio.Event()
