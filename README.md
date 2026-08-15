@@ -30,7 +30,7 @@
 
 ## What are you building?
 
-Whatever you came to build, Pydantic AI and [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) have you covered: it's the same [`Agent`](https://ai.pydantic.dev/agents/) underneath, and you can go as big or as small as you like.
+From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) have got you covered.
 
 ### Coding agent
 
@@ -69,7 +69,7 @@ uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m 
 
 **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
 
-### Data extraction & tools
+### Data extraction
 
 Give the agent an [output type](https://ai.pydantic.dev/output) and [tools](https://ai.pydantic.dev/tools), and every run comes back validated and typed:
 
@@ -139,13 +139,14 @@ Attach [`TemporalDurability`](https://ai.pydantic.dev/durable_execution/temporal
 from temporalio import workflow
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import WebFetch, WebSearch
 from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
 
 agent = Agent(
     'openai:gpt-5.6-sol',
     instructions='Research the topic and write a structured brief.',
     name='researcher',
-    capabilities=[TemporalDurability()],
+    capabilities=[WebSearch(), WebFetch(), TemporalDurability()],
 )
 
 

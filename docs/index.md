@@ -45,7 +45,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
 
 ## What are you building?
 
-Whatever you came to build, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have you covered: it's the same [`Agent`](agent.md) underneath, and you can go as big or as small as you like.
+From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered.
 
 === "Coding agent"
 
@@ -84,7 +84,7 @@ Whatever you came to build, Pydantic AI and [Pydantic AI Harness](https://pydant
 
     **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
 
-=== "Data extraction & tools"
+=== "Data extraction"
 
     Give the agent an [output type](output.md) and [tools](tools.md), and every run comes back validated and typed:
 
@@ -158,13 +158,14 @@ Whatever you came to build, Pydantic AI and [Pydantic AI Harness](https://pydant
     from temporalio import workflow
 
     from pydantic_ai import Agent
+    from pydantic_ai.capabilities import WebFetch, WebSearch
     from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
 
     agent = Agent(
         'openai:gpt-5.6-sol',
         instructions='Research the topic and write a structured brief.',
         name='researcher',
-        capabilities=[TemporalDurability()],
+        capabilities=[WebSearch(), WebFetch(), TemporalDurability()],
     )
 
 
