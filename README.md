@@ -24,9 +24,9 @@
 
 ---
 
-**Pydantic AI** is the Python agent framework: a typed agent loop, [every model](https://ai.pydantic.dev/models/overview) behind one Python API, and [every interface](https://ai.pydantic.dev/interfaces) — [terminal](https://ai.pydantic.dev/cli), [web](https://ai.pydantic.dev/web), [your own frontend](https://ai.pydantic.dev/ui/overview), even [voice](https://ai.pydantic.dev/realtime). **[Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness)** is its official capability library and harness: everything an agent needs for complex, long-running work, [capabilities](https://ai.pydantic.dev/capabilities/overview/) you snap on — from [web search](https://ai.pydantic.dev/capabilities/web-search/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+**Pydantic AI** is the Python AI SDK: a typed, [instrumented](https://ai.pydantic.dev/logfire) agent loop, [every model](https://ai.pydantic.dev/models/overview) behind one Python API, and [every interface](https://ai.pydantic.dev/interfaces) — [terminal](https://ai.pydantic.dev/cli), [web](https://ai.pydantic.dev/web), [your own frontend](https://ai.pydantic.dev/ui/overview), even [voice](https://ai.pydantic.dev/realtime). It does [embeddings](https://ai.pydantic.dev/embeddings) and [image generation](https://ai.pydantic.dev/capabilities/image-generation/) too. **[Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness)** is its official capability library and harness: everything an agent needs for complex, long-running work, [capabilities](https://ai.pydantic.dev/capabilities/overview/) you snap on — from [web search](https://ai.pydantic.dev/capabilities/web-search/) and [MCP](https://ai.pydantic.dev/capabilities/mcp/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
-Whatever you came to build — a one-off LLM call in a script, typed data extraction, an AI feature inside your product, a [realtime voice agent](https://ai.pydantic.dev/realtime), [image generation](https://ai.pydantic.dev/capabilities/image-generation/), [embeddings](https://ai.pydantic.dev/embeddings), or your very own coding agent — you've come to the right place.
+Whatever you came to build — a one-off LLM call extracting typed data in a script, an AI feature inside your product, a [realtime voice agent](https://ai.pydantic.dev/realtime) you can talk to, or your very own [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal — you've come to the right place.
 
 The simplest agent is three lines:
 
@@ -59,9 +59,9 @@ uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m 
 
 ## What are you building?
 
-A coding agent is the five lines above — and the same library, with the same typed API, covers the straightforward jobs and the complex, long-running ones. No separate SDKs, no framework bloat:
+A coding agent is the five lines above — and Pydantic AI and [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) have the rest covered too:
 
-### Structured output
+### Structured output & tools
 
 ```python
 from typing import Literal
@@ -77,19 +77,33 @@ class Sentiment(BaseModel):
 
 
 agent = Agent('openai:gpt-5.6-sol', output_type=Sentiment)
-result = agent.run_sync('The new release fixed everything I complained about!')
+
+
+@agent.tool_plain
+def recent_reviews(product: str) -> list[str]:
+    """Fetch recent review snippets for a product."""
+    return ['The new release fixed everything I complained about!']
+
+
+result = agent.run_sync('How are people feeling about the Extract app?')
 print(result.output)
 #> label='positive' score=0.9
 ```
 
-The result is validated against the model and typed as `Sentiment` — your IDE, type checker, and the LLM all agree on the shape. **Build this →** [Agents](https://ai.pydantic.dev/agents/) and [Structured Output](https://ai.pydantic.dev/output)
+The [`@agent.tool`](https://ai.pydantic.dev/tools) function's signature and docstring become the tool schema, its arguments are validated before your code runs, and the run is guaranteed to return a `Sentiment` — your IDE, type checker, and the LLM all agree on the shape. **Build this →** [Agents](https://ai.pydantic.dev/agents/), [Function Tools](https://ai.pydantic.dev/tools), and [Structured Output](https://ai.pydantic.dev/output)
 
 ### Realtime voice
 
 ```python
-from pydantic_ai import Agent
+import asyncio
 
-agent = Agent(instructions='You are a helpful voice assistant.')
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import MCP
+
+agent = Agent(
+    instructions='You are a helpful voice assistant.',
+    capabilities=[MCP('https://internal.example.com/mcp')],  # capabilities work in voice too
+)
 
 @agent.tool_plain
 def order_status(order_id: str) -> str:
@@ -97,10 +111,13 @@ def order_status(order_id: str) -> str:
     return f'Order {order_id}: shipped, arriving Thursday.'
 
 async with agent.realtime('openai:gpt-realtime-2.1').session() as session:
-    ...  # stream microphone audio in, play session.stream_audio() out
+    microphone = asyncio.create_task(stream_microphone(session))  # chunks → session.send_audio()
+    speaker = asyncio.create_task(play_audio(session.stream_audio()))  # model audio → your speaker
+    async for part in session.stream_transcripts():
+        print(f'{part.speaker}: {part.transcript}')
 ```
 
-The model calls your tools mid-conversation while it keeps talking — voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice. **Build this →** [Realtime Voice](https://ai.pydantic.dev/realtime)
+The model calls your [tools](https://ai.pydantic.dev/realtime/tools) mid-conversation while it keeps talking, [capabilities](https://ai.pydantic.dev/realtime/capabilities) attach the same way as in any run, and every session is [instrumented](https://ai.pydantic.dev/logfire) — voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice. **Build this →** [Realtime Voice](https://ai.pydantic.dev/realtime)
 
 ### Image generation
 
@@ -114,7 +131,7 @@ result = agent.run_sync('Generate a minimalist logo for a coffee shop called Ext
 Path('logo.png').write_bytes(result.output.data)
 ```
 
-Provider-native where supported, with a fallback path everywhere else — and the image is the typed output of the run. **Build this →** [Image Generation](https://ai.pydantic.dev/capabilities/image-generation/)
+Ask for an image and the run's typed output *is* the image: [provider-native generation](https://ai.pydantic.dev/native-tools#image-generation-tool) where the model supports it, a subagent fallback everywhere else, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way. **Build this →** [Image Generation](https://ai.pydantic.dev/capabilities/image-generation/)
 
 ### Embeddings
 
@@ -127,36 +144,11 @@ print(len(result.embeddings[0]))
 #> 1536
 ```
 
-Seven providers, one typed API, instrumented like everything else. **Build this →** [Embeddings](https://ai.pydantic.dev/embeddings)
-
-Everything between these is composition, not rewriting: add [tools](https://ai.pydantic.dev/tools), [structured outputs](https://ai.pydantic.dev/output), and [capabilities](https://ai.pydantic.dev/capabilities/overview/) one at a time. Here's a plain agent grown a typed output and [web search](https://ai.pydantic.dev/capabilities/web-search/):
-
-```python
-from pydantic import BaseModel
-
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import WebSearch
-
-
-class Meteorite(BaseModel):
-    mass_kg: float
-    location: str
-
-
-agent = Agent(
-    'anthropic:claude-fable-5',
-    output_type=Meteorite,
-    capabilities=[WebSearch(local='duckduckgo')],
-)
-
-result = agent.run_sync('What was the mass of the largest meteorite found this year?')
-print(result.output)
-#> mass_kg=7.6 location='Sahara Desert'
-```
+Embedding your documents for semantic search or a [RAG pipeline](https://ai.pydantic.dev/examples/rag)? Seven providers behind one typed API, [instrumented](https://ai.pydantic.dev/logfire) like everything else — and it lives next to the agent that will use the results. **Build this →** [Embeddings](https://ai.pydantic.dev/embeddings)
 
 ## Why Pydantic AI
 
-- **Any model, one API.** [Virtually every model and provider](https://ai.pydantic.dev/models/overview) — OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more — swappable with a string. No flagship feature is locked to one vendor.
+- **Any model, one Python API.** [Virtually every model and provider](https://ai.pydantic.dev/models/overview) — OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more — swappable with a string. No flagship feature is locked to one vendor.
 
 - **Typed end to end.** [Structured outputs](https://ai.pydantic.dev/output), typed [dependency injection](https://ai.pydantic.dev/dependencies), typed tools: your IDE, type checker, and AI coding agent all know what your agent returns, moving whole classes of errors from runtime to write-time.
 
@@ -281,7 +273,7 @@ For the annotated walkthrough and Logfire tracing, see the [same example in the 
 
 Everything you need to ship production-grade AI agents:
 
-- [Pydantic AI](https://pydantic.dev/pydantic-ai?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai) — the type-safe agent framework
+- [Pydantic AI](https://pydantic.dev/pydantic-ai?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai) — the type-safe AI SDK
 - [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) — the official capability library and harness, from single capabilities to complete agents
 - [Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai) — AI-first, full-stack observability
 - [Logfire AI Gateway](https://pydantic.dev/ai-gateway?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai) — unified LLM proxy

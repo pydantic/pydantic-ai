@@ -700,13 +700,9 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         args={'name': 'test', 'value': 42},
         tool_call_id='pyd_ai_tool_call_id',
     ),
-    'What was the mass of the largest meteorite found this year?': ToolCallPart(
-        tool_name='final_result',
-        args={'mass_kg': 7.6, 'location': 'Sahara Desert'},
-    ),
-    'The new release fixed everything I complained about!': ToolCallPart(
-        tool_name='final_result',
-        args={'label': 'positive', 'score': 0.9},
+    'How are people feeling about the Extract app?': ToolCallPart(
+        tool_name='recent_reviews',
+        args={'product': 'Extract'},
     ),
     'Find recent papers about transformer architectures': (
         'Here are some recent papers about transformer architectures from arxiv.org:\n'
@@ -1036,6 +1032,16 @@ async def model_logic(  # noqa: C901
     elif isinstance(m, ToolAvailabilityDeltaPart) and 'refund_status' in m.tools_added:
         return ModelResponse(
             parts=[ToolCallPart(tool_name='refund_status', args={}, tool_call_id='pyd_ai_tool_call_id')]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'recent_reviews':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'label': 'positive', 'score': 0.9},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'refund_status':
         args = {

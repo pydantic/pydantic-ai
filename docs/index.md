@@ -39,25 +39,45 @@ description: How Python does AI — agents, realtime voice, image generation, em
   Agents, realtime voice, image generation, embeddings — every model, every interface, typed end to end.
 </p>
 
-**Pydantic AI** is the Python agent framework: a typed agent loop, [every model](models/overview.md) behind one Python API, [every interface](interfaces.md) — [terminal](cli.md), [web](web.md), [your own frontend](ui/overview.md), even [voice](realtime/overview.md) — and [OpenTelemetry-native observability](logfire.md) throughout. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** is its official capability library and harness: everything an agent needs for complex, long-running work, [capabilities](capabilities/overview.md) you snap on — from [web search](capabilities/web-search.md) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+**Pydantic AI** is the Python AI SDK: a typed, [instrumented](logfire.md) agent loop, [every model](models/overview.md) behind one Python API, and [every interface](interfaces.md) — [terminal](cli.md), [web](web.md), [your own frontend](ui/overview.md), even [voice](realtime/overview.md). It does [embeddings](embeddings.md) and [image generation](capabilities/image-generation.md) too. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** is its official capability library and harness: everything an agent needs for complex, long-running work, [capabilities](capabilities/overview.md) you snap on — from [web search](capabilities/web-search.md) and [MCP](capabilities/mcp.md) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
-Whatever you came to build — a one-off LLM call in a script, typed data extraction, an AI feature inside your SaaS, a voice agent, or your very own coding agent — you've come to the right place.
+Whatever you came to build — a one-off LLM call extracting typed data in a script, an AI feature inside your SaaS, a realtime voice agent you can talk to, or your very own coding agent in your terminal — you've come to the right place.
 
 ## What are you building?
 
-The same library, with the same typed API, covers the straightforward jobs — tool calling, structured data extraction, embeddings — and the complex, long-running ones, like a complete coding agent. No separate SDKs, no framework bloat — pick one:
+Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have you covered:
 
 === "Coding agent"
 
+    A complete coding agent in your terminal — workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions — here with [web search](capabilities/web-search.md) and cross-session [memory](https://pydantic.dev/docs/ai/harness/memory/) snapped on alongside:
+
     ```python {test="skip" lint="skip"}
     from pydantic_ai import Agent
-    from pydantic_ai_harness import Coder
+    from pydantic_ai.capabilities import WebSearch
+    from pydantic_ai_harness import Coder, Memory
+    from pydantic_ai_harness.memory import FileStore
 
-    agent = Agent('anthropic:claude-fable-5', capabilities=[Coder()])
+    agent = Agent(
+        'anthropic:claude-fable-5',
+        capabilities=[
+            Coder(),
+            WebSearch(),  # look up docs and error messages on the web
+            Memory(FileStore('.agent-memory')),  # remembers across sessions
+        ],
+    )
     agent.to_cli_sync()
     ```
 
-    Run that file and you're chatting with a complete coding agent in your terminal — workspace-rooted file access, allowlisted shell, repo orientation, planning, context management that survives long sessions. Or skip the file entirely and run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/#api-reference) with [`clai`](cli.md#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
+    And [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) is a regular combined capability, not a black box — use it whole, or use the blocks it bundles directly; the two are equivalent:
+
+    ```python {test="skip" lint="skip"}
+    capabilities = [
+        FileSystem('.'), Shell(cwd='.'), RepoContext(), Planning(), SubAgents(...),
+        ClearToolResults(), WarnNearLimits(), ToolOutputLimits(),
+    ]
+    ```
+
+    Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/#api-reference) with [`clai`](cli.md#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
     ```bash
     uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
@@ -65,9 +85,9 @@ The same library, with the same typed API, covers the straightforward jobs — t
 
     **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
 
-=== "Structured output"
+=== "Structured output & tools"
 
-    ```python {title="sentiment.py"}
+    ```python {title="review_sentiment.py"}
     from typing import Literal
 
     from pydantic import BaseModel, Field
@@ -81,21 +101,35 @@ The same library, with the same typed API, covers the straightforward jobs — t
 
 
     agent = Agent('openai:gpt-5.6-sol', output_type=Sentiment)
-    result = agent.run_sync('The new release fixed everything I complained about!')
+
+
+    @agent.tool_plain
+    def recent_reviews(product: str) -> list[str]:
+        """Fetch recent review snippets for a product."""
+        return ['The new release fixed everything I complained about!']
+
+
+    result = agent.run_sync('How are people feeling about the Extract app?')
     print(result.output)
     #> label='positive' score=0.9
     ```
 
-    The result is validated against the model and typed as `Sentiment` — your IDE, type checker, and the LLM all agree on the shape.
+    The [`@agent.tool`](tools.md) function's signature and docstring become the tool schema, its arguments are [validated](tools.md#function-tools-and-schema) before your code runs, and the run is guaranteed to return a `Sentiment` — your IDE, type checker, and the LLM all agree on the shape.
 
-    **Build this →** [Agents](agent.md) and [Structured Output](output.md)
+    **Build this →** [Agents](agent.md), [Function Tools](tools.md), and [Structured Output](output.md)
 
 === "Realtime voice"
 
-    ```python {test="skip"}
-    from pydantic_ai import Agent
+    ```python {test="skip" lint="skip"}
+    import asyncio
 
-    agent = Agent(instructions='You are a helpful voice assistant.')
+    from pydantic_ai import Agent
+    from pydantic_ai.capabilities import MCP
+
+    agent = Agent(
+        instructions='You are a helpful voice assistant.',
+        capabilities=[MCP('https://internal.example.com/mcp')],  # capabilities work in voice too
+    )
 
     @agent.tool_plain
     def order_status(order_id: str) -> str:
@@ -103,12 +137,15 @@ The same library, with the same typed API, covers the straightforward jobs — t
         return f'Order {order_id}: shipped, arriving Thursday.'
 
     async with agent.realtime('openai:gpt-realtime-2.1').session() as session:
-        ...  # stream microphone audio in, play session.stream_audio() out
+        microphone = asyncio.create_task(stream_microphone(session))  # chunks → session.send_audio()
+        speaker = asyncio.create_task(play_audio(session.stream_audio()))  # model audio → your speaker
+        async for part in session.stream_transcripts():
+            print(f'{part.speaker}: {part.transcript}')
     ```
 
-    The model calls your tools mid-conversation while it keeps talking. Same capabilities, same observability as any other agent — voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
+    The model calls your [tools](realtime/tools.md) mid-conversation while it keeps talking, [capabilities](realtime/capabilities.md) attach the same way as in any run, and every session is [instrumented](logfire.md) — voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
 
-    **Build this →** [Realtime Voice](realtime/overview.md)
+    **Build this →** [Realtime Voice](realtime/overview.md), starting from the [voice assistant example](examples/realtime-voice.md)
 
 === "Image generation"
 
@@ -122,7 +159,7 @@ The same library, with the same typed API, covers the straightforward jobs — t
     Path('logo.png').write_bytes(result.output.data)
     ```
 
-    Provider-native where supported, with a fallback path everywhere else — and the image is the typed output of the run.
+    Ask for an image and the run's typed output *is* the image: [provider-native generation](native-tools.md#image-generation-tool) where the model supports it, a subagent fallback everywhere else, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way.
 
     **Build this →** [Image Generation](capabilities/image-generation.md)
 
@@ -137,41 +174,16 @@ The same library, with the same typed API, covers the straightforward jobs — t
     #> 1536
     ```
 
-    Seven providers, one typed API, instrumented like everything else.
+    Embedding your documents for semantic search or a [RAG pipeline](examples/rag.md)? Seven providers behind one typed API, [instrumented](logfire.md) like everything else — and it lives next to the agent that will use the results.
 
-    **Build this →** [Embeddings](embeddings.md)
+    **Build this →** [Embeddings](embeddings.md), then the [RAG example](examples/rag.md)
 
 !!! tip "No API key yet?"
     You don't need a provider API key to try any of this. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel) — `Agent('test')` — which runs entirely offline without calling an LLM, so you can exercise your agent, tools, and outputs first. When you're ready for a real model, see [Models and Providers](models/overview.md) to pick a provider and set its API key.
 
-Everything between these is composition, not rewriting: add [tools](tools.md), [structured outputs](output.md), and [capabilities](capabilities/overview.md) one at a time. Here's a plain agent grown a typed output and [web search](capabilities/web-search.md):
-
-```python {title="hello_world_capabilities.py"}
-from pydantic import BaseModel
-
-from pydantic_ai import Agent
-from pydantic_ai.capabilities import WebSearch
-
-
-class Meteorite(BaseModel):
-    mass_kg: float
-    location: str
-
-
-agent = Agent(
-    'anthropic:claude-fable-5',
-    output_type=Meteorite,
-    capabilities=[WebSearch(local='duckduckgo')],
-)
-
-result = agent.run_sync('What was the mass of the largest meteorite found this year?')
-print(result.output)
-#> mass_kg=7.6 location='Sahara Desert'
-```
-
 ## Why Pydantic AI
 
-- **Any model, one API.** [Virtually every model and provider](models/overview.md) — OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more — swappable with a string, or through the [Pydantic AI Gateway](gateway.md): one key for all of them, with failover and cost monitoring built in. No flagship feature is locked to one vendor.
+- **Any model, one Python API.** [Virtually every model and provider](models/overview.md) — OpenAI, Anthropic, Google, Bedrock, Azure AI Foundry, Groq, Mistral, xAI, Ollama, and dozens more — swappable with a string, or through the [Pydantic AI Gateway](gateway.md): one key for all of them, with failover and cost monitoring built in. No flagship feature is locked to one vendor.
 
 - **Typed end to end.** [Structured outputs](output.md), typed [dependency injection](dependencies.md), typed tools: your IDE, type checker, and AI coding agent all know what your agent returns, moving whole classes of errors from runtime to write-time. When plain control flow isn't enough, [Pydantic Graph](graph.md) brings the same typing to graph-based workflows.
 
