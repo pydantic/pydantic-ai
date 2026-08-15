@@ -39,7 +39,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
   Agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end.
 </p>
 
-**Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) behind one API. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](cli.md), on a [voice call](realtime/overview.md), or as a plain object you call [`run()`](agent.md#running-agents) on. [Embeddings](embeddings.md) and [image generation](capabilities/image-generation.md) come in the same box. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+**Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) a string swap away. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](cli.md), on a [voice call](realtime/overview.md), on a [durable background queue](durable_execution/overview.md), or as a plain object you call [`run()`](agent.md#running-agents) on. [Embeddings](embeddings.md) and [image generation](capabilities/image-generation.md) come in the same box. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
 Whatever you came to build: typed [data extraction](output.md), an agent inside your [FastAPI app](examples/chat-app.md), a [durable](durable_execution/overview.md) agent working in the background, or your own coding agent in the terminal. You've come to the right place.
 
@@ -117,6 +117,38 @@ Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) hav
     The [`@agent.tool`](tools.md) function receives a [`RunContext`][pydantic_ai.tools.RunContext] that carries your [dependencies](dependencies.md) in; the rest of its signature and its docstring become the tool schema, arguments are [validated](tools.md#function-tools-and-schema) before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape. Remote [MCP servers](capabilities/mcp.md) plug in just as easily: `capabilities=[MCP('https://api.githubcopilot.com/mcp/')]` hands the agent GitHub's tools.
 
     **Build this →** [Agents](agent.md), [Function Tools](tools.md), and [Structured Output](output.md)
+
+=== "Durable agent"
+
+    Attach [`TemporalDurability`](durable_execution/temporal.md) and the same agent runs inside a [Temporal](durable_execution/temporal.md) workflow: every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
+
+    ```python {title="durable_research.py"}
+    from temporalio import workflow
+
+    from pydantic_ai import Agent
+    from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
+
+    agent = Agent(
+        'openai:gpt-5.6-sol',
+        instructions='Research the topic and write a structured brief.',
+        name='researcher',
+        capabilities=[TemporalDurability()],
+    )
+
+
+    @workflow.defn
+    class ResearchWorkflow(PydanticAIWorkflow):
+        __pydantic_ai_agents__ = [agent]
+
+        @workflow.run
+        async def run(self, topic: str) -> str:
+            result = await agent.run(f'Write a brief on: {topic}')
+            return result.output
+    ```
+
+    [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, Kitaru, and Airflow](durable_execution/overview.md) integrations besides.
+
+    **Build this →** [Durable Execution](durable_execution/overview.md)
 
 === "Realtime voice"
 

@@ -24,7 +24,7 @@
 
 ---
 
-**Pydantic AI** is the Python AI SDK: a typed, [extensible](https://ai.pydantic.dev/extensibility) agent loop with [every model](https://ai.pydantic.dev/models/overview) behind one API. The same agent [runs everywhere you need it](https://ai.pydantic.dev/interfaces): behind a [web frontend](https://ai.pydantic.dev/ui/overview), in the [terminal](https://ai.pydantic.dev/cli), on a [voice call](https://ai.pydantic.dev/realtime), or as a plain object you call [`run()`](https://ai.pydantic.dev/agents/#running-agents) on. [Embeddings](https://ai.pydantic.dev/embeddings) and [image generation](https://ai.pydantic.dev/capabilities/image-generation/) come in the same box. **[Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](https://ai.pydantic.dev/capabilities/overview/), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+**Pydantic AI** is the Python AI SDK: a typed, [extensible](https://ai.pydantic.dev/extensibility) agent loop with [every model](https://ai.pydantic.dev/models/overview) a string swap away. The same agent [runs everywhere you need it](https://ai.pydantic.dev/interfaces): behind a [web frontend](https://ai.pydantic.dev/ui/overview), in the [terminal](https://ai.pydantic.dev/cli), on a [voice call](https://ai.pydantic.dev/realtime), on a [durable background queue](https://ai.pydantic.dev/durable_execution/overview/), or as a plain object you call [`run()`](https://ai.pydantic.dev/agents/#running-agents) on. [Embeddings](https://ai.pydantic.dev/embeddings) and [image generation](https://ai.pydantic.dev/capabilities/image-generation/) come in the same box. **[Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](https://ai.pydantic.dev/capabilities/overview/), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
 Whatever you came to build: typed [data extraction](https://ai.pydantic.dev/output), an agent inside your [FastAPI app](https://ai.pydantic.dev/examples/chat-app), a [durable](https://ai.pydantic.dev/durable_execution/overview/) agent working in the background, or your own coding agent in the terminal. You've come to the right place.
 
@@ -100,6 +100,36 @@ print(result.output)
 ```
 
 The [`@agent.tool`](https://ai.pydantic.dev/tools) function receives a [`RunContext`](https://ai.pydantic.dev/dependencies) that carries your dependencies in; the rest of its signature and its docstring become the tool schema, arguments are validated before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape. Remote [MCP servers](https://ai.pydantic.dev/capabilities/mcp/) plug in just as easily: `capabilities=[MCP('https://api.githubcopilot.com/mcp/')]` hands the agent GitHub's tools. **Build this →** [Agents](https://ai.pydantic.dev/agents/), [Function Tools](https://ai.pydantic.dev/tools), and [Structured Output](https://ai.pydantic.dev/output)
+
+### Durable agent
+
+Attach [`TemporalDurability`](https://ai.pydantic.dev/durable_execution/temporal/) and the same agent runs inside a [Temporal](https://ai.pydantic.dev/durable_execution/temporal/) workflow: every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
+
+```python
+from temporalio import workflow
+
+from pydantic_ai import Agent
+from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
+
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    instructions='Research the topic and write a structured brief.',
+    name='researcher',
+    capabilities=[TemporalDurability()],
+)
+
+
+@workflow.defn
+class ResearchWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [agent]
+
+    @workflow.run
+    async def run(self, topic: str) -> str:
+        result = await agent.run(f'Write a brief on: {topic}')
+        return result.output
+```
+
+[DBOS](https://ai.pydantic.dev/durable_execution/dbos/) and [Prefect](https://ai.pydantic.dev/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, Kitaru, and Airflow](https://ai.pydantic.dev/durable_execution/overview/) integrations besides. **Build this →** [Durable Execution](https://ai.pydantic.dev/durable_execution/overview/)
 
 ### Realtime voice
 
