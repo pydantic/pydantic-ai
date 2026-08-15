@@ -39,13 +39,13 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
   Agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end.
 </p>
 
-**Pydantic AI** is the Python AI SDK: a typed, extensible agent loop, [every model](models/overview.md) behind one Python API, and [every interface](interfaces.md) ([terminal](cli.md), [web](web.md), [your own frontend](ui/overview.md), and [voice](realtime/overview.md)). It does [embeddings](embeddings.md) and [image generation](capabilities/image-generation.md) too. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** is its official capability library and harness: everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/) and [compaction](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+**Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop, [every model](models/overview.md) behind one Python API, and [every interface](interfaces.md) ([terminal](cli.md), [a web frontend](ui/overview.md), and [voice](realtime/overview.md)). It does [embeddings](embeddings.md) and [image generation](capabilities/image-generation.md) too. **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** is its official capability library and harness: everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/) and [compaction](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
 Whatever you came to build: a one-off LLM call [extracting typed data](output.md) in a script, an agent embedded deep inside your SaaS, a [realtime voice agent](realtime/overview.md) that talks back, or your own [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in the terminal. You've come to the right place.
 
 ## What are you building?
 
-Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have you covered. These aren't paths to pick between: it's the same [`Agent`](agent.md) underneath, and the pieces combine freely.
+Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have you covered: it's the same [`Agent`](agent.md) underneath, and the pieces combine freely.
 
 === "Coding agent"
 

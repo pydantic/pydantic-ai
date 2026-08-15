@@ -24,7 +24,7 @@
 
 ---
 
-**Pydantic AI** is the Python AI SDK: a typed, extensible agent loop, [every model](https://ai.pydantic.dev/models/overview) behind one Python API, and [every interface](https://ai.pydantic.dev/interfaces) ([terminal](https://ai.pydantic.dev/cli), [web](https://ai.pydantic.dev/web), [your own frontend](https://ai.pydantic.dev/ui/overview), and [voice](https://ai.pydantic.dev/realtime)). It does [embeddings](https://ai.pydantic.dev/embeddings) and [image generation](https://ai.pydantic.dev/capabilities/image-generation/) too. **[Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness)** is its official capability library and harness: everything an agent needs for complex, long-running work, snapped on as [capabilities](https://ai.pydantic.dev/capabilities/overview/), from [memory](https://pydantic.dev/docs/ai/harness/memory/) and [compaction](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+**Pydantic AI** is the Python AI SDK: a typed, [extensible](https://ai.pydantic.dev/extensibility) agent loop, [every model](https://ai.pydantic.dev/models/overview) behind one Python API, and [every interface](https://ai.pydantic.dev/interfaces) ([terminal](https://ai.pydantic.dev/cli), [a web frontend](https://ai.pydantic.dev/ui/overview), and [voice](https://ai.pydantic.dev/realtime)). It does [embeddings](https://ai.pydantic.dev/embeddings) and [image generation](https://ai.pydantic.dev/capabilities/image-generation/) too. **[Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness)** is its official capability library and harness: everything an agent needs for complex, long-running work, snapped on as [capabilities](https://ai.pydantic.dev/capabilities/overview/), from [memory](https://pydantic.dev/docs/ai/harness/memory/) and [compaction](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
 Whatever you came to build: a one-off LLM call [extracting typed data](https://ai.pydantic.dev/output) in a script, an agent embedded deep inside your product, a [realtime voice agent](https://ai.pydantic.dev/realtime) that talks back, or your own [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in the terminal. You've come to the right place.
 
@@ -59,7 +59,7 @@ uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m 
 
 ## What are you building?
 
-A coding agent is the five lines above, and Pydantic AI and [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) have the rest covered too. These aren't paths to pick between: it's the same [`Agent`](https://ai.pydantic.dev/agents/) underneath, and the pieces combine freely.
+A coding agent is the five lines above, and Pydantic AI and [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) have the rest covered too: it's the same [`Agent`](https://ai.pydantic.dev/agents/) underneath, and the pieces combine freely.
 
 ### Data extraction & tools
 
