@@ -799,7 +799,7 @@ async def _read_gzip_body(response: httpx2.Response, max_bytes: int | None = Non
             try:
                 content.extend(decompressor.decompress(raw, max_length=max_length))
             except zlib.error as e:
-                raise _CompatibleDecodingError(f'Invalid gzip response body: {e}') from e
+                raise _CompatibleDecodingError(f'Invalid gzip response body: {e}', request=response.request) from e
             if max_bytes is not None and len(content) > max_bytes:
                 raise _download_exceeds(max_bytes)
 
@@ -810,9 +810,9 @@ async def _read_gzip_body(response: httpx2.Response, max_bytes: int | None = Non
     try:
         content.extend(decompressor.flush())
     except zlib.error as e:
-        raise _CompatibleDecodingError(f'Invalid gzip response body: {e}') from e
+        raise _CompatibleDecodingError(f'Invalid gzip response body: {e}', request=response.request) from e
     if max_bytes is not None and len(content) > max_bytes:
         raise _download_exceeds(max_bytes)
     if not decompressor.eof:
-        raise _CompatibleDecodingError('Received an incomplete gzip response body')
+        raise _CompatibleDecodingError('Received an incomplete gzip response body', request=response.request)
     return bytes(content)

@@ -748,6 +748,7 @@ class TestSafeDownload:
 
         assert isinstance(exc_info.value, httpx2.DecodingError)
         assert isinstance(exc_info.value, httpx.RequestError)
+        assert exc_info.value.request.url.path == '/file.txt'
 
     def test_safe_download_works_without_legacy_httpx(self) -> None:
         """The public download boundary remains usable when only httpx2 is installed."""
@@ -1027,8 +1028,10 @@ class TestSafeDownload:
             encoded = gzip.compress(b'complete member') + encoded
         serve_requests(stream_response(encoded, content_encoding='gzip'))
 
-        with pytest.raises(httpx2.DecodingError, match='incomplete gzip'):
+        with pytest.raises(httpx2.DecodingError, match='incomplete gzip') as exc_info:
             await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
+
+        assert exc_info.value.request.url.path == '/file.txt'
 
     @pytest.mark.parametrize('max_bytes', [None, 512])
     async def test_rejects_corrupt_gzip_member(
@@ -1039,8 +1042,10 @@ class TestSafeDownload:
         encoded[-8] ^= 0xFF
         serve_requests(stream_response(bytes(encoded), content_encoding='gzip'))
 
-        with pytest.raises(httpx2.DecodingError):
+        with pytest.raises(httpx2.DecodingError) as exc_info:
             await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
+
+        assert exc_info.value.request.url.path == '/file.txt'
 
     @pytest.mark.parametrize('max_bytes', [None, 512])
     async def test_accepts_empty_gzip_body(
@@ -1209,8 +1214,10 @@ class TestSafeDownload:
         monkeypatch.setattr(_ssrf.zlib, 'decompressobj', make_bad_flush)
         serve_requests(stream_response(b'raw', content_encoding='gzip'))
 
-        with pytest.raises(httpx2.DecodingError, match='Invalid gzip response body'):
+        with pytest.raises(httpx2.DecodingError, match='Invalid gzip response body') as exc_info:
             await safe_download('https://example.com/file.txt')
+
+        assert exc_info.value.request.url.path == '/file.txt'
 
     async def test_redirect_followed(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         redirect_response = AsyncMock()
