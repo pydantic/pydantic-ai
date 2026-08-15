@@ -2,8 +2,6 @@ from __future__ import annotations as _annotations
 
 import os
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
@@ -18,6 +16,10 @@ except ImportError as _import_error:
         'Please install the `cohere` package to use the Cohere provider, '
         'you can use the `cohere` optional group — `pip install "pydantic-ai-slim[cohere]"`'
     ) from _import_error
+
+# Below the guard on purpose: `cohere` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 
 class CohereProvider(Provider[AsyncClientV2]):

@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, Protocol, TypeAlias, cast, overload
 
 import anyio
-import httpx
 import pydantic_core
 from pydantic import AnyUrl, Field, TypeAdapter
 from typing_extensions import Self, assert_never
@@ -46,6 +45,10 @@ except ImportError as _import_error:  # pragma: no cover
         '`pip install "pydantic-ai-slim[mcp]"` pulls `fastmcp-slim[client]`, '
         'or install the full `fastmcp` package directly.'
     ) from _import_error
+
+# Below the guard on purpose: the fastmcp client requires `httpx`, so without the extra the error
+# above is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
 # SDK v2 renamed `McpError` to `MCPError`; fastmcp re-exports whichever the installed SDK has,

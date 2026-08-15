@@ -3,8 +3,6 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-import httpx
-
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
@@ -26,6 +24,10 @@ except ImportError as _import_error:
         'Please install the `groq` package to use the Groq provider, '
         'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
     ) from _import_error
+
+# Below the guard on purpose: `groq` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 
 def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:

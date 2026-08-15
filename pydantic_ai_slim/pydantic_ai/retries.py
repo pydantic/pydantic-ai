@@ -18,6 +18,8 @@ from types import TracebackType
 
 import httpx2
 
+# TODO(v3): remove this `httpx` import block along with the deprecated transports below;
+# the `retries` extra's `httpx` dependency goes with it.
 try:
     from httpx import (
         AsyncBaseTransport,
@@ -551,6 +553,7 @@ def wait_retry_after(
 
     def wait_func(state: RetryCallState) -> float:
         exc = state.outcome.exception() if state.outcome else None
+        # TODO(v3): remove the legacy `httpx` `HTTPStatusError` arm, leaving only `httpx2.HTTPStatusError`.
         if isinstance(exc, HTTPStatusError | httpx2.HTTPStatusError):
             retry_after = exc.response.headers.get('retry-after')
             if retry_after:

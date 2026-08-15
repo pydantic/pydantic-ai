@@ -4,7 +4,6 @@ import os
 from collections.abc import Callable
 from typing import overload
 
-import httpx
 import httpx2
 
 from pydantic_ai import ModelProfile
@@ -21,6 +20,10 @@ except ImportError as e:
         'Please install the `mistral` package to use the Mistral provider, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
     ) from e
+
+# Below the guard on purpose: `mistralai` requires `httpx`, so without the extra the error above
+# is what users should see, not `ModuleNotFoundError: httpx`.
+import httpx
 
 # Models with adjustable reasoning via `reasoning_effort` (opt-in, unlike always-on `magistral`):
 # the Mistral Small 4 and Medium 3.5 families. Older `mistral-small-*` / `mistral-medium-*`

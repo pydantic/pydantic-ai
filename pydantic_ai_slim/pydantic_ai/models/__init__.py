@@ -1107,10 +1107,10 @@ class StreamedResponse(ABC):
         """Return transport errors caused by `cancel()` tearing down the stream.
 
         The default covers model classes whose SDKs iterate HTTP responses
-        directly (Anthropic, OpenAI, Groq, Mistral, Google GenAI, HuggingFace,
-        and the custom Gemini client), since they let bare `httpx2` (or legacy
-        `httpx`) errors propagate from chunk reads. Model classes that use other transports
-        (for example gRPC or botocore) should override this method.
+        directly (Anthropic, OpenAI, Groq, Mistral, Google GenAI, and HuggingFace),
+        since they let bare `httpx2` (or legacy `httpx`) errors propagate from
+        chunk reads. Model classes that use other transports (for example gRPC or
+        botocore) should override this method.
         """
         try:
             import httpx
