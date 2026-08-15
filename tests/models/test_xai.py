@@ -141,6 +141,9 @@ def test_xai_hidden_tools_stay_off_the_wire():
 # Test model constants
 XAI_NON_REASONING_MODEL = 'grok-4-fast-non-reasoning'
 XAI_REASONING_MODEL = 'grok-4-fast-reasoning'
+# Attachment search only runs on xAI's agentic-capable models; the `grok-4-fast` family inlines
+# attachments into the prompt instead. See https://docs.x.ai/developers/files.
+XAI_AGENTIC_MODEL = 'grok-4.6'
 
 
 def test_xai_init():
@@ -6046,15 +6049,80 @@ async def test_xai_file_part_in_history_skipped(allow_model_requests: None):
     )
 
 
+class BrowsedPage(BaseModel):
+    """One page of xAI's `pdf_browse` output, without the rendered page image."""
+
+    page_num_one_indexed: int
+    text: str
+
+
+class BrowsedPages(BaseModel):
+    pages: list[BrowsedPage]
+
+
+async def test_xai_attachment_search_pdf_attachment(
+    allow_model_requests: None, document_content: BinaryContent, xai_provider: XaiProvider
+):
+    """xAI runs `attachment_search` over a PDF attachment (recorded via proto cassette).
+
+    The attachment-search tool only runs for attachments xAI browses server-side, such as PDFs;
+    plain-text attachments are inlined into the prompt and never produce a tool call. xAI names the
+    recorded call `pdf_browse`, so the Pydantic AI `tool_name` comes from the tool *type* while the
+    provider's own function name is kept in `provider_details` for history round-trips.
+    """
+    m = XaiModel(XAI_AGENTIC_MODEL, provider=xai_provider)
+    agent = Agent(m, model_settings=XaiModelSettings(xai_include_attachment_search_output=True))
+
+    result = await agent.run(
+        [
+            'Summarize every distinct claim made in the attached PDF. Do not use quotation marks.',
+            document_content,
+        ]
+    )
+    assert result.output == snapshot(
+        'The attached PDF is a placeholder document containing only the phrase Dummy PDF file and makes no claims.'
+    )
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+
+    ((call_part, return_part),) = response.native_tool_calls
+    assert call_part == snapshot(
+        NativeToolCallPart(
+            tool_name='attachment_search',
+            args={'document_id': 'gNF6i', 'pages': '1'},
+            tool_call_id='call-f2c77db6-d914-43cb-ae41-95765438ef68-0',
+            provider_name='xai',
+            provider_details={'function_name': 'pdf_browse'},
+        )
+    )
+
+    assert return_part.tool_name == 'attachment_search'
+    # The browsed pages are only present because `xai_include_attachment_search_output` was set; each
+    # one also carries a rendered image of the page, which `BrowsedPage` deliberately drops.
+    browsed = BrowsedPages.model_validate(return_part.content)
+    assert browsed.pages == snapshot([BrowsedPage(page_num_one_indexed=1, text='Dummy PDF file\n\n')])
+
+    assert response.usage.details == snapshot({'reasoning_tokens': 428, 'server_side_tools_attachment_search': 1})
+
+    # The mapped-back call has to be a payload xAI accepts, so replay the history against the API.
+    follow_up = await agent.run('Which page did you read that from?', message_history=result.new_messages())
+    assert follow_up.output == snapshot('Page 1 of the attached PDF.')
+
+
 async def test_xai_attachment_search_tool_call_round_trip(allow_model_requests: None):
-    """Test that attachment search tool calls are parsed and preserved in history."""
+    """Attachment search calls keep xAI's own function name when replayed into history.
+
+    The recorded `test_xai_attachment_search_pdf_attachment` cassette covers the live lifecycle; this
+    pins the outgoing payload directly, which the cassette's request matcher is not sensitive to.
+    """
     attachment_search_tool_call = chat_pb2.ToolCall(
         id='attachment_001',
         type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL,
         status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
         function=chat_pb2.FunctionCall(
-            name='attachment_search',
-            arguments='{"query": "my attachments"}',
+            name='pdf_browse',
+            arguments='{"document_id": "s2pXx", "pages": "1"}',
         ),
     )
 
@@ -6078,10 +6146,10 @@ async def test_xai_attachment_search_tool_call_round_trip(allow_model_requests: 
                 parts=[
                     NativeToolCallPart(
                         tool_name='attachment_search',
-                        args={'query': 'my attachments'},
+                        args={'document_id': 's2pXx', 'pages': '1'},
                         tool_call_id=IsStr(),
                         provider_name='xai',
-                        provider_details={'function_name': 'attachment_search'},
+                        provider_details={'function_name': 'pdf_browse'},
                     ),
                     TextPart(content='Found your attachments.'),
                 ],
@@ -6110,7 +6178,7 @@ async def test_xai_attachment_search_tool_call_round_trip(allow_model_requests: 
                         'id': 'attachment_001',
                         'type': 'TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL',
                         'status': 'TOOL_CALL_STATUS_COMPLETED',
-                        'function': {'name': 'attachment_search', 'arguments': '{"query":"my attachments"}'},
+                        'function': {'name': 'pdf_browse', 'arguments': '{"document_id":"s2pXx","pages":"1"}'},
                     }
                 ],
             },
@@ -6123,14 +6191,14 @@ async def test_xai_attachment_search_tool_call_round_trip(allow_model_requests: 
 async def test_xai_attachment_search_tool_stream(allow_model_requests: None):
     """Test that a streamed server-side attachment search call emits native tool call/return parts and events."""
     attachment_search_tool_call = create_server_tool_call(
-        tool_name='attachment_search',
-        arguments={'query': 'my attachments'},
+        tool_name='pdf_browse',
+        arguments={'document_id': 's2pXx', 'pages': '1'},
         tool_call_id='attachment_001',
         tool_type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL,
         status=chat_pb2.ToolCallStatus.TOOL_CALL_STATUS_COMPLETED,
     )
 
-    tool_output_json = json.dumps({'results': ['attachment content']})
+    tool_output_json = json.dumps({'pages': [{'page_num_one_indexed': 1, 'text': 'Dummy PDF file\n\n'}]})
 
     stream: list[tuple[chat_types.Response, chat_types.Chunk]] = [
         (
@@ -6174,14 +6242,24 @@ async def test_xai_attachment_search_tool_stream(allow_model_requests: None):
                 parts=[
                     NativeToolCallPart(
                         tool_name='attachment_search',
-                        args={'query': 'my attachments'},
+                        args={'document_id': 's2pXx', 'pages': '1'},
                         tool_call_id='attachment_001',
                         provider_name='xai',
-                        provider_details={'function_name': 'attachment_search'},
+                        provider_details={'function_name': 'pdf_browse'},
                     ),
                     NativeToolReturnPart(
                         tool_name='attachment_search',
-                        content={'results': ['attachment content']},
+                        content={
+                            'pages': [
+                                {
+                                    'page_num_one_indexed': 1,
+                                    'text': """\
+Dummy PDF file
+
+""",
+                                }
+                            ]
+                        },
                         tool_call_id='attachment_001',
                         timestamp=IsDatetime(),
                         provider_name='xai',
@@ -6207,20 +6285,20 @@ async def test_xai_attachment_search_tool_stream(allow_model_requests: None):
                 index=0,
                 part=NativeToolCallPart(
                     tool_name='attachment_search',
-                    args={'query': 'my attachments'},
+                    args={'document_id': 's2pXx', 'pages': '1'},
                     tool_call_id='attachment_001',
                     provider_name='xai',
-                    provider_details={'function_name': 'attachment_search'},
+                    provider_details={'function_name': 'pdf_browse'},
                 ),
             ),
             PartEndEvent(
                 index=0,
                 part=NativeToolCallPart(
                     tool_name='attachment_search',
-                    args={'query': 'my attachments'},
+                    args={'document_id': 's2pXx', 'pages': '1'},
                     tool_call_id='attachment_001',
                     provider_name='xai',
-                    provider_details={'function_name': 'attachment_search'},
+                    provider_details={'function_name': 'pdf_browse'},
                 ),
                 next_part_kind='builtin-tool-return',
             ),
@@ -6228,7 +6306,17 @@ async def test_xai_attachment_search_tool_stream(allow_model_requests: None):
                 index=1,
                 part=NativeToolReturnPart(
                     tool_name='attachment_search',
-                    content={'results': ['attachment content']},
+                    content={
+                        'pages': [
+                            {
+                                'page_num_one_indexed': 1,
+                                'text': """\
+Dummy PDF file
+
+""",
+                            }
+                        ]
+                    },
                     tool_call_id='attachment_001',
                     timestamp=IsDatetime(),
                     provider_name='xai',
