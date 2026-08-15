@@ -21,7 +21,7 @@ import pytest
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from pydantic_ai import _agent_graph
+from pydantic_ai import Capability as TopLevelCapability, _agent_graph
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
@@ -157,6 +157,10 @@ _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 pytestmark = [
     pytest.mark.anyio,
 ]
+
+
+def test_capability_top_level_export() -> None:
+    assert TopLevelCapability is Capability
 
 
 def test_capability_types() -> None:
