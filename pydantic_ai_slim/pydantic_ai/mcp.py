@@ -1282,11 +1282,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         `__aexit__`.
         """
         if self.cache_tools and self._cached_tools is not None:
-            return self._cached_tools
+            return list(self._cached_tools)
         async with self:
             tools = await self.client.list_tools()
             if self.cache_tools:
-                self._cached_tools = tools
+                self._cached_tools = list(tools)
             return tools
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -1486,7 +1486,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             MCPError: If the server returns an error.
         """
         if self.cache_prompts and self._cached_prompts is not None:
-            return self._cached_prompts
+            return list(self._cached_prompts)
         async with self:
             if not self.capabilities.prompts:
                 return []
@@ -1496,7 +1496,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 raise MCPError.from_mcp_sdk(e) from e
             prompts = [Prompt.from_mcp_sdk(p) for p in mcp_prompts]
             if self.cache_prompts:
-                self._cached_prompts = prompts
+                self._cached_prompts = list(prompts)
             return prompts
 
     async def get_prompt(self, name: str, arguments: dict[str, str] | None = None) -> PromptResult:
@@ -1541,7 +1541,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
             MCPError: If the server returns an error.
         """
         if self.cache_resources and self._cached_resources is not None:
-            return self._cached_resources
+            return list(self._cached_resources)
         async with self:
             if not self.capabilities.resources:
                 return []
@@ -1551,7 +1551,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 raise MCPError.from_mcp_sdk(e) from e
             resources = [Resource.from_mcp_sdk(r) for r in mcp_resources]
             if self.cache_resources:
-                self._cached_resources = resources
+                self._cached_resources = list(resources)
             return resources
 
     async def list_resource_templates(self) -> list[ResourceTemplate]:

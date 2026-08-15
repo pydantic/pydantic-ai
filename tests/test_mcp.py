@@ -559,6 +559,30 @@ class TestMCPToolsetIntegration:
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
 
+    async def test_list_tools_returns_copy_not_the_cache(self, fastmcp_server: FastMCP[None]):
+        """Mutating a returned list must not corrupt the cached snapshot."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            first = await toolset.list_tools()
+            assert first is not toolset._cached_tools  # pyright: ignore[reportPrivateUsage]
+            first.clear()
+            second = await toolset.list_tools()
+            assert second is not toolset._cached_tools  # pyright: ignore[reportPrivateUsage]
+            second.pop()
+            third = await toolset.list_tools()
+        assert {'echo', 'add'} <= {t.name for t in third}
+
+    async def test_get_tools_after_caller_mutates_returned_list(
+        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    ):
+        """Agent tool discovery reads the cached snapshot, not a caller-corrupted list."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            tools_list = await toolset.list_tools()
+            tools_list.clear()
+            tools = await toolset.get_tools(run_context)
+        assert {'echo', 'add'} <= set(tools)
+
     async def test_tool_annotations_keep_the_wire_spelling(
         self, fastmcp_server: FastMCP[None], run_context: RunContext
     ):
@@ -887,6 +911,19 @@ class TestMCPToolsetIntegration:
         assert any(r.name == 'greeting' for r in resources)
         assert resources == cached
 
+    async def test_list_resources_returns_copy_not_the_cache(self, fastmcp_server: FastMCP[None]):
+        """Mutating a returned list must not corrupt the cached snapshot."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            first = await toolset.list_resources()
+            assert first is not toolset._cached_resources  # pyright: ignore[reportPrivateUsage]
+            first.clear()
+            second = await toolset.list_resources()
+            assert second is not toolset._cached_resources  # pyright: ignore[reportPrivateUsage]
+            second.pop()
+            third = await toolset.list_resources()
+        assert 'greeting' in {r.name for r in third}
+
     async def test_list_resources_no_caching_when_disabled(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server, cache_resources=False)
         async with toolset:
@@ -1030,6 +1067,19 @@ class TestMCPToolsetIntegration:
             assert toolset._cached_prompts is not None  # pyright: ignore[reportPrivateUsage]
             second = await toolset.list_prompts()
         assert first == second
+
+    async def test_list_prompts_returns_copy_not_the_cache(self, fastmcp_server: FastMCP[None]):
+        """Mutating a returned list must not corrupt the cached snapshot."""
+        toolset = MCPToolset(fastmcp_server)
+        async with toolset:
+            first = await toolset.list_prompts()
+            assert first is not toolset._cached_prompts  # pyright: ignore[reportPrivateUsage]
+            first.clear()
+            second = await toolset.list_prompts()
+            assert second is not toolset._cached_prompts  # pyright: ignore[reportPrivateUsage]
+            second.pop()
+            third = await toolset.list_prompts()
+        assert {'simple_prompt', 'parameterized_prompt'} <= {p.name for p in third}
 
     async def test_list_prompts_no_caching_when_disabled(self, fastmcp_server: FastMCP[None]):
         toolset = MCPToolset(fastmcp_server, cache_prompts=False)
