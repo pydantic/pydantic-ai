@@ -97,8 +97,12 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     root_dir = Path(__file__).parent.parent
     os.chdir(root_dir)
 
-    for ex in find_examples('docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
+    for ex in find_examples('README.md', 'docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if '.agents' in ex.path.parts:
+            continue
+        if ex.path.name == 'README.md' and ('pydantic_ai_harness' in ex.source or 'agent.realtime(' in ex.source):
+            # README fences stay bare so GitHub renders them; snippets that can't run here
+            # (harness import, interactive realtime session) are excluded by content instead.
             continue
         if ex.path.name != '_utils.py':
             try:
