@@ -102,7 +102,9 @@ print(result.output)
 #> label='positive' score=0.9
 ```
 
-The [`@agent.tool`](https://ai.pydantic.dev/tools) function receives a [`RunContext`](https://ai.pydantic.dev/dependencies) that carries your dependencies in; the rest of its signature and its docstring become the tool schema, arguments are validated before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape. Remote [MCP servers](https://ai.pydantic.dev/capabilities/mcp/) plug in just as easily: `capabilities=[MCP('https://api.githubcopilot.com/mcp/')]` hands the agent GitHub's tools. **Build this →** [Agents](https://ai.pydantic.dev/agents/), [Function Tools](https://ai.pydantic.dev/tools), and [Structured Output](https://ai.pydantic.dev/output)
+The [`@agent.tool`](https://ai.pydantic.dev/tools) function receives a [`RunContext`](https://ai.pydantic.dev/dependencies) that carries your dependencies in; the rest of its signature and its docstring become the tool schema, arguments are validated before your code runs, and the run is guaranteed to return a `Sentiment`, so your IDE, type checker, and the LLM all agree on the shape. Remote [MCP servers](https://ai.pydantic.dev/capabilities/mcp/) plug in just as easily: `capabilities=[MCP('https://api.githubcopilot.com/mcp/')]` hands the agent GitHub's tools.
+
+**Build this →** [Agents](https://ai.pydantic.dev/agents/), [Function Tools](https://ai.pydantic.dev/tools), and [Structured Output](https://ai.pydantic.dev/output)
 
 ### Realtime voice
 
@@ -131,7 +133,9 @@ async with agent.realtime('openai:gpt-realtime-2.1').session() as session:
         print(f'{part.speaker}: {part.transcript}')
 ```
 
-The model calls your tools mid-conversation while it keeps talking, and every session is [instrumented](https://ai.pydantic.dev/logfire); voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice. **Build this →** [Realtime Voice](https://ai.pydantic.dev/realtime)
+The model calls your tools mid-conversation while it keeps talking, and every session is [instrumented](https://ai.pydantic.dev/logfire); voice is just another frontend, on OpenAI Realtime, Gemini Live, Azure, and xAI Grok Voice.
+
+**Build this →** [Realtime Voice](https://ai.pydantic.dev/realtime)
 
 ### Durable background agent
 
@@ -162,7 +166,9 @@ class ResearchWorkflow(PydanticAIWorkflow):
         return result.output
 ```
 
-[DBOS](https://ai.pydantic.dev/durable_execution/dbos/) and [Prefect](https://ai.pydantic.dev/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, Kitaru, and Airflow](https://ai.pydantic.dev/durable_execution/overview/) integrations besides. **Build this →** [Durable Execution](https://ai.pydantic.dev/durable_execution/overview/)
+[DBOS](https://ai.pydantic.dev/durable_execution/dbos/) and [Prefect](https://ai.pydantic.dev/durable_execution/prefect/) attach the same way, first-party and co-maintained, with [Restate, Kitaru, and Airflow](https://ai.pydantic.dev/durable_execution/overview/) integrations besides.
+
+**Build this →** [Durable Execution](https://ai.pydantic.dev/durable_execution/overview/)
 
 ### Image generation
 
@@ -178,7 +184,9 @@ result = agent.run_sync('Generate a minimalist logo for a coffee shop called Ext
 Path('logo.png').write_bytes(result.output.data)
 ```
 
-[Provider-native generation](https://ai.pydantic.dev/native-tools#image-generation-tool) on models that support it (like this one), a [subagent fallback](https://ai.pydantic.dev/capabilities/image-generation/) you can configure for the rest, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way. **Build this →** [Image Generation](https://ai.pydantic.dev/capabilities/image-generation/)
+[Provider-native generation](https://ai.pydantic.dev/native-tools#image-generation-tool) on models that support it (like this one), a [subagent fallback](https://ai.pydantic.dev/capabilities/image-generation/) you can configure for the rest, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way.
+
+**Build this →** [Image Generation](https://ai.pydantic.dev/capabilities/image-generation/)
 
 <!-- Embeddings section parked (bd54): restore by removing this comment.
 
@@ -195,7 +203,9 @@ print(len(result.embeddings[0]))
 #> 1536
 ```
 
-Seven providers behind one typed API, [instrumented](https://ai.pydantic.dev/logfire) like everything else. It lives next to the agent that will use the results. **Build this →** [Embeddings](https://ai.pydantic.dev/embeddings)
+Seven providers behind one typed API, [instrumented](https://ai.pydantic.dev/logfire) like everything else. It lives next to the agent that will use the results.
+
+**Build this →** [Embeddings](https://ai.pydantic.dev/embeddings)
 
 -->
 
