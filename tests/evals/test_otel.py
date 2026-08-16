@@ -462,6 +462,13 @@ async def test_span_tree_ancestors_methods():
     assert leaf_node.matches(
         {'no_ancestor_has': {'name_matches_regex': 'root'}, 'stop_recursing_when': {'name_equals': 'level1'}}
     )
+    assert not leaf_node.matches(
+        {
+            'all_ancestors_have': {'name_matches_regex': 'level|root'},
+            'no_ancestor_has': {'name_equals': 'root'},
+            'stop_recursing_when': {'name_equals': 'never'},
+        }
+    )
 
 
 async def test_span_tree_descendants_methods():
