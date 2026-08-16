@@ -50,6 +50,9 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     max_read_lines: int = 2000
     """Maximum number of lines returned by a single `read_file` call."""
 
+    max_list_results: int = 1000
+    """Maximum number of entries returned by `list_directory`."""
+
     max_search_results: int = 1000
     """Maximum number of matches returned by `search_files`."""
 
@@ -64,6 +67,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
         # A config-driven caller could pass a string that would otherwise propagate.
         values: dict[str, Any] = {
             'max_read_lines': self.max_read_lines,
+            'max_list_results': self.max_list_results,
             'max_search_results': self.max_search_results,
             'max_find_results': self.max_find_results,
         }
@@ -79,6 +83,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
             denied_patterns=self.denied_patterns,
             protected_patterns=self.protected_patterns,
             max_read_lines=self.max_read_lines,
+            max_list_results=self.max_list_results,
             max_search_results=self.max_search_results,
             max_find_results=self.max_find_results,
         )

@@ -102,6 +102,7 @@ def toolset(fs_root: Path) -> FileSystemToolset[None]:
         denied_patterns=[],
         protected_patterns=['.git/*', '.env', '.env.*'],
         max_read_lines=2000,
+        max_list_results=1000,
         max_search_results=1000,
         max_find_results=1000,
     )
@@ -161,6 +162,7 @@ class TestAccessPatterns:
             denied_patterns=['*.secret'],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
@@ -174,6 +176,7 @@ class TestAccessPatterns:
             denied_patterns=['*.secret'],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
@@ -187,6 +190,7 @@ class TestAccessPatterns:
             denied_patterns=[],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
@@ -200,6 +204,7 @@ class TestAccessPatterns:
             denied_patterns=[],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
@@ -229,67 +234,74 @@ class TestAccessPatterns:
             denied_patterns=[],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
         # No denied, no protected, no allowed → should pass for any path
         ts._check_access('anything.txt', write=True)
 
-    async def test_is_accessible_no_patterns(self, fs_root: Path) -> None:
+    async def test_no_patterns_allows_reads_and_writes(self, fs_root: Path) -> None:
         ts = FileSystemToolset(
             root_dir=fs_root,
             allowed_patterns=[],
             denied_patterns=[],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
-        assert ts._is_accessible('anything.txt')
-        assert ts._is_accessible('anything.txt', write=True)
+        assert 'Hello, world!' in await ts.read_file('hello.txt')
+        assert 'Wrote' in await ts.write_file('hello.txt', 'rewritten\n')
 
-    async def test_is_accessible_protected_only_on_write(self, fs_root: Path) -> None:
+    async def test_protected_path_reads_but_rejects_writes(self, fs_root: Path) -> None:
+        (fs_root / 'keys.pem').write_text('PRIVATE\n')
         ts = FileSystemToolset(
             root_dir=fs_root,
             allowed_patterns=[],
             denied_patterns=[],
-            protected_patterns=['.env', '.env.*'],
+            protected_patterns=['*.pem'],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
-        # Reads ignore the protected list -- they only block writes.
-        assert ts._is_accessible('.env')
-        assert ts._is_accessible('.env', write=True) is False
-        # A non-protected path passes the protected check even with write=True,
-        # so the walker falls through to the allowed/denied check.
-        assert ts._is_accessible('hello.txt', write=True)
+        assert 'PRIVATE' in await ts.read_file('keys.pem')
+        with pytest.raises(ModelRetry, match='protected'):
+            await ts.write_file('keys.pem', 'HACKED\n')
 
-    async def test_is_accessible_denied(self, fs_root: Path) -> None:
+    async def test_denied_pattern_rejects_reads(self, fs_root: Path) -> None:
+        (fs_root / 'creds.secret').write_text('hunter2\n')
         ts = FileSystemToolset(
             root_dir=fs_root,
             allowed_patterns=[],
             denied_patterns=['*.secret'],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
-        assert ts._is_accessible('visible.txt')
-        assert ts._is_accessible('creds.secret') is False
+        assert 'Hello, world!' in await ts.read_file('hello.txt')
+        with pytest.raises(ModelRetry, match='denied by pattern'):
+            await ts.read_file('creds.secret')
 
-    async def test_is_accessible_allowed_list_excludes(self, fs_root: Path) -> None:
+    async def test_allowed_patterns_reject_non_matching_reads(self, fs_root: Path) -> None:
+        (fs_root / 'main.py').write_text('print("hi")\n')
         ts = FileSystemToolset(
             root_dir=fs_root,
             allowed_patterns=['*.py'],
             denied_patterns=[],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
-        assert ts._is_accessible('main.py')
-        assert ts._is_accessible('README.md') is False
+        assert 'print' in await ts.read_file('main.py')
+        with pytest.raises(ModelRetry, match='does not match any allowed'):
+            await ts.read_file('hello.txt')
 
 
 class TestReadFile:
@@ -412,6 +424,24 @@ class TestListDirectory:
         result = await toolset.list_directory('subdir')
         assert 'nested.py' in result
 
+    async def test_list_skips_symlink_escaping_root(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
+        """An out-of-root symlink target isn't listed, so its size stays hidden."""
+        target = fs_root.parent / 'list-escape-target'
+        target.write_text('escaped!\n')
+        try:
+            (fs_root / 'escape_link.txt').symlink_to(target)
+            result = await toolset.list_directory('.')
+            assert 'escape_link.txt' not in result
+        finally:
+            target.unlink(missing_ok=True)
+
+    async def test_list_skips_dangling_symlink(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
+        """A link to a missing in-root target has no size to report, so it isn't listed."""
+        (fs_root / 'dangling.txt').symlink_to(fs_root / 'gone.txt')
+        result = await toolset.list_directory('.')
+        assert 'dangling.txt' not in result
+        assert 'hello.txt' in result
+
     async def test_list_not_a_dir(self, toolset: FileSystemToolset[None]) -> None:
         with pytest.raises(ModelRetry):
             await toolset.list_directory('hello.txt')
@@ -436,23 +466,20 @@ class TestListDirectory:
         result = await toolset.list_directory('empty')
         assert result == '(empty directory)'
 
-    async def test_list_hides_protected_entries(self, fs_root: Path) -> None:
-        # .env is protected by the default toolset fixture; .git is hidden by
-        # the dotfile filter, but a directory that is itself explicitly
-        # protected is also hidden from listings.
-        (fs_root / 'visible.txt').write_text('ok\n')
+    async def test_list_shows_protected_entries(self, fs_root: Path) -> None:
+        (fs_root / 'protected.txt').write_text('protected marker\n')
         ts = FileSystemToolset(
             root_dir=fs_root,
             allowed_patterns=[],
             denied_patterns=[],
-            protected_patterns=['.env', '.env.*'],
+            protected_patterns=['*'],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
-        result = await ts.list_directory('.')
-        assert 'visible.txt' in result
-        assert '.env' not in result
+
+        assert 'protected.txt' in await ts.list_directory('.')
 
     async def test_list_root_allowed_patterns_filters_entries(self, fs_root: Path) -> None:
         # A file-shaped allowed pattern must not make the root unlistable: '.'
@@ -465,6 +492,7 @@ class TestListDirectory:
             denied_patterns=[],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
@@ -481,12 +509,47 @@ class TestListDirectory:
             denied_patterns=['*.secret'],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
         result = await ts.list_directory('.')
         assert 'visible.txt' in result
         assert 'creds.secret' not in result
+
+    async def test_list_truncation(self, fs_root: Path) -> None:
+        for i in range(20):
+            (fs_root / f'file{i}.dat').write_text(f'{i}\n')
+        ts = FileSystemToolset(
+            root_dir=fs_root,
+            allowed_patterns=[],
+            denied_patterns=[],
+            protected_patterns=[],
+            max_read_lines=2000,
+            max_list_results=5,
+            max_search_results=1000,
+            max_find_results=1000,
+        )
+        result = await ts.list_directory('.')
+        lines = result.splitlines()
+        assert len(lines) == 6
+        assert lines[-1] == '[... truncated at 5 entries]'
+
+    async def test_list_at_cap_is_not_marked_truncated(self, tmp_path: Path) -> None:
+        for i in range(3):
+            (tmp_path / f'cap{i}.dat').write_text('x\n')
+        ts = FileSystemToolset(
+            root_dir=tmp_path,
+            allowed_patterns=[],
+            denied_patterns=[],
+            protected_patterns=[],
+            max_read_lines=2000,
+            max_list_results=3,
+            max_search_results=1000,
+            max_find_results=1000,
+        )
+        result = await ts.list_directory('.')
+        assert [line.split(' ')[0] for line in result.splitlines()] == ['cap0.dat', 'cap1.dat', 'cap2.dat']
 
 
 class TestSearchFiles:
@@ -536,29 +599,27 @@ class TestSearchFiles:
             denied_patterns=[],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=50,
             max_find_results=1000,
         )
         result = await ts.search_files('findme')
         assert 'truncated at 50 matches' in result
 
-    async def test_search_skips_protected_contents(self, fs_root: Path) -> None:
-        # The .env file has matching content but should be filtered by the
-        # recursive walker before its bytes are read.
-        (fs_root / 'visible.txt').write_text('SECRET=matchme\n')
-        (fs_root / '.env').write_text('SECRET=matchme\n')
+    async def test_search_includes_protected_files(self, fs_root: Path) -> None:
+        (fs_root / 'protected.txt').write_text('protected marker\n')
         ts = FileSystemToolset(
             root_dir=fs_root,
             allowed_patterns=[],
             denied_patterns=[],
-            protected_patterns=['.env', '.env.*'],
+            protected_patterns=['*'],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
-        result = await ts.search_files('matchme')
-        assert 'visible.txt' in result
-        assert '.env' not in result
+
+        assert 'protected.txt:1:protected marker' in await ts.search_files('protected marker')
 
     async def test_search_skips_denied_files(self, fs_root: Path) -> None:
         (fs_root / 'visible.txt').write_text('lookhere\n')
@@ -569,6 +630,7 @@ class TestSearchFiles:
             denied_patterns=['*.secret'],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
@@ -587,12 +649,88 @@ class TestSearchFiles:
             denied_patterns=[],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
         result = await ts.search_files('findme')
         assert 'keep.py' in result
         assert 'skip.md' not in result
+
+    async def test_search_truncates_within_a_single_file(self, fs_root: Path) -> None:
+        (fs_root / 'many.txt').write_text('findme\n' * 100)
+        ts = FileSystemToolset(
+            root_dir=fs_root,
+            allowed_patterns=[],
+            denied_patterns=[],
+            protected_patterns=[],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=5,
+            max_find_results=1000,
+        )
+        result = await ts.search_files('findme')
+        lines = result.splitlines()
+        assert len(lines) == 6
+        assert lines[-1] == '[... truncated at 5 matches]'
+
+    async def test_search_at_cap_is_not_marked_truncated(self, fs_root: Path) -> None:
+        (fs_root / 'exact.txt').write_text('capmarker\ncapmarker\n')
+        ts = FileSystemToolset(
+            root_dir=fs_root,
+            allowed_patterns=[],
+            denied_patterns=[],
+            protected_patterns=[],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=2,
+            max_find_results=1000,
+        )
+        result = await ts.search_files('capmarker')
+        assert result.splitlines() == ['exact.txt:1:capmarker', 'exact.txt:2:capmarker']
+
+    async def test_search_at_cap_across_files_is_not_marked_truncated(self, fs_root: Path) -> None:
+        (fs_root / 'one.txt').write_text('capmarker\n')
+        (fs_root / 'two.txt').write_text('capmarker\n')
+        ts = FileSystemToolset(
+            root_dir=fs_root,
+            allowed_patterns=[],
+            denied_patterns=[],
+            protected_patterns=[],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=2,
+            max_find_results=1000,
+        )
+        result = await ts.search_files('capmarker')
+        assert result.splitlines() == ['one.txt:1:capmarker', 'two.txt:1:capmarker']
+
+    async def test_search_with_zero_cap_returns_no_matches(self, fs_root: Path) -> None:
+        # FileSystemToolset is public, so it can be built without the capability's
+        # positive-integer validation.
+        ts = FileSystemToolset(
+            root_dir=fs_root,
+            allowed_patterns=[],
+            denied_patterns=[],
+            protected_patterns=[],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=0,
+            max_find_results=1000,
+        )
+        result = await ts.search_files('Hello')
+        assert result == '[... truncated at 0 matches]'
+
+    async def test_search_skips_symlink_escaping_root(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
+        """A symlink to an out-of-root file is skipped, matching `read_file`."""
+        target = fs_root.parent / 'search-escape-target'
+        target.write_text('escaped marker\n')
+        try:
+            (fs_root / 'escape_link.txt').symlink_to(target)
+            result = await toolset.search_files('escaped marker')
+            assert result == 'No matches found.'
+        finally:
+            target.unlink(missing_ok=True)
 
 
 class TestFindFiles:
@@ -613,6 +751,43 @@ class TestFindFiles:
         result = await toolset.find_files('*')
         assert '.hidden' not in result
         assert '.git' not in result
+
+    async def test_find_skips_symlink_escaping_root(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
+        target = fs_root.parent / 'find-escape-target'
+        target.write_text('escaped!\n')
+        try:
+            (fs_root / 'escape_link.txt').symlink_to(target)
+            result = await toolset.find_files('*.txt')
+            assert 'escape_link.txt' not in result
+            assert 'hello.txt' in result
+        finally:
+            target.unlink(missing_ok=True)
+
+    async def test_find_skips_dangling_symlink(self, toolset: FileSystemToolset[None], fs_root: Path) -> None:
+        (fs_root / 'dangling.txt').symlink_to(fs_root / 'gone.txt')
+        result = await toolset.find_files('*.txt')
+        assert 'dangling.txt' not in result
+        assert 'hello.txt' in result
+
+    async def test_find_absolute_pattern_rejected(self, toolset: FileSystemToolset[None]) -> None:
+        with pytest.raises(ModelRetry, match='must be relative to the search path'):
+            await toolset.find_files('/etc/*')
+
+    async def test_find_at_cap_is_not_marked_truncated(self, fs_root: Path) -> None:
+        for i in range(3):
+            (fs_root / f'cap{i}.dat').write_text('x\n')
+        ts = FileSystemToolset(
+            root_dir=fs_root,
+            allowed_patterns=[],
+            denied_patterns=[],
+            protected_patterns=[],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=3,
+        )
+        result = await ts.find_files('*.dat')
+        assert result.splitlines() == ['cap0.dat', 'cap1.dat', 'cap2.dat']
 
     async def test_find_not_a_dir(self, toolset: FileSystemToolset[None]) -> None:
         with pytest.raises(ModelRetry):
@@ -635,27 +810,27 @@ class TestFindFiles:
             denied_patterns=[],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=5,
         )
         result = await ts.find_files('*.dat')
         assert 'truncated at 5 matches' in result
 
-    async def test_find_hides_protected_entries(self, fs_root: Path) -> None:
-        (fs_root / 'visible.txt').write_text('ok\n')
-        (fs_root / '.env').write_text('SECRET=abc\n')
+    async def test_find_includes_protected_files(self, fs_root: Path) -> None:
+        (fs_root / 'protected.txt').write_text('protected marker\n')
         ts = FileSystemToolset(
             root_dir=fs_root,
             allowed_patterns=[],
             denied_patterns=[],
-            protected_patterns=['.env', '.env.*'],
+            protected_patterns=['*'],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
-        result = await ts.find_files('*')
-        assert 'visible.txt' in result
-        assert '.env' not in result
+
+        assert 'protected.txt' in await ts.find_files('*.txt')
 
     async def test_find_hides_denied_entries(self, fs_root: Path) -> None:
         (fs_root / 'visible.txt').write_text('ok\n')
@@ -666,6 +841,7 @@ class TestFindFiles:
             denied_patterns=['*.secret'],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
@@ -684,12 +860,71 @@ class TestFindFiles:
             denied_patterns=[],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
         result = await ts.find_files('*')
         assert 'keep.py' in result
         assert 'skip.md' not in result
+
+
+class TestWalkerEntryResolution:
+    """Walkers authorize the entry's resolved target, matching `read_file`."""
+
+    async def test_denied_target_alias_hidden_from_walkers(self, fs_root: Path) -> None:
+        (fs_root / 'creds.secret').write_text('hunter2\n')
+        (fs_root / 'alias.txt').symlink_to(fs_root / 'creds.secret')
+        ts = FileSystemToolset(
+            root_dir=fs_root,
+            allowed_patterns=[],
+            denied_patterns=['*.secret'],
+            protected_patterns=[],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=1000,
+        )
+        with pytest.raises(ModelRetry, match='denied by pattern'):
+            await ts.read_file('alias.txt')
+        assert 'alias.txt' not in await ts.list_directory('.')
+        assert 'alias.txt' not in await ts.find_files('*')
+        assert await ts.search_files('hunter2') == 'No matches found.'
+
+    async def test_alias_does_not_smuggle_a_file_past_allowed_patterns(self, fs_root: Path) -> None:
+        (fs_root / 'notes.md').write_text('hunter2\n')
+        (fs_root / 'alias.py').symlink_to(fs_root / 'notes.md')
+        ts = FileSystemToolset(
+            root_dir=fs_root,
+            allowed_patterns=['*.py'],
+            denied_patterns=[],
+            protected_patterns=[],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=1000,
+        )
+        with pytest.raises(ModelRetry, match='does not match any allowed'):
+            await ts.read_file('alias.py')
+        assert 'alias.py' not in await ts.list_directory('.')
+        assert 'alias.py' not in await ts.find_files('*')
+        assert await ts.search_files('hunter2') == 'No matches found.'
+
+    async def test_in_root_alias_to_allowed_target_stays_visible(self, fs_root: Path) -> None:
+        (fs_root / 'alias.txt').symlink_to(fs_root / 'hello.txt')
+        ts = FileSystemToolset(
+            root_dir=fs_root,
+            allowed_patterns=[],
+            denied_patterns=['*.secret'],
+            protected_patterns=[],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=1000,
+        )
+        assert 'alias.txt' in await ts.list_directory('.')
+        assert 'alias.txt' in await ts.find_files('*.txt')
+        assert 'alias.txt:1:Hello, world!' in await ts.search_files('Hello')
 
 
 class TestCreateDirectory:
@@ -816,6 +1051,7 @@ class TestMutationKillers:
             denied_patterns=[],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=5,
             max_find_results=1000,
         )
@@ -836,6 +1072,7 @@ class TestMutationKillers:
             denied_patterns=[],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=3,
         )
@@ -1085,6 +1322,10 @@ class TestFileSystemCapability:
         with pytest.raises(ValueError, match='max_read_lines must be a positive integer'):
             FileSystem(max_read_lines=-1)
 
+    def test_non_positive_max_list_results_rejected(self) -> None:
+        with pytest.raises(ValueError, match='max_list_results must be a positive integer'):
+            FileSystem(max_list_results=0)
+
     def test_non_positive_max_search_results_rejected(self) -> None:
         with pytest.raises(ValueError, match='max_search_results must be a positive integer'):
             FileSystem(max_search_results=0)
@@ -1123,6 +1364,7 @@ class TestPatternCanonicalization:
             denied_patterns=['config/secret.txt'],
             protected_patterns=[],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
@@ -1130,7 +1372,7 @@ class TestPatternCanonicalization:
         with pytest.raises(ModelRetry, match='denied'):
             await ts.read_file('config/./secret.txt')
 
-    async def test_root_level_secrets_hidden_from_search(self, fs_root: Path) -> None:
+    async def test_root_level_secrets_readable_but_protected_from_write(self, fs_root: Path) -> None:
         (fs_root / 'secrets.yaml').write_text('api: PRIVATE KEY material\n')
         ts = FileSystemToolset(
             root_dir=fs_root,
@@ -1138,9 +1380,10 @@ class TestPatternCanonicalization:
             denied_patterns=[],
             protected_patterns=['**/secrets*'],
             max_read_lines=2000,
+            max_list_results=1000,
             max_search_results=1000,
             max_find_results=1000,
         )
-        # `**/secrets*` must protect a root-level secrets file, not just nested ones.
-        result = await ts.search_files('PRIVATE KEY')
-        assert 'secrets.yaml' not in result
+        assert 'secrets.yaml:1:api: PRIVATE KEY material' in await ts.search_files('PRIVATE KEY')
+        with pytest.raises(ModelRetry, match='protected'):
+            await ts.write_file('secrets.yaml', 'changed\n')
