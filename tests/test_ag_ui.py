@@ -4648,6 +4648,66 @@ async def test_event_stream_multiple_responses_with_tool_calls():
     assert result_message_id != new_message_id
 
 
+async def test_function_tool_result_does_not_mutate_message_id() -> None:
+    """A function tool result must not change the id used as `parent_message_id`.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/7491:
+    `_handle_tool_result` used `self.new_message_id()` for the tool result, mutating the shared
+    `self.message_id`, so a tool call directly following the tool result (with no intervening
+    text) referenced the throwaway tool-result id as its parent instead of the assistant text
+    message. The builtin-tool path fixed the same problem in #4332.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'), next_part_kind='tool-call')
+
+        yield PartStartEvent(
+            index=1,
+            part=ToolCallPart(tool_name='tool_call_1', args='{}', tool_call_id='tool_call_1'),
+            previous_part_kind='text',
+        )
+        yield PartEndEvent(
+            index=1,
+            part=ToolCallPart(tool_name='tool_call_1', args='{}', tool_call_id='tool_call_1'),
+            next_part_kind='tool-call',
+        )
+
+        yield FunctionToolResultEvent(
+            part=ToolReturnPart(tool_name='tool_call_1', content='Hi!', tool_call_id='tool_call_1')
+        )
+
+        # A tool call directly after the tool result, with no text part in between.
+        yield PartStartEvent(
+            index=2,
+            part=ToolCallPart(tool_name='tool_call_2', args='{}', tool_call_id='tool_call_2'),
+            previous_part_kind='tool-call',
+        )
+        yield PartEndEvent(
+            index=2,
+            part=ToolCallPart(tool_name='tool_call_2', args='{}', tool_call_id='tool_call_2'),
+            next_part_kind=None,
+        )
+
+    run_input = create_input(UserMessage(id='msg_1', content='Say hello'))
+    event_stream = AGUIEventStream(run_input=run_input)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    text_start = next((e for e in events if e.get('type') == 'TEXT_MESSAGE_START'), None)
+    assert text_start is not None
+    tool_call_starts = [e for e in events if e.get('type') == 'TOOL_CALL_START']
+    tool_call_result = next((e for e in events if e.get('type') == 'TOOL_CALL_RESULT'), None)
+    assert tool_call_result is not None
+
+    assert len(tool_call_starts) == 2
+    assert tool_call_starts[0]['parentMessageId'] == text_start['messageId']
+    assert tool_call_starts[1]['parentMessageId'] == text_start['messageId']
+    assert tool_call_result['messageId'] != text_start['messageId']
+
+
 async def test_timestamps_are_set():
     """Test that all AG-UI events have timestamps set."""
     agent = Agent(

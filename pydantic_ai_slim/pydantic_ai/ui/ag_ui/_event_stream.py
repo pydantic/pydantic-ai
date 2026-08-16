@@ -429,7 +429,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         else:
             output = _tool_return_content(result)
 
-        message_id = self.new_message_id()
+        # Use a one-off message ID instead of `self.new_message_id()` to avoid
+        # mutating `self.message_id`, which is used as `parent_message_id` for
+        # subsequent tool calls in the same response.
+        message_id = str(uuid4())
         yield ToolCallResultEvent(
             message_id=message_id,
             type=EventType.TOOL_CALL_RESULT,
