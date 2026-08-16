@@ -67,6 +67,14 @@ forever.
 Without a policy, an unexpected provider close raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session iterator.
 
+On a [WebRTC sideband](deployment.md#browser-webrtc-server-sideband) the same policy applies to an
+unexpected drop, but a *clean* close is treated as the browser hanging up: the sideband is a control
+channel, so a normal close ends iteration without a session error or reconnect attempt even when a
+`reconnect` policy is set. The close frame alone can't distinguish a hangup from a
+WebSocket-terminating proxy closing the sideband cleanly mid-call (a restart or graceful rotation),
+which would end the agent side while the browser keeps talking to the provider — drain such
+connections at the infrastructure layer rather than relying on the `reconnect` policy to cover them.
+
 ### State restoration
 
 OpenAI and Azure OpenAI have no cross-connection server state, so Pydantic AI replays local message
@@ -79,17 +87,22 @@ the [Gemini resumption settings](gemini.md#session-resumption). Their handles li
 and cannot be persisted for another process.
 
 [`RealtimeSessionReconnectEvent.state_restored`][pydantic_ai.realtime.RealtimeSessionReconnectEvent.state_restored]
-reports whether conversation state was recovered, by either mechanism.
+reports whether the reconnect carried the conversation through without cutting a turn off.
 
-A reply the drop cut off follows the same flag. With state restored, the recorded response simply
-stays open: output on the new connection continues it, and the turn completes with the response
-terminal as usual — except on Gemini, which closes the cut reply as an interrupted response (keeping
-any partial transcript in history) before the
-[`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and stays
-quiet until the next input. With state lost, treat the session as a fresh context: before emitting
-the event, the session settles everything the provider lost — the partial reply is recorded as an
-interrupted response, running tool calls get cancelled returns, and the turn ends so queued messages
-waiting for the boundary still flush.
+How a reply the drop caught in flight is handled depends on the mechanism. Under native resumption
+(xAI) the recorded response simply stays open: output on the new connection continues it, the turn
+completes with the response terminal as usual, and `state_restored` stays `True`. Gemini also reports
+`True` but closes the cut reply as an interrupted response (keeping any partial transcript in history)
+before the [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and
+stays quiet until the next input.
+
+Local replay (OpenAI, Azure OpenAI) restores only the finalized turns, so a reply in flight when the
+socket dropped cannot continue. The session settles it before emitting the event — the partial reply
+becomes an interrupted response, running tool calls get cancelled returns, and the turn ends so queued
+messages waiting for the boundary still flush — and `state_restored` is `False` to say the turn was
+cut off. An answer that was solicited but had not started streaming is instead re-requested on the new
+connection, and a drop with nothing in flight restores the whole call as-is; both lose no output, so
+`state_restored` stays `True`.
 
 ## Provider session limits
 

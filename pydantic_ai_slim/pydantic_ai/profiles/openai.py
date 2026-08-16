@@ -405,6 +405,7 @@ def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_interruption': True,
         'supports_output_truncation': True,
         'supports_session_seeding': True,
+        'supports_webrtc': True,
         'supports_seeding_images': True,
         'supports_seeding_audio': True,
         # The realtime models keep talking while a tool call is outstanding — they're tuned to

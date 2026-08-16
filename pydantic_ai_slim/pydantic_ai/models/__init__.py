@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, 
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from functools import cache, cached_property, wraps
+from functools import cache, cached_property
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeVar, cast, get_args, overload
 
@@ -65,6 +65,7 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -84,6 +85,7 @@ from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 
 if TYPE_CHECKING:
     from ..agent.abstract import AbstractAgent
+from .._cost import preload_pricing_data
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._abstract import AbstractModel as AbstractModel
@@ -124,6 +126,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'alibaba',
         'azure',
         'cerebras',
+        'crusoe',
         'deepseek',
         'fireworks',
         'github',
@@ -195,6 +198,19 @@ class ModelRequestParameters:
     this is not necessarily a subset of `function_tools`' names; resolution ignores unknown names.
     """
 
+    deferred_capability_ids: set[str] = field(default_factory=set[str], repr=False)
+    """IDs of the run's capabilities that defer their loading.
+
+    Read from the capability instances themselves, so it means what it says. It cannot be derived
+    from the function tools: `ToolDefinition.capability_id` records which capability *contributed* a
+    tool, and `defer_loading` is set both by a deferred capability and by a search-gated tool inside
+    an always-on one — so the two cases are indistinguishable from the definitions alone.
+
+    Used to answer "may this tool be revealed yet?": a tool whose `capability_id` is in this set is
+    gated on that capability being loaded, while one whose owner is absent here is gated only on its
+    own discovery.
+    """
+
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list[ToolDefinition])
@@ -255,24 +271,6 @@ class ModelRequestParameters:
             tool for tool in self.function_tools if self.visibility_of(tool.name) not in ('withheld', 'via_history')
         ]
 
-    @property
-    def deferred_capability_ids(self) -> set[str]:
-        """Deprecated: derive capability ownership from the authored definitions instead.
-
-        Returns the IDs of deferred capabilities that gate at least one of this request's function
-        tools — the membership test adapters used this field for. Read
-        [`ToolDefinition.capability_id`][pydantic_ai.tools.ToolDefinition.capability_id] together
-        with `defer_loading`, or [`tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility],
-        instead.
-        """
-        warnings.warn(
-            '`ModelRequestParameters.deferred_capability_ids` is deprecated: read '
-            '`ToolDefinition.capability_id` on the function tools, or `tool_visibility`, instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-        return {t.capability_id for t in self.function_tools if t.capability_id is not None and t.defer_loading}
-
     @cached_property
     def prompted_output_instructions(self) -> str | None:
         if self.prompted_output_template and self.output_object:
@@ -291,32 +289,6 @@ class ModelRequestParameters:
         return replace(self, output_mode=output_mode, allow_text_output=output_mode in ('native', 'prompted'))
 
     __repr__ = _utils.dataclasses_no_defaults_repr
-
-
-_generated_model_request_parameters_init = ModelRequestParameters.__init__
-
-
-@wraps(_generated_model_request_parameters_init)
-def _init_accepting_deferred_capability_ids(
-    self: ModelRequestParameters, *, deferred_capability_ids: set[str] | None = None, **kwargs: Any
-) -> None:
-    # `deferred_capability_ids` shipped as a regular field, so its removal must keep the
-    # constructor argument working through the deprecation period, next to the derived read
-    # property above. An `InitVar` would be the natural spelling, but `dataclasses.replace()` on
-    # Python 3.13+ round-trips init-only variables through `getattr`, which would fire both
-    # deprecation warnings on every internal `replace()` call — so the generated `__init__` is
-    # wrapped instead, and `replace()` never sees the non-field name.
-    if deferred_capability_ids is not None:
-        warnings.warn(
-            '`ModelRequestParameters.deferred_capability_ids` is deprecated: set '
-            '`ToolDefinition.capability_id` and `defer_loading` on the function tools instead.',
-            PydanticAIDeprecationWarning,
-            stacklevel=2,
-        )
-    _generated_model_request_parameters_init(self, **kwargs)
-
-
-ModelRequestParameters.__init__ = _init_accepting_deferred_capability_ids
 
 
 @dataclass(kw_only=True)
@@ -404,6 +376,26 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     """
     supported_tool_addition_modes: ClassVar[frozenset[ToolAdditionMode]] = frozenset()
     """`tool_addition_mode` values this adapter's renderer implements. See `supported_tool_deferral_modes`."""
+    compaction_requires_encrypted_content: ClassVar[bool] = False
+    """Whether this adapter's API only honors a [`CompactionPart`][pydantic_ai.messages.CompactionPart]
+    that carries encrypted content.
+
+    When set, a part without it isn't a wire boundary: the adapter would omit it, so letting it hide
+    the earlier history would send nothing in its place.
+
+    Declared by the adapter rather than the model profile: how an API carries compaction state is a
+    property of the API, not of the model behind it — the same model reached through OpenAI's Chat
+    Completions and Responses APIs answers differently, and eight providers route a profile of their
+    own through `OpenAIResponsesModel`. Independent of `compaction_retains_standing_prompt`, which
+    today's two adapters happen to answer the same way."""
+    compaction_retains_standing_prompt: ClassVar[bool] = False
+    """Whether this adapter's compaction item keeps serving the leading system items of the window
+    it replaced.
+
+    When set, re-sending the standing prompt after the boundary would duplicate it. When not (the
+    default), the standing prompt travels in a per-request channel rebuilt from those items, so the
+    trim has to re-insert them or it is silently dropped from every subsequent request. See
+    `compaction_requires_encrypted_content` for why this is declared here and not on the profile."""
 
     _provider: Provider[InterfaceClient]
     _profile: ModelProfileSpec | None = None
@@ -423,6 +415,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         self._settings = settings
         self._profile = profile
+        preload_pricing_data()
 
     @property
     def provider(self) -> Provider[InterfaceClient] | None:
@@ -482,6 +475,32 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """The effective tool-addition mode: the profile's claim, if this adapter renders it."""
         mode = self.profile.get('tool_addition_mode')
         return mode if mode in self.supported_tool_addition_modes else None
+
+    def _trim_before_compaction(
+        self,
+        messages: list[ModelMessage],
+        *,
+        standing_prompt_retained: bool | None = None,
+    ) -> list[ModelMessage]:
+        """Drop history before the latest compaction boundary this adapter's API honors.
+
+        Called only by adapters that render `CompactionPart`s on the wire, and the one place their
+        declared `compaction_*` facts are turned into trim behavior — so an adapter states what its
+        API does rather than what to do about it. See `_trim_messages_before_compaction` for what
+        the trim preserves.
+
+        `standing_prompt_retained` defaults to `compaction_retains_standing_prompt`. A caller passes
+        an explicit value where its window is not an ordinary one: re-compaction plants the standing
+        prompt afresh, since retention decays across a second compaction.
+        """
+        return _trim_messages_before_compaction(
+            messages,
+            self.system,
+            requires_encrypted_content=self.compaction_requires_encrypted_content,
+            standing_prompt_retained=self.compaction_retains_standing_prompt
+            if standing_prompt_retained is None
+            else standing_prompt_retained,
+        )
 
     @abstractmethod
     async def request(
@@ -1061,7 +1080,7 @@ class StreamedResponse(ABC):
         return self._event_iterator
 
     async def cancel(self) -> None:
-        """Cancel the stream, stopping token generation.
+        """Cancel local stream consumption and request provider shutdown.
 
         Sets `self._cancelled = True` before delegating to `close_stream()`
         so the flag is visible to any iterator that observes the transport error
@@ -1089,12 +1108,12 @@ class StreamedResponse(ABC):
         return (httpx.StreamError, httpx.TransportError)
 
     async def close_stream(self) -> None:
-        """Close the underlying HTTP/gRPC connection.
+        """Close the provider stream and any exposed HTTP or gRPC transport.
 
-        Model classes must override this to stop token generation (and billing)
-        on the remote side. Integrations that cannot support cancellation should
-        leave the default implementation so `cancel()` fails clearly rather than
-        silently reporting successful cancellation while generation continues.
+        Model classes must override this to close the local stream and, where the
+        provider SDK exposes one, its transport. Integrations that cannot support
+        local cancellation should leave the default implementation so `cancel()`
+        fails clearly.
         """
         raise NotImplementedError(
             f'Stream cancellation is not implemented for {type(self).__name__}. '
@@ -1508,7 +1527,7 @@ def infer_model(  # noqa: C901
             return BedrockMantleChatModel(model_name, provider=provider)
         return BedrockMantleResponsesModel(model_name, provider=provider)
 
-    # OpenRouter, Cerebras, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
+    # OpenRouter, Cerebras, Crusoe, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
     # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
@@ -1518,6 +1537,10 @@ def infer_model(  # noqa: C901
         from .cerebras import CerebrasModel
 
         return CerebrasModel(model_name, provider=provider)
+    elif model_kind == 'crusoe':
+        from .crusoe import CrusoeModel
+
+        return CrusoeModel(model_name, provider=provider)
     elif model_kind == 'snowflake':
         from .snowflake import SnowflakeModel
 
@@ -1978,7 +2001,7 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
     return count
 
 
-def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
+def _trim_messages_before_compaction(
     messages: list[ModelMessage],
     system: str,
     *,
@@ -1987,13 +2010,15 @@ def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
 ) -> list[ModelMessage]:
     """Drop history before the latest same-provider compaction part the request will send.
 
-    Shared by the adapters that honor [`CompactionPart`][pydantic_ai.messages.CompactionPart]s on
-    the wire — each calls it from its own `_map_messages`, since whether a compaction part is
-    honored at all is provider semantics. Anthropic ignores (and doesn't bill) pre-boundary blocks,
+    Reached through [`Model._trim_before_compaction`][pydantic_ai.models.Model._trim_before_compaction],
+    which derives both flags from the adapter's declarations; adapters call that from their own
+    message-prep step, since where in a request build the trim belongs is provider mechanics.
+    Anthropic ignores (and doesn't bill) pre-boundary blocks,
     so there the trim only saves request size; the OpenAI Responses API processes and bills
     replayed items that precede a compaction item (live-verified), so there it is what makes
-    compaction actually compact. `requires_encrypted_content` mirrors OpenAI's render condition: a
-    part it wouldn't send must not act as a boundary either.
+    compaction actually compact. `requires_encrypted_content` is this caller's own render condition,
+    passed to the shared wire-boundary predicate: a part the adapter would omit must not act as a
+    boundary either, or the history is dropped with nothing sent to stand in for it.
 
     The standing prompt survives via `_standing_prompt_request`; nothing else from the prefix does.
     `standing_prompt_retained` mirrors where the calling API carries the standing prompt: on
@@ -2023,10 +2048,8 @@ def _trim_messages_before_compaction(  # pyright: ignore[reportUnusedFunction]
             continue
         for part_index in range(len(message.parts) - 1, -1, -1):
             part = message.parts[part_index]
-            if not isinstance(part, CompactionPart) or part.provider_name != system:
-                continue
-            if requires_encrypted_content and not (
-                part.provider_details and 'encrypted_content' in part.provider_details
+            if not isinstance(part, CompactionPart) or not _compaction_part_is_wire_boundary(
+                part, system, requires_encrypted_content=requires_encrypted_content
             ):
                 continue
             tail = [replace(message, parts=message.parts[part_index:]), *messages[message_index + 1 :]]

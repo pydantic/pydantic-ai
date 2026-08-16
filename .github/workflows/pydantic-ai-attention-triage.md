@@ -93,6 +93,7 @@ pre-agent-steps:
     with:
       persist-credentials: false
       ref: ${{ github.event.repository.default_branch }}
+      fetch-depth: 0
   - name: Stage Pydantic AI gh-aw shim launcher
     run: |
       mkdir -p /tmp/gh-aw/bin

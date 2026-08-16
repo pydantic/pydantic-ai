@@ -53,7 +53,7 @@ repos:
       - id: no-rst-syntax
         name: No RST syntax (use Markdown in docstrings and docs)
         description: |
-          Bans RST-only constructs that mkdocstrings/Markdown won't render:
+          Bans RST-only constructs that the documentation renderer will not render:
           `` ``foo`` `` (use single backticks), trailing `::` (use ```` ```python ```` fences),
           and Sphinx roles like `:mod:`foo`` / `:class:`Bar`` (use `[Bar][pkg.mod.Bar]` reference links).
         language: pygrep

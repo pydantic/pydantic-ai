@@ -294,6 +294,12 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         """Ignored: xAI restores the conversation itself, so replaying it would say everything twice."""
 
     @property
+    def reconnect_restores_in_flight_state(self) -> bool:
+        # xAI resumes the conversation server-side, so the in-flight turn is not the session's to settle
+        # (unlike the OpenAI base, which reconnects by replaying finalized history only).
+        return True
+
+    @property
     def conversation_id(self) -> str | None:
         """The xAI conversation ID used for native session resumption."""
         return self._conversation_id

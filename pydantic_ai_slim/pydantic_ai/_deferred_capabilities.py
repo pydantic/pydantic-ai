@@ -141,7 +141,10 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     Every [`CompactionPart`][pydantic_ai.messages.CompactionPart] resets the derived
     state at its exact position in a response. This is deliberately provider-agnostic:
     over-counting can expose tools whose load evidence is no longer visible, while
-    under-counting only permits a redundant, idempotent load.
+    under-counting once only permitted a redundant, idempotent load. Now that availability
+    gates execution, an under-count also *refuses* the call — see
+    [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] for when that
+    is wrong and what is tracked to fix it.
 
     Only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] is scanned —
     the one definition of the boundary — so only pairs entirely after the boundary count.
@@ -150,9 +153,14 @@ def parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     # and `post_compaction_window` is defined after that point, so it can only be imported at call time.
     from .messages import post_compaction_window
 
+    return _parse_loaded_capabilities(post_compaction_window(messages))
+
+
+def _parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
+    """Parse capability-load evidence from an already-selected message window."""
     call_id_by_tool_call_id: dict[str, str] = {}
     loaded: set[str] = set()
-    for msg in post_compaction_window(messages):
+    for msg in messages:
         for part in msg.parts:
             if isinstance(part, LoadCapabilityCallPart):
                 if part.capability_id is not None:

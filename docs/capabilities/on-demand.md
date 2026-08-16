@@ -120,7 +120,7 @@ History carries *which* capability ids were loaded, not the capabilities themsel
 
 Several [`RunContext`][pydantic_ai.tools.RunContext] fields expose progressive-disclosure state to tools, hooks, and capability-owned callbacks:
 
-- `ctx.loaded_capability_ids` — deferred capability IDs explicitly loaded through the `load_capability` tool, reconstructed from message history and updated when a capability loads during the current step.
+- `ctx.loaded_capability_ids` — deferred capability IDs explicitly loaded through the `load_capability` tool, reconstructed from message history before each model request. A capability loaded during a step appears from the *next* step onwards, which is also the first step on which its instructions and tools reach the model.
 - `ctx.available_capability_ids` — the currently-live capability IDs: always-available capabilities plus `ctx.loaded_capability_ids`.
 - `ctx.capability_loaded` — only meaningful while Pydantic AI is running a capability-owned hook or callback. It is scoped to that capability; deferred hooks and callbacks are skipped until this value would be true.
 - `ctx.discovered_tool_names` — deferred function tools revealed by durable history, whether through tool search, [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn], or a capability load.
@@ -255,7 +255,7 @@ agent = Agent('openai-responses:gpt-5.4', capabilities=[AccountSecurityWorkflow(
 
 ### Deferred native tools
 
-Any [native capability](overview.md#built-in-capabilities) (`WebSearch`, `WebFetch`, `MCP`, …) can be deferred the same way. The native tool definition only enters the request after the `load_capability` tool loads the capability — see [Cache implications](#cache-implications) for the trade-off:
+Any [provider-adaptive capability](overview.md#provider-adaptive-tools) (`WebSearch`, `WebFetch`, `MCP`, …) can be deferred the same way. The native tool definition only enters the request after the `load_capability` tool loads the capability — see [Cache implications](#cache-implications) for the trade-off:
 
 ```python {title="deferred_native_tool.py"}
 from pydantic_ai import Agent

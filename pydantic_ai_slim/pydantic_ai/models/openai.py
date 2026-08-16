@@ -113,7 +113,6 @@ from . import (
     OpenAIResponsesCompatibleProvider,
     StreamedResponse,
     ToolVisibility,
-    _trim_messages_before_compaction,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -199,6 +198,18 @@ except ImportError as _import_error:
         'Please install `openai` to use the OpenAI model, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+
+def _preload_openai_sdk_resource_modules(model: OpenAIChatModel | OpenAIResponsesModel, client: AsyncOpenAI) -> None:
+    """Load deferred OpenAI SDK modules before request handling.
+
+    The provider client only triggers process-wide module loading; it need not be the exact client later used by
+    an OpenAI-compatible model subclass.
+    """
+    if isinstance(model, OpenAIChatModel):
+        _ = client.chat.completions
+    else:
+        _ = client.responses
 
 
 @contextmanager
@@ -944,6 +955,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         super().__init__(settings=settings, profile=profile)
 
         validate_openai_profile(self.profile)
+
+        _preload_openai_sdk_resource_modules(self, self._provider.client)
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -1921,6 +1934,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     supported_tool_deferral_modes = frozenset({'with_tool_search'})
     supported_tool_addition_modes = frozenset({'with_definitions'})
+    # Responses only: `OpenAIChatModel` shares this model family's profile but has no compaction
+    # surface, and the Responses API bills replayed pre-boundary items, so the trim is what makes
+    # compaction actually compact here.
+    #
+    # The compaction item is an opaque blob the API decrypts; without it there is nothing to send in
+    # place of the history the boundary would hide.
+    compaction_requires_encrypted_content = True
+    # `SystemPromptPart`s render as `system` input items *inside* the compacted window, and the item
+    # keeps serving them: a latent directive that never fired before the boundary still governs
+    # post-compaction replies without being re-sent (live-verified).
+    compaction_retains_standing_prompt = True
 
     _model_name: OpenAIModelName = field(repr=False)
     _provider: Provider[AsyncOpenAI] = field(repr=False)
@@ -1953,6 +1977,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         self._provider = provider
 
         super().__init__(settings=settings, profile=profile)
+
+        _preload_openai_sdk_resource_modules(self, self._provider.client)
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -2091,9 +2117,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `standing_prompt_retained=False` (here and in the mapping below): blob-of-blob retention
         # decayed in probing, so the window sent for re-compaction plants the standing prompt
         # explicitly rather than relying on the previous compaction item to carry it forward.
-        messages = _trim_messages_before_compaction(
-            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=False
-        )
+        messages = self._trim_before_compaction(messages, standing_prompt_retained=False)
         instructions, openai_messages = await self._map_messages(
             messages,
             model_settings,
@@ -2535,9 +2559,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # `_resolve_server_side_state`, which recovers conversation/response IDs from responses the
         # trim would drop; `_map_messages` applies the same idempotent trim to whatever slice that
         # resolution hands it.
-        trimmed_messages = _trim_messages_before_compaction(
-            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=True
-        )
+        trimmed_messages = self._trim_before_compaction(messages)
         # Call-time import mirroring `models/__init__.py`'s `_tool_search` import: the toolsets
         # package imports `messages` while adapters load, so a module-level import would cycle.
         from ..toolsets._tool_search import parse_discovered_tools
@@ -3192,9 +3214,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # window's leading `system` items (single hop, live-verified), so re-sending them would
         # duplicate the standing prompt. The re-compaction path passes `False`: retention decayed
         # across a second compaction in probing, so each freshly built window plants it explicitly.
-        messages = _trim_messages_before_compaction(
-            messages, self.system, requires_encrypted_content=True, standing_prompt_retained=standing_prompt_retained
-        )
+        messages = self._trim_before_compaction(messages, standing_prompt_retained=standing_prompt_retained)
         profile = self.profile
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)

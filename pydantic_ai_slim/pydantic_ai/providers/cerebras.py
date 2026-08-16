@@ -7,25 +7,25 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import zai_model_profile
-from pydantic_ai.providers import Provider
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Cerebras provider, '
         'you can use the `cerebras` optional group — `pip install "pydantic-ai-slim[cerebras]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 
-class CerebrasProvider(Provider[AsyncOpenAI]):
+class CerebrasProvider(_OpenAICompatibleProvider):
     """Provider for Cerebras API."""
 
     @property
@@ -130,17 +130,7 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
 
         if openai_client is not None:
             self._client = openai_client
-        elif http_client is not None:
-            self._client = AsyncOpenAI(
-                base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
-            )
         else:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(
+            self._client = self._create_openai_client(
                 base_url=self.base_url, api_key=api_key, http_client=http_client, default_headers=default_headers
             )
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]

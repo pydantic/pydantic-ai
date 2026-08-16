@@ -13,6 +13,13 @@ You need to either install [`pydantic-ai`](../install.md), or [`pydantic-ai-slim
 pip/uv-add "pydantic-ai-slim[mcp]"
 ```
 
+!!! note "FastMCP 4 preview"
+    FastMCP 4 is currently a pre-release and must be installed explicitly. `MCPToolset` supports it,
+    but its modern protocol mode does not support server-initiated sampling or elicitation, and
+    cannot apply `log_level`. `MCPToolset` warns when these options are configured; filter logs in
+    `log_handler` instead. For these options, FastMCP 4's legacy protocol mode retains the
+    FastMCP 3 behavior.
+
 ## Usage
 
 An [`MCPToolset`][pydantic_ai.mcp.MCPToolset] accepts any of the following as its first positional argument:
@@ -358,7 +365,7 @@ MCP tools can include metadata that provides additional information about the to
 | `"optional"` | Calls with `task=True` by default. Set [`prefer_tasks=False`][pydantic_ai.mcp.MCPToolset.prefer_tasks] to call normally instead. |
 | `"forbidden"` or absent | Calls normally. |
 
-The newer MCP [Tasks extension](https://tasks.extensions.modelcontextprotocol.io/seps/2663-tasks-extension) (SEP-2663) uses server-directed task creation instead, so this client-side preference does not apply.
+FastMCP 4 uses the newer MCP [Tasks extension](https://tasks.extensions.modelcontextprotocol.io/seps/2663-tasks-extension) (SEP-2663), where the server directs task creation. The `task` metadata and `prefer_tasks` client preference above therefore apply to FastMCP 3, not FastMCP 4. An ordinary call drives a task-only tool to completion with nothing extra installed; explicitly selecting the tasks extension with `use_task=True` requires the separate `fastmcp-tasks` package, available via the `mcp-tasks` optional group: `pip install "pydantic-ai-slim[mcp-tasks]"`.
 
 For [FastMCP 3](https://gofastmcp.com/v3/servers/tasks) servers, install the tasks extra with
 `pip install "fastmcp[tasks]>=3,<4"` and declare task support per tool with

@@ -503,6 +503,68 @@ async def test_on_run_error_recovers_session_error() -> None:
     assert session.result.output == 'error hook recovered'
 
 
+async def test_on_run_error_recovers_connect_failure() -> None:
+    """A recovered *pre-session* failure (connecting) yields a closed session carrying the result.
+
+    The lifecycle hooks suppress the connect error before any session was yielded; without the
+    recovery yield in `_open_realtime_session`, `asynccontextmanager` would turn that clean exit
+    into `RuntimeError: generator didn't yield` and defeat the documented run-error recovery.
+    """
+
+    class _FailingConnectModel(_RecordingModel):
+        @asynccontextmanager
+        async def connect(
+            self,
+            *,
+            messages: Sequence[ModelMessage],
+            model_settings: RealtimeModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> AsyncGenerator[RealtimeConnection]:
+            raise RuntimeError('connect failed')
+            yield  # pragma: no cover
+
+    class RecoveryCapability(AbstractCapability[None]):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            assert str(error) == 'connect failed'
+            return AgentRunResult(output='recovered before connecting')
+
+    agent = Agent(capabilities=[RecoveryCapability()], deps_type=type(None))
+
+    async with agent.realtime(_FailingConnectModel()).session() as session:
+        # No connection was ever opened, so the recovered session is yielded closed.
+        with pytest.raises(UserError, match='session is closed'):
+            await session.send('hello')
+
+    assert session.result is not None
+    assert session.result.output == 'recovered before connecting'
+
+
+async def test_on_run_error_recovers_toolset_enter_failure() -> None:
+    """A recovered failure *during resolution* (entering the toolset) also yields a closed session.
+
+    This error fires inside `_resolve_realtime_session` after the lifecycle hooks are entered but
+    before the resolution is yielded, exercising the resolver's own recovery yield.
+    """
+
+    class _FailingToolset(FunctionToolset[None]):
+        async def __aenter__(self) -> _FailingToolset:
+            raise RuntimeError('toolset failed')
+
+    class RecoveryCapability(AbstractCapability[None]):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            assert str(error) == 'toolset failed'
+            return AgentRunResult(output='recovered before resolving')
+
+    agent = Agent(capabilities=[RecoveryCapability()], toolsets=[_FailingToolset()], deps_type=type(None))
+
+    async with agent.realtime(_RecordingModel()).session() as session:
+        with pytest.raises(UserError, match='session is closed'):
+            await session.send('hello')
+
+    assert session.result is not None
+    assert session.result.output == 'recovered before resolving'
+
+
 async def test_unrecovered_session_error_propagates() -> None:
     """A session error still propagates unchanged when no run hook recovers it."""
     agent = Agent(deps_type=type(None))
@@ -546,6 +608,33 @@ async def test_wrap_run_short_circuits_before_session_connects() -> None:
         assert session.result.output == 'short-circuited'
 
     assert model.instructions is None
+
+
+async def test_short_circuit_then_recovered_caller_error_exits_cleanly() -> None:
+    """A caller-body error after a `wrap_run` short-circuit, recovered by `on_run_error`, exits cleanly.
+
+    The short-circuit path yields a closed session without connecting; if the caller then raises and
+    `on_run_error` recovers, the lifecycle hooks suppress the error. Without the `yielded` guard on the
+    short-circuit yields, `_resolve_realtime_session`/`_open_realtime_session` would resume past their
+    exit stacks and yield a second time, which `asynccontextmanager` reports as
+    `RuntimeError: generator didn't stop after athrow()`.
+    """
+
+    class ShortCircuitThenRecoverCapability(AbstractCapability[None]):
+        async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+            return AgentRunResult(output='short-circuited')
+
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            assert str(error) == 'caller failed'
+            return AgentRunResult(output='recovered after short-circuit')
+
+    agent = Agent(capabilities=[ShortCircuitThenRecoverCapability()], deps_type=type(None))
+
+    async with agent.realtime(_RecordingModel()).session() as session:
+        assert session.closed
+        raise RuntimeError('caller failed')
+
+    assert session.result is not None
 
 
 async def test_wrap_run_context_is_ambient_throughout_session() -> None:
