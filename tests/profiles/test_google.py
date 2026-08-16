@@ -243,3 +243,14 @@ def test_model_profile_minimal_thinking_level_supported_by_default():
     profile = google_model_profile('gemini-3.0-pro')
     assert profile is not None
     assert profile.get('google_supports_minimal_thinking_level', True) is True
+
+
+def test_model_profile_dated_variant_ids_disable_minimal_thinking_level():
+    """Dated/variant model IDs should disable MINIMAL like their bare IDs (prefix matching)."""
+    profile = google_model_profile('gemini-3-pro-preview-11-2025')
+    assert profile is not None
+    assert profile.get('google_supports_minimal_thinking_level', True) is False
+
+    profile = google_model_profile('gemini-3.7-flash-preview-08-2026')
+    assert profile is not None
+    assert profile.get('google_supports_minimal_thinking_level', True) is False
