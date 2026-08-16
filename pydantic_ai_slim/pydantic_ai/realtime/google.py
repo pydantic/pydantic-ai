@@ -328,6 +328,8 @@ def _ws_connect_lock() -> Lock:
 # yet: a Live-API model whose documented thinking levels start at `low` (e.g. the Gemini 3.x names in
 # `_MODELS_WITHOUT_MINIMAL_THINKING_LEVEL`) would reject `thinking_level='MINIMAL'` here too —
 # revisit with a gated LOW fallback like `GoogleModel._translate_thinking` if such a model ships.
+# That revisit must gate both branches below: `thinking=False` sends `thinking_budget=0` here, while
+# `_translate_thinking` now falls back to `thinking_level='LOW'` for the same input.
 def _thinking_to_config(thinking: ThinkingLevel) -> genai_types.ThinkingConfig:
     """Map the unified `thinking` setting to a Gemini `ThinkingConfig`."""
     if thinking is False:
