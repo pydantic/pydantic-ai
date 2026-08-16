@@ -463,6 +463,16 @@ async def test_span_tree_ancestors_methods():
         {'no_ancestor_has': {'name_matches_regex': 'root'}, 'stop_recursing_when': {'name_equals': 'level1'}}
     )
 
+    # Pruned results are reused by each recursive condition and must be reusable
+    # collections rather than one-shot generators.
+    assert not leaf_node.matches(
+        {
+            'all_ancestors_have': {'name_matches_regex': 'level|root'},
+            'no_ancestor_has': {'name_equals': 'root'},
+            'stop_recursing_when': {'name_equals': 'never'},
+        }
+    )
+
 
 async def test_span_tree_descendants_methods():
     """Test the descendant traversal methods in SpanNode."""
