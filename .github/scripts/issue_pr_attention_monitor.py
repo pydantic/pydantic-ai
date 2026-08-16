@@ -660,7 +660,7 @@ def apply_decisions(client: GitHubClient, repo: str, output_path: str, snapshot_
                 continue
             mentions = ' '.join(f'@{login}' for login in recipients)
             lines.append(f'#{number}: requested maintainer attention from {mentions}')
-        except (urllib.error.HTTPError, RuntimeError) as exc:
+        except (urllib.error.URLError, RuntimeError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')
@@ -1063,7 +1063,7 @@ def reconcile(
                 lines.append(line)
                 if notice is not None and notices is not None:
                     notices.append(notice)
-        except (urllib.error.HTTPError, RuntimeError, ValueError) as exc:
+        except (urllib.error.URLError, RuntimeError, ValueError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')
@@ -1088,7 +1088,7 @@ def reconcile(
         try:
             if line := _sweep_escalated_item(client, repo, number):
                 lines.append(line)
-        except (urllib.error.HTTPError, RuntimeError, ValueError) as exc:
+        except (urllib.error.URLError, RuntimeError, ValueError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')
@@ -1299,7 +1299,7 @@ def finalize_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRe
         try:
             if line := _finalize_notice(client, repo, notice, now=now):
                 lines.append(line)
-        except (urllib.error.HTTPError, RuntimeError) as exc:
+        except (urllib.error.URLError, RuntimeError) as exc:
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')

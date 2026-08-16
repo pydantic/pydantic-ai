@@ -86,7 +86,6 @@ from . import (
     StreamedResponse,
     ToolVisibility,
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
-    _trim_messages_before_compaction,  # pyright: ignore[reportPrivateUsage]
     _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -563,6 +562,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     supported_tool_deferral_modes = frozenset({'standalone'})
     supported_tool_addition_modes = frozenset({'by_reference'})
+    # The API ignores (and doesn't bill) blocks before a compaction block, so the trim only saves
+    # request size here — but it also keeps a `tool_result` whose `tool_use` was trimmed away from
+    # 400ing, since validation runs even on ignored content.
+    #
+    # Both declarations match the inherited defaults, restated because they're what makes this
+    # adapter's trim correct rather than an accident: the summary is plaintext message content, so
+    # there is no encrypted blob to require, and the standing prompt travels in the top-level
+    # `system` parameter, rebuilt from the opening `SystemPromptPart`s on every request, so the trim
+    # has to re-insert them.
+    compaction_requires_encrypted_content = False
+    compaction_retains_standing_prompt = False
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
@@ -1623,7 +1633,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
-        messages = _trim_messages_before_compaction(messages, self.system)
+        messages = self._trim_before_compaction(messages)
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
         # Cross-provider files are dropped silently here, not raised via

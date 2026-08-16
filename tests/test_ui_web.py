@@ -5,12 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import AsyncIterator
+import threading
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, Literal
 from unittest.mock import AsyncMock
 
+import anyio
+import anyio.to_thread
 import pytest
 
 from pydantic_ai import Agent, ModelSettings
@@ -34,6 +37,7 @@ with try_import() as starlette_import_successful:
     from starlette.applications import Starlette
     from starlette.responses import Response
     from starlette.testclient import TestClient
+    from starlette.websockets import WebSocket, WebSocketDisconnect
 
     import pydantic_ai.ui._web.app as app_module
     from pydantic_ai.native_tools import WebSearchTool
@@ -47,6 +51,18 @@ with try_import() as openai_import_successful:
 pytestmark = [
     pytest.mark.skipif(not starlette_import_successful(), reason='starlette not installed'),
 ]
+
+# The app only answers to a `Host` header that is an IP address or `localhost`, so `TestClient`'s
+# default `http://testserver` gets a `421`. Every client below stands in for a browser pointed at
+# the loopback address the UI actually runs on; `test_host_validation` covers the rest.
+LOCAL_BASE_URL = 'http://127.0.0.1:7932'
+
+
+def _fake_cache_dir(path: Path) -> Callable[[], Awaitable[Path]]:
+    async def get_cache_dir() -> Path:
+        return path
+
+    return get_cache_dir
 
 
 def test_agent_to_web():
@@ -82,7 +98,7 @@ async def test_model_instance_preserved_in_dispatch(monkeypatch: pytest.MonkeyPa
     mock_dispatch = AsyncMock(return_value=Response(content=b'', status_code=200))
     monkeypatch.setattr(VercelAIAdapter, 'dispatch_request', mock_dispatch)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         client.post(
             '/api/chat',
             json={
@@ -134,7 +150,7 @@ def test_chat_app_health_endpoint():
     agent = Agent('test')
     app = create_web_app(agent)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response = client.get('/api/health')
         assert response.status_code == 200
         assert response.json() == {'ok': True}
@@ -150,7 +166,7 @@ def test_chat_app_configure_endpoint():
         native_tools=[WebSearchTool()],
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response = client.get('/api/configure')
         assert response.status_code == 200
         assert response.json() == snapshot(
@@ -169,7 +185,7 @@ def test_chat_app_configure_endpoint_empty():
     agent = Agent('test')
     app = create_web_app(agent)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response = client.get('/api/configure')
         assert response.status_code == 200
         assert response.json() == snapshot(
@@ -185,7 +201,7 @@ def test_chat_app_preserves_capability_resolved_model_id():
     )
     app = create_web_app(agent, models=['test'], native_tools=[WebSearchTool()])
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response = client.get('/api/configure')
         assert response.status_code == 200
         assert response.json() == snapshot(
@@ -218,7 +234,7 @@ def test_chat_app_configure_preserves_chat_vs_responses(monkeypatch: pytest.Monk
         models=['openai-chat:gpt-4o', 'openai-responses:gpt-4o'],
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response = client.get('/api/configure')
         assert response.status_code == 200
         data = response.json()
@@ -267,7 +283,7 @@ def isolated_ui_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     per-test isolation, tests that serve `/` race on the same file across xdist workers
     (a non-atomic write being read mid-write), and miss the cache into a real CDN request.
     """
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
     _stub_cdn_fetch(monkeypatch, b'<html>Test UI</html>')
 
 
@@ -276,7 +292,7 @@ def test_chat_app_index_endpoint(isolated_ui_cache: None):
     agent = Agent('test')
     app = create_web_app(agent)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response = client.get('/')
         assert response.status_code == 200
         assert response.headers['content-type'] == 'text/html; charset=utf-8'
@@ -288,7 +304,7 @@ def test_chat_app_index_endpoint(isolated_ui_cache: None):
 @pytest.mark.anyio
 async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html fetches from CDN when filesystem cache misses."""
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
 
     test_content = b'<html>Test UI</html>'
     _stub_cdn_fetch(monkeypatch, test_content)
@@ -304,7 +320,7 @@ async def test_get_ui_html_cdn_fetch(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 @pytest.mark.anyio
 async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html returns cached content from filesystem."""
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
 
     test_content = b'<html>Cached UI</html>'
     cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
@@ -315,7 +331,8 @@ async def test_get_ui_html_filesystem_cache_hit(monkeypatch: pytest.MonkeyPatch,
     assert result == test_content
 
 
-def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+@pytest.mark.anyio
+async def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """`_get_cache_dir` derives its path from `XDG_CACHE_HOME` and creates the directory.
 
     The index-route tests monkeypatch `_get_cache_dir` for isolation, so this is the only
@@ -323,7 +340,7 @@ def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_
     """
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path))
 
-    cache_dir = app_module._get_cache_dir()  # pyright: ignore[reportPrivateUsage]
+    cache_dir = await app_module._get_cache_dir()  # pyright: ignore[reportPrivateUsage]
 
     assert cache_dir == tmp_path / 'pydantic-ai' / 'web-ui'
     assert cache_dir.is_dir()
@@ -331,7 +348,7 @@ def test_get_cache_dir_uses_xdg_cache_home(monkeypatch: pytest.MonkeyPatch, tmp_
 
 @pytest.mark.anyio
 async def test_get_ui_html_refetches_empty_cache_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
 
     cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
     cache_file.write_bytes(b'')
@@ -415,7 +432,7 @@ async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch
     deterministically (no timing/threads) that the destination materializes only through the atomic
     rename, and that the rename source already holds the complete content.
     """
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
 
     full_content = b'<html>complete UI document</html>'
     _stub_cdn_fetch(monkeypatch, full_content)
@@ -439,12 +456,66 @@ async def test_get_ui_html_cache_write_is_atomic(monkeypatch: pytest.MonkeyPatch
     assert replaced_targets == [cache_file]
 
 
+@pytest.mark.anyio
+async def test_cache_read_and_write_do_not_overlap_on_windows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """A reader holds the cache lock until it closes, before a writer replaces the destination."""
+    cache_file = tmp_path / f'{app_module.CHAT_UI_VERSION}.html'
+    cache_file.write_bytes(b'old content')
+    reader_open = threading.Event()
+    release_reader = threading.Event()
+    writer_attempted = threading.Event()
+    real_read_bytes = Path.read_bytes
+    real_replace = app_module.os.replace
+
+    def blocked_read_bytes(path: Path) -> bytes:
+        assert path == cache_file
+        reader_open.set()
+        try:
+            release_reader.wait()
+            return real_read_bytes(path)
+        finally:
+            reader_open.clear()
+
+    def windows_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        assert not reader_open.is_set(), 'The cache file must be closed before it is replaced'
+        real_replace(src, dst)
+
+    class InstrumentedLock:
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+
+        def __enter__(self) -> None:
+            if reader_open.is_set():
+                writer_attempted.set()
+            self._lock.acquire()
+
+        def __exit__(self, *args: object) -> None:
+            self._lock.release()
+
+    async def write_cache() -> None:
+        await anyio.to_thread.run_sync(app_module._write_cached_file, cache_file, b'new content')  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(Path, 'read_bytes', blocked_read_bytes)
+    monkeypatch.setattr(app_module.os, 'replace', windows_replace)
+    monkeypatch.setattr(app_module, '_CACHE_FILE_LOCK', InstrumentedLock())
+
+    with anyio.fail_after(1):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(anyio.to_thread.run_sync, app_module._read_cached_file, cache_file)  # pyright: ignore[reportPrivateUsage]
+            await anyio.to_thread.run_sync(reader_open.wait)
+            tg.start_soon(write_cache)
+            await anyio.to_thread.run_sync(writer_attempted.wait)
+            release_reader.set()
+
+    assert cache_file.read_bytes() == b'new content'
+
+
 def test_chat_app_index_caching(isolated_ui_cache: None):
     """Test that the UI HTML is cached after first fetch."""
     agent = Agent('test')
     app = create_web_app(agent)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response1 = client.get('/')
         response2 = client.get('/')
 
@@ -459,7 +530,7 @@ async def test_post_chat_endpoint():
     agent = Agent(TestModel(custom_output_text='Hello from test!'))
     app = create_web_app(agent)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response = client.post(
             '/api/chat',
             json={
@@ -516,7 +587,7 @@ async def test_post_chat_streams_tool_approval(allow_model_requests: None, sdk_v
 
     app = create_web_app(agent) if sdk_version is None else create_web_app(agent, sdk_version=sdk_version)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response = client.post(
             '/api/chat',
             json={
@@ -552,7 +623,7 @@ def test_chat_app_options_endpoint():
     agent = Agent('test')
     app = create_web_app(agent)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response = client.options('/api/chat')
         assert response.status_code == 200
         assert not any(name.lower().startswith('access-control-') for name in response.headers)
@@ -594,7 +665,7 @@ def test_chat_rejects_non_json_content_type(content_type: str | None, monkeypatc
     )
     headers = {'content-type': content_type} if content_type is not None else {}
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response = client.post('/api/chat', content=body, headers=headers)
 
     assert response.status_code == 415
@@ -623,10 +694,215 @@ def test_chat_accepts_json_content_type(content_type: str):
         }
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response = client.post('/api/chat', content=body, headers={'content-type': content_type})
 
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    'host',
+    [
+        pytest.param('127.0.0.1:7932', id='loopback-ipv4'),
+        pytest.param('[::1]:7932', id='loopback-ipv6'),
+        # Bracketed IPv6 is the case a `host.split(':')[0]` check mangles into `[`.
+        pytest.param('[2001:db8::1]', id='ipv6-no-port'),
+        # Any IP literal, not just a loopback one: reaching a dev server over the LAN or a forwarded
+        # port is normal, and no IP literal can be the product of DNS rebinding.
+        pytest.param('192.168.1.5:7932', id='lan-ipv4'),
+        pytest.param('localhost:7932', id='localhost'),
+        # RFC 6761 reserves everything under `.localhost` for the loopback interface too.
+        pytest.param('my-app.localhost:7932', id='localhost-subdomain'),
+        # A browser navigating to `http://localhost./` keeps the root dot in the `Host` header, so
+        # the fully-qualified spelling of every accepted name has to be accepted as well.
+        pytest.param('localhost.:7932', id='localhost-fully-qualified'),
+        pytest.param('my-app.localhost.:7932', id='localhost-subdomain-fully-qualified'),
+        pytest.param('127.0.0.1.:7932', id='ipv4-fully-qualified'),
+    ],
+)
+def test_host_validation_accepts_local_hosts(host: str):
+    """The ways a developer actually reaches the UI all still work."""
+    app = create_web_app(Agent('test'))
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/api/health', headers={'host': host})
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    'host',
+    [
+        # What a browser sends once `evil.example` has been rebound to 127.0.0.1.
+        pytest.param('evil.example:7932', id='rebound-hostname'),
+        pytest.param('EVIL.EXAMPLE', id='uppercase-hostname'),
+        # Registrable names that contain `localhost` without being under it. These are what a
+        # substring test would wave through where the label-boundary test doesn't, so they pin the
+        # `.localhost` suffix check against being loosened.
+        pytest.param('localhost.evil.example', id='localhost-as-leading-label'),
+        pytest.param('evil-localhost.example', id='localhost-inside-a-label'),
+        # `localhost..` denotes no host at all; only one root dot is stripped.
+        pytest.param('localhost..', id='localhost-double-root-dot'),
+        # `urlsplit` reads userinfo and a path, so without rejecting these outright they would parse
+        # as the loopback address that follows the delimiter.
+        pytest.param('evil.example@127.0.0.1', id='userinfo-smuggled'),
+        pytest.param('127.0.0.1/evil.example', id='path-smuggled'),
+        pytest.param('127.0.0.1?evil.example', id='query-smuggled'),
+        pytest.param('127.0.0.1#evil.example', id='fragment-smuggled'),
+        # Not parsable as a host at all: `urlsplit` raises on both.
+        pytest.param('[::1', id='unterminated-ipv6'),
+        pytest.param('[not-an-address]', id='bracketed-non-address'),
+        pytest.param('', id='no-host-header'),
+    ],
+)
+def test_host_validation_rejects_foreign_hosts(host: str):
+    """Anything that isn't demonstrably local is refused, including near-misses that parse loosely."""
+    app = create_web_app(Agent('test'))
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/api/health', headers={'host': host})
+
+    assert response.status_code == 421
+    assert 'is not allowed' in response.text
+    # The message quotes the client's `Host` back at it, so it must not be sniffable as markup.
+    assert response.headers['x-content-type-options'] == 'nosniff'
+
+
+def test_host_validation_blocks_the_rebinding_attack_before_the_agent_runs(monkeypatch: pytest.MonkeyPatch):
+    """A fully browser-legal rebound request never reaches the agent.
+
+    This is the whole point of the check. DNS rebinding makes the browser treat the attacker's page
+    and the local UI as the same origin, so the request carries `Content-Type: application/json`
+    and a matching `Origin` — everything the CSRF defence looks at is satisfied, and only the `Host`
+    header still names the attacker. Asserting the status alone would be too weak: the attacker
+    never needs to read the response, so what matters is that nothing runs.
+
+    A unit test rather than a VCR one because the check runs before any model request, so there is
+    no HTTP traffic to record.
+    """
+    mock_from_request = AsyncMock(side_effect=AssertionError('adapter should not be built'))
+    monkeypatch.setattr(VercelAIAdapter, 'from_request', mock_from_request)
+    app = create_web_app(Agent(TestModel()))
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.post(
+            '/api/chat',
+            json={
+                'trigger': 'submit-message',
+                'id': 'test-id',
+                'messages': [{'id': 'msg-1', 'role': 'user', 'parts': [{'type': 'text', 'text': 'Hello'}]}],
+            },
+            headers={'host': 'evil.example:7932', 'origin': 'http://evil.example:7932'},
+        )
+
+    assert response.status_code == 421
+    assert mock_from_request.call_count == 0
+
+
+@pytest.mark.parametrize(
+    ('host', 'allowed'),
+    [
+        pytest.param('ui.example.com', True, id='exact'),
+        pytest.param('UI.EXAMPLE.COM', True, id='exact-uppercase'),
+        pytest.param('ui.example.com.', True, id='exact-fully-qualified'),
+        pytest.param('a.corp.example', True, id='wildcard-subdomain'),
+        pytest.param('a.b.corp.example', True, id='wildcard-nested-subdomain'),
+        # `*.corp.example` means subdomains only, as it does in Starlette's `TrustedHostMiddleware`.
+        # A deployment that serves the apex lists it separately.
+        pytest.param('corp.example', False, id='wildcard-does-not-cover-apex'),
+        pytest.param('notcorp.example', False, id='wildcard-suffix-not-a-subdomain'),
+        # The allowlisted domain appears in the middle of an attacker-registrable name. Only a
+        # suffix test rejects this; a substring test would not.
+        pytest.param('a.corp.example.evil', False, id='wildcard-domain-not-at-the-end'),
+        pytest.param('evil.example', False, id='not-listed'),
+    ],
+)
+def test_host_validation_honours_allowed_hosts(host: str, allowed: bool):
+    """`allowed_hosts` is what a deployment behind a proxy or a tunnel reaches for."""
+    app = create_web_app(Agent('test'), allowed_hosts=['ui.example.com', '*.corp.example'])
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/api/health', headers={'host': host})
+
+    assert response.status_code == (200 if allowed else 421)
+
+
+@pytest.mark.parametrize('host', ['ui.example.com', 'a.corp.example'])
+def test_host_validation_normalizes_configured_hosts(host: str):
+    """Entries are normalized the same way an incoming `Host` is, so casing and a root dot don't matter.
+
+    Without this, `allowed_hosts=['UI.Example.COM.']` would silently never match: the header is
+    lowercased and stripped of its root dot before comparison, and the configured value wasn't.
+    """
+    app = create_web_app(Agent('test'), allowed_hosts=['UI.Example.COM.', '*.CORP.example.'])
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/api/health', headers={'host': host})
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    'pattern',
+    [
+        # The dangerous one: normalizing away the root dot would leave `*`, the sentinel that
+        # accepts every host, so a typo would silently turn the whole check off.
+        pytest.param('*.', id='wildcard-with-no-domain'),
+        pytest.param('*..', id='wildcard-with-only-dots'),
+        # Matches nothing, since a `Host` header can't contain `*` — accepting it would leave the
+        # user believing they had allowlisted something.
+        pytest.param('*example.com', id='wildcard-without-a-label-boundary'),
+    ],
+)
+def test_host_validation_rejects_malformed_patterns(pattern: str):
+    """A malformed `allowed_hosts` entry fails loudly instead of quietly meaning something else."""
+    with pytest.raises(UserError, match='Invalid `allowed_hosts` pattern'):
+        create_web_app(Agent('test'), allowed_hosts=[pattern])
+
+
+def test_host_validation_can_be_turned_off():
+    """`['*']` is the documented escape hatch for someone who has their own authentication."""
+    app = create_web_app(Agent('test'), allowed_hosts=['*'])
+
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        response = client.get('/api/health', headers={'host': 'evil.example'})
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(('host', 'accepted'), [('127.0.0.1:7932', True), ('evil.example:7932', False)])
+def test_host_validation_covers_websocket_routes(host: str, accepted: bool):
+    """A WebSocket route added to the app is guarded too, rather than bypassing the check.
+
+    The app ships no WebSocket routes today, so this adds one: the middleware wraps the whole app,
+    and a route that silently escaped the check would be a hole the day one is added.
+    """
+
+    reached_endpoint = False
+
+    async def endpoint(websocket: WebSocket) -> None:
+        nonlocal reached_endpoint
+        reached_endpoint = True
+        await websocket.accept()
+        await websocket.close()
+
+    app = create_web_app(Agent('test'))
+    app.router.add_websocket_route('/ws', endpoint)
+
+    disconnect_code: int | None = None
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
+        try:
+            with client.websocket_connect('/ws', headers={'host': host}):
+                pass
+        except WebSocketDisconnect as exc:
+            disconnect_code = exc.code
+
+    assert reached_endpoint is accepted
+    # `disconnect_code` is the ASGI `websocket.close` message the middleware sends, which `TestClient`
+    # surfaces directly. It is not what a client sees: closing before accepting means the handshake
+    # never completes, so a real ASGI server refuses it at the HTTP layer instead (uvicorn: `403`).
+    # What this pins is that the connection is refused and the endpoint never runs.
+    assert disconnect_code == (None if accepted else 1008)
 
 
 def test_mcp_server_tool_label():
@@ -664,7 +940,7 @@ def test_post_chat_invalid_model():
     # Use 'test' as the allowed model, then send a different model in the request
     app = create_web_app(agent, models=['test'])
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response = client.post(
             '/api/chat',
             json={
@@ -691,7 +967,7 @@ def test_post_chat_invalid_builtin_tool():
     agent = Agent(TestModel(custom_output_text='Hello'))
     app = create_web_app(agent, native_tools=[WebSearchTool()])
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         response = client.post(
             '/api/chat',
             json={
@@ -738,7 +1014,7 @@ async def test_instructions_passed_to_dispatch(monkeypatch: pytest.MonkeyPatch):
     mock_dispatch = AsyncMock(return_value=Response(content=b'', status_code=200))
     monkeypatch.setattr(VercelAIAdapter, 'dispatch_request', mock_dispatch)
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL) as client:
         client.post(
             '/api/chat',
             json={
@@ -765,7 +1041,7 @@ async def test_instructions_passed_to_dispatch(monkeypatch: pytest.MonkeyPatch):
 @pytest.mark.anyio
 async def test_get_ui_html_custom_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html fetches from custom URL when provided."""
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
 
     test_content = b'<html>Custom CDN UI</html>'
     captured_url: list[str] = []
@@ -801,7 +1077,7 @@ async def test_get_ui_html_custom_url(monkeypatch: pytest.MonkeyPatch, tmp_path:
 @pytest.mark.anyio
 async def test_get_ui_html_custom_url_caching(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that custom URLs are cached to filesystem and not re-fetched."""
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: tmp_path)
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(tmp_path))
 
     test_content = b'<html>Cached Custom UI</html>'
     fetch_count = _stub_cdn_fetch(monkeypatch, test_content)
@@ -860,6 +1136,33 @@ async def test_get_ui_html_local_file_path_instance(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.anyio
+async def test_get_ui_html_local_file_cancellation_waits_for_file_operation(monkeypatch: pytest.MonkeyPatch):
+    """Cancelling a local-file request does not abandon its active worker-thread operation."""
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def blocking_read(path: Path) -> bytes:
+        entered.set()
+        release.wait()
+        finished.set()
+        return b'<html>UI</html>'
+
+    monkeypatch.setattr(app_module, '_read_local_file_sync', blocking_read)
+    timer = threading.Timer(0.1, release.set)
+    timer.start()
+    try:
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(app_module._read_local_file, Path('ui.html'))  # pyright: ignore[reportPrivateUsage]
+            await anyio.to_thread.run_sync(entered.wait)
+            tg.cancel_scope.cancel()
+    finally:
+        timer.cancel()
+
+    assert finished.is_set()
+
+
+@pytest.mark.anyio
 async def test_get_ui_html_local_file_not_found(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Test that _get_ui_html raises FileNotFoundError for missing local file paths."""
     # Try to use a non-existent local file path
@@ -867,6 +1170,14 @@ async def test_get_ui_html_local_file_not_found(monkeypatch: pytest.MonkeyPatch,
 
     with pytest.raises(FileNotFoundError, match='Local UI file not found'):
         await app_module._get_ui_html(html_source=nonexistent_path)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.anyio
+async def test_get_ui_html_local_file_not_found_preserves_user_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv('HOME', str(tmp_path))
+
+    with pytest.raises(FileNotFoundError, match=r'Local UI file not found: ~/missing-ui.html'):
+        await app_module._get_ui_html(html_source='~/missing-ui.html')  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.anyio
@@ -885,7 +1196,7 @@ def test_chat_app_index_file_not_found(tmp_path: Path):
     nonexistent_file = tmp_path / 'nonexistent-ui.html'
     app = create_web_app(agent, html_source=str(nonexistent_file))
 
-    with TestClient(app, raise_server_exceptions=True) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL, raise_server_exceptions=True) as client:
         with pytest.raises(FileNotFoundError, match='Local UI file not found'):
             client.get('/')
 
@@ -909,11 +1220,11 @@ def test_chat_app_index_http_error(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(app_module.httpx, 'AsyncClient', MockAsyncClient)
     # Use a fresh temp dir so there's no cached file
-    monkeypatch.setattr(app_module, '_get_cache_dir', lambda: Path('/tmp/nonexistent-cache-dir-for-test'))
+    monkeypatch.setattr(app_module, '_get_cache_dir', _fake_cache_dir(Path('/tmp/nonexistent-cache-dir-for-test')))
 
     agent = Agent('test')
     app = create_web_app(agent)
 
-    with TestClient(app, raise_server_exceptions=True) as client:
+    with TestClient(app, base_url=LOCAL_BASE_URL, raise_server_exceptions=True) as client:
         with pytest.raises(httpx.HTTPStatusError):
             client.get('/')

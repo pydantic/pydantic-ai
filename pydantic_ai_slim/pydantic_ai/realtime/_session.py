@@ -1924,6 +1924,13 @@ class RealtimeSession:
         events = self._finalize_lost_state()
         if lost_in_flight:
             event = replace(event, state_restored=False)
+        if not event.state_restored:
+            # The reconnect cut whatever was playing: the in-flight response (if any) is settled as
+            # interrupted above, and even a finalized response's audio won't resume on the fresh
+            # connection. End the `speak` span so it measures only what was actually audible, rather
+            # than running until session close or being merged into the next utterance
+            # (`start_playback_span` no-ops while a span is already open). No-op off a sideband.
+            self._session_instrumentation.end_playback_span()
         return [*events, event]
 
     def _finalize_lost_state(self) -> list[RealtimeEvent]:

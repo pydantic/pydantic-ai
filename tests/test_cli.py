@@ -31,6 +31,12 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
 
+@pytest.fixture
+def blockbuster_excluded_modules() -> tuple[str, ...]:
+    """The CLI owns intentionally synchronous terminal and history operations."""
+    return ('pydantic_ai._cli',)
+
+
 @pytest.fixture(autouse=True)
 def reset_sniffio_cvar() -> Iterator[None]:
     # The anyio pytest plugin sets `current_async_library_cvar` to 'asyncio' at session
@@ -577,6 +583,7 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
         instructions=None,
         default_model='openai:gpt-5',
         html_source=None,
+        allowed_hosts=[],
     )
 
 
@@ -599,6 +606,7 @@ def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..
         instructions=None,
         default_model='openai:gpt-5',
         html_source=None,
+        allowed_hosts=[],
     )
 
 
@@ -636,6 +644,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
         instructions=None,
         default_model='openai:gpt-5',
         html_source=None,
+        allowed_hosts=[],
     )
 
 
@@ -664,6 +673,7 @@ def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable
         instructions=None,
         default_model='openai:gpt-5',
         html_source=None,
+        allowed_hosts=[],
     )
 
 
@@ -684,6 +694,7 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
         instructions='You are a helpful coding assistant',
         default_model='openai:gpt-5',
         html_source=None,
+        allowed_hosts=[],
     )
 
 
@@ -710,6 +721,7 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
         instructions=None,
         default_model='openai:gpt-5',
         html_source=None,
+        allowed_hosts=[],
     )
 
 
@@ -1012,4 +1024,42 @@ def test_clai_web_with_html_source(mocker: MockerFixture, env: TestEnv):
         instructions=None,
         default_model='openai:gpt-5',
         html_source=custom_url,
+        allowed_hosts=[],
     )
+
+
+def test_clai_web_with_allowed_hosts(mocker: MockerFixture, env: TestEnv):
+    """`--allowed-host` is repeatable, for serving the UI under a name behind a proxy or a tunnel."""
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_web = mocker.patch('pydantic_ai._cli.web.run_web_command', return_value=0)
+
+    args = ['web', '-m', 'openai:gpt-5', '--allowed-host', 'ui.example.com', '--allowed-host', '*.corp.example']
+    assert cli(args, prog_name='clai') == 0
+
+    mock_run_web.assert_called_once_with(
+        agent_path=None,
+        host='127.0.0.1',
+        port=7932,
+        models=['openai:gpt-5'],
+        tools=[],
+        instructions=None,
+        default_model='openai:gpt-5',
+        html_source=None,
+        allowed_hosts=['ui.example.com', '*.corp.example'],
+    )
+
+
+def test_clai_web_answers_to_the_host_it_binds_to(mocker: MockerFixture, env: TestEnv):
+    """`--host <name>` implies answering to that name, so the URL the CLI prints actually works.
+
+    Without this the CLI contradicts itself: it prints `Open your browser at: http://devbox.example:7932`
+    and then rejects that exact `Host` with a `421`.
+    """
+    env.set('OPENAI_API_KEY', 'test')
+    mock_uvicorn = mocker.patch('uvicorn.run')
+    mock_create = mocker.patch('pydantic_ai._cli.web.create_web_app')
+
+    assert cli(['web', '-m', 'openai:gpt-5', '--host', 'devbox.example'], prog_name='clai') == 0
+
+    assert mock_create.call_args.kwargs['allowed_hosts'] == ['devbox.example']
+    assert mock_uvicorn.call_args.kwargs['host'] == 'devbox.example'

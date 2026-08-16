@@ -161,6 +161,22 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 #### Model requests
 - `allow_model_requests` - bypasses the default `ALLOW_MODEL_REQUESTS = False`
 
+#### Blocking-call detection
+- `blockbuster` (autouse) raises `BlockingError` when a scanned library frame blocks inside the event loop.
+- Scanned packages are `pydantic_ai`, `pydantic_graph`, `pydantic_evals`, and `clai`.
+- Test-only and third-party stacks are ignored. User callbacks remain covered while a scanned library frame is below them.
+- Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
+- Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.
+- Override `blockbuster_excluded_modules` when one integration module intentionally provides synchronous APIs.
+- Override `blockbuster_enabled` at the narrowest test or integration-module boundary that intentionally performs blocking work.
+- Use the narrowest module or test boundary. Do not replace the autouse `blockbuster` fixture.
+- Each pytest worker configures one detector per exclusion set and activates it separately for each test.
+- CI enables BlockBuster in Python 3.13 slim, evals, and standard jobs, plus unique compatibility or live-provider jobs.
+- The all-extras job disables BlockBuster because its stack-inspection overhead exceeds the seven-minute CI budget. Rebenchmark after [BlockBuster #61](https://github.com/cbornet/blockbuster/pull/61) is released in a compatible version, and re-enable it if the job stays within seven minutes.
+- Other Python-version lanes disable BlockBuster because they repeat the same dependency set.
+- Lowest-version lanes disable BlockBuster to keep jobs within the seven-minute CI budget. This leaves dependency-version-specific blocking behavior outside CI detection.
+- Local targeted tests enable BlockBuster by default.
+
 #### The `model` fixture (use with `indirect=True`)
 
 The `model` fixture takes a string param (e.g. `'openai'`, `'anthropic'`, `'google'`) and returns a configured `Model` instance, using session-scoped API key fixtures that default to `'mock-api-key'` (real keys loaded from env when recording).

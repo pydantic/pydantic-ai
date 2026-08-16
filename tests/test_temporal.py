@@ -69,6 +69,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._run_context import AnchoredEvidence
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
@@ -274,6 +275,18 @@ pytestmark = [
         'ignore:`TemporalAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
     ),
 ]
+
+
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    """Disable detection for Temporal's synchronous worker and integration setup.
+
+    It performs module/config introspection above Pydantic AI plugin frames; BlockBuster changes
+    its error handling and makes these tests unusably slow. Rebenchmark after
+    https://github.com/cbornet/blockbuster/pull/61 is released, but retain this opt-out until the
+    synchronous-introspection false positives are isolated too.
+    """
+    return False
 
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
@@ -4447,6 +4460,44 @@ def test_temporal_run_context_serializes_usage_limits():
     assert reconstructed.usage_limits == ctx.usage_limits
 
 
+async def test_temporal_run_context_preserves_anchored_evidence():
+    """Provider-exact evidence is computed workflow-side and survives the untyped activity payload."""
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        _anchored_evidence=AnchoredEvidence(
+            discovered_tool_names=frozenset({'deferred_tool'}),
+            loaded_capability_ids=frozenset({'deferred_capability'}),
+        ),
+    )
+
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    reconstructed = TemporalRunContext.deserialize_run_context(wire, deps=None)
+
+    assert reconstructed._anchored_evidence == AnchoredEvidence(  # pyright: ignore[reportPrivateUsage]
+        discovered_tool_names=frozenset({'deferred_tool'}),
+        loaded_capability_ids=frozenset({'deferred_capability'}),
+    )
+
+
+async def test_temporal_run_context_without_anchored_evidence_still_answers_availability():
+    """A payload that predates the field keeps answering, with the history-derived window.
+
+    `serialize_run_context` is a documented override point, so a subclass written against an
+    earlier version returns a dict without it. Guarding it like the other omitted fields would
+    turn that into a `UserError` from a tool that only asked whether it may run.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    older_payload = {name: value for name, value in wire.items() if name != '_anchored_evidence'}
+
+    reconstructed = TemporalRunContext.deserialize_run_context(older_payload, deps=None)
+
+    assert reconstructed._anchored_evidence == AnchoredEvidence()  # pyright: ignore[reportPrivateUsage]
+    assert reconstructed.is_tool_available(ToolDefinition(name='hidden', defer_loading=True)) is False
+
+
 def test_temporal_run_context_serialization_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Temporal serialization.
 
@@ -4581,6 +4632,66 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
         getattr(reconstructed, 'not_a_field')
 
 
+async def test_is_tool_available_answers_for_a_capability_owned_tool_inside_an_activity():
+    """The definition form must answer, not raise, for a tool a capability contributed.
+
+    `is_tool_available` consults `available_capability_ids` for any tool carrying a
+    `capability_id`, and the `capabilities` registry deliberately doesn't cross the boundary. The
+    docs send toolset authors to the definition form precisely because it works inside `get_tools`,
+    which under Temporal runs in an activity — so the ids travel as a snapshot.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+        capabilities={'guarded': Capability[Any](id='guarded', description='Guarded.', defer_loading=True)},
+        loaded_capability_ids={'guarded'},
+        discovered_tool_names={'secret_op'},
+    )
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+
+    assert reconstructed.available_capability_ids == {'guarded'}
+    loaded = ToolDefinition(name='secret_op', defer_loading=True, capability_id='guarded')
+    assert reconstructed.is_tool_available(loaded) is True
+
+    unloaded = ToolDefinition(name='other_op', defer_loading=True, capability_id='not_loaded')
+    assert reconstructed.is_tool_available(unloaded) is False
+
+
+async def test_loaded_capability_tool_without_a_reveal_marker_answers_inside_an_activity():
+    """The on-demand set travels too, so a stripped reveal marker doesn't flip the answer.
+
+    A deferred capability's load is itself the reveal for its own tools, and telling that apart
+    from a capability since reconfigured always-on needs the *configured* set, which lives in the
+    `capabilities` registry and cannot cross the boundary. Without the snapshot this degrades to
+    the discovery check and answers `False` inside an activity while the workflow says `True` --
+    for a tool no search can ever surface, so nothing could restore the marker.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+        capabilities={'guarded': Capability[Any](id='guarded', description='Guarded.', defer_loading=True)},
+        loaded_capability_ids={'guarded'},
+        # No `discovered_tool_names`: the reveal marker is gone, as a history processor can leave it.
+    )
+    tool_def = ToolDefinition(name='secret_op', defer_loading=True, capability_id='guarded')
+    assert ctx.is_tool_available(tool_def) is True
+
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+    assert reconstructed.is_tool_available(tool_def) is True
+
+    # The registry itself still doesn't cross — only the ids it resolves to.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed.capabilities
+
+
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
     """A user subclass with its own field set."""
 
@@ -4625,6 +4736,16 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     assert reconstructed.usage == ctx.usage
     assert reconstructed.discovered_tool_names == {'searched_tool'}
     assert reconstructed.available_tool_names == {'searched_tool'}
+    # No capability snapshot in this subclass's field set, so the property falls back to the base
+    # one, which reads the registry — and that is guarded, so it raises rather than quietly
+    # reporting no capabilities are active.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed.available_capability_ids
+    # Same for the on-demand set that `is_tool_available` consults: an older subclass doesn't carry
+    # it either, so the base property reads the guarded registry and raises rather than reporting an
+    # empty set, which would silently answer "no capability is deferred" for every tool.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed._deferred_capability_ids  # pyright: ignore[reportPrivateUsage]
     assert reconstructed.__dict__['custom'] == 'from-subclass'
     for name in ('prompt', 'conversation_id', 'instrumentation_version'):
         with pytest.raises(UserError, match=f'{name!r} is not available on {LegacyFieldsRunContext.__name__!r}'):
