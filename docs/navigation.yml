@@ -781,6 +781,11 @@ navigation:
             slug: "examples/data-analytics/twelvelabs-video-agent"
             aliases:
               - "examples/twelvelabs-video-agent"
+          - page: "Live Tennis Agent"
+            path: "examples/live-tennis-agent.md"
+            slug: "examples/data-analytics/live-tennis-agent"
+            aliases:
+              - "examples/live-tennis-agent"
       - section: "Streaming"
         slug: ""
         contents:
