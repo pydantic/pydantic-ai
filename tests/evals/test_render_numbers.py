@@ -79,8 +79,7 @@ def test_negative_base_diff_sign_matches_direction():
         rendered = default_render_number_diff(old, new)
         assert rendered is not None
         abs_part, _, rel_part = rendered.partition(' / ')
-        if not rel_part:
-            continue
+        assert rel_part, f'{old} -> {new} rendered as {rendered!r}: no relative part'
         assert abs_part[0] == rel_part[0], (
             f'{old} -> {new} rendered as {rendered!r}: absolute and relative signs disagree'
         )

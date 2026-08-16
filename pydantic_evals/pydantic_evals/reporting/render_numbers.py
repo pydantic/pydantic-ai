@@ -68,12 +68,15 @@ def default_render_number_diff(old: float | int, new: float | int) -> str | None
             _default_format_number_diff(3, 4) -> '+1'
       - For floats (or a mix of float and int):
           * Compute the raw delta = new - old and format it with ABS_SIG_FIGS significant figures.
-          * If `old` is nonzero, compute a relative change:
+          * If `old` is nonzero, compute a relative change against |old|, so that its sign
+            tracks the direction of the change rather than the sign of the baseline:
               - If |delta|/|old| ≤ 1, render the relative change as a percentage with
                 PERC_DECIMALS decimal places, e.g. '+0.7 / +70.0%'.
-              - If |delta|/|old| > 1, render a multiplier (new/old). Use one decimal place
-                if the absolute multiplier is less than MULTIPLIER_ONE_DECIMAL_THRESHOLD,
-                otherwise no decimals.
+              - If |delta|/|old| > 1 and `old` is positive, render a multiplier (new/old).
+                Use one decimal place if the absolute multiplier is less than
+                MULTIPLIER_ONE_DECIMAL_THRESHOLD, otherwise no decimals.
+              - If `old` is negative, keep the percentage form: a multiplier over a negative
+                base reads backwards, e.g. -1.0 -> -3.0 would show as '3.0x'.
           * However, if the percentage rounds to 0.0% (e.g. '+0.0%'), return only the absolute diff.
           * Also, if |old| is below BASE_THRESHOLD and |delta| exceeds MULTIPLIER_DROP_FACTOR×|old|,
             drop the relative change indicator.
