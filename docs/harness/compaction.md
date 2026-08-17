@@ -47,7 +47,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SummarizingCompaction
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-sonnet-5',
     capabilities=[SummarizingCompaction(max_fraction=0.9, keep_messages=20)],
 )
 ```
@@ -60,7 +60,7 @@ The model consulted is `ModelRequestContext.model`, the one the request will be 
 
 ### When the window does not resolve
 
-Not every model is in the registry. A local endpoint, a bespoke deployment, a Bedrock-prefixed reference such as `bedrock:us.anthropic.claude-sonnet-4-5`, a model the registry knows without a recorded window (`google-gla:gemini-2.5-pro` today), and any `FallbackModel` (its `model_id` is a composite `fallback:...`) all resolve to nothing. The fraction is then taken of `fallback_context_window`, which defaults to a conservative 200K (`DEFAULT_CONTEXT_WINDOW`): compacting earlier than necessary costs one summary, overestimating costs the whole request.
+Not every model is in the registry. A local endpoint, a bespoke deployment, a Bedrock-prefixed reference such as `bedrock:us.anthropic.claude-sonnet-5`, a model the registry knows without a recorded window, and any `FallbackModel` (its `model_id` is a composite `fallback:...`) all resolve to nothing. The fraction is then taken of `fallback_context_window`, which defaults to a conservative 200K (`DEFAULT_CONTEXT_WINDOW`): compacting earlier than necessary costs one summary, overestimating costs the whole request.
 
 Every capability that takes a fraction takes the fallback too, so you are not stuck with 200K on a model you know the size of:
 
@@ -69,7 +69,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SummarizingCompaction
 
 agent = Agent(
-    'google-gla:gemini-2.5-pro',
+    'bedrock:us.anthropic.claude-sonnet-5',
     capabilities=[SummarizingCompaction(max_fraction=0.9, fallback_context_window=1_000_000)],
 )
 ```
@@ -82,15 +82,14 @@ It is only consulted when resolution fails, so it costs nothing on a model the r
 
 Resolution can also succeed and be wrong, which `fallback_context_window` cannot help with -- it applies only when resolution fails. Three cases:
 
-- **The registry entry itself is wrong.** Harness reads `genai-prices` and cannot validate it. Measured against `genai-prices` 0.0.71:
+- **The registry entry itself is wrong.** Harness reads `genai-prices` and cannot validate it. Measured against `genai-prices` 0.1.3:
 
   | model id | registry records | real window |
   |---|---|---|
   | `anthropic:claude-sonnet-4-5` | 1,000,000 | 200,000 |
   | `anthropic:claude-opus-4-6` | 200,000 | 1,000,000 |
-  | `google:gemini-2.5-pro` (also the `google-gla:` and `google-vertex:` forms) | no window recorded | 1,000,000 |
 
-  An over-recorded window is the direction that breaks a run. On `anthropic:claude-sonnet-4-5`, `max_fraction=0.9` resolves to a 900,000-token trigger against a 200,000-token window: compaction never fires, and the provider rejects the request instead. **Pass `context_window=200_000` explicitly on Anthropic Sonnet-class models** (`claude-sonnet-4-5` today; check any Sonnet id you use against the provider's own documentation before relying on the resolved number). An under-recorded window is safe but wasteful -- it compacts earlier than it has to.
+  An over-recorded window is the direction that breaks a run. On `anthropic:claude-sonnet-4-5`, `max_fraction=0.9` resolves to a 900,000-token trigger against a 200,000-token window: compaction never fires, and the provider rejects the request instead. **Pass `context_window=200_000` explicitly on `claude-sonnet-4-5`.** `claude-sonnet-5`'s recorded 1,000,000 matches Anthropic's model documentation, so it needs no override; check any other Sonnet id you use against the provider's own documentation before relying on the resolved number. An under-recorded window is safe but wasteful -- it compacts earlier than it has to.
 - The registry records the maximum a model can be made to accept. Where that maximum is gated -- a beta header, a pricing tier -- an ordinary request gets less, and a fraction of the recorded number never triggers before the provider rejects the request.
 - A self-hosted or proxied endpoint reports a model id whose registry entry describes someone else's deployment.
 
@@ -101,7 +100,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SummarizingCompaction
 
 agent = Agent(
-    'openai:gpt-4o',  # served by a local endpoint with a smaller window than the registry records
+    'openai:gpt-5.6-luna',  # served by a local endpoint with a smaller window than the registry records
     capabilities=[SummarizingCompaction(max_fraction=0.9, context_window=32_000)],
 )
 ```
@@ -126,7 +125,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import ReportContextUsage, SummarizingCompaction
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-sonnet-5',
     capabilities=[
         SummarizingCompaction(max_fraction=0.9, keep_messages=20),
         ReportContextUsage(on_usage=lambda usage: print(f'{usage.fraction:.0%}')),
@@ -156,7 +155,7 @@ strategy = SummarizingCompaction(max_fraction=0.9, keep_messages=20)
 history = await compact_now(
     strategy,
     history,
-    model='anthropic:claude-sonnet-4-6',
+    model='anthropic:claude-sonnet-5',
     focus='the auth refactor, not the earlier CSS work',
 )
 ```
@@ -186,7 +185,7 @@ def my_file_key(call: ToolCallPart) -> str | None:
 
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5.6-luna',
     capabilities=[
         TieredCompaction(
             tiers=[
@@ -213,7 +212,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import ClampOversizedMessages
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5.6-terra',
     capabilities=[
         ClampOversizedMessages(max_part_tokens=50_000, keep_head_chars=2_000, keep_tail_chars=2_000)
     ],
@@ -254,7 +253,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import ClearToolResults
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5.6-luna',
     capabilities=[ClearToolResults(max_tokens=100_000, keep_pairs=3)],
 )
 ```
@@ -279,7 +278,7 @@ def file_key(call: ToolCallPart) -> str | None:
     return call.args_as_dict().get('path')
 
 
-agent = Agent('openai:gpt-4o', capabilities=[DeduplicateFileReads(file_key=file_key)])
+agent = Agent('openai:gpt-5.6-terra', capabilities=[DeduplicateFileReads(file_key=file_key)])
 ```
 
 With no `max_messages` or `max_tokens` trigger set, `DeduplicateFileReads` runs on every request. It is cheap and near-lossless, so that default is usually what you want.
@@ -293,7 +292,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SlidingWindowCompaction
 
 agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5.6-terra',
     capabilities=[SlidingWindowCompaction(max_messages=80, keep_messages=40)],
 )
 ```
@@ -309,10 +308,10 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import SummarizingCompaction
 
 agent = Agent(
-    'openai:gpt-4o',
+    'anthropic:claude-opus-5',
     capabilities=[
         SummarizingCompaction(
-            model='openai:gpt-4o-mini',
+            model='anthropic:claude-sonnet-5',
             max_messages=60,
             keep_messages=20,
         )
@@ -335,7 +334,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import WarnNearLimits
 
 agent = Agent(
-    'openai:gpt-4o',
+    'google:gemini-3.6-flash',
     capabilities=[
         WarnNearLimits(
             max_iterations=40,
@@ -429,7 +428,7 @@ With `incremental=True` (the default), a prior summary is not re-summarized -- s
 
 `bridge_prefix=True` prepends a one-line note to the summary only when the summarizer's model family differs from the family that produced the history, derived from the history's `model_name` and the summarizer config. It marks the summary as a cross-model handoff so the resuming model builds on it rather than confabulating that it did the work itself. It never fires in the common same-model case, so it is cheap. It defaults to `False` because the note is prompt content.
 
-The family token is a coarse approximation: drop any `provider:` prefix, then take the leading token before the first `-` or `/`. It separates `gpt` from `claude` on ordinary references (`openai:gpt-4o` -> `gpt`, `google-gla:gemini-2.5-pro` -> `gemini`) and misreads several real ones -- `us.anthropic.claude-sonnet-4-5-v1:0` reduces to `0`, `ollama/llama3` to `ollama`, and a `fallback:` model *string* to its last listed model rather than its first. A `FallbackModel` object is read correctly, from its first model. So bridge and receipt attribution are best-effort: a misread family can suppress a bridge note or fire one between two same-family models. Neither outcome changes what compaction keeps or drops.
+The family token is a coarse approximation: drop any `provider:` prefix, then take the leading token before the first `-` or `/`. It separates `gpt` from `claude` on ordinary references (`openai:gpt-5.6-luna` -> `gpt`, `google:gemini-3.6-flash` -> `gemini`) and misreads several real ones -- `us.anthropic.claude-sonnet-4-5-v1:0` reduces to `0`, `ollama/llama3` to `ollama`, and a `fallback:` model *string* to its last listed model rather than its first. A `FallbackModel` object is read correctly, from its first model. So bridge and receipt attribution are best-effort: a misread family can suppress a bridge note or fire one between two same-family models. Neither outcome changes what compaction keeps or drops.
 
 As with receipts, the update instruction and the bridge-prefix wording are content, shipped minimal and neutral pending the eval-rig pass; the anchoring and family-gating mechanisms are structural.
 
