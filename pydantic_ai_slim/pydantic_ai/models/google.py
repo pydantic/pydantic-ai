@@ -862,6 +862,7 @@ class GoogleModel(Model[Client]):
         profile = self.profile
         if thinking is False:
             if profile.get('google_supports_thinking_level', False):
+                # Gemini represents `thinking=False` as its lowest supported thinking level.
                 return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
             return ThinkingConfigDict(thinking_budget=0)
         if profile.get('google_supports_thinking_level', False):
