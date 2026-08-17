@@ -14,11 +14,12 @@ from __future__ import annotations
 import asyncio
 import posixpath
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal, cast
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
@@ -36,7 +37,12 @@ from .conftest import try_import
 
 with try_import() as imports_successful:
     from modal import Sandbox
-    from modal.exception import ExecutionError, SandboxFilesystemNotFoundError, SandboxTerminatedError
+    from modal.exception import (
+        ExecutionError,
+        SandboxFilesystemNotADirectoryError,
+        SandboxFilesystemNotFoundError,
+        SandboxTerminatedError,
+    )
     from modal.types import FileInfo, FileType
 
     from pydantic_ai.sandboxes.modal import ModalSandbox
@@ -105,6 +111,13 @@ class FakeFilesystem:
 
     async def _stat(self, remote_path: str) -> FileInfo:
         if not self._exists(remote_path):
+            # Modal separates "nothing at that path" from "a component of the path is a file
+            # rather than a directory", which is what a path below a file reports.
+            parent = posixpath.dirname(remote_path)
+            while parent and parent != '/':
+                if parent in self.files:
+                    raise SandboxFilesystemNotADirectoryError(remote_path)
+                parent = posixpath.dirname(parent)
             raise SandboxFilesystemNotFoundError(remote_path)
         is_dir = remote_path in self.dirs
         return _file_info(remote_path, is_dir=is_dir, size=4096 if is_dir else len(self.files[remote_path]))
@@ -114,13 +127,11 @@ class FakeFilesystem:
             raise SandboxFilesystemNotFoundError(remote_path)
         children = [child for child in [*self.files, *self.dirs] if posixpath.dirname(child) == remote_path]
         return [
-            # A bare name, not the absolute path: the backend rebuilds the absolute path the
-            # protocol promises from the directory it listed, and this keeps that load-bearing.
-            _file_info(
-                posixpath.basename(child),
-                is_dir=child in self.dirs,
-                size=4096 if child in self.dirs else len(self.files[child]),
-            )
+            # `name` is the base name and `path` the whole path, as in the `stat` these entries
+            # are decoded from the same way. The backend joins the base name onto the directory
+            # it listed rather than trusting `path`, which is produced by the sandbox-side fs
+            # tools rather than by anything in the SDK.
+            _file_info(child, is_dir=child in self.dirs, size=4096 if child in self.dirs else len(self.files[child]))
             for child in sorted(children)
         ]
 
@@ -142,33 +153,68 @@ class FakeFilesystem:
 class FakeStreamReader:
     """Stand-in for `modal.io_streams.StreamReader`.
 
-    Async-iterable like the SDK's, and `read()` picks up wherever iteration stopped — that
-    resumption is what lets `wait()` collect the output an abandoned `stream()` left behind.
+    Faithful to the two semantics the backend leans on. `read()` opens a stream of its own at
+    offset zero and hands back everything the command produced: the SDK builds a brand-new
+    stream per call and never consults the iterator, so a drained stream is *not* at EOF for
+    the next `read()`. `__aiter__` caches one generator, so a reader has a single consumer.
     Sharing an `order` list between the two readers makes their chunks arrive in one
     deterministic sequence instead of whichever the event loop happens to pick.
     """
 
     def __init__(self, chunks: Sequence[str] = (), *, name: Stream = 'stdout', order: list[Stream] | None = None):
-        self._chunks = list(chunks)
+        self._chunks = tuple(chunks)
         self._name = name
         self._order = order
+        self._iterator: AsyncGenerator[str] | None = None
         self.read = Aio(self._read)
 
-    def __aiter__(self) -> FakeStreamReader:
-        return self
+    def __aiter__(self) -> AsyncGenerator[str]:
+        if self._iterator is None:
+            self._iterator = self._iterate()
+        return self._iterator
 
-    async def __anext__(self) -> str:
-        if not self._chunks:
-            raise StopAsyncIteration
-        while self._order and self._order[0] != self._name:
-            await asyncio.sleep(0)  # not this stream's turn yet; let the other reader go first
-        if self._order:
-            self._order.pop(0)
-        return self._chunks.pop(0)
+    async def _iterate(self) -> AsyncGenerator[str]:
+        for chunk in self._chunks:
+            while self._order and self._order[0] != self._name:
+                await asyncio.sleep(0)  # not this stream's turn yet; let the other reader go first
+            if self._order:
+                self._order.pop(0)
+            yield chunk
 
     async def _read(self) -> str:
-        rest, self._chunks = ''.join(self._chunks), []
-        return rest
+        return ''.join(self._chunks)
+
+
+class HangingStreamReader(FakeStreamReader):
+    """A read that never finishes on its own, so only a cancellation can end it."""
+
+    def __init__(self, *, name: Stream = 'stdout') -> None:
+        super().__init__(name=name)
+        self.cancelled = False
+
+    async def _read(self) -> str:
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        raise AssertionError('unreachable')  # pragma: no cover
+
+
+class LaggingStreamReader(FakeStreamReader):
+    """Output that finishes arriving only after the command exited, with the deadline window
+    gone by the time it does: a command whose reads outlive it by more than it ran for."""
+
+    def __init__(self, chunks: Sequence[str], *, exited: asyncio.Event, clock: FakeClock, at: float) -> None:
+        super().__init__(chunks)
+        self._exited = exited
+        self._clock = clock
+        self._at = at
+
+    async def _read(self) -> str:
+        await self._exited.wait()
+        self._clock.now = self._at
+        return await super()._read()
 
 
 class FakeContainerProcess:
@@ -181,16 +227,20 @@ class FakeContainerProcess:
         stderr: FakeStreamReader | str = '',
         exit_code: int = 0,
         error: Exception | None = None,
+        exited: asyncio.Event | None = None,
     ) -> None:
         self.stdout = FakeStreamReader([stdout] if stdout else []) if isinstance(stdout, str) else stdout
         self.stderr = FakeStreamReader([stderr] if stderr else [], name='stderr') if isinstance(stderr, str) else stderr
         self._exit_code = exit_code
         self._error = error
+        self._exited = exited
         self.wait = Aio(self._wait)
 
     async def _wait(self) -> int:
         if self._error is not None:
             raise self._error
+        if self._exited is not None:
+            self._exited.set()
         return self._exit_code
 
 
@@ -211,9 +261,17 @@ def default_responder(argv: tuple[str, ...]) -> FakeContainerProcess:
 
 
 class FakeSandbox:
-    def __init__(self, sandbox_id: str = 'sb-1', responder: Responder = default_responder) -> None:
+    def __init__(
+        self,
+        sandbox_id: str = 'sb-1',
+        responder: Responder = default_responder,
+        *,
+        filesystem: FakeFilesystem | None = None,
+    ) -> None:
         self.object_id = sandbox_id
-        self.filesystem = FakeFilesystem()
+        # Taking one lets a responder serve commands out of the same files `fs` exposes, which
+        # is the protocol's one-environment contract.
+        self.filesystem = filesystem if filesystem is not None else FakeFilesystem()
         self.calls: list[ExecCall] = []
         self.processes: list[FakeContainerProcess] = []
         self.terminations = 0
@@ -245,6 +303,8 @@ class FakeSandboxApi:
         self.created: list[dict[str, Any]] = []
         self.connected: list[dict[str, Any]] = []
         self.sandboxes: list[FakeSandbox] = []
+        self.create_delay = 0.0
+        """Holds the create in flight, so a caller can be cancelled part way through one."""
         self._responder = responder
         self.create = Aio(self._create)
         self.from_id = Aio(self._from_id)
@@ -255,6 +315,7 @@ class FakeSandboxApi:
         return sandbox
 
     async def _create(self, **kwargs: Any) -> FakeSandbox:
+        await asyncio.sleep(self.create_delay)
         self.created.append(kwargs)
         return self._new(f'sb-{len(self.sandboxes) + 1}')
 
@@ -361,6 +422,49 @@ async def test_create_terminates_the_sandbox_when_the_block_raises(modal_api: Fa
     assert modal_api.sandboxes[0].terminations == 1
 
 
+def _break_terminate(backend: ModalSandbox) -> None:
+    async def terminate() -> None:
+        raise ExecutionError('the control plane is unreachable')
+
+    cast(Any, backend.sandbox).terminate = Aio(terminate)
+
+
+async def test_a_failing_teardown_is_not_raised_at_a_block_that_succeeded(modal_api: FakeSandboxApi):
+    """Teardown is best effort: a `terminate` that fails must not invent an exception for a
+    block that ran to completion.
+    """
+    async with ModalSandbox.create() as backend:
+        _break_terminate(backend)
+
+
+async def test_a_failing_teardown_does_not_mask_the_block_exception(modal_api: FakeSandboxApi):
+    with pytest.raises(ExecutionError, match='boom'):
+        async with ModalSandbox.create() as backend:
+            _break_terminate(backend)
+            raise ExecutionError('boom')
+
+
+async def test_cancelling_a_create_in_flight_terminates_the_orphan(modal_api: FakeSandboxApi):
+    """Modal provisions the sandbox whether or not anyone is left to receive the handle, so a
+    caller cancelled part way through must not leave a running (and billed) environment behind.
+    """
+    modal_api.create_delay = 0.05
+    with anyio.move_on_after(0.01):
+        async with ModalSandbox.create():
+            raise AssertionError('the create never completed for this block')  # pragma: no cover
+
+    # The cleanup is scheduled by the create finishing, which is after the caller gave up.
+    await _eventually(lambda: bool(modal_api.sandboxes) and modal_api.sandboxes[0].terminations == 1)
+
+
+async def _eventually(condition: Callable[[], bool]) -> None:
+    for _ in range(1000):
+        if condition():
+            return
+        await asyncio.sleep(0.001)
+    raise AssertionError('the condition was never met')
+
+
 async def test_connect_attaches_to_an_existing_sandbox_without_owning_it(modal_api: FakeSandboxApi):
     """`connect` is the resolver building block: a ref round-trips into a live backend, and the
     caller that provisioned the environment keeps the right to destroy it.
@@ -404,6 +508,14 @@ async def test_run_rejects_a_command_shape_that_contradicts_shell(
         await backend_for(FakeSandbox()).run(command, shell=shell)
 
 
+async def test_run_rejects_an_empty_command():
+    """Modal would exec zero arguments; there is no program in an empty argv to report an exit
+    code for, so it is not a command, exactly as `LocalSandbox` has it.
+    """
+    with pytest.raises(TypeError, match='the argv sequence is empty'):
+        await backend_for(FakeSandbox()).run([])
+
+
 async def test_run_forwards_cwd_and_env():
     sandbox = FakeSandbox()
     await backend_for(sandbox).run(['true'], cwd='/tmp', env={'TOKEN': 'secret'})
@@ -436,12 +548,14 @@ async def test_a_non_zero_exit_is_a_result_not_an_exception():
 @pytest.mark.parametrize('exit_code', [-1, 137], ids=['client-deadline', 'server-sigkill'])
 async def test_a_deadline_kill_raises_a_builtin_timeout_error(clock: FakeClock, exit_code: int):
     """Modal's deadline kills the command itself, reporting `-1` when its client-side copy of the
-    deadline won the race and the plain SIGKILL exit when the server's kill did.
+    deadline won the race and the plain SIGKILL exit when the server's kill did. The deadline the
+    error names is the one Modal applied, not the fraction of a second that was asked for.
     """
     sandbox = FakeSandbox(responder=lambda argv: FakeContainerProcess(exit_code=exit_code))
     process = await backend_for(sandbox).start(['sleep', '600'], timeout=0.01)
     clock.now = 60.0  # the deadline window has passed
-    with pytest.raises(TimeoutError, match=re.escape('command timed out after 0.01 seconds and was killed')):
+    message = 'command timed out after 1 seconds (Modal takes whole seconds; 0.01 was requested) and was killed'
+    with pytest.raises(TimeoutError, match=re.escape(message)):
         await process.wait()
 
 
@@ -452,6 +566,35 @@ async def test_a_sigkill_the_deadline_cannot_explain_is_still_a_result(clock: Fa
     sandbox = FakeSandbox(responder=lambda argv: FakeContainerProcess(exit_code=137))
     result = await backend_for(sandbox).run(['self-destruct'], timeout=30)
     assert result.exit_code == 137
+
+
+async def test_a_sigkill_is_dated_by_the_exit_code_not_by_the_last_of_the_output(clock: FakeClock):
+    """What dates a `137` is when the command exited, not when its output finished arriving:
+    a command OOM-killed seconds in, whose output only drains after the deadline window has
+    passed, still reports the honest exit code it had.
+    """
+    exited = asyncio.Event()
+    process = FakeContainerProcess(
+        stdout=LaggingStreamReader(['partial'], exited=exited, clock=clock, at=60.0),
+        exit_code=137,
+        exited=exited,
+    )
+    result = await backend_for(FakeSandbox(responder=lambda argv: process)).run(['hungry'], timeout=30)
+    assert (result.exit_code, result.stdout) == (137, 'partial')
+
+
+async def test_a_failing_step_does_not_leave_the_output_reads_running():
+    """`wait()` collects the exit code and both streams together, so one of them failing has to
+    end the others: an abandoned read would keep retrying against the worker long after `run()`
+    returned.
+    """
+    stdout, stderr = HangingStreamReader(), HangingStreamReader(name='stderr')
+    gone = SandboxTerminatedError('sandbox sb-1 is no longer running')
+    process = FakeContainerProcess(stdout=stdout, stderr=stderr, error=gone)
+
+    with pytest.raises(SandboxTerminatedError):
+        await backend_for(FakeSandbox(responder=lambda argv: process)).run(['true'])
+    assert (stdout.cancelled, stderr.cancelled) == (True, True)
 
 
 async def test_a_deadline_kill_is_not_read_into_a_command_that_had_none():
@@ -513,8 +656,10 @@ async def test_stream_yields_both_streams_in_arrival_order():
     assert chunks == [('stdout', 'one\n'), ('stderr', 'two\n'), ('stdout', 'three\n')]
 
 
-async def test_wait_after_streaming_reports_what_was_streamed():
-    """`stream()` consumes the output, so `wait()` has to remember it rather than re-read it."""
+async def test_wait_after_streaming_counts_the_output_once():
+    """Modal's `read()` opens a stream of its own at offset zero, so a drained stream is not at
+    EOF for it: `wait()` reports the command's output exactly once, not twice.
+    """
     order: list[Stream] = ['stdout', 'stderr']
     process = FakeContainerProcess(
         stdout=FakeStreamReader(['done\n'], name='stdout', order=order),
@@ -530,8 +675,8 @@ async def test_wait_after_streaming_reports_what_was_streamed():
 
 
 async def test_output_delivered_to_an_abandoned_stream_still_reaches_wait():
-    """A consumer that stops iterating leaves an already-delivered chunk behind. Modal cannot be
-    asked for it again, so it is part of the command's output and `wait()` still reports it.
+    """A consumer that stops iterating half way costs `wait()` nothing: it asks Modal for the
+    command's output in full rather than for whatever the iterator left behind.
     """
     process = FakeContainerProcess(stdout='out', stderr='err')
     started = await backend_for(FakeSandbox(responder=lambda argv: process)).start(['noisy'])
@@ -544,6 +689,38 @@ async def test_output_delivered_to_an_abandoned_stream_still_reaches_wait():
 
     result = await started.wait()
     assert (result.stdout, result.stderr) == ('out', 'err')
+
+
+async def test_streaming_after_a_wait_replays_the_output():
+    """`wait()` reads the streams rather than consuming them, so streaming a command that has
+    already been waited for replays its output from the beginning.
+    """
+    process = FakeContainerProcess(stdout='out')
+    started = await backend_for(FakeSandbox(responder=lambda argv: process)).start(['noisy'])
+
+    assert (await started.wait()).stdout == 'out'
+    assert [chunk.data async for chunk in started.stream()] == ['out']
+
+
+async def test_a_process_can_only_be_streamed_once():
+    """Modal's readers each cache the one generator they hand out, so a second consumer would
+    collide with the first inside the SDK. The backend refuses it instead.
+    """
+    started = await backend_for(FakeSandbox()).start(['noisy'])
+    async with aclosing(started.stream()) as chunks:
+        async for _ in chunks:
+            pass
+
+    with pytest.raises(RuntimeError, match='single consumer'):
+        started.stream()
+
+
+async def test_concurrent_waits_report_the_same_outcome():
+    """The protocol requires concurrent waits to agree, so only one of them reaches the SDK."""
+    sandbox = FakeSandbox()
+    process = await backend_for(sandbox).start(['true'])
+    first, second = await asyncio.gather(process.wait(), process.wait())
+    assert first is second
 
 
 async def test_working_dir_asks_the_environment_once():
@@ -561,6 +738,22 @@ async def test_working_dir_reports_an_environment_that_cannot_answer():
     sandbox = FakeSandbox(responder=lambda argv: FakeContainerProcess(stderr='pwd: not found', exit_code=127))
     with pytest.raises(ExecutionError, match=r"working directory of sandbox 'sb-1'.+`pwd` exited 127"):
         await backend_for(sandbox).working_dir()
+
+
+async def test_working_dir_rejects_an_answer_that_is_not_a_path():
+    """Caching whatever else the environment printed would hand every later `resolve()` a
+    working directory that is not one.
+    """
+    sandbox = FakeSandbox(responder=lambda argv: FakeContainerProcess(stdout='not a path\n'))
+    with pytest.raises(ExecutionError, match=r"working directory of sandbox 'sb-1'.+`pwd` printed"):
+        await backend_for(sandbox).working_dir()
+
+
+async def test_create_already_knows_the_working_directory_it_asked_for(modal_api: FakeSandboxApi):
+    """`create(workdir=...)` decided the answer, so the environment is never asked for it."""
+    async with ModalSandbox.create(workdir='/work') as backend:
+        assert await backend.working_dir() == '/work'
+    assert modal_api.sandboxes[0].calls == []
 
 
 @pytest.mark.parametrize(
@@ -637,6 +830,15 @@ async def test_exists_answers_for_a_file_that_is_there():
     assert await backend.fs.exists(f'{WORKING_DIR}/here.txt') is True
 
 
+async def test_exists_answers_false_for_a_path_below_a_file():
+    """Modal reports a path whose parent component is a file as "not a directory" rather than
+    "not found". Nothing is there either way, which is what the other backends answer.
+    """
+    backend = backend_for(FakeSandbox())
+    await backend.fs.write_bytes(f'{WORKING_DIR}/notes.txt', b'x')
+    assert await backend.fs.exists(f'{WORKING_DIR}/notes.txt/deeper') is False
+
+
 @pytest.mark.parametrize('operation', ['read_bytes', 'stat', 'list_dir', 'remove'])
 async def test_a_missing_path_raises_the_sdk_error_unchanged(operation: str):
     """File errors are Modal's to describe: they pass through rather than being renamed."""
@@ -664,6 +866,51 @@ async def test_the_sandbox_serves_an_agent_run():
 
     assert seen == ['from the model']
     assert sandbox.filesystem.files == {f'{WORKING_DIR}/note.txt': b'from the model'}
+
+
+def _sed_responder(filesystem: FakeFilesystem) -> Responder:
+    """Serves `pwd` and the `sed` line-window form the `Sandbox` facade emits out of the same
+    files `fs` exposes, which is the protocol's one-environment contract.
+    """
+
+    def respond(argv: tuple[str, ...]) -> FakeContainerProcess:
+        if argv == ('pwd',):
+            return FakeContainerProcess(stdout=f'{WORKING_DIR}\n')
+        assert argv[:2] == ('sed', '-n'), argv
+        expression, path = argv[2], argv[3]
+        if path not in filesystem.files:
+            return FakeContainerProcess(stderr=f'sed: {path}: No such file or directory', exit_code=2)
+        first, _, last = expression.removesuffix('p').partition(',')
+        lines = filesystem.files[path].decode().split('\n')
+        if lines[-1] == '':
+            lines.pop()
+        return FakeContainerProcess(stdout=''.join(f'{line}\n' for line in lines[int(first) - 1 : int(last)]))
+
+    return respond
+
+
+async def test_the_facade_slices_a_file_window_inside_the_sandbox():
+    """`Sandbox.read_file` slices the window with `sed` in the sandbox rather than pulling the
+    whole file across, and reads it back from the same environment the command ran in.
+    """
+    filesystem = FakeFilesystem()
+    sandbox = FakeSandbox(responder=_sed_responder(filesystem), filesystem=filesystem)
+    facade = SandboxFacade(backend_for(sandbox))
+    await facade.write_text('notes.txt', 'one\ntwo\nthree\n')
+
+    window = await facade.read_file('notes.txt', offset=2, limit=1)
+    assert (window.lines, window.start_line, window.has_more) == (('two',), 2, True)
+
+
+async def test_the_facade_falls_back_to_a_full_read_when_the_slice_fails():
+    """A `sed` that cannot find the file falls back to the filesystem, which stays the
+    authoritative source of the error.
+    """
+    filesystem = FakeFilesystem()
+    sandbox = FakeSandbox(responder=_sed_responder(filesystem), filesystem=filesystem)
+
+    with pytest.raises(SandboxFilesystemNotFoundError):
+        await SandboxFacade(backend_for(sandbox)).read_file('missing.txt', limit=3)
 
 
 async def test_the_facade_exposes_the_backend_for_provider_specific_work():

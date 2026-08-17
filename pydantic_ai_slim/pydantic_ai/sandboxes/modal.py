@@ -21,12 +21,18 @@ from typing import TYPE_CHECKING, Literal
 import anyio
 from typing_extensions import Self
 
+from ._lifecycle import destroy_quietly, guarded_create
 from .protocol import FileEntry, SandboxCommand
 
 try:
     from modal import App, Client, Image, Sandbox
     from modal.container_process import ContainerProcess
-    from modal.exception import ExecutionError, SandboxFilesystemNotFoundError
+    from modal.exception import (
+        ExecutionError,
+        SandboxFilesystemNotADirectoryError,
+        SandboxFilesystemNotFoundError,
+    )
+    from modal.io_streams import StreamReader
     from modal.types import FileInfo, FileType
 except ImportError as _import_error:
     raise ImportError(
@@ -66,12 +72,12 @@ class _ModalOutputChunk:
 class _ModalProcess:
     """A command running inside a Modal sandbox, as returned by `ModalSandbox.start()`."""
 
-    def __init__(self, process: ContainerProcess[str], *, timeout: float | None, deadline: int | None):
+    def __init__(self, process: ContainerProcess[str], *, timeout: float | None, deadline: int | None, started: float):
         self._process = process
         self._timeout = timeout
         self._deadline = deadline
-        self._started = time.monotonic()
-        self._output: dict[_Stream, str] = {'stdout': '', 'stderr': ''}
+        self._started = started
+        self._streaming = False
         self._lock = anyio.Lock()
         self._outcome: _ModalResult | Exception | None = None
 
@@ -81,17 +87,28 @@ class _ModalProcess:
         # OS process id, so there is no honest number to give here.
         return None
 
-    async def stream(self) -> AsyncGenerator[_ModalOutputChunk]:
+    def stream(self) -> AsyncGenerator[_ModalOutputChunk]:
         """Iterate over the command's output as Modal produces it.
 
-        Chunks from the two streams are interleaved in arrival order. Everything Modal has
-        already delivered is also kept, so a later
-        [`wait()`][pydantic_ai.sandboxes.SandboxProcess.wait] still reports it — whether this
-        iterator ran to completion or was abandoned part way. A read still in flight when the
-        iterator is abandoned is cancelled, so output produced after that point is not. It is an
-        async generator rather than a bare iterator so that a consumer stopping early can close
-        it — and cancel that read — at a point of its own choosing.
+        Chunks from the two streams are interleaved in arrival order. Modal's readers have a
+        single consumer — each caches the one generator it hands out — so a process can only be
+        streamed once and a second call raises. Nothing here is load-bearing for
+        [`wait()`][pydantic_ai.sandboxes.SandboxProcess.wait], which asks Modal for the command's
+        output in full: a consumer that stops iterating part way costs it nothing, and streaming
+        a command that has already been waited for replays its output from the beginning.
+
+        It is an async generator rather than a bare iterator so that a consumer stopping early
+        can close it — and cancel the reads still in flight — at a point of its own choosing.
         """
+        if self._streaming:
+            raise RuntimeError(
+                "Modal's output streams have a single consumer: `stream()` can only be iterated "
+                'once per started command.'
+            )
+        self._streaming = True
+        return self._stream()
+
+    async def _stream(self) -> AsyncGenerator[_ModalOutputChunk]:
         iterators: dict[_Stream, AsyncIterator[str]] = {
             'stdout': aiter(self._process.stdout),
             'stderr': aiter(self._process.stderr),
@@ -110,14 +127,7 @@ class _ModalProcess:
         try:
             while pending:
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                arrived = [task.result() for task in sorted(done, key=lambda finished: finished.result()[0])]
-                # Recorded before any of it is handed out, because a delivered chunk has already
-                # moved the SDK's stream position: a consumer that stops iterating half way must
-                # not cost `wait()` output that the sandbox can no longer be asked for again.
-                for _, name, chunk in arrived:
-                    if chunk is not None:
-                        self._output[name] += chunk
-                for _, name, chunk in arrived:
+                for _, name, chunk in sorted(task.result() for task in done):
                     if chunk is None:  # that stream reached EOF and is not re-armed
                         continue
                     # Re-armed before the chunk is handed over, so the next read is already in
@@ -125,8 +135,11 @@ class _ModalProcess:
                     pending.add(asyncio.ensure_future(read_one(name)))
                     yield _ModalOutputChunk(stream=name, data=chunk)
         finally:
+            # Reaped, not just cancelled: an abandoned read would otherwise keep retrying
+            # against the worker long after the consumer walked away.
             for task in pending:
                 task.cancel()
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def wait(self) -> _ModalResult:
         # The timeout verdict below can only be reached once, so the first call's verdict is the
@@ -143,27 +156,56 @@ class _ModalProcess:
         return self._outcome
 
     async def _settle(self) -> _ModalResult:
-        # Modal's own SDK reads both streams alongside the wait; a stream already drained by
-        # `stream()` reports itself at EOF and contributes nothing a second time.
-        stdout, stderr, exit_code = await asyncio.gather(
-            self._process.stdout.read.aio(),
-            self._process.stderr.read.aio(),
-            self._process.wait.aio(),
-        )
-        self._output['stdout'] += stdout
-        self._output['stderr'] += stderr
-        if self._timed_out(exit_code):
-            raise TimeoutError(f'command timed out after {self._timeout} seconds and was killed')
-        return _ModalResult(exit_code=exit_code, stdout=self._output['stdout'], stderr=self._output['stderr'])
+        output: dict[_Stream, str] = {}
+        exit_code = 0
+        elapsed = 0.0
 
-    def _timed_out(self, exit_code: int) -> bool:
+        async def read(name: _Stream, reader: StreamReader[str]) -> None:
+            # Every `read()` opens a stream of its own at offset zero and returns the command's
+            # whole output, so what `stream()` consumed changes nothing here: the output is
+            # accumulated exactly once however the two are interleaved.
+            output[name] = await reader.read.aio()
+
+        async def collect_exit_code() -> None:
+            nonlocal exit_code, elapsed
+            exit_code = await self._process.wait.aio()
+            # Stamped where the exit code lands rather than where the last of the output does:
+            # a command that exited long before its output finished streaming must not be read
+            # as one the deadline killed.
+            elapsed = time.monotonic() - self._started
+
+        tasks = [
+            asyncio.ensure_future(read('stdout', self._process.stdout)),
+            asyncio.ensure_future(read('stderr', self._process.stderr)),
+            asyncio.ensure_future(collect_exit_code()),
+        ]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            # One step failing leaves its siblings retrying network reads long after `run()`
+            # returned, so they are cancelled and reaped rather than orphaned.
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        if self._timed_out(exit_code, elapsed):
+            raise TimeoutError(
+                f'command timed out after {self._deadline} seconds '
+                f'(Modal takes whole seconds; {self._timeout} was requested) and was killed'
+            )
+        return _ModalResult(exit_code=exit_code, stdout=output['stdout'], stderr=output['stderr'])
+
+    def _timed_out(self, exit_code: int, elapsed: float) -> bool:
         if self._deadline is None:
             return False
         if exit_code == _CLIENT_DEADLINE_EXIT:
             return True
         # A command can exit 137 on its own account (an OOM kill, a `kill -9` it asked for), so
-        # that exit only means "the deadline killed it" once the deadline window has elapsed.
-        return exit_code == _SIGKILL_EXIT and time.monotonic() - self._started >= self._deadline
+        # that exit only means "the deadline killed it" once the whole window has elapsed. The
+        # window is measured from before the exec call, which makes it a superset of the one
+        # Modal's own timer runs — the platform starts counting when the command starts, inside
+        # that round trip — so a deadline kill always lands inside it and an earlier exit does not.
+        return exit_code == _SIGKILL_EXIT and elapsed >= self._deadline
 
     async def kill(self) -> None:
         raise NotImplementedError(
@@ -188,8 +230,9 @@ class _ModalFilesystem:
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
         entries = await self._sandbox.filesystem.list_files.aio(path)
-        # A listing names its entries relative to the directory that was listed, so the absolute
-        # path the protocol promises is rebuilt from the directory we asked about.
+        # `name` is the entry's base name, so joining it onto the directory we asked about gives
+        # the absolute path the protocol promises. The listing's own `path` is produced by the
+        # sandbox-side fs tools rather than by anything in the SDK, so it is not relied on.
         return [_file_entry(entry, posixpath.join(path, entry.name)) for entry in entries]
 
     async def make_dir(self, path: str) -> None:
@@ -204,10 +247,13 @@ class _ModalFilesystem:
 
     async def exists(self, path: str) -> bool:
         # Modal has no existence check of its own, and `stat` is the cheapest question that
-        # answers one. Only "not found" is an answer: every other failure is still a failure.
+        # answers one. Only "there is nothing at that path" is an answer, and Modal splits it in
+        # two: a missing component, and a non-leaf component that is a file rather than a
+        # directory (`/tmp/notes.txt/deeper`), which the other backends both answer `False` for.
+        # Every other failure is still a failure.
         try:
             await self._sandbox.filesystem.stat.aio(path)
-        except SandboxFilesystemNotFoundError:
+        except (SandboxFilesystemNotFoundError, SandboxFilesystemNotADirectoryError):
             return False
         return True
 
@@ -229,6 +275,10 @@ def _command_argv(command: SandboxCommand, shell: bool) -> Sequence[str]:
         return ['/bin/sh', '-c', command]
     if isinstance(command, str):
         raise TypeError('a string command requires shell=True; pass an argv sequence otherwise')
+    if not command:
+        # Modal would exec zero arguments; `LocalSandbox` rejects the same thing, because there
+        # is no program in an empty argv to report an exit code for.
+        raise TypeError('a command needs at least the program to run; the argv sequence is empty')
     return command
 
 
@@ -245,10 +295,19 @@ class ModalSandbox:
     ([`SupportsStart`][pydantic_ai.sandboxes.SupportsStart]), Modal's SDK exposes a command's
     output as async-iterable streams that it keeps drained on its own, so live output
     ([`SupportsStream`][pydantic_ai.sandboxes.SupportsStream]) needs no bridging and is offered
-    too. What Modal has no API for is killing a single command:
+    too — for one consumer per command, which is all Modal's readers hand out. What Modal has no
+    API for is killing a single command:
     [`kill()`][pydantic_ai.sandboxes.SandboxProcess.kill] raises `NotImplementedError`, and
     `timeout=` — which Modal enforces itself, killing the command at the deadline — is how a
-    command is bounded.
+    command is bounded. Modal takes whole seconds, so a fractional `timeout=` is rounded up to
+    the deadline it actually applies, which is the one a `TimeoutError` reports.
+
+    The deadline kill lands as one of two exits, and both are read as the timeout the protocol
+    promises: the SDK's own `-1`, and the `137` of the platform's `SIGKILL` once the whole
+    deadline window has passed. A `137` from inside that window is a command that killed itself
+    — an OOM kill, a `kill -9` it asked for — and is returned as the honest exit code it is. The
+    residual ambiguity is a self-inflicted `137` that lands exactly as the deadline expires,
+    which is reported as a timeout.
 
     `output_limit=` is not implemented: Modal always delivers the full output, and dropping
     characters after the fact would misreport what the command produced. Bound it in-command
@@ -318,25 +377,31 @@ class ModalSandbox:
             client: Modal client to use; defaults to the ambient Modal credentials.
         """
         resolved_app = app if isinstance(app, App) else await App.lookup.aio(app, create_if_missing=True, client=client)
-        # The ignore is for unparameterized `os.PathLike` mount keys in the SDK's own signature,
-        # not for anything this call passes.
-        sandbox = await Sandbox.create.aio(  # pyright: ignore[reportUnknownMemberType]
-            app=resolved_app,
-            image=image,
-            timeout=timeout,
-            workdir=workdir,
-            env=dict(env) if env is not None else None,
-            cpu=cpu,
-            memory=memory,
-            client=client,
+        # Guarded because a caller cancelled while the create is in flight would otherwise leave
+        # a running (and billed) sandbox behind that nobody holds a handle to.
+        sandbox = await guarded_create(
+            # The ignore is for unparameterized `os.PathLike` mount keys in the SDK's own
+            # signature, not for anything this call passes.
+            Sandbox.create.aio(  # pyright: ignore[reportUnknownMemberType]
+                app=resolved_app,
+                image=image,
+                timeout=timeout,
+                workdir=workdir,
+                env=dict(env) if env is not None else None,
+                cpu=cpu,
+                memory=memory,
+                client=client,
+            ),
+            lambda created: created.terminate.aio(),
         )
+        backend = cls(sandbox)
+        # `create(workdir=...)` already knows the answer `working_dir()` would have to ask the
+        # environment for, and the answer cannot change.
+        backend._working_dir = workdir
         try:
-            yield cls(sandbox)
+            yield backend
         finally:
-            # Shielded because teardown can run inside an already-cancelled scope, where every
-            # await re-raises: an unshielded terminate would leak a running (and billed) sandbox.
-            with anyio.CancelScope(shield=True):
-                await sandbox.terminate.aio()
+            await destroy_quietly(sandbox.terminate.aio())
 
     @classmethod
     async def connect(cls, sandbox_id: str, *, client: Client | None = None) -> Self:
@@ -366,8 +431,11 @@ class ModalSandbox:
                 return await ModalSandbox.connect(ref.sandbox_id)
         ```
 
-        Connecting never creates: `modal.exception.NotFoundError` is raised if the environment is
-        gone, rather than an empty replacement being silently swapped in.
+        Connecting never creates, but it does not prove the environment is alive either: Modal
+        looks the sandbox up and hands back a handle for one it still knows about even after it
+        has terminated, so a dead environment surfaces at the first command as
+        `modal.exception.SandboxTerminatedError` rather than here. An id the workspace does not
+        know raises `modal.exception.NotFoundError`, and a malformed one `modal.exception.InvalidError`.
 
         Args:
             sandbox_id: The `sandbox_id` of the environment to attach to.
@@ -377,8 +445,9 @@ class ModalSandbox:
 
     async def working_dir(self) -> str:
         # Modal exposes no API for a running sandbox's working directory — it is the image's
-        # unless `create(workdir=...)` overrode it — so ask the environment itself. It cannot
-        # change, so one answer serves the sandbox's whole life.
+        # unless `create(workdir=...)` overrode it, in which case `create()` already filled this
+        # in — so ask the environment itself. It cannot change, so one answer serves the
+        # sandbox's whole life.
         if self._working_dir is None:
             result = await self.run(['pwd'])
             if result.exit_code != 0:
@@ -386,7 +455,15 @@ class ModalSandbox:
                     f'Could not determine the working directory of sandbox {self.sandbox_id!r}: '
                     f'`pwd` exited {result.exit_code}: {result.stderr}'
                 )
-            self._working_dir = result.stdout.strip()
+            working_dir = result.stdout.strip()
+            # Only an absolute path is an answer. Caching whatever else the environment printed
+            # would hand every later `resolve()` a working directory that is not one.
+            if not posixpath.isabs(working_dir):
+                raise ExecutionError(
+                    f'Could not determine the working directory of sandbox {self.sandbox_id!r}: '
+                    f'`pwd` printed {result.stdout!r}'
+                )
+            self._working_dir = working_dir
         return self._working_dir
 
     async def run(
@@ -417,6 +494,10 @@ class ModalSandbox:
         # Modal takes whole seconds and reads a missing deadline as "run until the sandbox dies",
         # so a sub-second deadline rounds up rather than silently becoming unbounded.
         deadline = None if timeout is None else max(1, math.ceil(timeout))
+        # Stamped before the call, so the window a `137` is dated against is a superset of the
+        # one Modal's own timer runs: the platform starts counting when the command starts,
+        # which happens inside this round trip.
+        started = time.monotonic()
         process = await self.sandbox.exec.aio(
             *_command_argv(command, shell),
             # Modal's deadline really does kill the command, so — unlike E2B's — the platform
@@ -428,7 +509,7 @@ class ModalSandbox:
             env=dict(env) if env is not None else None,
             text=True,
         )
-        return _ModalProcess(process, timeout=timeout, deadline=deadline)
+        return _ModalProcess(process, timeout=timeout, deadline=deadline, started=started)
 
 
 if TYPE_CHECKING:
@@ -440,5 +521,5 @@ if TYPE_CHECKING:
     _backend_conforms: SandboxBackend = ModalSandbox(_sandbox)
     _filesystem_backend_conforms: SupportsFilesystem = ModalSandbox(_sandbox)
     _start_conforms: SupportsStart = ModalSandbox(_sandbox)
-    _process_conforms: SandboxProcess = _ModalProcess(_process, timeout=None, deadline=None)
-    _stream_conforms: SupportsStream = _ModalProcess(_process, timeout=None, deadline=None)
+    _process_conforms: SandboxProcess = _ModalProcess(_process, timeout=None, deadline=None, started=0.0)
+    _stream_conforms: SupportsStream = _ModalProcess(_process, timeout=None, deadline=None, started=0.0)
