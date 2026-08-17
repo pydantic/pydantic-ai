@@ -17,6 +17,7 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 
 import pytest
+from anthropic.types.beta import BetaMCPToolResultBlock, BetaTextBlock
 
 from pydantic_ai import (
     Agent,
@@ -32,6 +33,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import CachePoint, NativeToolSearchCallPart, ThinkingPart
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import MCPServerTool
 
 from ..._inline_snapshot import snapshot
 from ...conftest import try_import
@@ -347,6 +349,68 @@ async def test_dropped_call_hands_the_boundary_back_a_message_when_its_turn_cann
             {
                 'role': 'assistant',
                 'content': [{'thinking': 'Searching for the duration.', 'signature': 'sig', 'type': 'thinking'}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'In one sentence: does a longer duration mean more interest-rate risk?', 'type': 'text'}
+                ],
+            },
+        ]
+    )
+
+
+_MCP_CALL_ID = 'mcptoolu_01AbCdEfGhIjKlMnOpQrStUv'
+
+
+async def test_dropped_call_skips_a_block_that_is_not_a_mapping():
+    """A replayed MCP result renders as a Pydantic model, which subscripting would raise on.
+
+    It shares an assistant turn with a native call whenever the model used both, so the boundary search
+    walks over blocks that aren't `dict`s at all, not just ones that can't carry `cache_control`.
+    """
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='x'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+        ModelResponse(
+            parts=[
+                NativeToolReturnPart(
+                    tool_name=f'{MCPServerTool.kind}:docs',
+                    content={'content': [{'type': 'text', 'text': '8.1'}], 'is_error': False},
+                    tool_call_id=_MCP_CALL_ID,
+                    provider_name='anthropic',
+                ),
+                _SEARCH_CALL,
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[UserPromptPart(content=[CachePoint(), _FOLLOW_UP])]),
+    ]
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        history, ModelRequestParameters(), AnthropicModelSettings()
+    )
+    assert [dict(message) for message in messages] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Look up the 10-year Treasury duration, then add 2 and 2.',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    }
+                ],
+            },
+            {
+                'role': 'assistant',
+                'content': [
+                    BetaMCPToolResultBlock(
+                        content=[BetaTextBlock(text='8.1', type='text')],
+                        is_error=False,
+                        tool_use_id='mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                        type='mcp_tool_result',
+                    )
+                ],
             },
             {
                 'role': 'user',
