@@ -3518,7 +3518,8 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
     Anthropic fails a whole request with `<tool> tool use with id ... was found without a
     corresponding <tool>_tool_result block` when a `server_tool_use` or `mcp_tool_use` block goes
     unpaired, unless the result is still in flight — see `_result_is_still_in_flight` for the shape
-    that buys. That exception is what lets the bug reach storage: the turn is accepted while it is the
+    that buys. Both block types were measured live, against controls with the call removed that the
+    API accepts. That exception is what lets the bug reach storage: the turn is accepted while it is the
     live one, and then every later request replaying that history fails.
 
     A call goes unpaired two ways. The result may never have arrived, since Anthropic can end a turn
@@ -3529,9 +3530,11 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
     actually built rather than the parts behind them, and across the whole payload, since a result may
     sit in a later turn than its call.
 
-    Tool-search calls drop even while the result is in flight: Bedrock rejects the shape the direct
-    API tolerates, and a search is cheap for the model to repeat. Dropping beats synthesizing an empty
-    result block either way, which would tell the model the tool ran and returned nothing.
+    Tool-search calls drop even while the result is in flight, which is what the mapper did before this
+    function existed: #5143 dropped them on the grounds that Bedrock rejects the shape the direct API
+    tolerates, a claim carried forward here rather than re-measured, and a search is cheap for the model
+    to repeat. Dropping beats synthesizing an empty result block either way, which would tell the model
+    the tool ran and returned nothing.
     """
     returned_ids: set[str] = set()
     for message in anthropic_messages:
