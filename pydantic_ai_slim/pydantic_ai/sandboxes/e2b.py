@@ -8,15 +8,19 @@ pulls in the E2B SDK.
 
 from __future__ import annotations as _annotations
 
+import asyncio
+import math
+import posixpath
 import shlex
 from collections.abc import AsyncGenerator, Mapping, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import anyio
 from typing_extensions import Self, Unpack
 
+from ._lifecycle import destroy_quietly, guarded_create
 from .protocol import FileEntry, SandboxCommand
 
 try:
@@ -25,6 +29,7 @@ try:
         AsyncCommandHandle,
         AsyncSandbox,
         CommandExitException,
+        CommandResult,
         EntryInfo,
         FileType,
         SandboxException,
@@ -39,6 +44,10 @@ if TYPE_CHECKING:
     from .protocol import SandboxBackend, SandboxProcess, SupportsFilesystem, SupportsStart
 
 __all__ = ('E2BSandbox',)
+
+# Bounds the best-effort kill of a command whose wait is over: a sandbox that has stopped
+# answering must not hang the caller that is walking away from it.
+_TEARDOWN_TIMEOUT = 30.0
 
 
 @dataclass(frozen=True)
@@ -56,7 +65,12 @@ class _E2BProcess:
     def __init__(self, handle: AsyncCommandHandle, *, timeout: float | None):
         self._handle = handle
         self._timeout = timeout
+        # Stamped here rather than at the first `wait()`, so `start(timeout=5)` bounds the
+        # command's life and not the length of whichever wait happens to come first.
+        self._deadline = math.inf if timeout is None else anyio.current_time() + timeout
         self._lock = anyio.Lock()
+        self._pump: asyncio.Future[CommandResult] | None = None
+        self._abandoned = False
         self._outcome: _E2BResult | Exception | None = None
 
     @property
@@ -77,21 +91,68 @@ class _E2BProcess:
         return self._outcome
 
     async def _settle(self) -> _E2BResult:
-        try:
-            with anyio.fail_after(self._timeout):
-                result = await self._handle.wait()
-        except CommandExitException as exit_error:
-            # A non-zero exit is a normal result, not an error; the SDK reports it by raising.
-            return _E2BResult(exit_code=exit_error.exit_code, stdout=exit_error.stdout, stderr=exit_error.stderr)
-        except TimeoutError as error:
-            # E2B's own command deadline only tears the event stream down and leaves the command
-            # running in the sandbox, so the kill the timeout contract promises is ours to perform.
-            await self._handle.kill()
-            raise TimeoutError(f'command timed out after {self._timeout} seconds and was killed') from error
-        return _E2BResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+        with anyio.CancelScope(deadline=self._deadline):
+            try:
+                result = await self._await_pump()
+            except CommandExitException as exit_error:
+                # A non-zero exit is a normal result, not an error; the SDK reports it by raising.
+                return _E2BResult(exit_code=exit_error.exit_code, stdout=exit_error.stdout, stderr=exit_error.stderr)
+            return _E2BResult(exit_code=result.exit_code, stdout=result.stdout, stderr=result.stderr)
+        # Only the deadline reaches here: a cancel scope absorbs the cancellation it raised
+        # itself and lets an outer one through, which is what keeps a caller's cancellation — or
+        # a transport `TimeoutError` from the SDK — from being mistaken for the deadline.
+        kill_failure = await self.abandon()
+        # E2B's own command deadline only tears the event stream down and leaves the command
+        # running in the sandbox, so the kill the timeout contract promises is ours to perform.
+        # It is reported either way: a kill that failed cannot turn the timeout into a success.
+        raise TimeoutError(f'command timed out after {self._timeout} seconds and was killed') from kill_failure
+
+    async def _await_pump(self) -> CommandResult:
+        """Wait for the SDK's event pump without handing it this caller's cancellation.
+
+        `AsyncCommandHandle.wait()` awaits a shared `asyncio.Task` — the pump collecting the
+        command's output and exit code — and awaiting a task cancels it along with its awaiter.
+        One cancelled `wait()` would therefore kill the pump for good, and every later `wait()`
+        on the same process would raise `CancelledError` instead of the process's result.
+        """
+        if self._pump is None:
+            self._pump = asyncio.ensure_future(self._handle.wait())
+            # A wait this caller walked away from still completes; retrieving its outcome keeps
+            # the loop from reporting it as an exception nobody ever looked at.
+            self._pump.add_done_callback(_retrieve_outcome)
+        return await asyncio.shield(self._pump)
+
+    async def abandon(self) -> Exception | None:
+        """Best-effort teardown of a command whose wait will never finish.
+
+        Returns the kill's failure rather than raising it: the verdict that brought us here —
+        a deadline, a cancelled `run()` — is the one the caller has to see. Called at most once
+        per command, so a `run()` whose own deadline already dealt with it doesn't kill twice.
+        """
+        if self._abandoned:
+            return None
+        self._abandoned = True
+        failure: Exception | None = None
+        # Shielded and bounded, because this runs on cancellation paths, where an unshielded
+        # await re-raises before the command is dealt with.
+        with anyio.CancelScope(shield=True), anyio.move_on_after(_TEARDOWN_TIMEOUT):
+            try:
+                await self._handle.kill()
+            except Exception as error:
+                failure = error
+            # The kill stops the command; this closes the event stream the SDK keeps open for
+            # it, which is the SDK's own teardown surface for a handle nobody will wait on.
+            with suppress(Exception):
+                await self._handle.disconnect()
+        return failure
 
     async def kill(self) -> None:
         await self._handle.kill()
+
+
+def _retrieve_outcome(wait: asyncio.Future[CommandResult]) -> None:
+    if not wait.cancelled():
+        wait.exception()
 
 
 class _E2BFilesystem:
@@ -139,6 +200,11 @@ def _command_text(command: SandboxCommand, shell: bool) -> str:
         return command
     if isinstance(command, str):
         raise TypeError('a string command requires shell=True; pass an argv sequence otherwise')
+    if not command:
+        # An empty argv quotes back into an empty shell string, which bash would run as a
+        # successful command that did nothing; `LocalSandbox` rejects the same thing, because
+        # there is no program in an empty argv to report an exit code for.
+        raise TypeError('a command needs at least the program to run; the argv sequence is empty')
     # E2B only executes shell strings (every command runs as `/bin/bash -l -c <string>`), so argv
     # form is quoted back into one. `shlex.join` makes each element a single literal word, which
     # is what argv execution means: no element can be split, expanded, or read as an operator.
@@ -164,6 +230,16 @@ class E2BSandbox:
     `output_limit=` is not implemented either: E2B always delivers the full output, and dropping
     characters after the fact would misreport what the command produced. Bound it in-command
     instead, e.g. `| tail -c 10000`.
+
+    `timeout=` is enforced here rather than by E2B, whose own command deadline only drops the
+    event stream and leaves the command running. It runs from `start()`, so it bounds the
+    command's life rather than the length of whichever wait happens to come first, and the kill
+    it promises is performed even when the caller is being cancelled at the same moment. A
+    [`run()`][pydantic_ai.sandboxes.SandboxBackend.run] that is cancelled kills the command it
+    started, for the same reason; a cancelled
+    [`wait()`][pydantic_ai.sandboxes.SandboxProcess.wait] on a process from
+    [`start()`][pydantic_ai.sandboxes.SupportsStart.start] does not, because that process is the
+    caller's, and it stays waitable afterwards.
 
     Deliberately no base class: it conforms to the protocol structurally, like any third-party
     backend would.
@@ -221,24 +297,26 @@ class E2BSandbox:
             api_params: E2B connection options such as `api_key` (which defaults to the
                 `E2B_API_KEY` environment variable) and `domain`.
         """
-        sandbox = await AsyncSandbox.create(
-            template=template,
-            timeout=timeout,
-            envs=dict(envs) if envs is not None else None,
-            metadata=dict(metadata) if metadata is not None else None,
-            **api_params,
+        # Guarded because a caller cancelled while the create is in flight would otherwise leave
+        # a running (and billed) sandbox behind that nobody holds a handle to.
+        sandbox = await guarded_create(
+            AsyncSandbox.create(
+                template=template,
+                timeout=timeout,
+                envs=dict(envs) if envs is not None else None,
+                metadata=dict(metadata) if metadata is not None else None,
+                **api_params,
+            ),
+            lambda created: created.kill(),
         )
         try:
             yield cls(sandbox)
         finally:
-            # Shielded because teardown can run inside an already-cancelled scope, where every
-            # await re-raises: an unshielded kill would leak a running (and billed) sandbox.
-            with anyio.CancelScope(shield=True):
-                await sandbox.kill()
+            await destroy_quietly(sandbox.kill())
 
     @classmethod
-    async def connect(cls, sandbox_id: str, **api_params: Unpack[ApiParams]) -> Self:
-        """Attach to an E2B sandbox that already exists, without taking over its lifecycle.
+    async def connect(cls, sandbox_id: str, *, timeout: int | None = None, **api_params: Unpack[ApiParams]) -> Self:
+        """Attach to an E2B sandbox that already exists, without taking over its destruction.
 
         This is the building block for a
         [`SandboxResolver`][pydantic_ai.sandboxes.SandboxResolver] — a capability's
@@ -265,14 +343,20 @@ class E2BSandbox:
         ```
 
         Connecting never creates: `e2b.SandboxNotFoundException` is raised if the environment is
-        gone, rather than an empty replacement being silently swapped in.
+        gone, rather than an empty replacement being silently swapped in. It is not passive
+        either, and there is no way to ask E2B for a look that is: a paused sandbox is resumed,
+        and the sandbox's own keep-alive timeout is set to `timeout` — E2B's own default of 300
+        seconds when it is omitted — for a sandbox whose remaining time is shorter than that.
 
         Args:
             sandbox_id: The `sandbox_id` of the environment to attach to.
+            timeout: How long E2B keeps the sandbox alive from now, in seconds; a running
+                sandbox's timeout is only ever extended, never cut short. E2B applies its own
+                default of 300 seconds when this is omitted.
             api_params: E2B connection options such as `api_key` (which defaults to the
                 `E2B_API_KEY` environment variable) and `domain`.
         """
-        return cls(await AsyncSandbox.connect(sandbox_id, **api_params))
+        return cls(await AsyncSandbox.connect(sandbox_id, timeout=timeout, **api_params))
 
     async def working_dir(self) -> str:
         # E2B exposes no API for the template's default directory, and a command started without
@@ -284,7 +368,17 @@ class E2BSandbox:
                     f'Could not determine the working directory of sandbox {self.sandbox_id!r}: '
                     f'`pwd` exited {result.exit_code}: {result.stderr}'
                 )
-            self._working_dir = result.stdout.strip()
+            # Every command runs under `bash -l`, so a template whose login shell prints a banner
+            # puts it on stdout ahead of the answer: the path is the last line, and only an
+            # absolute one is an answer. Caching whatever else the shell printed would hand every
+            # later `resolve()` a working directory that is not one.
+            working_dir = result.stdout.strip().rpartition('\n')[2].strip()
+            if not posixpath.isabs(working_dir):
+                raise SandboxException(
+                    f'Could not determine the working directory of sandbox {self.sandbox_id!r}: '
+                    f'`pwd` printed {result.stdout!r}'
+                )
+            self._working_dir = working_dir
         return self._working_dir
 
     async def run(
@@ -298,7 +392,14 @@ class E2BSandbox:
         output_limit: int | None = None,
     ) -> _E2BResult:
         process = await self.start(command, shell=shell, cwd=cwd, env=env, timeout=timeout, output_limit=output_limit)
-        return await process.wait()
+        try:
+            return await process.wait()
+        except BaseException:
+            # `run()` owns the command it started, so a caller that walks away from it — a
+            # cancellation, an SDK failure mid-wait — must not leave it running in the sandbox.
+            # (`start()` hands the process to the caller instead, so `wait()` never kills.)
+            await process.abandon()
+            raise
 
     async def start(
         self,
@@ -312,17 +413,23 @@ class E2BSandbox:
     ) -> _E2BProcess:
         if output_limit is not None:
             raise NotImplementedError('E2BSandbox does not bound output; bound it in-command, e.g. `| tail -c`.')
-        handle = await self.sandbox.commands.run(
-            _command_text(command, shell),
-            background=True,
-            # `envs` are applied on top of the sandbox's environment, not in place of it.
-            envs=dict(env) if env is not None else None,
-            # `cwd=None` leaves the command in the sandbox's own default directory.
-            cwd=cwd,
-            # `0` disables E2B's command deadline (which would otherwise default to 60 seconds).
-            # The deadline is the process handle's to own, because E2B's merely drops the event
-            # stream while the command keeps running, which the timeout contract forbids.
-            timeout=0,
+        # Guarded like `create()`: cancelling the caller of an in-flight start would otherwise
+        # leave a command running in the sandbox that nobody holds a handle to.
+        handle = await guarded_create(
+            self.sandbox.commands.run(
+                _command_text(command, shell),
+                background=True,
+                # `envs` are applied on top of the sandbox's environment, not in place of it.
+                envs=dict(env) if env is not None else None,
+                # `cwd=None` leaves the command in the sandbox's own default directory.
+                cwd=cwd,
+                # `0` disables E2B's command deadline (which would otherwise default to 60
+                # seconds). The deadline is the process handle's to own, because E2B's merely
+                # drops the event stream while the command keeps running, which the timeout
+                # contract forbids.
+                timeout=0,
+            ),
+            lambda started: started.kill(),
         )
         return _E2BProcess(handle, timeout=timeout)
 

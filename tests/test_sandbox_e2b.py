@@ -9,8 +9,10 @@ those shapes fails here instead of in production.
 
 from __future__ import annotations
 
+import asyncio
 import posixpath
 import re
+import shlex
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -128,30 +130,51 @@ class FakeFiles:
 
 
 class FakeCommandHandle:
-    """Stand-in for `AsyncCommandHandle`; reports non-zero exits the way the SDK does."""
+    """Stand-in for `AsyncCommandHandle`; reports non-zero exits the way the SDK does.
+
+    The SDK collects a command's output and exit code in an `asyncio.Task` created in the
+    handle's constructor — its event pump — and `wait()` is `await self._wait` on that shared
+    task, so awaiting it hands the awaiter's cancellation straight to the pump. That structure
+    is reproduced here, because it is what a cancelled `wait()` has to survive.
+    """
 
     def __init__(self, result: CommandResult | None = None, *, error: Exception | None = None) -> None:
         self.pid = 4242
         self.kills = 0
+        self.disconnects = 0
         self._result = result
         self._error = error
+        self._pump = asyncio.ensure_future(self._run())
 
-    async def wait(self) -> CommandResult:
+    async def _run(self) -> CommandResult:
         if self._error is not None:
             raise self._error
         assert self._result is not None
-        if self._result.exit_code != 0:
-            raise CommandExitException(
-                stderr=self._result.stderr,
-                stdout=self._result.stdout,
-                exit_code=self._result.exit_code,
-                error=self._result.error,
-            )
         return self._result
 
+    async def wait(self) -> CommandResult:
+        result = await self._pump
+        if result.exit_code != 0:
+            raise CommandExitException(
+                stderr=result.stderr,
+                stdout=result.stdout,
+                exit_code=result.exit_code,
+                error=result.error,
+            )
+        return result
+
     async def kill(self) -> bool:
+        # Suspends at least once, like the RPC it stands in for, so a kill that runs on a
+        # cancellation path fails visibly unless it is shielded.
+        await anyio.sleep(0)
         self.kills += 1
         return True
+
+    async def disconnect(self) -> None:
+        # The SDK's own teardown surface: it cancels the pump and closes the event stream.
+        self.disconnects += 1
+        self._pump.cancel()
+        await asyncio.wait([self._pump])
 
 
 class HangingCommandHandle(FakeCommandHandle):
@@ -160,9 +183,29 @@ class HangingCommandHandle(FakeCommandHandle):
     def __init__(self) -> None:
         super().__init__(CommandResult(stderr='', stdout='', exit_code=0, error=None))
 
-    async def wait(self) -> CommandResult:
+    async def _run(self) -> CommandResult:
         await anyio.sleep_forever()
-        assert False
+        raise AssertionError('unreachable')  # pragma: no cover
+
+
+class DeferredCommandHandle(FakeCommandHandle):
+    """A command that finishes only when the test says so, so a wait can be cancelled mid-flight."""
+
+    def __init__(self, result: CommandResult) -> None:
+        self.finished = anyio.Event()
+        super().__init__(result)
+
+    async def _run(self) -> CommandResult:
+        await self.finished.wait()
+        return await super()._run()
+
+
+class UnkillableCommandHandle(HangingCommandHandle):
+    """A command the sandbox refuses to kill, so a timeout's teardown fails under it."""
+
+    async def kill(self) -> bool:
+        await anyio.sleep(0)
+        raise SandboxException('503 while killing the command')
 
 
 @dataclass(frozen=True)
@@ -203,9 +246,13 @@ class FakeCommands:
 
 
 class FakeAsyncSandbox:
-    def __init__(self, sandbox_id: str = 'sbx-1', responder: Responder = default_responder) -> None:
+    def __init__(
+        self, sandbox_id: str = 'sbx-1', responder: Responder = default_responder, *, files: FakeFiles | None = None
+    ) -> None:
         self.sandbox_id = sandbox_id
-        self.files = FakeFiles()
+        # Taking one lets a responder serve commands out of the same files `fs` exposes, which
+        # is the protocol's one-environment contract.
+        self.files = files if files is not None else FakeFiles()
         self.commands = FakeCommands(responder)
         self.kills = 0
 
@@ -221,6 +268,9 @@ class FakeSandboxApi:
         self.created: list[dict[str, Any]] = []
         self.connected: list[dict[str, Any]] = []
         self.sandboxes: list[FakeAsyncSandbox] = []
+        self.create_delay = 0.0
+        """Holds the create in flight, so a caller can be cancelled part way through one."""
+        self.create_error: Exception | None = None
         self._responder = responder
 
     def _new(self, sandbox_id: str) -> FakeAsyncSandbox:
@@ -229,6 +279,9 @@ class FakeSandboxApi:
         return sandbox
 
     async def create(self, **kwargs: Any) -> FakeAsyncSandbox:
+        await anyio.sleep(self.create_delay)
+        if self.create_error is not None:
+            raise self.create_error
         self.created.append(kwargs)
         return self._new(f'sbx-{len(self.sandboxes) + 1}')
 
@@ -291,15 +344,82 @@ async def test_create_kills_the_sandbox_when_the_block_raises(sandbox_api: FakeS
     assert sandbox_api.sandboxes[0].kills == 1
 
 
+def _break_kill(backend: E2BSandbox) -> None:
+    async def kill() -> bool:
+        raise SandboxException('the control plane is unreachable')
+
+    cast(Any, backend.sandbox).kill = kill
+
+
+async def test_a_failing_teardown_is_not_raised_at_a_block_that_succeeded(sandbox_api: FakeSandboxApi):
+    """Teardown is best effort: E2B's `kill` raises for any failing status, and that must not
+    invent an exception for a block that ran to completion.
+    """
+    async with E2BSandbox.create() as backend:
+        _break_kill(backend)
+
+
+async def test_a_failing_teardown_does_not_mask_the_block_exception(sandbox_api: FakeSandboxApi):
+    with pytest.raises(RuntimeError, match='boom'):
+        async with E2BSandbox.create() as backend:
+            _break_kill(backend)
+            raise RuntimeError('boom')
+
+
+async def test_cancelling_a_create_in_flight_kills_the_orphan(sandbox_api: FakeSandboxApi):
+    """E2B provisions the sandbox whether or not anyone is left to receive the handle, so a
+    caller cancelled part way through must not leave a running (and billed) environment behind.
+    """
+    sandbox_api.create_delay = 0.05
+    with anyio.move_on_after(0.01):
+        async with E2BSandbox.create():
+            raise AssertionError('the create never completed for this block')  # pragma: no cover
+
+    # The cleanup is scheduled by the create finishing, which is after the caller gave up.
+    await _eventually(lambda: bool(sandbox_api.sandboxes) and sandbox_api.sandboxes[0].kills == 1)
+
+
+async def test_a_create_that_fails_reports_the_failure(sandbox_api: FakeSandboxApi):
+    """Guarding the create against cancellation must not swallow what it went wrong with."""
+    sandbox_api.create_error = SandboxException('no capacity for a new sandbox')
+    with pytest.raises(SandboxException, match='no capacity'):
+        async with E2BSandbox.create():
+            raise AssertionError('the create never produced a sandbox')  # pragma: no cover
+
+
+async def test_cancelling_a_create_that_then_fails_leaves_nothing_to_clean_up(sandbox_api: FakeSandboxApi):
+    """A create that failed provisioned nothing, so the cancelled caller's cleanup has nothing
+    to kill — and nobody is left to be told about the failure either.
+    """
+    sandbox_api.create_delay = 0.05
+    sandbox_api.create_error = SandboxException('no capacity for a new sandbox')
+    with anyio.move_on_after(0.01):
+        async with E2BSandbox.create():
+            raise AssertionError('the create never produced a sandbox')  # pragma: no cover
+
+    await anyio.sleep(0.06)  # long enough for the create to fail behind the caller's back
+    assert sandbox_api.sandboxes == []
+
+
+async def _eventually(condition: Callable[[], bool]) -> None:
+    for _ in range(1000):
+        if condition():
+            return
+        await anyio.sleep(0.001)
+    raise AssertionError('the condition was never met')
+
+
 async def test_connect_attaches_to_an_existing_sandbox_without_owning_it(sandbox_api: FakeSandboxApi):
     """`connect` is the resolver building block: a ref round-trips into a live backend, and the
-    caller that provisioned the environment keeps the right to destroy it.
+    caller that provisioned the environment keeps the right to destroy it. E2B's connect is not
+    a passive look, so the keep-alive `timeout` it applies is exposed and passed through — the
+    SDK's own default when it is omitted.
     """
     ref = SandboxRef(provider='e2b', sandbox_id='sbx-existing')
-    backend = await E2BSandbox.connect(ref.sandbox_id, api_key='e2b_key')
+    backend = await E2BSandbox.connect(ref.sandbox_id, timeout=900, api_key='e2b_key')
 
     assert SandboxRef(provider=backend.provider, sandbox_id=backend.sandbox_id) == ref
-    assert sandbox_api.connected == [{'sandbox_id': 'sbx-existing', 'api_key': 'e2b_key'}]
+    assert sandbox_api.connected == [{'sandbox_id': 'sbx-existing', 'timeout': 900, 'api_key': 'e2b_key'}]
     assert sandbox_api.sandboxes[0].kills == 0
 
 
@@ -334,6 +454,15 @@ async def test_run_rejects_a_command_shape_that_contradicts_shell(
         await backend_for(FakeAsyncSandbox()).run(command, shell=shell)
 
 
+async def test_run_rejects_an_empty_command():
+    """An empty argv quotes back into an empty shell string, which bash would run as a command
+    that succeeded at doing nothing. There is no program to report an exit code for, so it is
+    rejected, exactly as `LocalSandbox` has it.
+    """
+    with pytest.raises(TypeError, match='the argv sequence is empty'):
+        await backend_for(FakeAsyncSandbox()).run([])
+
+
 async def test_run_forwards_cwd_and_env_and_owns_the_deadline():
     sandbox = FakeAsyncSandbox()
     await backend_for(sandbox).run(['true'], cwd='/tmp', env={'TOKEN': 'secret'}, timeout=30)
@@ -363,6 +492,55 @@ async def test_timeout_kills_the_command_before_raising():
     with pytest.raises(TimeoutError, match=re.escape('command timed out after 0.01 seconds and was killed')):
         await backend_for(sandbox).run(['sleep', '600'], timeout=0.01)
     assert sandbox.commands.handles[0].kills == 1
+
+
+async def test_a_failing_kill_still_reports_the_timeout():
+    """A kill that fails cannot turn a timeout into a success — the command is no less over
+    the deadline for it — so the failure is chained onto the verdict rather than replacing it.
+    """
+    sandbox = FakeAsyncSandbox(responder=lambda command: UnkillableCommandHandle())
+    with pytest.raises(TimeoutError) as exc_info:
+        await backend_for(sandbox).run(['sleep', '600'], timeout=0.01)
+    assert isinstance(exc_info.value.__cause__, SandboxException)
+
+
+async def test_a_transport_timeout_is_not_read_as_the_command_deadline():
+    """E2B's transport reports a request that never got through as the builtin `TimeoutError`.
+    That is an infrastructure failure, not a command that outlived its deadline, and a command
+    started without one has no deadline to blame in the first place.
+    """
+    stalled = TimeoutError('the request to the sandbox timed out')
+    sandbox = FakeAsyncSandbox(responder=lambda command: FakeCommandHandle(error=stalled))
+    with pytest.raises(TimeoutError) as exc_info:
+        await backend_for(sandbox).run(['true'])
+    assert exc_info.value is stalled
+
+
+async def test_the_deadline_runs_from_the_start_not_from_the_first_wait():
+    """`start(timeout=)` bounds the command's life, so time that passes before anyone waits
+    comes out of the same budget rather than buying a fresh one.
+    """
+    sandbox = FakeAsyncSandbox(responder=lambda command: HangingCommandHandle())
+    process = await backend_for(sandbox).start(['sleep', '600'], timeout=0.05)
+    await anyio.sleep(0.06)  # the whole budget goes by before the first wait
+
+    started = anyio.current_time()
+    with pytest.raises(TimeoutError):
+        await process.wait()
+    assert anyio.current_time() - started < 0.05
+    assert sandbox.commands.handles[0].kills == 1
+
+
+async def test_a_cancelled_run_kills_the_command_it_started():
+    """`run()` owns the command it started, so a caller that gives up must not leave it running
+    in the sandbox — and the kill has to survive the very cancellation that called for it.
+    """
+    sandbox = FakeAsyncSandbox(responder=lambda command: HangingCommandHandle())
+    with anyio.move_on_after(0.01):
+        await backend_for(sandbox).run(['sleep', '600'], timeout=60)
+
+    handle = sandbox.commands.handles[0]
+    assert (handle.kills, handle.disconnects) == (1, 1)
 
 
 async def test_output_limit_is_not_supported():
@@ -404,6 +582,30 @@ async def test_waiting_twice_reports_the_same_outcome():
     assert await finished.wait() == await finished.wait()
 
 
+async def test_concurrent_waits_report_the_same_outcome():
+    """The protocol requires concurrent waits to agree, so only one of them reaches the SDK."""
+    process = await backend_for(FakeAsyncSandbox()).start(['true'])
+    first, second = await asyncio.gather(process.wait(), process.wait())
+    assert first is second
+
+
+async def test_a_cancelled_wait_leaves_the_process_usable():
+    """The SDK's `wait()` awaits a shared `asyncio.Task` — its event pump — and awaiting a task
+    hands it the awaiter's cancellation. A caller that gives up on one wait must not kill the
+    pump for every later one, and must not kill a process it does not own either.
+    """
+    handle = DeferredCommandHandle(CommandResult(stderr='', stdout='done', exit_code=0, error=None))
+    sandbox = FakeAsyncSandbox(responder=lambda command: handle)
+    process = await backend_for(sandbox).start(['slow'])
+
+    with anyio.move_on_after(0.01):
+        await process.wait()
+    assert handle.kills == 0  # `start()` hands the caller the process; giving up on a wait is not a kill
+
+    handle.finished.set()
+    assert (await process.wait()).stdout == 'done'
+
+
 async def test_working_dir_asks_the_environment_once():
     """E2B exposes no API for the template's default directory, so the sandbox is asked, and the
     answer — which cannot change — is kept.
@@ -423,6 +625,27 @@ async def test_working_dir_reports_an_environment_that_cannot_answer():
     )
     with pytest.raises(SandboxException, match=r"working directory of sandbox 'sbx-1'.+`pwd` exited 127"):
         await backend_for(sandbox).working_dir()
+
+
+def _printing_sandbox(stdout: str) -> FakeAsyncSandbox:
+    return FakeAsyncSandbox(
+        responder=lambda command: FakeCommandHandle(CommandResult(stderr='', stdout=stdout, exit_code=0, error=None))
+    )
+
+
+async def test_working_dir_looks_past_a_login_shell_banner():
+    """Every E2B command runs as `bash -l -c`, so a template whose login shell greets you puts
+    that greeting on stdout ahead of the answer.
+    """
+    assert await backend_for(_printing_sandbox(f'Welcome!\n{WORKING_DIR}\n')).working_dir() == WORKING_DIR
+
+
+async def test_working_dir_rejects_an_answer_that_is_not_a_path():
+    """Caching whatever else the shell printed would hand every later `resolve()` a working
+    directory that is not one.
+    """
+    with pytest.raises(SandboxException, match=r"working directory of sandbox 'sbx-1'.+`pwd` printed"):
+        await backend_for(_printing_sandbox('Welcome!\n')).working_dir()
 
 
 @pytest.mark.parametrize(
@@ -484,6 +707,12 @@ async def test_remove_deletes_files_and_directories():
     assert await backend.fs.exists(f'{WORKING_DIR}/tree/leaf.txt') is False
 
 
+async def test_exists_answers_for_a_file_that_is_there():
+    backend = backend_for(FakeAsyncSandbox())
+    await backend.fs.write_bytes(f'{WORKING_DIR}/here.txt', b'x')
+    assert await backend.fs.exists(f'{WORKING_DIR}/here.txt') is True
+
+
 @pytest.mark.parametrize('operation', ['read_bytes', 'stat', 'list_dir', 'remove'])
 async def test_a_missing_path_raises_the_sdk_error_unchanged(operation: str):
     """File errors are E2B's to describe: they pass through rather than being renamed."""
@@ -511,6 +740,56 @@ async def test_the_sandbox_serves_an_agent_run():
 
     assert seen == ['from the model']
     assert sandbox.files.files == {f'{WORKING_DIR}/note.txt': b'from the model'}
+
+
+def _sed_responder(files: FakeFiles) -> Responder:
+    """Serves `pwd` and the `sed` line-window form the `Sandbox` facade emits out of the same
+    files `fs` exposes, which is the protocol's one-environment contract. The shell string is
+    split back into words the way `bash -l -c` would, so the argv quoting is under test too.
+    """
+
+    def respond(command: str) -> FakeCommandHandle:
+        argv = shlex.split(command)
+        if argv == ['pwd']:
+            return FakeCommandHandle(CommandResult(stderr='', stdout=f'{WORKING_DIR}\n', exit_code=0, error=None))
+        assert argv[:2] == ['sed', '-n'], argv
+        expression, path = argv[2], argv[3]
+        if path not in files.files:
+            error = f'sed: {path}: No such file or directory'
+            return FakeCommandHandle(CommandResult(stderr=error, stdout='', exit_code=2, error='exit status 2'))
+        first, _, last = expression.removesuffix('p').partition(',')
+        lines = files.files[path].decode().split('\n')
+        if lines[-1] == '':
+            lines.pop()
+        window = ''.join(f'{line}\n' for line in lines[int(first) - 1 : int(last)])
+        return FakeCommandHandle(CommandResult(stderr='', stdout=window, exit_code=0, error=None))
+
+    return respond
+
+
+async def test_the_facade_slices_a_file_window_inside_the_sandbox():
+    """`Sandbox.read_file` slices the window with `sed` in the sandbox rather than pulling the
+    whole file across, and reads it back from the same environment the command ran in. E2B
+    quotes argv into a single shell string on the way, so this covers that round trip.
+    """
+    files = FakeFiles()
+    sandbox = FakeAsyncSandbox(responder=_sed_responder(files), files=files)
+    facade = Sandbox(backend_for(sandbox))
+    await facade.write_text('notes.txt', 'one\ntwo\nthree\n')
+
+    window = await facade.read_file('notes.txt', offset=2, limit=1)
+    assert (window.lines, window.start_line, window.has_more) == (('two',), 2, True)
+
+
+async def test_the_facade_falls_back_to_a_full_read_when_the_slice_fails():
+    """A `sed` that cannot find the file falls back to the filesystem, which stays the
+    authoritative source of the error.
+    """
+    files = FakeFiles()
+    sandbox = FakeAsyncSandbox(responder=_sed_responder(files), files=files)
+
+    with pytest.raises(FileNotFoundException):
+        await Sandbox(backend_for(sandbox)).read_file('missing.txt', limit=3)
 
 
 async def test_the_facade_exposes_the_backend_for_provider_specific_work():
