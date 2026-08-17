@@ -15,7 +15,11 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
     def __init__(self, store: CapabilityStore) -> None:
         super().__init__()
         self._store = store
-        self.add_function(self.author_capability, name='author_capability')
+        self.add_function(
+            self.author_capability,
+            name='author_capability',
+            metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
+        )
         self.add_function(self.list_authored_capabilities, name='list_authored_capabilities')
         self.add_function(self.disable_authored_capability, name='disable_authored_capability')
 

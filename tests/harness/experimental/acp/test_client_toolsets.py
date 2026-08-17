@@ -12,6 +12,7 @@ from pydantic_ai import RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 
+from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 from pydantic_ai_harness.experimental.acp import (
     AcpFileSystemToolset,
     AcpSession,
@@ -142,6 +143,22 @@ async def test_run_command_creates_a_terminal_in_the_session_cwd() -> None:
 async def test_terminal_registers_run_command_tool() -> None:
     ts = AcpTerminalToolset[None](client=RecordingClient(), session_id='sid')
     assert set(await ts.get_tools(_ctx())) == {'run_command'}
+
+
+async def test_run_command_stays_native_under_code_mode() -> None:
+    """`run_command` takes a command line, so CodeMode exposes it beside `run_code`, not inside it.
+
+    Folding it in would make the model write a Monty script whose argument is a shell script
+    quoted as a Python string, running the outer script locally and the inner one in the
+    editor's terminal.
+    """
+    ts = AcpTerminalToolset[None](client=RecordingClient(), session_id='sid')
+    wrapper = CodeMode[None]().get_wrapper_toolset(ts)
+    assert isinstance(wrapper, CodeModeToolset)
+
+    tools = await wrapper.get_tools(_ctx())
+
+    assert set(tools) == {'run_command', 'run_code'}
 
 
 @pytest.mark.parametrize(

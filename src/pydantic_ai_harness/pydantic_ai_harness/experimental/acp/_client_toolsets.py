@@ -163,7 +163,11 @@ class AcpTerminalToolset(FunctionToolset[AgentDepsT]):
         self._client = client
         self._session_id = session_id
         self._cwd = cwd
-        self.add_function(self.run_command, name='run_command')
+        self.add_function(
+            self.run_command,
+            name='run_command',
+            metadata={'code_arg_name': 'command', 'code_arg_language': 'shell'},
+        )
 
     # Embedding a live terminal pane in the tool call would require the terminal id at
     # call-start, before the command runs; the captured output is returned instead.

@@ -9,11 +9,12 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 
 from pydantic_ai_harness.capability_creation import (
     CapabilityCreation,
@@ -23,6 +24,7 @@ from pydantic_ai_harness.capability_creation import (
     load_capability_instance,
     validate_capability_file,
 )
+from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 
 pytestmark = pytest.mark.anyio
 
@@ -424,6 +426,22 @@ class TestCapabilityCreationToolset:
         toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))
         result = await toolset.disable_authored_capability('nope')
         assert 'No authored capability' in result
+
+    async def test_author_capability_stays_native_under_code_mode(self, tmp_path: Path) -> None:
+        """`author_capability` takes Python source, so CodeMode exposes it beside `run_code`, not inside it.
+
+        Folding it in would make the model write a Monty script whose argument is a second
+        Python module quoted as a string literal. The list/disable tools carry no code and
+        stay sandboxed.
+        """
+        toolset = CapabilityCreationToolset[None](CapabilityStore(tmp_path))
+        wrapper = CodeMode[None]().get_wrapper_toolset(toolset)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=1)
+        tools = await wrapper.get_tools(ctx)
+
+        assert set(tools) == {'author_capability', 'run_code'}
 
 
 class TestCapabilityCreationCapability:

@@ -67,7 +67,11 @@ class ModalSandboxToolset(FunctionToolset[AgentDepsT]):
         self._session: ModalSandboxSession | None = None
         self._run_scoped = _run_scoped
 
-        self.add_function(self.run_command, name='run_command')
+        self.add_function(
+            self.run_command,
+            name='run_command',
+            metadata={'code_arg_name': 'command', 'code_arg_language': 'shell'},
+        )
         self.add_function(self.read_file, name='read_file')
         self.add_function(self.write_file, name='write_file')
         self.add_function(self.list_directory, name='list_directory')

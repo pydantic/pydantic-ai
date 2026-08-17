@@ -127,8 +127,16 @@ class ShellToolset(FunctionToolset[AgentDepsT]):
         if max_output_chars <= 0:
             raise ValueError('max_output_chars must be a positive integer.')
 
-        self.add_function(self.run_command, name='run_command')
-        self.add_function(self.start_command, name='start_command')
+        self.add_function(
+            self.run_command,
+            name='run_command',
+            metadata={'code_arg_name': 'command', 'code_arg_language': 'shell'},
+        )
+        self.add_function(
+            self.start_command,
+            name='start_command',
+            metadata={'code_arg_name': 'command', 'code_arg_language': 'shell'},
+        )
         self.add_function(self.check_command, name='check_command')
         self.add_function(self.stop_command, name='stop_command')
 

@@ -235,13 +235,17 @@ _INVALID_IDENT_CHARS = re.compile(r'[^a-zA-Z0-9_]')
 
 
 def _is_code_execution_tool(tool_def: ToolDefinition) -> bool:
-    """Whether a tool is itself a code-execution sandbox that takes a code string.
+    """Whether a tool executes its string argument as a program when called.
 
-    Such tools (this `run_code`, or DynamicWorkflow's `run_workflow`) carry `code_arg_name`
-    metadata -- the same marker instrumentation reads to render the argument as code. They must
-    not be folded into `run_code`: nesting one code sandbox inside another would make the model
-    write a script that passes a second script as a string literal. They stay native so the two
-    code surfaces sit side by side.
+    Such tools carry `code_arg_name` metadata -- the same marker instrumentation reads to render
+    the argument as code. It covers script sandboxes (this `run_code`, DynamicWorkflow's
+    `run_workflow`), shell surfaces that hand the argument to a shell (`Shell`'s
+    `run_command`/`start_command`, ModalSandbox's `run_command`), and tools that import the
+    argument as Python (`CapabilityCreation`'s `author_capability`). They must not be folded
+    into `run_code`: nesting one code surface inside another would make the model write a script
+    that passes a second script as a string literal. They stay native so the two code surfaces
+    sit side by side. Tools whose string argument is data (file contents, an argv-style command
+    parsed with `shlex`) are folded as usual.
     """
     return bool(tool_def.metadata and 'code_arg_name' in tool_def.metadata)
 

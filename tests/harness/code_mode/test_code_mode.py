@@ -990,7 +990,9 @@ class TestCodeMode:
 
         Folding one code-execution tool into `run_code` would make the model pass a script as a
         string argument to a function inside another script. Such a tool (e.g. DynamicWorkflow's
-        `run_workflow`) is a peer of `run_code`, exposed alongside it, not inside it.
+        `run_workflow`) is a peer of `run_code`, exposed alongside it, not inside it. The guard
+        keys off `code_arg_name` alone, whatever `code_arg_language` says, so shell surfaces
+        marked with a `command` argument stay native the same way.
         """
         td_run_workflow = ToolDefinition(
             name='run_workflow',
