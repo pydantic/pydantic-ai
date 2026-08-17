@@ -19,6 +19,11 @@ async def research(ctx: RunContext, topic: str) -> str:
     return result.output
 ```
 
+Any tool or output function that calls another agent must be `async def` and use `await delegate.run(...)`.
+Never call `run_sync()` or `run_stream_sync()` from a synchronous callback run by Pydantic AI: nested synchronous
+agent calls are rejected because they can deadlock on shared async resources. The parent agent may still use
+`run_sync()` at the synchronous application boundary. Ordinary tools that do not delegate may remain synchronous.
+
 Good split:
 
 - delegation via tools when the parent keeps control
