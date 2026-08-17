@@ -61,6 +61,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._thinking_part import render_replayed_thinking
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import is_multi_modal_content
 from pydantic_ai.models import (
@@ -74,7 +75,6 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
-from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
@@ -1315,9 +1315,8 @@ class BedrockConverseModel(Model[BaseClient]):
                                 }
                             content.append({'reasoningContent': reasoning_content})
                         else:
-                            start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                            thinking_text = '\n'.join([start_tag, item.content, end_tag])
-                            if profile.get('mimics_assistant_message_formatting', False):
+                            thinking_text, carry_in_user_turn = render_replayed_thinking(item.content, profile)
+                            if carry_in_user_turn:
                                 carried_thinking.append({'text': thinking_text})
                             else:
                                 content.append({'text': thinking_text})

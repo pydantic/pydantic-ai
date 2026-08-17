@@ -15,6 +15,7 @@ from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
+from .._thinking_part import render_replayed_thinking
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
 from ..capabilities.abstract import AbstractCapability
@@ -67,7 +68,7 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
-from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec, merge_profile
+from ..profiles import ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
@@ -1893,7 +1894,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     | BetaCompactionBlockParam
                 ] = []
                 carried_thinking_params: list[BetaTextBlockParam] = []
-                carry_thinking_in_user_turn = self.profile.get('mimics_assistant_message_formatting', False)
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
                         if response_part.content:
@@ -1926,10 +1926,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     )
                                 )
                         elif response_part.content:  # pragma: no branch
-                            start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                            thinking_text = '\n'.join([start_tag, response_part.content, end_tag])
+                            thinking_text, carry_in_user_turn = render_replayed_thinking(
+                                response_part.content, self.profile
+                            )
                             thinking_param = BetaTextBlockParam(text=thinking_text, type='text')
-                            if carry_thinking_in_user_turn:
+                            if carry_in_user_turn:
                                 carried_thinking_params.append(thinking_param)
                             else:
                                 assistant_content_params.append(thinking_param)
@@ -2171,6 +2172,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     # It goes *ahead* of any `system` entry this request emitted, so that entry
                     # still has no user turn to hop and keeps the cache boundary it was authored
                     # with — see `_place_system_messages_before_generation`.
+                    #
+                    # That last line is why the placement stays here rather than moving to
+                    # `Model.prepare_messages`, which is where a profile-flag-driven part-to-part
+                    # rewrite would otherwise belong. `render_replayed_thinking` centralizes what can
+                    # be centralized — the tags and the flag's meaning — but `prepare_messages` can
+                    # only insert a whole `ModelRequest`, which renders *after* the `system` entry
+                    # this request emits. The entry then slides forward past it and
+                    # `_leave_cache_boundary_behind` drops its `cache_control` onto an earlier
+                    # message, shortening the cached prefix with nothing to notice at runtime. A
+                    # `system` entry is a rendering decision that doesn't exist at the message level,
+                    # so nothing upstream of here can aim a turn ahead of one.
                     insert_at = len(anthropic_messages)
                     while insert_at > 0 and anthropic_messages[insert_at - 1]['role'] == 'system':
                         insert_at -= 1
