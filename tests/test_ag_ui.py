@@ -7938,3 +7938,142 @@ async def test_tool_availability_delta_stream_matches_dumped_activity_message() 
     # The literal is a frontend-facing wire contract: deriving both sides from the shared constant
     # would let a rename drift silently.
     assert activity.activity_type == 'pydantic_ai_tool_availability_delta'
+
+
+async def test_tool_only_response_emits_text_message_start() -> None:
+    """Regression test for #7527: tool-only responses must emit TEXT_MESSAGE_START.
+
+    When a response contains only tool calls (no TextPart), before_response()
+    mints a synthetic message_id but no TEXT_MESSAGE_START is emitted.
+    TOOL_CALL_START then uses that synthetic ID as parentMessageId, which
+    refers to no event in the stream. This test verifies a TEXT_MESSAGE_START
+    is emitted before the first TOOL_CALL_START for a tool-only response.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='get_weather', json_args='{"location":"Paris"}')}
+        else:
+            yield 'Final result'
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+        tools=[get_weather()],
+    )
+
+    thread_id = uuid_str()
+    run_inputs = [
+        create_input(
+            UserMessage(
+                id='msg_1',
+                content='Get weather for Paris',
+            ),
+            tools=[get_weather()],
+            thread_id=thread_id,
+        ),
+        create_input(
+            UserMessage(
+                id='msg_1',
+                content='Get weather for Paris',
+            ),
+            AssistantMessage(
+                id='msg_2',
+                tool_calls=[
+                    ToolCall(
+                        id='pyd_ai_00000000000000000000000000000003',
+                        type='function',
+                        function=FunctionCall(
+                            name='get_weather',
+                            arguments='{"location": "Paris"}',
+                        ),
+                    ),
+                ],
+            ),
+            ToolMessage(
+                id='msg_3',
+                content='Tool result',
+                tool_call_id='pyd_ai_00000000000000000000000000000003',
+            ),
+            thread_id=thread_id,
+        ),
+    ]
+
+    events = await run_and_collect_events(agent, *run_inputs)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                # The first response is tool-only: TEXT_MESSAGE_START must be
+                # emitted before TOOL_CALL_START so the client has a parent
+                # message to attach the tool call to.
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'get_weather',
+                'parentMessageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': tool_call_id,
+                'delta': '{"location":"Paris"}',
+            },
+            {'type': 'TOOL_CALL_END', 'timestamp': IsInt(), 'toolCallId': tool_call_id},
+            # Tool call result via _handle_tool_result mints its own message_id.
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'timestamp': IsInt(),
+                'messageId': IsStr(),
+                'type_': 'tool_call_result',
+                'role': 'tool',
+                'toolCallId': tool_call_id,
+                'content': '"Tool result"',
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                # Second response has a TextPart — normal TEXT_MESSAGE_START.
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': message_id,
+                'delta': 'Final result',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'timestamp': IsInt(), 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
