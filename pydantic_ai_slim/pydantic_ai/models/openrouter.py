@@ -662,15 +662,22 @@ def _hoist_leading_cache_points(message: ModelRequest) -> ModelRequest:
     OpenRouter maps each `UserPromptPart` to its own message, so a `CachePoint` at the start of a
     later part has no content to attach to and raises, even when an earlier part in the same request
     produced eligible content. A `CachePoint` caches everything up to that point, so moving one from
-    the start of a later part to the end of the nearest preceding user part is equivalent while giving
-    it content to attach to. Returns `message` unchanged (leaving the raise intact) when there is no
-    preceding user part to hoist onto.
+    the start of a later part to the end of an immediately preceding user part is equivalent while
+    giving it content to attach to.
+
+    Hoisting only happens across *adjacent* user parts: a `ToolReturnPart` (or any other non-user
+    part) between them would sit inside the cached prefix, so moving the marker before it would cache
+    a shorter prefix than the marker denotes. In that case the tracking resets and the marker is left
+    in place, so the downstream raise is preserved rather than silently mis-caching. An empty user
+    part is likewise skipped as an anchor, since it has no content to attach the marker to. Returns
+    `message` unchanged when there is no eligible preceding user part to hoist onto.
     """
     parts = list(message.parts)
     previous_user_index: int | None = None
     changed = False
     for index, part in enumerate(parts):
         if not isinstance(part, UserPromptPart):
+            previous_user_index = None
             continue
         content = part.content
         if (
@@ -689,7 +696,10 @@ def _hoist_leading_cache_points(message: ModelRequest) -> ModelRequest:
             parts[previous_user_index] = replace(previous, content=[*previous_content, *leading])
             parts[index] = replace(part, content=content)
             changed = True
-        previous_user_index = index
+        # Only track parts that still have content to anchor a hoisted marker to; a part that is
+        # empty (originally, or emptied by hoisting all its content away) can't carry a breakpoint.
+        if isinstance(content, str) or content:
+            previous_user_index = index
     return replace(message, parts=parts) if changed else message
 
 

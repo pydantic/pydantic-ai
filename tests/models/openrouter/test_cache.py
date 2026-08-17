@@ -86,7 +86,8 @@ async def test_openrouter_cache_point_start_of_later_user_part(allow_model_reque
     ]
 
     # The two leading `CachePoint`s move onto the preceding `'Hello'` block (the last wins, matching
-    # same-part semantics), and the intervening tool part is left untouched.
+    # same-part semantics). The tool part precedes both user parts, so it stays within the cached
+    # prefix and is left untouched.
     assert mapped == snapshot(
         [
             {'role': 'tool', 'tool_call_id': 'c', 'content': 'tool output'},
@@ -94,6 +95,72 @@ async def test_openrouter_cache_point_start_of_later_user_part(allow_model_reque
                 'role': 'user',
                 'content': [{'text': 'Hello', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
             },
+            {'role': 'user', 'content': [{'text': 'reminder', 'type': 'text'}]},
+        ]
+    )
+
+
+async def test_openrouter_cache_point_intervening_tool_part_raises_error(allow_model_requests: None) -> None:
+    """A `CachePoint` is not hoisted across an intervening non-user part, preserving the raise.
+
+    A `CachePoint` caches everything up to it, so with a `ToolReturnPart` *between* the anchor user
+    part and the marker, hoisting onto the earlier user part would cache a shorter prefix that
+    excludes the tool output. Hoisting only spans adjacent user parts; when a non-user part
+    intervenes the marker is left in place and the pre-existing `UserError` stands, rather than
+    silently caching the wrong prefix.
+    """
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
+
+    with pytest.raises(
+        UserError,
+        match='CachePoint cannot be the first content in a user message - there must be previous content',
+    ):
+        _ = [
+            message
+            async for message in model._map_user_message(  # pyright: ignore[reportPrivateUsage]
+                ModelRequest(
+                    parts=[
+                        UserPromptPart('Hello'),
+                        ToolReturnPart(tool_name='t', content='tool output', tool_call_id='c'),
+                        UserPromptPart([CachePoint(), 'reminder']),
+                    ]
+                )
+            )
+        ]
+
+
+async def test_openrouter_cache_point_skips_empty_preceding_user_part(allow_model_requests: None) -> None:
+    """A leading `CachePoint` skips an empty preceding user part and anchors to the last non-empty one.
+
+    An empty `UserPromptPart` has no content to attach a breakpoint to, so hoisting onto it would
+    still raise. The hoist falls back to the nearest *non-empty* preceding user part (here a
+    list-content part), leaving the empty part untouched.
+    """
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
+
+    mapped = [
+        message
+        async for message in model._map_user_message(  # pyright: ignore[reportPrivateUsage]
+            ModelRequest(
+                parts=[
+                    UserPromptPart(['real', 'stuff']),
+                    UserPromptPart([]),
+                    UserPromptPart([CachePoint(ttl='5m'), 'reminder']),
+                ]
+            )
+        )
+    ]
+
+    assert mapped == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'real', 'type': 'text'},
+                    {'text': 'stuff', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                ],
+            },
+            {'role': 'user', 'content': []},
             {'role': 'user', 'content': [{'text': 'reminder', 'type': 'text'}]},
         ]
     )
