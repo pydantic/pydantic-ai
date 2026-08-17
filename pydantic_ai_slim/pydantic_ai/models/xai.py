@@ -55,7 +55,14 @@ from ..models import (
     check_allow_model_requests,
     download_item,
 )
-from ..native_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
+from ..native_tools import (
+    AbstractNativeTool,
+    CodeExecutionTool,
+    FileSearchTool,
+    MCPServerTool,
+    WebSearchTool,
+    XSearchTool,
+)
 from ..output import OutputObjectDefinition
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec
 from ..profiles.grok import GrokModelProfile, GrokReasoningEffort
@@ -324,7 +331,7 @@ class XaiModel(Model[AsyncClient]):
         return cast(GrokModelProfile, super().profile)
 
     @classmethod
-    def supported_native_tools(cls) -> frozenset[type]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, XSearchTool, FileSearchTool})
 
