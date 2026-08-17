@@ -3474,9 +3474,11 @@ def _result_is_still_in_flight(anthropic_messages: list[BetaMessageParam], index
     """
     for message in anthropic_messages[index + 1 :]:
         content = message['content']
-        if message['role'] != 'user' or not isinstance(content, list):  # pragma: no branch
+        if message['role'] != 'user':
             return False
-        if any(cast(dict[str, Any], block)['type'] != 'tool_result' for block in content):
+        if not isinstance(content, list):  # pragma: no cover
+            return False
+        if any(not is_str_dict(block) or block['type'] != 'tool_result' for block in content):
             return False
     return True
 
@@ -3515,7 +3517,7 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
             # models and the mapper appends as-is.
             if isinstance(block, BetaMCPToolResultBlock):
                 returned_ids.add(block.tool_use_id)
-            elif (tool_use_id := cast(dict[str, Any], block).get('tool_use_id')) is not None:
+            elif is_str_dict(block) and (tool_use_id := block.get('tool_use_id')) is not None:
                 returned_ids.add(tool_use_id)
 
     for index in range(len(anthropic_messages) - 1, -1, -1):
