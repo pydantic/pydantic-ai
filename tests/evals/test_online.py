@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import inspect
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -319,6 +320,51 @@ async def test_evaluate_decorator_async_basic():
     assert results[0].value is True
     assert ctx.output == 42
     assert ctx.inputs == {'x': 21}
+
+
+@pytest.mark.anyio
+async def test_evaluate_decorator_async_callable_instance():
+    """A callable instance whose `__call__` is `async def` gets the async wrapper, so evaluators see the resolved output."""
+    collected: list[tuple[list[EvaluationResult[Any]], list[EvaluatorFailure], EvaluatorContext[Any, Any, Any]]] = []
+
+    async def collect(
+        results: Sequence[EvaluationResult[Any]],
+        failures: Sequence[EvaluatorFailure],
+        context: EvaluatorContext[Any, Any, Any],
+    ) -> None:
+        collected.append((list(results), list(failures), context))
+
+    config = OnlineEvalConfig(default_sink=CallbackSink(collect))
+
+    seen_awaitable: list[bool] = []
+
+    @dataclass
+    class CaptureAwaitable(Evaluator):
+        def evaluate(self, ctx: EvaluatorContext) -> bool:
+            seen_awaitable.append(inspect.isawaitable(ctx.output))
+            return True
+
+    class AsyncCallable:
+        async def __call__(self, x: int) -> int:
+            return x * 2
+
+    # `target` is passed explicitly because a callable instance has no `__name__`.
+    wrapped = config.evaluate(
+        OnlineEvaluator(evaluator=CaptureAwaitable()),
+        target='async-callable',
+        msg_template='Calling async callable',
+    )(AsyncCallable())
+
+    result = await wrapped(21)
+    assert result == 42
+
+    await wait_for_evaluations()
+
+    assert len(collected) == 1
+    _, _, ctx = collected[0]
+    assert ctx.output == 42
+    assert inspect.isawaitable(ctx.output) is False
+    assert seen_awaitable == [False]
 
 
 @pytest.mark.anyio

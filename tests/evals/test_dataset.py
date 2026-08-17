@@ -1,9 +1,12 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import gc
+import inspect
 import json
 import math
 import sys
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
@@ -395,6 +398,33 @@ async def test_evaluate_sync(
             'trace_id': _any_trace_id,
         }
     )
+
+
+async def test_evaluate_async_callable_instance(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+):
+    """A callable instance whose `__call__` is `async def` is awaited, not run in a worker thread."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    class AsyncCallable:
+        async def __call__(self, inputs: TaskInput) -> TaskOutput:
+            if inputs.query == 'What is 2+2?':
+                return TaskOutput(answer='4')
+            return TaskOutput(answer='Paris')
+
+    with warnings.catch_warnings(record=True) as caught_warnings:
+        warnings.simplefilter('always')
+        report = await example_dataset.evaluate(AsyncCallable(), progress=False)
+        # An un-awaited coroutine only warns once collected, so collect inside the capture.
+        gc.collect()
+
+    assert len(report.cases) == 2
+    assert report.cases[0].output == TaskOutput(answer='4')
+    assert report.cases[1].output == TaskOutput(answer='Paris')
+    assert inspect.isawaitable(report.cases[0].output) is False
+    assert len(report.failures) == 0
+    assert not [w for w in caught_warnings if 'never awaited' in str(w.message)]
 
 
 @pytest.mark.skipif(not tenacity_import_successful(), reason='tenacity not installed')
