@@ -21,6 +21,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.exceptions import UserError
@@ -59,6 +60,72 @@ async def test_openrouter_cache_point_first_content_raises_error(allow_model_req
         match='CachePoint cannot be the first content in a user message - there must be previous content',
     ):
         await agent.run([CachePoint(), 'This should fail'])
+
+
+async def test_openrouter_cache_point_start_of_later_user_part(allow_model_requests: None) -> None:
+    """A `CachePoint` starting a later `UserPromptPart` attaches to the preceding user content.
+
+    Regression test for #7467: OpenRouter maps each `UserPromptPart` independently, so a `CachePoint`
+    at the start of a later part used to raise even when an earlier part produced eligible content.
+    It now attaches to the preceding block, mirroring `AnthropicModel`. Exercises `_map_user_message`
+    directly since the boundary spans two parts of the same request (no network request is made).
+    """
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key='test-key'))
+
+    mapped = [
+        message
+        async for message in model._map_user_message(  # pyright: ignore[reportPrivateUsage]
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='t', content='tool output', tool_call_id='c'),
+                    UserPromptPart('Hello'),
+                    UserPromptPart([CachePoint(ttl='1h'), CachePoint(ttl='5m'), 'reminder']),
+                ]
+            )
+        )
+    ]
+
+    # The two leading `CachePoint`s move onto the preceding `'Hello'` block (the last wins, matching
+    # same-part semantics), and the intervening tool part is left untouched.
+    assert mapped == snapshot(
+        [
+            {'role': 'tool', 'tool_call_id': 'c', 'content': 'tool output'},
+            {
+                'role': 'user',
+                'content': [{'text': 'Hello', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
+            },
+            {'role': 'user', 'content': [{'text': 'reminder', 'type': 'text'}]},
+        ]
+    )
+
+
+async def test_openrouter_cache_point_later_part_unsupported_profile() -> None:
+    """A profile without cache-control support skips hoisting and drops the `CachePoint`.
+
+    Only reachable via a custom profile: no built-in OpenRouter model both maps as multiple user
+    parts and disables `openrouter_supports_cache_control`. Pins the `_map_user_message` branch that
+    leaves the request untouched, deferring to `_add_cache_control`, which no-ops (rather than raises)
+    for providers that don't support cache control.
+    """
+    model = OpenRouterModel(
+        'openai/gpt-4o',
+        provider=OpenRouterProvider(api_key='test-key'),
+        profile=OpenRouterModelProfile(openrouter_supports_cache_control=False),
+    )
+
+    mapped = [
+        message
+        async for message in model._map_user_message(  # pyright: ignore[reportPrivateUsage]
+            ModelRequest(parts=[UserPromptPart('Hello'), UserPromptPart([CachePoint(), 'reminder'])])
+        )
+    ]
+
+    assert mapped == snapshot(
+        [
+            {'role': 'user', 'content': 'Hello'},
+            {'role': 'user', 'content': [{'text': 'reminder', 'type': 'text'}]},
+        ]
+    )
 
 
 async def test_openrouter_cache_points_exceed_limit_raises(allow_model_requests: None) -> None:

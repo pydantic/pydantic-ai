@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterable, Iterable, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
@@ -15,9 +15,11 @@ from ..messages import (
     CachePoint,
     FinishReason,
     ModelMessage,
+    ModelRequest,
     ModelResponseStreamEvent,
     ThinkingPart,
     UserContent,
+    UserPromptPart,
     VideoUrl,
 )
 from ..native_tools import AbstractNativeTool, AdvisorTool, WebSearchTool
@@ -654,6 +656,43 @@ def _openrouter_settings_to_openai_settings(
     return OpenAIChatModelSettings(**model_settings)  # type: ignore[reportCallIssue]
 
 
+def _hoist_leading_cache_points(message: ModelRequest) -> ModelRequest:
+    """Move a later `UserPromptPart`'s leading `CachePoint`s onto the preceding user part.
+
+    OpenRouter maps each `UserPromptPart` to its own message, so a `CachePoint` at the start of a
+    later part has no content to attach to and raises, even when an earlier part in the same request
+    produced eligible content. A `CachePoint` caches everything up to that point, so moving one from
+    the start of a later part to the end of the nearest preceding user part is equivalent while giving
+    it content to attach to. Returns `message` unchanged (leaving the raise intact) when there is no
+    preceding user part to hoist onto.
+    """
+    parts = list(message.parts)
+    previous_user_index: int | None = None
+    changed = False
+    for index, part in enumerate(parts):
+        if not isinstance(part, UserPromptPart):
+            continue
+        content = part.content
+        if (
+            previous_user_index is not None
+            and not isinstance(content, str)
+            and content
+            and isinstance(content[0], CachePoint)
+        ):
+            content = list(content)
+            leading: list[UserContent] = []
+            while content and isinstance(content[0], CachePoint):
+                leading.append(content.pop(0))
+            previous = parts[previous_user_index]
+            assert isinstance(previous, UserPromptPart)
+            previous_content = [previous.content] if isinstance(previous.content, str) else list(previous.content)
+            parts[previous_user_index] = replace(previous, content=[*previous_content, *leading])
+            parts[index] = replace(part, content=content)
+            changed = True
+        previous_user_index = index
+    return replace(message, parts=parts) if changed else message
+
+
 class OpenRouterModel(OpenAIChatModel):
     """Extends OpenAIChatModel to capture extra metadata for Openrouter."""
 
@@ -1106,6 +1145,19 @@ class OpenRouterModel(OpenAIChatModel):
     @override
     def _streamed_response_cls(self):
         return OpenRouterStreamedResponse
+
+    @override
+    async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
+        # OpenRouter maps each `UserPromptPart` to its own message, so a `CachePoint` at the start of a
+        # later part reaches `_add_cache_control` with an empty content list and raises, even though an
+        # earlier user part in the same request already produced eligible content. Anthropic attaches
+        # such a marker to the preceding content instead (see `anthropic.py`'s `_last_message_content`
+        # fallback); mirror that by hoisting the leading `CachePoint`s onto the nearest preceding user
+        # part before mapping. A `CachePoint` with no preceding user content still raises downstream.
+        if self._resolved_profile.get('openrouter_supports_cache_control', False):
+            message = _hoist_leading_cache_points(message)
+        async for item in super()._map_user_message(message):
+            yield item
 
     @override
     async def _map_user_prompt_content_item(
