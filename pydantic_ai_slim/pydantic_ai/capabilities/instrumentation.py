@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from opentelemetry.baggage import set_baggage as _otel_set_baggage
+from opentelemetry.baggage import get_all as _otel_get_all_baggage, set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode
 from pydantic_core import ValidationError, to_json
@@ -46,6 +46,7 @@ from .abstract import (
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapOutputProcessHandler,
+    WrapRunHandler,
     WrapToolExecuteHandler,
 )
 
@@ -72,6 +73,10 @@ def _default_settings() -> InstrumentationSettings:
 class _RunState:
     new_message_index: int
     run_span: Span
+    baggage_at_span_start: Mapping[str, object]
+    """OTel baggage active when the run span opened, i.e. what a baggage span processor already
+    recorded on it. `wrap_run` mirrors what has been attached since (see
+    `_tag_run_span_with_late_baggage`)."""
     metadata: dict[str, Any] | None = None
     last_result: AgentRunResult[Any] | None = None
     last_messages: list[ModelMessage] | None = None
@@ -188,11 +193,15 @@ class Instrumentation(AbstractCapability[Any]):
             names.get_agent_run_span_name(agent_name),
             attributes=span_attributes,
         ) as span:
-            run_state = _RunState(new_message_index=len(ctx.messages), run_span=span)
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id, context=otel_ctx)
             otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id, context=otel_ctx)
             token = _otel_attach(otel_ctx)
+            run_state = _RunState(
+                new_message_index=len(ctx.messages),
+                run_span=span,
+                baggage_at_span_start=_otel_get_all_baggage(),
+            )
             self._runs[get_run_state_key(ctx)] = run_state
             try:
                 yield
@@ -233,6 +242,50 @@ class Instrumentation(AbstractCapability[Any]):
                                 'history processor.',
                                 MessageHistoryMutatedWarning,
                             )
+
+    async def wrap_run(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        handler: WrapRunHandler,
+    ) -> AgentRunResult[Any]:
+        """Mirror onto the run span the baggage that was attached before this point in the chain.
+
+        A capability that publishes OTel baggage around the run — a resolved prompt variant, a
+        tenant id — expects every span of the run to carry it, which is what the span processor
+        that copies baggage onto spans when they start does. The run span opens in
+        `wrap_entire_run`, ahead of run preparation and the whole `wrap_run` chain, so by then
+        there is nothing for the processor to copy and the run span would be the only span of the
+        run missing the value.
+
+        This is the seam the run span itself used to open at, so the entries mirrored here are
+        exactly the ones the processor used to record: whatever run preparation and the
+        capabilities that wrap this one have attached, and not the baggage of the capabilities
+        this one wraps, which is attached further in.
+        """
+        run_state = self._run_state(ctx)
+        if run_state is not None:
+            self._tag_run_span_with_late_baggage(run_state)
+        return await handler()
+
+    def _tag_run_span_with_late_baggage(self, run_state: _RunState) -> None:
+        """Set the baggage attached since the run span opened as attributes on it.
+
+        Only entries added (or changed) since then are written: the ones already there were
+        recorded by the processor itself, including whatever conflict handling it applies.
+        """
+        span = run_state.run_span
+        if not span.is_recording():  # pragma: no cover
+            return
+        at_start = run_state.baggage_at_span_start
+        attributes = {
+            key: value
+            for key, value in _otel_get_all_baggage().items()
+            # Non-string baggage isn't a valid attribute value; the processor skips it too.
+            if isinstance(value, str) and at_start.get(key) != value
+        }
+        if attributes:
+            span.set_attributes(attributes)
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Record the resolved model once run assembly is complete."""

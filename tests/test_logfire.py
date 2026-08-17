@@ -4324,3 +4324,129 @@ def test_output_function_call_deferred_recorded_as_error(
     # not the deferral-attribute path that `wrap_tool_execute` uses.
     assert span_attrs.get('logfire.level_num', 0) >= 17  # error level
     assert 'pydantic_ai.tool.deferral.name' not in span_attrs
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_capability_baggage_tags_the_run_span(capfire: CaptureLogfire) -> None:
+    """Baggage a capability attaches around the run tags the run span, not just its children.
+
+    The run span opens in `wrap_entire_run`, ahead of every `wrap_run` hook, so the span
+    processor that copies baggage onto spans at start time has nothing to copy yet;
+    `Instrumentation` backfills it from its own place in the chain. Model request and tool
+    spans open inside the baggage context and are tagged by the processor as usual.
+    """
+    from pydantic_ai.capabilities import CapabilityOrdering
+
+    @dataclass
+    class BaggageCapability(AbstractCapability[Any]):
+        """Stand-in for a capability that resolves a value and publishes it as baggage."""
+
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost', wraps=[Instrumentation])
+
+        async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+            with logfire.set_baggage(resolved_prompt='v3'):  # pyright: ignore[reportPossiblyUnboundVariable]
+                return await handler()
+
+    agent = Agent(
+        TestModel(call_tools=[]),
+        name='baggage_agent',
+        capabilities=[BaggageCapability(), Instrumentation(settings=InstrumentationSettings())],
+    )
+    await agent.run('hello')
+
+    tagged = {
+        span['name']
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('resolved_prompt') == 'v3'
+    }
+    assert tagged == snapshot({'invoke_agent baggage_agent', 'chat test'})
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_baggage_from_capability_inside_instrumentation_leaves_run_span_untagged(
+    capfire: CaptureLogfire,
+) -> None:
+    """A capability `Instrumentation` wraps attaches its baggage below the run span's seam.
+
+    The run span is only backfilled with what was attached ahead of `Instrumentation` in the
+    `wrap_run` chain, so a capability running inside it tags the run's child spans and not the
+    run span itself — the same split as when the run span opened at that seam.
+    """
+
+    @dataclass
+    class InnerBaggageCapability(AbstractCapability[Any]):
+        async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+            with logfire.set_baggage(inner_value='set'):  # pyright: ignore[reportPossiblyUnboundVariable]
+                return await handler()
+
+    agent = Agent(
+        TestModel(call_tools=[]),
+        name='inner_agent',
+        capabilities=[InnerBaggageCapability(), Instrumentation(settings=InstrumentationSettings())],
+    )
+    await agent.run('hello')
+
+    tagged = {
+        span['name']
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('inner_value') == 'set'
+    }
+    assert tagged == snapshot({'chat test'})
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_baggage_set_before_the_run_keeps_the_processor_conflict_handling(
+    capfire: CaptureLogfire,
+) -> None:
+    """Baggage already active when the run span opens is left to the span processor.
+
+    It records those entries when the span starts, renaming any that collide with an attribute
+    the run span sets itself; re-setting them from the run would clobber that.
+    """
+    agent = Agent(TestModel(call_tools=[]), name='outer_agent', capabilities=[Instrumentation()])
+
+    with logfire.set_baggage(model_name='from-baggage', tenant='acme'):  # pyright: ignore[reportPossiblyUnboundVariable]
+        await agent.run('hello')
+
+    [run_span] = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'invoke_agent outer_agent']
+    assert {k: v for k, v in run_span['attributes'].items() if 'model_name' in k or k == 'tenant'} == snapshot(
+        {'model_name': 'test', 'baggage_conflict.model_name': 'from-baggage', 'tenant': 'acme'}
+    )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_non_string_capability_baggage_is_skipped_on_the_run_span(capfire: CaptureLogfire) -> None:
+    """Only string baggage is mirrored: anything else is not a valid span attribute value."""
+    from opentelemetry.baggage import set_baggage
+    from opentelemetry.context import attach, detach
+
+    from pydantic_ai.capabilities import CapabilityOrdering
+
+    @dataclass
+    class MixedBaggageCapability(AbstractCapability[Any]):
+        def get_ordering(self) -> CapabilityOrdering:
+            return CapabilityOrdering(position='outermost', wraps=[Instrumentation])
+
+        async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+            otel_ctx = set_baggage('rollout_percentage', 50)
+            otel_ctx = set_baggage('rollout_label', 'canary', context=otel_ctx)
+            token = attach(otel_ctx)
+            try:
+                return await handler()
+            finally:
+                detach(token)
+
+    agent = Agent(
+        TestModel(call_tools=[]),
+        name='mixed_agent',
+        capabilities=[MixedBaggageCapability(), Instrumentation(settings=InstrumentationSettings())],
+    )
+    # The span processor skips the non-string entry the same way, loudly, on the child spans.
+    with pytest.warns(UserWarning, match='Baggage value for key "rollout_percentage" is of type "int"'):
+        await agent.run('hello')
+
+    [run_span] = [s for s in capfire.exporter.exported_spans_as_dict() if s['name'] == 'invoke_agent mixed_agent']
+    assert {k: v for k, v in run_span['attributes'].items() if k.startswith('rollout_')} == snapshot(
+        {'rollout_label': 'canary'}
+    )
