@@ -86,9 +86,8 @@ def check_no_nested_sync_run() -> None:
     if _in_executor.get():
         raise UserError(
             '`Agent.run_sync()` and `Agent.run_stream_sync()` cannot be used inside a synchronous tool, '
-            'output function, or other callback Pydantic AI runs in a worker thread, where a second '
-            'event loop can deadlock the parent run. '
-            'Make the callback `async def` and use `await agent.run(...)` or `async with agent.run_stream(...)` instead.'
+            'output function, or other function called during an agent run, as they can deadlock the run. '
+            'Make the function `async def` and use `await agent.run(...)` or `async with agent.run_stream(...)` instead.'
         )
 
 
