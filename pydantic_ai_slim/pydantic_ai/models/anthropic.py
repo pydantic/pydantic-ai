@@ -3566,14 +3566,15 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
                 # A `CachePoint` the user put on this block has to survive it. Landing it on the
                 # nearest preceding block that can carry one keeps the cacheable prefix a prefix;
                 # moving it forward would cache content the user placed outside the boundary. Nearest
-                # isn't always the block right before it: an assistant turn that reasons before calling
-                # a server tool renders `[thinking, server_tool_use]`, and a `thinking` block takes no
-                # `cache_control`.
+                # is often not the block right before it: an assistant turn that reasons before calling
+                # a server tool renders `[thinking, server_tool_use]`, and `thinking` takes no
+                # `cache_control` — nor does a replayed `BetaMCPToolResultBlock`, which is a model
+                # rather than a mapping and raises on subscript.
                 if (cache_control := block_dict.get('cache_control')) is not None:
                     carriers = [
                         param
                         for param in kept
-                        if cast(dict[str, Any], param)['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES
+                        if is_str_dict(block_param := param) and block_param['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES
                     ]
                     _add_cache_control_param(
                         carriers or _last_message_content(anthropic_messages[:index]), cache_control
