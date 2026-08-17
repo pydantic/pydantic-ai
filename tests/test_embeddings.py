@@ -376,6 +376,28 @@ class TestOpenAI:
         with pytest.raises(ModelHTTPError, match='model_not_found'):
             await embedder.embed_query('Hello, world!')
 
+    async def test_out_of_order_batch_response(self):
+        """Embeddings are returned in input order even when the response items are not.
+
+        Mocked rather than recorded: OpenAI itself returns items in order today, so no cassette
+        reproduces the reordering that OpenAI-compatible servers are free to do.
+        """
+        mock_client = AsyncMock()
+        second, first = MagicMock(), MagicMock()
+        second.embedding, second.index = [0.9, 0.9], 1
+        first.embedding, first.index = [0.1, 0.1], 0
+
+        mock_response = MagicMock()
+        mock_response.data = [second, first]
+        mock_response.usage = None
+        mock_response.model = 'test-model'
+        mock_client.embeddings.create.return_value = mock_response
+
+        model = OpenAIEmbeddingModel('test-model', provider=OpenAIProvider(openai_client=mock_client))
+
+        result = await model.embed(['first', 'second'], input_type='document')
+        assert result.embeddings == [[0.1, 0.1], [0.9, 0.9]]
+
     async def test_response_with_no_usage(self):
         mock_client = AsyncMock()
         mock_embedding_item = MagicMock()
