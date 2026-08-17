@@ -154,7 +154,7 @@ class GoogleModelProfile(ModelProfile, total=False):
     """
 
 
-_MODELS_WITHOUT_MINIMAL_THINKING_LEVEL: tuple[str, ...] = (
+_MODELS_WITHOUT_MINIMAL_THINKING_LEVEL = (
     'gemini-3.7-flash',
     'gemini-3-pro-preview',
     'gemini-3.1-pro-preview',
