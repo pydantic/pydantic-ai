@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1336'
+      - '1356'
       content-type:
       - application/json
       host:
@@ -38,9 +38,9 @@ interactions:
         role: user
       - content:
         - text: |-
-            <thinking>
+            <assistant_thinking>
             Duration measures price sensitivity to rates, and the lookup came back with 8.1 for the 10-year, so a 1% move in yields is worth roughly 8% of price.
-            </thinking>
+            </assistant_thinking>
           type: text
         role: user
       - content:
@@ -80,7 +80,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-984940434d4ae7c5e56d7d4a55ab32e8-4297e94926d294e4-01
+      - 00-d429f818b92c509ef3c8f22ff67c2cd7-4e231d3127cff87b-01
       transfer-encoding:
       - chunked
       vary:
@@ -90,7 +90,7 @@ interactions:
       - text: A longer duration means more interest-rate risk, as the bond's price will be more sensitive to changes in interest
           rates.
         type: text
-      id: msg_011CdyxTdbgwcPpM44nepm5P
+      id: msg_011Ce8hRXpepHpnpEuBbzSnX
       model: claude-sonnet-4-5-20250929
       role: assistant
       stop_details: null
@@ -104,7 +104,7 @@ interactions:
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         inference_geo: not_available
-        input_tokens: 763
+        input_tokens: 767
         output_tokens: 28
         service_tier: standard
     status:

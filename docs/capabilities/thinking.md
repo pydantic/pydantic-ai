@@ -119,12 +119,14 @@ Anthropic reports how many thinking tokens it used in [`RunUsage.details`][pydan
 
 ### Thinking carried over from another model
 
-A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] in message history can't always be sent back through Anthropic's native reasoning channel: it may have lost its signature on a round trip through storage, been rebuilt by a [history processor](../message-history.md#processing-message-history), or come from a different model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] chain. Pydantic AI still sends the reasoning, wrapped in `<thinking>` tags.
+A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] in message history can't always be sent back through Anthropic's native reasoning channel: it may have lost its signature on a round trip through storage, been rebuilt by a [history processor](../message-history.md#processing-message-history), or come from a different model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] chain. Pydantic AI still sends the reasoning, as text.
 
 !!! warning "Claude imitates formatting it sees in assistant turns"
-    Sending that text in the assistant turn teaches Claude that writing `<thinking>` tags is part of its own house style, and it starts emitting them in the answers your users read — which, once persisted to history, reinforces itself every turn.
+    Sending that text in the assistant turn teaches Claude that writing thinking tags is part of its own house style, and it starts emitting them in the answers your users read — which, once persisted to history, reinforces itself every turn.
 
-    Pydantic AI therefore carries such reasoning in a *user message ahead of the assistant turn* for models whose profile sets [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting], which stops the imitation. That flag is set for the whole Anthropic family, and is honored by [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] and [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel]. The trade-off is that Claude then describes that reasoning inaccurately if you ask it who wrote it — it may credit it to you, or claim it as its own.
+    Pydantic AI therefore carries such reasoning in a *user message ahead of the assistant turn* for models whose profile sets [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting], which stops the imitation. That flag is set for the whole Anthropic family, and is honored by [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] and [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel].
+
+    Reasoning sent in a user message would read as something you thought, so it is wrapped in an `<assistant_thinking>` tag rather than the model's own thinking tags, with a `by` attribute naming the provider of the response it came from — `<assistant_thinking by="openai">` for a `FallbackModel` chain that fell back from OpenAI, and a bare `<assistant_thinking>` when that response names no provider. The trade-off is that Claude describes the reasoning inaccurately anyway if you ask it who wrote it — measured on `claude-opus-4-5`, it claims the reasoning as its own whether or not the tag names a different source.
 
     To send it in the assistant turn instead, turn the flag off for your model:
 

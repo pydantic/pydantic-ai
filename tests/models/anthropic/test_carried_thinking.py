@@ -118,9 +118,9 @@ async def test_carried_thinking_accepted_after_tool_result(
                 'content': [
                     {
                         'text': """\
-<thinking>
+<assistant_thinking>
 Duration measures price sensitivity to rates, and the lookup came back with 8.1 for the 10-year, so a 1% move in yields is worth roughly 8% of price.
-</thinking>\
+</assistant_thinking>\
 """,
                         'type': 'text',
                     }
