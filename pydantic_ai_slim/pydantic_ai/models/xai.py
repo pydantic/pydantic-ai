@@ -229,7 +229,7 @@ class XaiModelSettings(ModelSettings, total=False):
     xai_include_attachment_search_output: bool
     """Whether to include the attachment search results in the response.
 
-    Corresponds to the `attachment_search_call.outputs` value of the `include` parameter in the Responses API.
+    Corresponds to `INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT` in the xAI SDK.
     """
 
     xai_reasoning_effort: GrokReasoningEffort
@@ -280,33 +280,6 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'xai_max_turns': 'max_turns',
     'xai_agent_count': 'agent_count',
 }
-
-
-def _get_include_options(
-    model_settings: XaiModelSettings, model_request_parameters: ModelRequestParameters
-) -> list[chat_pb2.IncludeOption]:
-    """Build the xAI `include` options for a request.
-
-    Extracted from `XaiModel._create_chat` to keep that method under the complexity limit.
-    """
-    include: list[chat_pb2.IncludeOption] = []
-    if model_settings.get('xai_include_code_execution_output'):
-        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT)
-    if model_settings.get('xai_include_web_search_output'):
-        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
-    if model_settings.get('xai_include_inline_citations'):
-        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
-    if model_settings.get('xai_include_x_search_output') or any(
-        isinstance(tool, XSearchTool) and tool.include_output for tool in model_request_parameters.native_tools
-    ):
-        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
-    if model_settings.get('xai_include_collections_search_output'):
-        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT)
-    if model_settings.get('xai_include_attachment_search_output'):
-        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT)
-    if model_settings.get('xai_include_mcp_output'):
-        include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
-    return include
 
 
 class XaiModel(Model[AsyncClient]):
@@ -807,7 +780,44 @@ class XaiModel(Model[AsyncClient]):
 
         # Populate use_encrypted_content and include based on model settings
         use_encrypted_content = model_settings.get('xai_include_encrypted_content') or False
-        include = _get_include_options(model_settings, model_request_parameters)
+        include = [
+            option
+            for enabled, option in (
+                (
+                    model_settings.get('xai_include_code_execution_output'),
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT,
+                ),
+                (
+                    model_settings.get('xai_include_web_search_output'),
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT,
+                ),
+                (
+                    model_settings.get('xai_include_inline_citations'),
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS,
+                ),
+                (
+                    model_settings.get('xai_include_x_search_output')
+                    or any(
+                        isinstance(tool, XSearchTool) and tool.include_output
+                        for tool in model_request_parameters.native_tools
+                    ),
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT,
+                ),
+                (
+                    model_settings.get('xai_include_collections_search_output'),
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT,
+                ),
+                (
+                    model_settings.get('xai_include_attachment_search_output'),
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT,
+                ),
+                (
+                    model_settings.get('xai_include_mcp_output'),
+                    chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT,
+                ),
+            )
+            if enabled
+        ]
 
         # Create and return chat instance
         return self._provider.client.chat.create(

@@ -155,9 +155,9 @@ As an alternative to the capability, you can pass the lower-level [`XSearchTool`
 
 ## File attachments
 
-When you include a document in a user prompt, xAI may browse it server-side with its `attachment_search` tool rather than reading it from the prompt. This happens automatically, on the [agentic-capable models that support it](https://docs.x.ai/developers/files) and for attachments that need browsing, such as PDFs — plain-text attachments are inlined into the prompt instead, and produce no tool call. See [document input](../input.md#document-input) for supported input forms.
+When you include a document in a user prompt, xAI automatically makes its `attachment_search` tool available on [supported models](https://docs.x.ai/developers/files). If the model uses the tool, Pydantic AI exposes its lifecycle alongside the model's response. See [document input](../input.md#document-input) for supported input forms.
 
-When it does run, the [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] have a `tool_name` of `'attachment_search'`, and the call's `provider_details['function_name']` holds xAI's own name for the operation it ran (for example `'pdf_browse'`). Set [`XaiModelSettings.xai_include_attachment_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_attachment_search_output] to `True` to include the browsed content on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]; without it the model still uses the content internally, but the return part comes back empty.
+The [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] have a `tool_name` of `'attachment_search'`, and the call's `provider_details['function_name']` holds xAI's own name for the operation it ran (for example `'pdf_browse'`). Set [`XaiModelSettings.xai_include_attachment_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_attachment_search_output] to `True` to ask xAI to include the browsed content on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart].
 
 Attachment search applies to files attached directly to a conversation. To search persistent xAI collections instead, use [`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool].
 
