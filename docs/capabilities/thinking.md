@@ -60,6 +60,14 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
 | Bedrock Mantle | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | Served on the Responses API, so effort rides the `reasoning` object; `thinking=False` → `effort='none'` |
 
+## Thinking in message history
+
+Pydantic AI always sends a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from message history back to the model. Reasoning is usually load-bearing for the turns that follow it, so dropping it would cost the model context it produced for itself.
+
+Where the provider's own reasoning channel is available — a signed thinking block, an encrypted reasoning item, a dedicated `reasoning` field — that is what carries it. That channel needs the signature the provider minted, so it is only open for a part that still has one and came from that same provider. A part that lost its signature on a round trip through storage, was rebuilt by a [history processor](../message-history.md#processing-message-history), or came from another model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] chain can't use it; Pydantic AI then writes the reasoning out as text in the model's thinking tags rather than dropping it.
+
+Anthropic is the exception to *where* that text goes — see [Thinking carried over from another model](#thinking-carried-over-from-another-model).
+
 ## OpenAI
 
 When using the [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], text output inside `<think>` tags are converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
@@ -116,6 +124,32 @@ agent = Agent(model, model_settings=settings)
 ```
 
 Anthropic reports how many thinking tokens it used in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under the `thinking_tokens` key. They are billed within `output_tokens`, so they are a readable subset of the output total rather than an addition to it, and the key is omitted entirely when a response used no thinking tokens.
+
+### Thinking carried over from another model
+
+Reasoning that can't ride Anthropic's native reasoning channel — see [Thinking in message history](#thinking-in-message-history) for when that happens — is sent as text, but not from the turn it was produced in.
+
+!!! warning "Claude imitates formatting it sees in assistant turns"
+    Sending that text in the assistant turn teaches Claude that writing thinking tags is part of its own house style, and it starts emitting them in the answers your users read — which, once persisted to history, reinforces itself every turn.
+
+    Pydantic AI therefore carries such reasoning in a *user message ahead of the assistant turn* for models whose profile sets [`mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting], which stops the imitation. That flag is set for the whole Anthropic family, and is honored by [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] and [`BedrockConverseModel`][pydantic_ai.models.bedrock.BedrockConverseModel].
+
+    Reasoning sent in a user message would read as something you thought, so it is wrapped in an `<assistant_thinking>` tag rather than the model's own thinking tags, with a `by` attribute naming the provider of the response it came from — `<assistant_thinking by="openai">` for a `FallbackModel` chain that fell back from OpenAI, and a bare `<assistant_thinking>` when that response names no provider. The trade-off is that Claude describes the reasoning inaccurately anyway if you ask it who wrote it — measured on `claude-opus-4-5`, it claims the reasoning as its own whether or not the tag names a different source.
+
+    To send it in the assistant turn instead, turn the flag off for your model:
+
+    ```python {title="anthropic_foreign_thinking.py"}
+    from pydantic_ai import Agent
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.profiles import ModelProfile
+
+    model = AnthropicModel(
+        'claude-sonnet-4-5',
+        profile=ModelProfile(mimics_assistant_message_formatting=False),
+    )
+    agent = Agent(model)
+    ...
+    ```
 
 ### Interleaved Thinking
 
