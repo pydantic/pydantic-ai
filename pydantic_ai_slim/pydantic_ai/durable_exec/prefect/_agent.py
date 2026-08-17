@@ -525,7 +525,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        _utils.check_sync_agent_call('run_sync', 'await agent.run(...)')
+        _utils.check_no_nested_sync_run()
 
         reject_cancellation_token(cancellation_token, engine='Prefect')
 

@@ -639,7 +639,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         Returns:
             The result of the run.
         """
-        _utils.check_sync_agent_call('run_sync', 'await agent.run(...)')
+        _utils.check_no_nested_sync_run()
 
         reject_cancellation_token(cancellation_token, engine='DBOS')
         if model is not None and not isinstance(model, DBOSModel):  # pragma: lax no cover

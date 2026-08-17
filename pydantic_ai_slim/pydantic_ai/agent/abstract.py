@@ -792,7 +792,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        _utils.check_sync_agent_call('run_sync', 'await agent.run(...)')
+        _utils.check_no_nested_sync_run()
 
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
@@ -1274,7 +1274,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         Returns:
             The result of the run.
         """
-        _utils.check_sync_agent_call('run_stream_sync', 'async with agent.run_stream(...)')
+        _utils.check_no_nested_sync_run()
 
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())

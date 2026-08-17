@@ -75,12 +75,20 @@ _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', d
 _in_executor: ContextVar[bool] = ContextVar('_in_executor', default=False)
 
 
-def check_sync_agent_call(method: str, async_method: str) -> None:
-    """Reject sync agent entry points from framework-managed worker threads."""
+def check_no_nested_sync_run() -> None:
+    """Reject sync agent entry points inside callbacks that Pydantic AI runs on worker threads.
+
+    Sync tools, output functions, and similar callbacks are dispatched through
+    [`run_in_executor`][pydantic_ai._utils.run_in_executor], which flags the callback's context.
+    Starting a second event loop there can deadlock if the nested run touches an async resource
+    bound to the parent run's loop, so we fail fast with guidance instead.
+    """
     if _in_executor.get():
         raise UserError(
-            f'`Agent.{method}()` cannot be called from a synchronous callback run by Pydantic AI. '
-            f'Make the callback `async def` and use `{async_method}` instead.'
+            '`Agent.run_sync()` and `Agent.run_stream_sync()` cannot be used inside a synchronous tool, '
+            'output function, or other callback that Pydantic AI runs on a worker thread, as starting '
+            'a second event loop there can deadlock the parent run. '
+            'Make the callback `async def` and use `await agent.run(...)` or `async with agent.run_stream(...)` instead.'
         )
 
 
