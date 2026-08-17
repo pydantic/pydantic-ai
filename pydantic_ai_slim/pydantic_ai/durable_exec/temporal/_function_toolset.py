@@ -18,10 +18,12 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._activity_execution import execute_activity
-from ._run_context import TemporalRunContext, deserialize_run_context
+from ._run_context import TemporalRunContext
 from ._toolset import (
     CallToolParams,
     call_tool_in_activity,
+    call_tool_params,
+    deserialize_tool_call_run_context,
     heartbeating,
     resolve_tool_activity_config,
     tool_result_payload_errors,
@@ -43,7 +45,9 @@ def temporalize_function_toolset(
 ) -> DurableFunctionToolset[AgentDepsT]:
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         async with heartbeating():
-            ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+            ctx = deserialize_tool_call_run_context(
+                run_context_type, params, deps=deps, agent=agent
+            )
             try:
                 if params.tool_def is not None:
                     # Rebuild the tool from the definition the workflow prepared, so a tool's `prepare`
@@ -95,10 +99,11 @@ def temporalize_function_toolset(
             result = await execute_activity(
                 activity=registered_activity,
                 args=[
-                    CallToolParams(
+                    call_tool_params(
                         name=name,
                         tool_args=tool_args,
-                        serialized_run_context=run_context_type.serialize_run_context(ctx),
+                        ctx=ctx,
+                        run_context_type=run_context_type,
                         tool_def=tool.tool_def,
                         # A `prepare` function can expose a tool under a different name than the toolset
                         # holds it under; the activity needs the latter to find the function to call.

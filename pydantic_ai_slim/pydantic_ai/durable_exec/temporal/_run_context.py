@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
@@ -53,7 +54,14 @@ _NONE_UNLESS_ATTACHED = ('agent', 'root_capability', 'pending_messages', 'tool_m
 # which is exactly what `is_tool_available` reads when the serving response has no provenance. A
 # custom `serialize_run_context` written before this field existed therefore keeps answering — with
 # the history-derived window — instead of raising for a field it never knew to carry.
-_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (('_anchored_evidence', AnchoredEvidence()),)
+_DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (
+    ('_anchored_evidence', AnchoredEvidence()),
+    # Gate fields are not trusted out of the serialized run-context blob. Tool-call
+    # activities re-apply them from `CallToolParams` after deserialize; everywhere else
+    # they stay the unapproved defaults rather than raising on access.
+    ('tool_call_approved', False),
+    ('tool_call_metadata', None),
+)
 
 # Reading any other omitted field raises instead of returning the `RunContext` dataclass default,
 # which would silently pass for real run state (e.g. `instrumentation_version` reading as the
@@ -64,7 +72,7 @@ _GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', *_NONE_U
 class TemporalRunContext(RunContext[AgentDepsT]):
     """The [`RunContext`][pydantic_ai.tools.RunContext] subclass to use to serialize and deserialize the run context for use inside a Temporal activity.
 
-    By default, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `tool_call_metadata`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `partial_output`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, the private dispatch-only availability supplements, and `capability_loaded` attributes will be available. Reading any other attribute raises a `UserError` explaining how to make it available, rather than returning its default value, so a field that didn't cross the boundary can't be mistaken for real run state.
+    By default, only the `deps`, `run_id`, `conversation_id`, `metadata`, `retries`, `tool_call_id`, `tool_name`, `retry`, `max_retries`, `run_step`, `usage`, `usage_limits`, `partial_output`, `trace_include_content`, `instrumentation_version`, `loaded_capability_ids`, `discovered_tool_names`, the private dispatch-only availability supplements, and `capability_loaded` attributes will be available. `tool_call_approved` and `tool_call_metadata` are not trusted out of the serialized run-context blob — a value that decides whether a tool executes is applied from `CallToolParams` on the tool-call activity, defaulting to `False`/`None` on every other activity. Reading any other attribute raises a `UserError` explaining how to make it available, rather than returning its default value, so a field that didn't cross the boundary can't be mistaken for real run state.
 
     `agent` and `root_capability` are re-attached from the worker's agent instance, `pending_messages` holds a guard that makes [`enqueue`][pydantic_ai.tools.RunContext.enqueue] raise inside an activity, and `tool_manager` and `realtime_session` are `None`: they hold live run state that isn't serializable (for `tool_manager`, `available_tool_names` returns the resolved snapshot serialized at activity dispatch time, falling back to `discovered_tool_names` if a custom subclass doesn't carry it; for `realtime_session`, `None` already means "not available here"). The `capabilities` registry is excluded for the same reason — it holds live capability objects (toolsets, hooks, callables) — so `available_capability_ids` likewise returns a snapshot serialized at dispatch time, which is what lets [`is_tool_available`][pydantic_ai.tools.RunContext.is_tool_available] answer for a capability-owned tool inside an activity; reading `capabilities` itself still raises. `model` and `tracer` are excluded as live objects too. `messages` is excluded because the full history would be duplicated into every activity payload, and `prompt` is excluded because a multi-modal prompt can carry large `BinaryContent` that would likewise ride in every activity payload, risking Temporal's 2 MB limit. `model_settings` is excluded because it's only set for model requests, which receive it as their own activity parameter, and `validation_context` because it's an arbitrary user object with no serialization contract.
     To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A subclass can use this escape hatch to opt in to carrying `prompt` if it knows its prompts are text-only.
@@ -147,8 +155,6 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'retries': ctx.retries,
             'tool_call_id': ctx.tool_call_id,
             'tool_name': ctx.tool_name,
-            'tool_call_approved': ctx.tool_call_approved,
-            'tool_call_metadata': ctx.tool_call_metadata,
             'retry': ctx.retry,
             'max_retries': ctx.max_retries,
             'run_step': ctx.run_step,
@@ -180,8 +186,14 @@ class TemporalRunContext(RunContext[AgentDepsT]):
 
     @classmethod
     def deserialize_run_context(cls, ctx: dict[str, Any], deps: Any) -> TemporalRunContext[Any]:
-        """Deserialize the run context from a `dict[str, Any]`."""
-        return cls(**ctx, deps=deps)
+        """Deserialize the run context from a `dict[str, Any]`.
+
+        `tool_call_approved` and `tool_call_metadata` in the payload are ignored: a flipped
+        bit in the generic run-context blob must not be enough to run a side-effecting tool.
+        Tool-call activities re-apply the gate from the `CallToolParams` activity arguments.
+        """
+        payload = {k: v for k, v in ctx.items() if k not in ('tool_call_approved', 'tool_call_metadata')}
+        return cls(**payload, deps=deps)
 
 
 def deserialize_run_context(
@@ -210,4 +222,31 @@ def deserialize_run_context(
     # unit whose result is replayed without re-running it, so an enqueue would be dropped. Install
     # the same guard the in-process engines use so `ctx.enqueue()` raises the shared explanation.
     ctx.__dict__['pending_messages'] = EnqueueGuard(enqueue_not_supported_message('activity', 'workflow'))
+    return ctx
+
+
+def attach_tool_call_gate(
+    ctx: RunContext[Any],
+    *,
+    params_approved: bool | None,
+    params_metadata: Any,
+    serialized_run_context: Mapping[str, Any] | Any,
+) -> RunContext[Any]:
+    """Apply HITL gate state onto an activity-side run context.
+
+    `CallToolParams.tool_call_approved` is authoritative when present (`True` or `False`).
+    `None` means a payload scheduled before that field existed, so the in-flight HITL
+    resume still reads the legacy keys on `serialized_run_context`. Injecting
+    `tool_call_approved=True` into the generic run-context blob never elevates a call
+    whose `CallToolParams` say unapproved.
+    """
+    if params_approved is not None:
+        approved = params_approved
+        metadata = params_metadata
+    else:
+        raw = serialized_run_context if isinstance(serialized_run_context, Mapping) else {}
+        approved = bool(raw.get('tool_call_approved', False))
+        metadata = raw.get('tool_call_metadata')
+    ctx.__dict__['tool_call_approved'] = approved
+    ctx.__dict__['tool_call_metadata'] = metadata
     return ctx

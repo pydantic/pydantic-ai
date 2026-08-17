@@ -277,6 +277,25 @@ class RunContext(Generic[RunContextAgentDepsT]):
         """Whether this is the last attempt at running this tool before an error is raised."""
         return self.retry == self.max_retries
 
+    @property
+    def idempotency_key(self) -> str | None:
+        """Replay-safe key for this tool call, bound to the agent run.
+
+        Derived from [`run_id`][pydantic_ai.tools.RunContext.run_id] and
+        [`tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] — the same values Temporal
+        already carries across an activity boundary — so a timeout retry of the same activity
+        produces the same key. `None` when this context is not executing a named tool call.
+
+        Pass it to downstream APIs that support idempotency (payment processors, provisioners)
+        so an at-least-once activity retry after a successful-but-unrecorded side effect does
+        not double-execute. This is not an approval token and does not authorize the call.
+        """
+        if self.tool_call_id is None:
+            return None
+        if self.run_id is None:
+            return self.tool_call_id
+        return f'{self.run_id}:{self.tool_call_id}'
+
     def _emit_event(self, event: _messages.AgentStreamEvent) -> None:
         """Append an event to the run's event buffer for the agent graph to drain into the event stream.
 

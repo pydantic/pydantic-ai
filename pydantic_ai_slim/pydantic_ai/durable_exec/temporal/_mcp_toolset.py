@@ -24,6 +24,8 @@ from ._run_context import TemporalRunContext, deserialize_run_context
 from ._toolset import (
     CallToolParams,
     GetToolsParams,
+    call_tool_params,
+    deserialize_tool_call_run_context,
     heartbeating,
     resolve_tool_activity_config,
     tool_result_payload_errors,
@@ -65,7 +67,7 @@ def temporalize_mcp_toolset(
 
     async def call_tool_activity(params: CallToolParams, deps: AgentDepsT) -> CallToolResult:
         async with heartbeating():
-            ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+            ctx = deserialize_tool_call_run_context(run_context_type, params, deps=deps, agent=agent)
             assert isinstance(params.tool_def, ToolDefinition)
             return await wrap_tool_call_result(
                 toolset.call_tool(
@@ -128,10 +130,11 @@ def temporalize_mcp_toolset(
             result = await execute_activity(
                 activity=call_tool_activity_def,
                 args=[
-                    CallToolParams(
+                    call_tool_params(
                         name=name,
                         tool_args=tool_args,
-                        serialized_run_context=run_context_type.serialize_run_context(ctx),
+                        ctx=ctx,
+                        run_context_type=run_context_type,
                         tool_def=tool.tool_def,
                     ),
                     ctx.deps,

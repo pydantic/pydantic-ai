@@ -28,7 +28,7 @@ from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavi
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from ._run_context import TemporalRunContext
+from ._run_context import TemporalRunContext, attach_tool_call_gate, deserialize_run_context, attach_tool_call_gate, deserialize_run_context
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -49,6 +49,53 @@ class CallToolParams:
     tool_def: ToolDefinition | None
     original_name: str | None = None
     """The name the toolset holds the tool under, when a `prepare` function renamed it in `tool_def.name`."""
+    tool_call_approved: bool | None = None
+    """HITL gate for this tool call, computed workflow-side from `DeferredToolResults`.
+
+    `None` is the pre-gate-field payload (in-flight HITL resumes). `True`/`False` is
+    authoritative: a flipped `tool_call_approved` on `serialized_run_context` cannot
+    elevate the call.
+    """
+    tool_call_metadata: Any = None
+    """Metadata paired with `tool_call_approved`, from `DeferredToolResults.metadata`."""
+
+
+def call_tool_params(
+    *,
+    name: str,
+    tool_args: dict[str, Any],
+    ctx: RunContext[Any],
+    run_context_type: type[TemporalRunContext[Any]],
+    tool_def: ToolDefinition | None,
+    original_name: str | None = None,
+) -> CallToolParams:
+    """Build activity arguments with the HITL gate on the params, not in the run-context blob."""
+    return CallToolParams(
+        name=name,
+        tool_args=tool_args,
+        serialized_run_context=run_context_type.serialize_run_context(ctx),
+        tool_def=tool_def,
+        original_name=original_name,
+        tool_call_approved=ctx.tool_call_approved,
+        tool_call_metadata=ctx.tool_call_metadata,
+    )
+
+
+def deserialize_tool_call_run_context(
+    run_context_type: type[TemporalRunContext[Any]],
+    params: CallToolParams,
+    *,
+    deps: Any,
+    agent: AbstractAgent[Any, Any] | None,
+) -> RunContext[Any]:
+    """Deserialize a tool-call activity context and attach the HITL gate from `params`."""
+    ctx = deserialize_run_context(run_context_type, params.serialized_run_context, deps=deps, agent=agent)
+    return attach_tool_call_gate(
+        ctx,
+        params_approved=params.tool_call_approved,
+        params_metadata=params.tool_call_metadata,
+        serialized_run_context=params.serialized_run_context,
+    )
 
 
 @asynccontextmanager

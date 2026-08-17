@@ -195,6 +195,7 @@ try:
         CallToolParams,
         GetToolsParams,
         TemporalWrapperToolset,
+        deserialize_tool_call_run_context,
         heartbeating,
         resolve_tool_activity_config,
         toolset_temporal_activities,
@@ -4525,6 +4526,8 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
         'realtime_session',  # live RealtimeSession, not serializable; realtime sessions don't run inside Temporal activities
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
+        'tool_call_approved',  # HITL gate: not trusted out of the generic run-context blob; CallToolParams carries it for tool-call activities
+        'tool_call_metadata',  # paired with tool_call_approved on CallToolParams; ignored on the serialized run-context blob
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
@@ -4554,6 +4557,100 @@ async def _serialized_run_context_across_the_wire(ctx: RunContext[Any]) -> dict[
     payloads = await pydantic_data_converter.encode([params])
     (decoded,) = await pydantic_data_converter.decode(payloads, [CallToolParams])
     return cast('dict[str, Any]', decoded.serialized_run_context)
+
+
+def test_idempotency_key_bound_to_run_and_tool_call_and_stable_across_activity_boundary():
+    """A Temporal retry of the same tool activity must see the same idempotency key.
+
+    Activities are at-least-once: if `charge_card` succeeds and the activity then times out,
+    Temporal re-enters the tool. The key is derived from `run_id` + `tool_call_id`, which already
+    cross the boundary, so it is stable under replay and is not a payload field that could drift
+    independently. This is not a VCR test because the contract is the serialize/deserialize shape.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-1',
+        tool_call_id='call-1',
+        tool_name='charge_card',
+    )
+    assert ctx.idempotency_key == 'run-1:call-1'
+    serialized = TemporalRunContext.serialize_run_context(ctx)
+    assert 'idempotency_key' not in serialized
+
+    first = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    retry = TemporalRunContext.deserialize_run_context(serialized, deps=None)
+    assert first.idempotency_key == retry.idempotency_key == 'run-1:call-1'
+
+    mutated = dict(serialized)
+    mutated['tool_call_id'] = 'call-2'
+    other_call = TemporalRunContext.deserialize_run_context(mutated, deps=None)
+    assert other_call.idempotency_key == 'run-1:call-2'
+    assert other_call.idempotency_key != first.idempotency_key
+
+
+async def test_serialized_tool_call_approved_cannot_elevate_call_tool_gate():
+    """A flipped bool on the generic run-context blob must not run a tool `CallToolParams` refused.
+
+    `tool_manager` re-derives approval from `DeferredToolResults` and puts it on `CallToolParams`.
+    Honoring an injected `serialized_run_context['tool_call_approved']` would make a payload-level
+    flip enough to execute. Not a VCR test: the contract is the activity argument shape.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-1',
+        tool_call_id='call-1',
+        tool_name='charge_card',
+        tool_call_approved=False,
+    )
+    params = CallToolParams(
+        name='charge_card',
+        tool_args={'amount': 10},
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+        tool_def=None,
+        tool_call_approved=False,
+    )
+    payloads = await pydantic_data_converter.encode([params])
+    (decoded,) = await pydantic_data_converter.decode(payloads, [CallToolParams])
+    decoded.serialized_run_context['tool_call_approved'] = True
+
+    reconstructed = deserialize_tool_call_run_context(TemporalRunContext, decoded, deps=None, agent=None)
+    assert reconstructed.tool_call_approved is False
+    assert reconstructed.idempotency_key == 'run-1:call-1'
+
+
+async def test_legacy_serialized_approval_honored_when_call_tool_params_omit_gate():
+    """In-flight HITL resumes scheduled before the CallToolParams gate field still complete.
+
+    Adding an optional field is the compatible path; payloads that lack it keep the previous
+    source of approval (the keys on the serialized run-context blob).
+    """
+    serialized = TemporalRunContext.serialize_run_context(
+        RunContext(
+            deps=None,
+            model=TestModel(),
+            usage=RunUsage(),
+            run_id='run-1',
+            tool_call_id='call-1',
+            tool_name='delete_file',
+        )
+    )
+    serialized['tool_call_approved'] = True
+    serialized['tool_call_metadata'] = {'approver': 'human'}
+    params = CallToolParams(
+        name='delete_file',
+        tool_args={'path': '/tmp/x'},
+        serialized_run_context=serialized,
+        tool_def=None,
+    )
+    assert params.tool_call_approved is None
+
+    reconstructed = deserialize_tool_call_run_context(TemporalRunContext, params, deps=None, agent=None)
+    assert reconstructed.tool_call_approved is True
+    assert reconstructed.tool_call_metadata == {'approver': 'human'}
 
 
 async def test_temporal_run_context_rehydrates_containers():
