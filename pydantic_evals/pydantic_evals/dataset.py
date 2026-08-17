@@ -975,7 +975,8 @@ async def _run_task(
             ):
                 t0 = time.perf_counter()
                 if is_async_callable(task):
-                    task_output_ = cast(OutputT, await task(case.inputs))
+                    # `is_async_callable`'s `TypeIs` narrowing doesn't type the call's return as awaitable.
+                    task_output_ = await cast('Callable[[InputsT], Awaitable[OutputT]]', task)(case.inputs)
                 else:
                     # A plain `def` may still return an awaitable, which `to_thread.run_sync` would leave un-awaited.
                     task_output_ = cast(OutputT, await await_maybe(await to_thread.run_sync(task, case.inputs)))
