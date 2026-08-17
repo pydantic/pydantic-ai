@@ -108,7 +108,10 @@ async def main() -> None:
 ```
 
 [`connect()`][pydantic_ai.sandboxes.e2b.E2BSandbox.connect] attaches to an environment that
-already exists without taking over its teardown, which is exactly what a capability's
+already exists without taking over its destruction — though not without touching it: E2B has no
+passive look, so connecting resumes a paused sandbox and sets its keep-alive `timeout=` (E2B's own
+default of 300 seconds when you omit it), never shortening one that already has longer to live.
+That is exactly what a capability's
 [`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] hook needs to turn a
 [`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] back into a live backend, including
 [under durable execution](#durable-execution):
@@ -140,7 +143,9 @@ pip/uv-add "pydantic-ai-slim[modal]"
 
 Its [`create()`][pydantic_ai.sandboxes.modal.ModalSandbox.create] terminates the environment when
 the block ends, and [`connect()`][pydantic_ai.sandboxes.modal.ModalSandbox.connect] attaches to an
-existing one for a capability's `get_sandbox`, exactly as above. Every Modal sandbox belongs to an
+existing one for a capability's `get_sandbox`, exactly as above — Modal's is a genuine look-up,
+though it does not prove the environment is alive: a sandbox Modal still knows about but has
+terminated surfaces at the first command rather than at `connect()`. Every Modal sandbox belongs to an
 app, so `app=` takes either a `modal.App` you already hold or a name to look up (creating it if it
 doesn't exist). It authenticates with the ambient Modal credentials — `modal token new`, or the
 `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` environment variables — unless you pass `client=`.
@@ -170,9 +175,12 @@ members. Only `ModalSandbox` adds live output
 ([`SupportsStream`][pydantic_ai.sandboxes.SupportsStream]): Modal's SDK hands a command's output
 back as async-iterable streams it keeps drained itself, while E2B's delivers output through
 callbacks its own event pump awaits, so bridging those into an iterator would either buffer
-without bound or stall the pump. In exchange, Modal has no API for killing a single command, so
+without bound or stall the pump. Modal's streams take one consumer each, so a started command can
+be streamed once — [`wait()`][pydantic_ai.sandboxes.SandboxProcess.wait] asks Modal for the whole
+output separately, and reports it in full whether you streamed all of it, some of it, or none.
+In exchange, Modal has no API for killing a single command, so
 [`kill()`][pydantic_ai.sandboxes.SandboxProcess.kill] raises `NotImplementedError` there and
-`timeout=`, which Modal enforces itself, is how a command is bounded. Neither backend supports
+`timeout=`, which Modal enforces itself in whole seconds, is how a command is bounded. Neither backend supports
 `output_limit=`, for the same honesty reason `LocalSandbox` doesn't: bound the output in-command
 instead, e.g. `| tail -c 10000`.
 
