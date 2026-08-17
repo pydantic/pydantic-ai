@@ -19,6 +19,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      pull-requests: write
     outputs:
       notice_items: ${{ steps.reconcile.outputs.notice_items }}
       has_notices: ${{ steps.reconcile.outputs.has_notices }}
@@ -44,6 +45,7 @@ jobs:
     permissions:
       contents: read
       issues: read
+      pull-requests: read
     outputs:
       notice_items: ${{ steps.prepare.outputs.notice_items }}
     steps:
@@ -74,6 +76,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

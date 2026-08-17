@@ -24,6 +24,7 @@ from typing import Any, Literal, TypedDict, cast  # noqa: TID251
 
 _API = 'https://api.github.com'
 _SLA = dt.timedelta(days=3)
+_RESURFACE_AFTER = dt.timedelta(days=7)
 _RECENT_ACTIVITY_WINDOW = dt.timedelta(days=45)
 _CANDIDATE_LIMIT = 10
 _RECENT_CANDIDATE_LIMIT = _CANDIDATE_LIMIT // 2
@@ -54,7 +55,7 @@ _LIFECYCLE_LABELS = (*_STAGE_LABELS, _DELIVERED_LABEL)
 _LABELS = {
     _ACTION_LABEL: ('d4c5f9', 'The next meaningful action must come from a maintainer'),
     _PINGED_LABEL: ('fbca04', 'The assigned maintainer has received one reminder'),
-    _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request has been escalated after one reminder'),
+    _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request is cooling down after escalation'),
     _DELIVERED_LABEL: ('ededed', 'A delivered channel escalation is waiting for GitHub state cleanup'),
 }
 
@@ -322,23 +323,26 @@ def _rotated_search(
 
 
 def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[dict[str, Any]]:
-    before = (now - _SLA).date().isoformat()
-    # An escalated item stays dormant until the reconcile sweep sees real
-    # activity and removes the marker; only then may a fresh lifecycle start.
+    cutoff_date = (now - _SLA).date()
+    # An escalated item cools down outside classification. Reconciliation
+    # either wakes it after new activity or returns it to the active queue.
     excluded = f'-label:"{_ACTION_LABEL}" -label:"{_ESCALATED_LABEL}"'
-    base_query = f'repo:{repo} is:open updated:<{before} {excluded}'
+    base_query = f'repo:{repo} is:open {excluded}'
     slot = int(now.timestamp()) // int(_SLA.total_seconds() / 12)
-    recent_after = (now - _RECENT_ACTIVITY_WINDOW).date().isoformat()
+    recent_after = (now - _RECENT_ACTIVITY_WINDOW).date()
+    stale_through = cutoff_date - dt.timedelta(days=1)
     recent = _rotated_search(
         client,
-        f'{base_query} updated:>={recent_after}',
+        # GitHub Search does not intersect repeated `updated:` qualifiers; a
+        # single range is required or the lower bound silently wins.
+        f'{base_query} updated:{recent_after.isoformat()}..{stale_through.isoformat()}',
         order='desc',
         limit=_RECENT_CANDIDATE_LIMIT,
         slot=slot,
     )
     backlog = _rotated_search(
         client,
-        base_query,
+        f'{base_query} updated:<{recent_after.isoformat()}',
         order='asc',
         limit=_BACKLOG_CANDIDATE_LIMIT,
         slot=slot,
@@ -890,7 +894,7 @@ def _notice_if_current(
 
 
 def _finish_delivered_escalation(client: GitHubClient, repo: str, number: int, *, new_delivery: bool = False) -> None:
-    """Finish a terminal delivery while preserving its dormant marker."""
+    """Finish an escalation delivery while preserving its cooldown marker."""
     labels = [_ESCALATED_LABEL, _DELIVERED_LABEL] if new_delivery else [_ESCALATED_LABEL]
     _add_labels(client, repo, number, labels)
     _remove_label(client, repo, number, _ACTION_LABEL)
@@ -995,8 +999,8 @@ def _reconcile_item(
     return (f'#{number}: queued channel {kind}', notice) if notice is not None else None
 
 
-def _sweep_escalated_item(client: GitHubClient, repo: str, number: int) -> str | None:
-    """Wake or retire one dormant escalated item."""
+def _sweep_escalated_item(client: GitHubClient, repo: str, number: int, *, now: dt.datetime) -> str | None:
+    """Wake, recycle, or retire one escalated item."""
     current = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
     labels = _labels(current)
     if _ACTION_LABEL in labels or _ESCALATED_LABEL not in labels:
@@ -1024,6 +1028,14 @@ def _sweep_escalated_item(client: GitHubClient, repo: str, number: int) -> str |
     ):
         _remove_label(client, repo, number, _ESCALATED_LABEL)
         return f'#{number}: restored attention eligibility after new activity'
+    if now - transition[0] >= _RESURFACE_AFTER:
+        # Add the active marker first so a partial GitHub failure cannot leave
+        # unresolved work in neither state. Its label event starts a fresh SLA.
+        _add_labels(client, repo, number, [_ACTION_LABEL])
+        _remove_label(client, repo, number, _ESCALATED_LABEL)
+        reactivated = cast(dict[str, Any], client.get(f'/repos/{repo}/issues/{number}'))
+        _ensure_recipients(client, repo, reactivated)
+        return f'#{number}: returned unresolved attention to the active queue'
     return None
 
 
@@ -1086,7 +1098,7 @@ def reconcile(
         if number in processed or _ACTION_LABEL in _labels(item):
             continue
         try:
-            if line := _sweep_escalated_item(client, repo, number):
+            if line := _sweep_escalated_item(client, repo, number, now=now):
                 lines.append(line)
         except (urllib.error.URLError, RuntimeError, ValueError) as exc:
             if isinstance(exc, urllib.error.HTTPError):

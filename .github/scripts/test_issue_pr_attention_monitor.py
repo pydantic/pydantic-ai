@@ -321,8 +321,13 @@ def test_candidate_search_covers_recent_activity_and_the_backlog():
     monitor._candidate_page(client, 'pydantic/pydantic-ai', now=NOW)
 
     searches = [path for method, path, _ in client.calls if method == 'GET' and path.startswith('/search/issues?')]
-    assert any('updated%3A%3E%3D' in path and 'order=desc' in path for path in searches)
-    assert any('order=asc' in path and f'-label%3A%22{monitor._ACTION_LABEL}%22' in path for path in searches)
+    recent = [path for path in searches if 'order=desc' in path]
+    backlog = [path for path in searches if 'order=asc' in path]
+    assert recent and all('updated%3A2026-06-05..2026-07-16' in path for path in recent)
+    assert all(path.count('updated%3A') == 1 for path in recent)
+    assert backlog and all('updated%3A%3C' in path for path in backlog)
+    assert all(path.count('updated%3A') == 1 for path in backlog)
+    assert all(f'-label%3A%22{monitor._ACTION_LABEL}%22' in path for path in backlog)
     assert all(f'-label%3A%22{monitor._ESCALATED_LABEL}%22' in path for path in searches)
 
 
@@ -1512,6 +1517,26 @@ def test_sweep_keeps_untouched_escalated_item_dormant():
     assert not any(call[0] == 'DELETE' for call in client.calls)
 
 
+def test_sweep_returns_unresolved_escalation_to_active_queue_after_cooldown():
+    client = FakeClient({7: item(7, labels=[monitor._ESCALATED_LABEL])})
+    client.timelines[7] = [
+        label_event(monitor._ESCALATED_LABEL, created_at='2026-07-12T00:00:00Z'),
+        {
+            'event': 'unlabeled',
+            'created_at': '2026-07-12T00:00:01Z',
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (
+        ['#7: returned unresolved attention to the active queue'],
+        [],
+    )
+    assert {label['name'] for label in client.items[7]['labels']} == {monitor._ACTION_LABEL}
+    assert ('POST', '/repos/r/issues/7/assignees', {'assignees': [monitor._FALLBACK_OWNER]}) in client.calls
+
+
 def test_sweep_removes_a_foreign_escalation_marker():
     client = FakeClient({7: item(7, labels=[monitor._ESCALATED_LABEL])})
     client.timelines[7] = [
@@ -1574,6 +1599,7 @@ def test_compiled_lock_keeps_agent_read_only_and_stable_artifact_name():
 def test_operations_workflow_routes_all_notices_to_the_triage_channel():
     workflow = Path(__file__).parent.parent / 'workflows' / 'issue-pr-attention-monitor.yml'
     text = workflow.read_text()
+    jobs = yaml.safe_load(text)['jobs']
 
     assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' in text
     assert 'issue_pr_attention_monitor.py finalize' in text
@@ -1583,6 +1609,9 @@ def test_operations_workflow_routes_all_notices_to_the_triage_channel():
     assert 'needs.notify.outputs.notice_items' in text
     assert 'steps.prepare.outputs.slack_payload' in text
     assert 'Post actionable attention digest to the triage channel' in text
+    assert jobs['reconcile']['permissions']['pull-requests'] == 'write'
+    assert jobs['notify']['permissions']['pull-requests'] == 'read'
+    assert jobs['finalize']['permissions']['pull-requests'] == 'write'
 
 
 def test_monitor_imports_with_stdlib_only():
