@@ -134,6 +134,8 @@ dbos = ["dbos>=2.10.0"]
 prefect = ["prefect>=3.7.5"]
 # Spec (YAML agent specs)
 spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
+# Sandboxes
+e2b = ["e2b>=2.34.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

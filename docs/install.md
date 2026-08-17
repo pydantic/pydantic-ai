@@ -70,6 +70,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `temporal` - installs [Temporal Durable Execution](durable_execution/temporal.md) dependency `temporalio` [PyPI ↗](https://pypi.org/project/temporalio){:target="_blank"}
 * `dbos` - installs [DBOS Durable Execution](durable_execution/dbos.md) dependency `dbos` [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}
 * `prefect` - installs [Prefect Durable Execution](durable_execution/prefect.md) dependency `prefect` [PyPI ↗](https://pypi.org/project/prefect){:target="_blank"}
+* `e2b` - installs the [E2B Sandbox](sandbox.md#provider-backends) dependency `e2b` [PyPI ↗](https://pypi.org/project/e2b){:target="_blank"}
 * `spec` - installs [AgentSpec](agent-spec.md) dependencies `pyyaml` [PyPI ↗](https://pypi.org/project/PyYAML){:target="_blank"} and `pydantic-handlebars` [PyPI ↗](https://pypi.org/project/pydantic-handlebars){:target="_blank"}
 
 You can also install dependencies for multiple models and use cases, for example:
