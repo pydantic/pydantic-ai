@@ -482,7 +482,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         This is a convenience method that wraps [`self.run`][pydantic_ai.agent.AbstractAgent.run] with `loop.run_until_complete(...)`.
         You therefore can't use this method inside async code or if there's an active event loop.
 
-        This method cannot be called from a synchronous callback run by Pydantic AI.
+        This method cannot be used inside a synchronous tool, output function, or other function called
+        during an agent run.
 
         Example:
         ```python

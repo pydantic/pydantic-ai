@@ -36,9 +36,7 @@ Synchronous methods like [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.ru
 
 ## [`UserError`][pydantic_ai.exceptions.UserError]: `Agent.run_sync()` and `Agent.run_stream_sync()` cannot be used inside a synchronous tool, output function, or other function called during an agent run
 
-If a synchronous [tool](tools.md) or [output function](output.md#output-functions) running in a Pydantic AI worker thread delegates to another agent with [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`Agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync], Pydantic AI raises this error rather than risk a deadlock.
-
-Sync callbacks are normally offloaded to worker threads, which have no event loop of their own. A nested sync call would create a second event loop while the parent run is still waiting for the callback. If the delegate uses an async resource bound to the parent loop, the two runs can wait on each other indefinitely.
+This error means a synchronous [tool](tools.md), [output function](output.md#output-functions), or other function called during an agent run tried to start a nested run with [`Agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`Agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync]. The sync run methods can only be used from regular application code, outside of a run: inside one, the parent run is still waiting on your function while the nested run blocks it, which can deadlock, so Pydantic AI raises this error instead.
 
 Make the delegating function `async def` and `await` the inner run, as shown in [Agent delegation](multi-agent-applications.md#agent-delegation). The parent agent can still be started with `run_sync()` from normal synchronous application code. If the delegating function also needs to do blocking work, push just that part into [`asyncio.to_thread()`][asyncio.to_thread].
 
