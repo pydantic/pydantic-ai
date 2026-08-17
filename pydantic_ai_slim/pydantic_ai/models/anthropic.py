@@ -3564,10 +3564,20 @@ def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam])
             )
             if unpaired and not (in_flight and block_dict.get('name') not in _TOOL_SEARCH_SERVER_TOOL_USE_NAMES):
                 # A `CachePoint` the user put on this block has to survive it. Landing it on the
-                # preceding block keeps the cacheable prefix a prefix; moving it forward would cache
-                # content the user placed outside the boundary.
+                # nearest preceding block that can carry one keeps the cacheable prefix a prefix;
+                # moving it forward would cache content the user placed outside the boundary. Nearest
+                # isn't always the block right before it: an assistant turn that reasons before calling
+                # a server tool renders `[thinking, server_tool_use]`, and a `thinking` block takes no
+                # `cache_control`.
                 if (cache_control := block_dict.get('cache_control')) is not None:
-                    _add_cache_control_param(kept or _last_message_content(anthropic_messages[:index]), cache_control)
+                    carriers = [
+                        param
+                        for param in kept
+                        if cast(dict[str, Any], param)['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES
+                    ]
+                    _add_cache_control_param(
+                        carriers or _last_message_content(anthropic_messages[:index]), cache_control
+                    )
                 continue
             kept.append(block)
         if len(kept) == len(content):
