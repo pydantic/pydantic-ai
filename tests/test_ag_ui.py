@@ -7891,6 +7891,89 @@ async def test_compaction_stream_matches_dumped_activity_message() -> None:
     assert snapshot_event['content'] == activity.content
 
 
+async def test_file_event_skipped_without_preserve_file_data() -> None:
+    """A streamed `FilePart` stays out of the stream unless the file round-trip is opted into.
+
+    Unit rather than VCR: no provider is involved, and the claim is about what the encoder emits
+    for a part, not about what a model produces.
+    """
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Draw a kiwi')),
+        ag_ui_version='0.1.19',
+    )
+    events = [
+        event
+        async for event in event_stream.handle_file(
+            FilePart(content=BinaryImage(data=b'image data', media_type='image/png'))
+        )
+    ]
+    assert events == []
+
+
+async def test_file_event_skipped_for_legacy_ag_ui() -> None:
+    """File activity events are omitted when the negotiated AG-UI version predates them."""
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Draw a kiwi')),
+        ag_ui_version='0.1.10',
+        preserve_file_data=True,
+    )
+    events = [
+        event
+        async for event in event_stream.handle_file(
+            FilePart(content=BinaryImage(data=b'image data', media_type='image/png'))
+        )
+    ]
+    assert events == []
+
+
+@requires_ag_ui('0.1.19')
+async def test_file_stream_matches_dumped_activity_message() -> None:
+    """A streamed file uses the same activity type and content as dumped history.
+
+    This is what makes the documented round-trip complete: the frontend echoes back what it was
+    streamed, and `load_messages` rehydrates the same `FilePart`.
+    """
+    file_part = FilePart(
+        content=BinaryImage(data=b'image data', media_type='image/png', vendor_metadata={'seed': 1}),
+        id='file-1',
+        provider_name='openai',
+        provider_details={'revised_prompt': 'a kiwi'},
+    )
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Draw a kiwi')),
+        ag_ui_version='0.1.19',
+        preserve_file_data=True,
+    )
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=file_part)
+        yield PartEndEvent(index=0, part=file_part)
+
+    events = [
+        json.loads(event_stream.encode_event(event).removeprefix('data: '))
+        async for event in event_stream.transform_stream(event_generator())
+    ]
+    snapshot_event = next(event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT')
+
+    [activity] = AGUIAdapter.dump_messages([ModelResponse(parts=[file_part])], preserve_file_data=True)
+    assert isinstance(activity, ActivityMessage)
+    assert snapshot_event['activityType'] == activity.activity_type
+    assert snapshot_event['content'] == activity.content
+
+    # The frontend echoing the streamed activity back rehydrates the part it was streamed.
+    [reloaded] = AGUIAdapter.load_messages([activity], preserve_file_data=True)
+    assert reloaded.parts == snapshot(
+        [
+            FilePart(
+                content=BinaryImage(data=b'image data', media_type='image/png', vendor_metadata={'seed': 1}),
+                id='file-1',
+                provider_name='openai',
+                provider_details={'revised_prompt': 'a kiwi'},
+            )
+        ]
+    )
+
+
 async def test_tool_availability_delta_event_skipped_for_legacy_ag_ui() -> None:
     """Activity events are omitted when the negotiated AG-UI version predates them."""
     event_stream = AGUIEventStream(

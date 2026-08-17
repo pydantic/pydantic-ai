@@ -97,6 +97,7 @@ try:
         TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
         UPLOADED_FILE_ACTIVITY_TYPE,
         dump_tool_return_content,
+        file_payload,
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
         parse_encrypted_outcome,
@@ -303,7 +304,12 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
     def build_event_stream(self) -> UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, OutputDataT]:
         """Build an AG-UI event stream transformer."""
-        return AGUIEventStream(self.run_input, accept=self.accept, ag_ui_version=self.ag_ui_version)
+        return AGUIEventStream(
+            self.run_input,
+            accept=self.accept,
+            ag_ui_version=self.ag_ui_version,
+            preserve_file_data=self.preserve_file_data,
+        )
 
     @classmethod
     async def from_request(
@@ -861,23 +867,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     # with a reserved `pydantic_ai_*` activity_type for round-trip fidelity.
                     # See FileActivityContent.
                     flush()
-                    file_content: dict[str, Any] = {
-                        'url': part.content.data_uri,
-                        'media_type': part.content.media_type,
-                    }
-                    if part.id is not None:
-                        file_content['id'] = part.id
-                    if part.provider_name is not None:
-                        file_content['provider_name'] = part.provider_name
-                    if part.provider_details is not None:
-                        file_content['provider_details'] = part.provider_details
-                    if part.content.vendor_metadata is not None:
-                        file_content['vendor_metadata'] = part.content.vendor_metadata
                     result.append(
                         ActivityMessage(
                             id=_new_message_id(),
                             activity_type=FILE_ACTIVITY_TYPE,
-                            content=file_content,
+                            content=dict(file_payload(part)),
                         )
                     )
             elif isinstance(part, CompactionPart):

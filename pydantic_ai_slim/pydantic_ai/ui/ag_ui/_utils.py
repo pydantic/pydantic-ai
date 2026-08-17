@@ -11,7 +11,7 @@ from typing import Any, Final, Literal
 from typing_extensions import Required, TypedDict
 
 from ..._utils import is_str_dict
-from ...messages import ThinkingPart, ToolPartKind, parse_tool_kind, tool_return_content_ta
+from ...messages import FilePart, ThinkingPart, ToolPartKind, parse_tool_kind, tool_return_content_ta
 
 ENCRYPTED_VALUE_VERSION = (0, 1, 11)
 """AG-UI version that added the `encrypted_value` field to `ToolCall` and `ToolMessage`.
@@ -76,6 +76,28 @@ class FileActivityContent(TypedDict, total=False):
     provider_name: str
     provider_details: dict[str, Any]
     vendor_metadata: dict[str, Any]
+
+
+def file_payload(part: FilePart) -> FileActivityContent:
+    """Serialize a file part as a `FILE_ACTIVITY_TYPE` payload, omitting fields whose value is `None`.
+
+    Shared by `AGUIAdapter.dump_messages` and `AGUIEventStream.handle_file` so a file streamed live
+    and the same file dumped to history carry identical content, and a frontend echoing either one
+    back rehydrates the same `FilePart`.
+    """
+    payload: FileActivityContent = {
+        'url': part.content.data_uri,
+        'media_type': part.content.media_type,
+    }
+    if part.id is not None:
+        payload['id'] = part.id
+    if part.provider_name is not None:
+        payload['provider_name'] = part.provider_name
+    if part.provider_details is not None:
+        payload['provider_details'] = part.provider_details
+    if part.content.vendor_metadata is not None:
+        payload['vendor_metadata'] = part.content.vendor_metadata
+    return payload
 
 
 class UploadedFileActivityContent(TypedDict, total=False):

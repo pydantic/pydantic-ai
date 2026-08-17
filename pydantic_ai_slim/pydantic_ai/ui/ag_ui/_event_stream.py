@@ -18,6 +18,7 @@ from ..._uuid import uuid7
 from ...exceptions import RunCancelled
 from ...messages import (
     CompactionPart,
+    FilePart,
     FunctionToolResultEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -47,10 +48,12 @@ from ._utils import (
     BUILTIN_TOOL_CALL_ID_PREFIX,
     COMPACTION_ACTIVITY_TYPE,
     DEFAULT_AG_UI_VERSION,
+    FILE_ACTIVITY_TYPE,
     INTERRUPTS_VERSION,
     REASONING_VERSION,
     TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
     dump_tool_return_content,
+    file_payload,
     parse_ag_ui_version,
     tool_kind_encrypted_value,
 )
@@ -136,6 +139,17 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     This is the protocol's run ID, not the agent run ID that
     [`UIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream] takes as `run_id`; the two are
     never wired together.
+    """
+
+    preserve_file_data: bool = False
+    """Whether to emit agent-generated [`FilePart`][pydantic_ai.messages.FilePart]s as reserved
+    `pydantic_ai_file` activity events.
+
+    Mirrors [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data],
+    which passes its own value here, so a file a frontend sees streamed is one it can echo back as
+    the activity message `load_messages` rehydrates. Defaults to `False`: AG-UI has no native file
+    message type, so a frontend that hasn't opted in has nothing to do with the reserved activity
+    type, and the file is left out of the stream as before.
     """
 
     _use_reasoning: bool = field(default=False, init=False)
@@ -405,6 +419,21 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             message_id=str(uuid4()),
             activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
             content={'added': part.tools_added, 'tool_call_id': part.tool_call_id},
+        )
+
+    async def handle_file(self, part: FilePart) -> AsyncIterator[BaseEvent]:
+        if not self.preserve_file_data:
+            return
+
+        if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION:
+            return
+
+        from ag_ui.core import ActivitySnapshotEvent
+
+        yield ActivitySnapshotEvent(
+            message_id=str(uuid4()),
+            activity_type=FILE_ACTIVITY_TYPE,
+            content=dict(file_payload(part)),
         )
 
     async def handle_compaction(self, part: CompactionPart) -> AsyncIterator[BaseEvent]:
