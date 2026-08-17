@@ -31,7 +31,7 @@ def setup_logfire():
 
 
 ### [web_app]
-@app.function(min_containers=1)
+@app.function(min_containers=1)  # pyright: ignore[reportUnknownMemberType]
 @modal.asgi_app()  # pyright: ignore[reportUnknownMemberType]
 def web_app():
     setup_logfire()
@@ -42,7 +42,7 @@ def web_app():
 
 
 ### [process_slack_member]
-@app.function()
+@app.function()  # pyright: ignore[reportUnknownMemberType]
 async def process_slack_member(profile_raw: dict[str, Any], logfire_ctx: Any):
     setup_logfire()
 
@@ -57,7 +57,8 @@ async def process_slack_member(profile_raw: dict[str, Any], logfire_ctx: Any):
 
 
 ### [send_daily_summary]
-@app.function(schedule=modal.Cron('0 8 * * *'))  # Every day at 8am UTC
+# Every day at 8am UTC
+@app.function(schedule=modal.Cron('0 8 * * *'))  # pyright: ignore[reportUnknownMemberType]
 async def send_daily_summary():
     setup_logfire()
 

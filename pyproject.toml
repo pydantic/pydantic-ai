@@ -79,6 +79,7 @@ web-fetch = ["pydantic-ai-slim[web-fetch]=={{ version }}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
 spec = ["pydantic-ai-slim[spec]=={{ version }}"]
 e2b = ["pydantic-ai-slim[e2b]=={{ version }}"]
+modal = ["pydantic-ai-slim[modal]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"

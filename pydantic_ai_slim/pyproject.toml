@@ -136,6 +136,7 @@ prefect = ["prefect>=3.7.5"]
 spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
 # Sandboxes
 e2b = ["e2b>=2.34.0"]
+modal = ["modal>=1.5.2"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
