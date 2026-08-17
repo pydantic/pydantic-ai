@@ -8,8 +8,8 @@ accepted once, and every later request built from that history replays the unpai
 
 Measured on `claude-sonnet-4-5` — the same history is accepted while the request ends at the
 tool-result turn and rejected as soon as one more turn follows, with no reasoning or other content
-involved. `_drop_unpaired_native_tool_calls` decides pairing on the blocks actually built, so a result
-that never arrived and a result whose part didn't render both leave the call unpaired and both drop.
+involved. Pairing is decided on the blocks actually built, so a result that never arrived and a result
+whose part didn't render both leave the call unpaired and both drop.
 """
 
 from __future__ import annotations as _annotations
@@ -115,6 +115,7 @@ class Case:
     history: list[ModelMessage]
     expected: list[tuple[str, list[str]]]
     follow_up: bool = True
+    expected_call_ids: list[str] | None = None
 
     def __str__(self) -> str:
         return self.id
@@ -245,6 +246,7 @@ CASES = [
         # mcp_tool_result block`, measured live against a control with the call removed.
         'mcp-result-never-arrived-drops-the-call',
         _continued_history(_MCP_CALL),
+        expected_call_ids=[_TOOL_CALL_ID],
         expected=snapshot(
             [
                 ('user', ['text']),
@@ -263,6 +265,7 @@ CASES = [
             ModelRequest(parts=[ToolReturnPart(tool_name='add', content='4', tool_call_id=_TOOL_CALL_ID)]),
         ],
         follow_up=False,
+        expected_call_ids=[_MCP_CALL_ID, _TOOL_CALL_ID],
         expected=snapshot(
             [
                 ('user', ['text']),
@@ -287,6 +290,15 @@ async def test_drop_unpaired_native_tool_calls(case: Case):
         history, ModelRequestParameters(), AnthropicModelSettings()
     )
     assert message_shape({'messages': [dict(message) for message in messages]}) == case.expected
+    if case.expected_call_ids is not None:
+        call_ids: list[str] = []
+        for message in messages:
+            content = message['content']
+            assert isinstance(content, list)
+            for block in content:
+                if isinstance(block, dict) and isinstance(block_id := block.get('id'), str):
+                    call_ids.append(block_id)
+        assert call_ids == case.expected_call_ids
 
 
 async def test_mcp_call_answered_by_its_replayed_result_is_kept():
@@ -609,13 +621,41 @@ async def test_unpaired_native_tool_call_history_is_accepted(
     result = await agent.run(_FOLLOW_UP, message_history=_continued_history(_SEARCH_CALL))
 
     body = request_capture.body('/v1/messages')
-    assert message_shape(body) == snapshot(
+    assert body['messages'] == snapshot(
         [
-            ('user', ['text']),
-            ('assistant', ['tool_use']),
-            ('user', ['tool_result']),
-            ('assistant', ['text']),
-            ('user', ['text']),
+            {
+                'role': 'user',
+                'content': [{'text': 'Look up the 10-year Treasury duration, then add 2 and 2.', 'type': 'text'}],
+            },
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'id': 'toolu_01WjXqPrN8vKsRt2YbLmZdQe',
+                        'type': 'tool_use',
+                        'name': 'add',
+                        'input': {'a': 2, 'b': 2},
+                    }
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'tool_use_id': 'toolu_01WjXqPrN8vKsRt2YbLmZdQe',
+                        'type': 'tool_result',
+                        'content': [{'text': '4', 'type': 'text'}],
+                        'is_error': False,
+                    }
+                ],
+            },
+            {'role': 'assistant', 'content': [{'text': 'It is 4.', 'type': 'text'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'In one sentence: does a longer duration mean more interest-rate risk?', 'type': 'text'}
+                ],
+            },
         ]
     )
     assert result.output == snapshot(
@@ -670,8 +710,42 @@ async def test_in_flight_mcp_call_history_is_accepted(
     )
 
     body = request_capture.body('/v1/messages')
-    assert message_shape(body) == snapshot(
-        [('user', ['text']), ('assistant', ['mcp_tool_use', 'tool_use']), ('user', ['tool_result'])]
+    assert body['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [{'text': 'Look up the 10-year Treasury duration, then add 2 and 2.', 'type': 'text'}],
+            },
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'id': 'mcptoolu_01SAss3KEwASziHZoMR6HcZU',
+                        'type': 'mcp_tool_use',
+                        'server_name': 'deepwiki',
+                        'name': 'ask_question',
+                        'input': {'question': 'What is pydantic-ai?', 'repoName': 'pydantic/pydantic-ai'},
+                    },
+                    {
+                        'id': 'toolu_01WjXqPrN8vKsRt2YbLmZdQe',
+                        'type': 'tool_use',
+                        'name': 'add',
+                        'input': {'a': 2, 'b': 2},
+                    },
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'tool_use_id': 'toolu_01WjXqPrN8vKsRt2YbLmZdQe',
+                        'type': 'tool_result',
+                        'content': [{'text': '4', 'type': 'text'}],
+                        'is_error': False,
+                    }
+                ],
+            },
+        ]
     )
     assert result.output == snapshot("""\
 I apologize, but I don't have the ability to look up the 10-year Treasury duration. The tools available to me are limited to asking questions about GitHub repositories and performing basic mathematical operations.
@@ -716,8 +790,41 @@ async def test_in_flight_native_tool_call_history_is_accepted(
     )
 
     body = request_capture.body('/v1/messages')
-    assert message_shape(body) == snapshot(
-        [('user', ['text']), ('assistant', ['server_tool_use', 'tool_use']), ('user', ['tool_result'])]
+    assert body['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [{'text': 'Look up the 10-year Treasury duration, then add 2 and 2.', 'type': 'text'}],
+            },
+            {
+                'role': 'assistant',
+                'content': [
+                    {
+                        'id': 'srvtoolu_01EoSNE7k4dUJyGatASCV5qs',
+                        'type': 'server_tool_use',
+                        'name': 'web_search',
+                        'input': {'query': '10-year Treasury modified duration'},
+                    },
+                    {
+                        'id': 'toolu_01WjXqPrN8vKsRt2YbLmZdQe',
+                        'type': 'tool_use',
+                        'name': 'add',
+                        'input': {'a': 2, 'b': 2},
+                    },
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'tool_use_id': 'toolu_01WjXqPrN8vKsRt2YbLmZdQe',
+                        'type': 'tool_result',
+                        'content': [{'text': '4', 'type': 'text'}],
+                        'is_error': False,
+                    }
+                ],
+            },
+        ]
     )
     assert result.output == snapshot("""\
 Based on the search results, the duration of a 10-year Treasury note is approximately 8.95 years (this example was given when yields were at 1.30%). However, it's important to note that the exact duration varies depending on current market conditions, coupon rates, and yield levels.
