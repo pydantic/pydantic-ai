@@ -97,7 +97,6 @@ class ReadOnlySandbox:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> Never:
         raise UserError(_READ_ONLY_REASON)
 
@@ -109,7 +108,6 @@ class ReadOnlySandbox:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> Never:
         raise UserError(_READ_ONLY_REASON)
 

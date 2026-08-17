@@ -74,7 +74,6 @@ class _FilesystemBackend:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> FakeSandboxResult:
         self.commands.append(command)
         return FakeSandboxResult()

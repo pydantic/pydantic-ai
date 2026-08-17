@@ -68,22 +68,12 @@ class SandboxResult(Protocol):
 
     @property
     def stdout(self) -> str:
-        """Captured standard output (possibly bounded by `output_limit=`)."""
+        """Captured standard output."""
         ...
 
     @property
     def stderr(self) -> str:
-        """Captured standard error (possibly bounded by `output_limit=`)."""
-        ...
-
-    @property
-    def stdout_dropped(self) -> int:
-        """Number of stdout characters dropped due to `output_limit=`; `0` when nothing was dropped."""
-        ...
-
-    @property
-    def stderr_dropped(self) -> int:
-        """Number of stderr characters dropped due to `output_limit=`; `0` when nothing was dropped."""
+        """Captured standard error."""
         ...
 
 
@@ -253,7 +243,6 @@ class SupportsStart(Protocol):
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> SandboxProcess:
         """Start a command without waiting, returning a handle to the running process.
 
@@ -310,7 +299,6 @@ class SandboxBackend(Protocol):
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> SandboxResult:
         """Execute a command and wait for it to complete.
 
@@ -322,10 +310,6 @@ class SandboxBackend(Protocol):
             env: Extra environment variables for the command.
             timeout: Deadline in seconds. On expiry the command is killed and an exception
                 deriving from `TimeoutError` is raised.
-            output_limit: Maximum number of output characters to retain in total across both
-                streams (oldest dropped first, reported via `stdout_dropped`/`stderr_dropped`).
-                Implementations that cannot bound output raise `NotImplementedError` when this
-                is set.
         """
         ...
 

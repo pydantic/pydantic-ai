@@ -14,8 +14,6 @@ class FakeSandboxResult:
     exit_code: int = 0
     stdout: str = 'connected'
     stderr: str = ''
-    stdout_dropped: int = 0
-    stderr_dropped: int = 0
 
 
 class FakeSandboxHandle:
@@ -34,7 +32,6 @@ class FakeSandboxHandle:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> FakeSandboxResult:
         raise AssertionError('FakeSandboxHandle must not execute commands')  # pragma: no cover
 
@@ -57,7 +54,6 @@ class RecordingSandboxBackend:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> FakeSandboxResult:
         self.commands.append(command)
         return FakeSandboxResult()

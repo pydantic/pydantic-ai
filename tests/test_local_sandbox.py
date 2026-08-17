@@ -121,7 +121,6 @@ async def test_run_argv_and_shell(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
     result = await sandbox.run(['echo', 'hello'])
     assert (result.exit_code, result.stdout, result.stderr) == (0, 'hello\n', '')
-    assert result.stdout_dropped == 0 and result.stderr_dropped == 0
     shell_result = await sandbox.run('echo foo | tr a-z A-Z', shell=True)
     assert shell_result.stdout == 'FOO\n'
 
@@ -313,8 +312,6 @@ async def test_env_overlays_the_host_environment(tmp_path: Path):
 
 async def test_optional_operations_raise_not_implemented(tmp_path: Path):
     sandbox = LocalSandbox(tmp_path)
-    with pytest.raises(NotImplementedError, match='bound it in-command'):
-        await sandbox.run(['echo', 'hi'], output_limit=10)
     with pytest.raises(NotImplementedError, match=r'does not implement `start\(\)`'):
         await Sandbox(sandbox).start(['echo', 'hi'])
 

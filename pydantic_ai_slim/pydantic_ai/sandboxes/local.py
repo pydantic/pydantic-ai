@@ -36,8 +36,6 @@ class _LocalResult:
     exit_code: int
     stdout: str
     stderr: str
-    stdout_dropped: int = 0
-    stderr_dropped: int = 0
 
 
 class _LocalFilesystem:
@@ -103,8 +101,7 @@ class LocalSandbox:
     explicit opt-in for trusted workloads, tests, and development. POSIX-only: construction
     raises `NotImplementedError` elsewhere, where the timeout contract (kill the whole process
     group at the deadline) can't be honored.
-    `start()` is not implemented (use `run(timeout=...)` to bound commands) and neither is
-    `output_limit=` (bound output in-command, e.g. `| tail -c 10000`).
+    `start()` is not implemented (use `run(timeout=...)` to bound commands).
 
     Deliberately no base class: it conforms to the protocol structurally, like any
     third-party backend would.
@@ -169,10 +166,7 @@ class LocalSandbox:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> _LocalResult:
-        if output_limit is not None:
-            raise NotImplementedError('LocalSandbox does not bound output; bound it in-command, e.g. `| tail -c`.')
         # `env` overlays the host environment rather than replacing it, so passing one
         # variable doesn't strip PATH from the child.
         merged_env = {**os.environ, **env} if env is not None else None

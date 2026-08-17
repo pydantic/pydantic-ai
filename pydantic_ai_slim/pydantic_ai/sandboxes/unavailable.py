@@ -74,7 +74,6 @@ class UnavailableSandbox:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> Never:
         raise UserError(self.reason)
 
@@ -89,7 +88,6 @@ class UnavailableSandbox:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> Never:
         raise UserError(self.reason)
 

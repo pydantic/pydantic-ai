@@ -199,7 +199,6 @@ class Sandbox:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> SandboxResult:
         """Execute a command and wait for it to complete.
 
@@ -207,7 +206,7 @@ class Sandbox:
         and contracts are documented there.
         """
         backend = await self._ensure_backend()
-        return await backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout, output_limit=output_limit)
+        return await backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
     async def start(
         self,
@@ -217,7 +216,6 @@ class Sandbox:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> SandboxProcess:
         """Start a command without waiting, returning a handle to the running process.
 
@@ -227,9 +225,7 @@ class Sandbox:
         """
         backend = await self._ensure_backend()
         if isinstance(backend, SupportsStart):
-            return await backend.start(
-                command, shell=shell, cwd=cwd, env=env, timeout=timeout, output_limit=output_limit
-            )
+            return await backend.start(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
         raise NotImplementedError(
             'This sandbox backend does not implement `start()`; run the command with `shell=True` '
             'and shell backgrounding via `run()`, or use a backend that implements `SupportsStart`.'

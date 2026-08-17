@@ -138,7 +138,6 @@ class FakeSandbox:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> FakeSandboxResult:
         if not isinstance(command, str) and list(command[:2]) == ['sed', '-n']:
             if not self._sed:
@@ -170,7 +169,6 @@ class FakeSandbox:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> Any:
         raise NotImplementedError('FakeSandbox cannot start background processes; use `run` instead.')
 
@@ -270,7 +268,6 @@ class _MinimalBackend:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> SandboxResult:
         return FakeSandboxResult(exit_code=0, stdout='', stderr='')
 

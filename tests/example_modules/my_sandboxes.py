@@ -22,8 +22,6 @@ class ContainerResult:
     exit_code: int = 0
     stdout: str = ''
     stderr: str = ''
-    stdout_dropped: int = 0
-    stderr_dropped: int = 0
 
 
 @dataclass(frozen=True)
@@ -89,7 +87,6 @@ class DockerSandbox:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> ContainerResult:
         return ContainerResult()
 
@@ -101,7 +98,6 @@ class DockerSandbox:
         cwd: str | None = None,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
-        output_limit: int | None = None,
     ) -> SandboxProcess:
         raise NotImplementedError('this docs stand-in does not run background processes')
 
