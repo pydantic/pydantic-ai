@@ -9,6 +9,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import KW_ONLY, dataclass, field
+from typing import Any
 from uuid import uuid4
 
 from pydantic_core import to_json
@@ -18,6 +19,7 @@ from ..._uuid import uuid7
 from ...exceptions import RunCancelled
 from ...messages import (
     CompactionPart,
+    FilePart,
     FunctionToolResultEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -47,6 +49,7 @@ from ._utils import (
     BUILTIN_TOOL_CALL_ID_PREFIX,
     COMPACTION_ACTIVITY_TYPE,
     DEFAULT_AG_UI_VERSION,
+    FILE_ACTIVITY_TYPE,
     INTERRUPTS_VERSION,
     REASONING_VERSION,
     TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
@@ -136,6 +139,16 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     This is the protocol's run ID, not the agent run ID that
     [`UIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream] takes as `run_id`; the two are
     never wired together.
+    """
+
+    preserve_file_data: bool = False
+    """Whether to emit an in-stream `pydantic_ai_file` activity event for agent-generated files.
+
+    Mirrors [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data]:
+    when `True`, a streamed [`FilePart`][pydantic_ai.messages.FilePart] yields an
+    `ActivitySnapshotEvent` whose content matches what `dump_messages` writes for the same part, so
+    the frontend can echo that activity message back to complete the round-trip. Ignored on clients
+    below the activity-events protocol version.
     """
 
     _use_reasoning: bool = field(default=False, init=False)
@@ -417,6 +430,33 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             message_id=str(uuid4()),
             activity_type=COMPACTION_ACTIVITY_TYPE,
             content=compaction_payload(part),
+        )
+
+    async def handle_file(self, part: FilePart) -> AsyncIterator[BaseEvent]:
+        if parse_ag_ui_version(self.ag_ui_version) < ACTIVITY_EVENTS_VERSION or not self.preserve_file_data:
+            return
+
+        from ag_ui.core import ActivitySnapshotEvent
+
+        # Same content `_dump_response_parts` writes for history round-trips, so a frontend
+        # rendering the stream can echo the activity message back unchanged.
+        file_content: dict[str, Any] = {
+            'url': part.content.data_uri,
+            'media_type': part.content.media_type,
+        }
+        if part.id is not None:
+            file_content['id'] = part.id
+        if part.provider_name is not None:
+            file_content['provider_name'] = part.provider_name
+        if part.provider_details is not None:
+            file_content['provider_details'] = part.provider_details
+        if part.content.vendor_metadata is not None:
+            file_content['vendor_metadata'] = part.content.vendor_metadata
+
+        yield ActivitySnapshotEvent(
+            message_id=str(uuid4()),
+            activity_type=FILE_ACTIVITY_TYPE,
+            content=file_content,
         )
 
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseEvent]:

@@ -473,6 +473,8 @@ If the client sends those messages back on a later run, the adapter restores the
 
 AG-UI has no native representation for agent-generated files ([`FilePart`][pydantic_ai.messages.FilePart]) or [`UploadedFile`][pydantic_ai.messages.UploadedFile] references, so they are omitted from `dump_messages` output by default. Set [`AGUIAdapter.preserve_file_data`][pydantic_ai.ui.ag_ui.AGUIAdapter.preserve_file_data] to `True` to round-trip them through reserved `pydantic_ai_*` [activity messages](https://docs.ag-ui.com/concepts/messages), which a frontend completes by echoing those activity messages back on the next request. This is a representation opt-in, not a security one: an `UploadedFile` reconstructed from a round-tripped activity message is still subject to the inbound [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files] gate before it reaches the agent.
 
+With `preserve_file_data=True`, a streamed [`FilePart`][pydantic_ai.messages.FilePart] is also delivered in-stream as a `pydantic_ai_file` activity snapshot event with the same content `dump_messages` writes, so a frontend rendering the stream receives the activity message to echo back. Like compaction, it is only emitted on clients at or above the activity-events protocol version.
+
 !!! warning "Behavior change"
     `preserve_file_data` used to gate honoring inbound client-submitted `UploadedFile` references. It is now representation-only. If your app set `AGUIAdapter(preserve_file_data=True)` to accept inbound uploaded files, you must now also set [`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]`=True`, since the two concerns are now separate flags.
 

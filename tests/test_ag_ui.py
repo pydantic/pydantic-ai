@@ -7938,3 +7938,66 @@ async def test_tool_availability_delta_stream_matches_dumped_activity_message() 
     # The literal is a frontend-facing wire contract: deriving both sides from the shared constant
     # would let a rename drift silently.
     assert activity.activity_type == 'pydantic_ai_tool_availability_delta'
+
+
+@requires_ag_ui('0.1.19')
+async def test_file_stream_matches_dumped_activity_message() -> None:
+    """A streamed file uses the same activity type and content as dumped history."""
+    file_part = FilePart(
+        content=BinaryImage(
+            data=b'generated file content',
+            media_type='image/png',
+            vendor_metadata={'detail': 'high'},
+        ),
+        id='file-1',
+        provider_name='openai',
+        provider_details={'file_id': 'file-abc'},
+    )
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Generate the file')),
+        ag_ui_version='0.1.19',
+        preserve_file_data=True,
+    )
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=file_part)
+        yield PartEndEvent(index=0, part=file_part)
+
+    events = [
+        json.loads(event_stream.encode_event(event).removeprefix('data: '))
+        async for event in event_stream.transform_stream(event_generator())
+    ]
+    snapshot_events = [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT']
+    assert len(snapshot_events) == 1
+
+    dumped = AGUIAdapter.dump_messages([ModelResponse(parts=[file_part])], preserve_file_data=True)
+    activity = next(message for message in dumped if isinstance(message, ActivityMessage))
+    assert snapshot_events[0]['activityType'] == activity.activity_type
+    assert snapshot_events[0]['content'] == activity.content
+
+
+async def test_file_event_skipped_for_legacy_ag_ui() -> None:
+    """File activity events are omitted when the negotiated AG-UI version predates them."""
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Generate the file')),
+        ag_ui_version='0.1.10',
+        preserve_file_data=True,
+    )
+    events = [
+        event
+        async for event in event_stream.handle_file(FilePart(content=BinaryImage(data=b'x', media_type='image/png')))
+    ]
+    assert events == []
+
+
+async def test_file_event_not_emitted_by_default() -> None:
+    """With `preserve_file_data` unset, streamed files emit no events — today's behavior."""
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Generate the file')),
+        ag_ui_version='0.1.19',
+    )
+    events = [
+        event
+        async for event in event_stream.handle_file(FilePart(content=BinaryImage(data=b'x', media_type='image/png')))
+    ]
+    assert events == []
