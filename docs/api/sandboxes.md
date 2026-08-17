@@ -22,3 +22,5 @@
             - SandboxResult
 
 ::: pydantic_ai.sandboxes.e2b
+
+::: pydantic_ai.sandboxes.modal

@@ -131,12 +131,50 @@ class E2BCapability(AbstractCapability[Any]):
         return await E2BSandbox.connect(ref.sandbox_id)
 ```
 
-Backends implement exactly what their platform supports. `E2BSandbox` adds native background
-processes ([`start()`][pydantic_ai.sandboxes.Sandbox.start]) on top of the required members, but
-not live output streaming — E2B's async SDK delivers output through callbacks its own event pump
-awaits, so bridging them into an iterator would either buffer without bound or stall the pump.
-`output_limit=` is unsupported for the same honesty reason it is on `LocalSandbox`: bound the
-output in-command instead, e.g. `| tail -c 10000`.
+[`ModalSandbox`][pydantic_ai.sandboxes.modal.ModalSandbox] is the same story on
+[Modal](https://modal.com), from the `modal` optional group:
+
+```bash
+pip/uv-add "pydantic-ai-slim[modal]"
+```
+
+Its [`create()`][pydantic_ai.sandboxes.modal.ModalSandbox.create] terminates the environment when
+the block ends, and [`connect()`][pydantic_ai.sandboxes.modal.ModalSandbox.connect] attaches to an
+existing one for a capability's `get_sandbox`, exactly as above. Every Modal sandbox belongs to an
+app, so `app=` takes either a `modal.App` you already hold or a name to look up (creating it if it
+doesn't exist). It authenticates with the ambient Modal credentials — `modal token new`, or the
+`MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` environment variables — unless you pass `client=`.
+
+```python {title="modal_sandbox.py" test="skip"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.sandboxes.modal import ModalSandbox
+
+agent = Agent('anthropic:claude-sonnet-5')
+
+
+@agent.tool
+async def execute(ctx: RunContext[None], command: str) -> str:
+    result = await ctx.sandbox.run(command, shell=True, timeout=60)
+    return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
+
+
+async def main() -> None:
+    async with ModalSandbox.create(app='my-agent', timeout=600) as sandbox:
+        result = await agent.run('Profile the script and fix the hot spot.', sandbox=sandbox)
+        print(result.output)
+```
+
+Backends implement exactly what their platform supports, and these two differ. Both add native
+background processes ([`start()`][pydantic_ai.sandboxes.Sandbox.start]) on top of the required
+members. Only `ModalSandbox` adds live output
+([`SupportsStream`][pydantic_ai.sandboxes.SupportsStream]): Modal's SDK hands a command's output
+back as async-iterable streams it keeps drained itself, while E2B's delivers output through
+callbacks its own event pump awaits, so bridging those into an iterator would either buffer
+without bound or stall the pump. In exchange, Modal has no API for killing a single command, so
+[`kill()`][pydantic_ai.sandboxes.SandboxProcess.kill] raises `NotImplementedError` there and
+`timeout=`, which Modal enforces itself, is how a command is bounded. Neither backend supports
+`output_limit=`, for the same honesty reason `LocalSandbox` doesn't: bound the output in-command
+instead, e.g. `| tail -c 10000`.
 
 ## Attaching a sandbox
 
