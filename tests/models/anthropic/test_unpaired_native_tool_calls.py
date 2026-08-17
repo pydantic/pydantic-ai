@@ -17,7 +17,6 @@ from __future__ import annotations as _annotations
 from dataclasses import dataclass
 
 import pytest
-from anthropic.types.beta import BetaMCPToolResultBlock, BetaTextBlock
 
 from pydantic_ai import (
     Agent,
@@ -40,6 +39,8 @@ from ...conftest import try_import
 from ..conftest import AnthropicModelFactory, RequestCapture, message_shape
 
 with try_import() as imports_successful:
+    from anthropic.types.beta import BetaMCPToolResultBlock, BetaTextBlock
+
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
