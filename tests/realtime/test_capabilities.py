@@ -22,7 +22,7 @@ from pydantic_ai import Agent
 from pydantic_ai._instrumentation import get_instructions
 from pydantic_ai.capabilities import Hooks, NativeTool, ProcessEventStream, WebSearch
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolResultEvent,
@@ -862,11 +862,48 @@ async def test_run_context_exposes_realtime_session_and_merged_settings() -> Non
     assert observed == [{'output_modality': 'audio'}, session, session]
 
 
+async def test_before_run_can_cancel_realtime_session() -> None:
+    class CancelBeforeRun(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            ctx.cancel()
+
+    model = _RecordingModel()
+    agent = Agent(capabilities=[CancelBeforeRun()], deps_type=type(None))
+
+    with pytest.raises(RunCancelled) as exc_info:
+        async with agent.realtime(model).session():
+            pass
+
+    assert exc_info.value.all_messages() == []
+    assert model.instructions is None
+
+
+async def test_run_error_hook_cannot_recover_realtime_cancellation() -> None:
+    class RecoverCancellation(AbstractCapability[None]):
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+            return AgentRunResult(output='recovered')
+
+    agent = Agent[None, str](capabilities=[RecoverCancellation()], deps_type=type(None))
+
+    @agent.tool
+    async def cancel(ctx: RunContext[None]) -> None:
+        ctx.cancel()
+        await asyncio.Event().wait()
+
+    model = _RecordingModel(
+        connection_events=[ToolCall(tool_call_id='tc', tool_name='cancel', args='{}'), ResponseDone()]
+    )
+    with pytest.raises(RunCancelled):
+        async with agent.realtime(model).session() as session:
+            async for _ in session:
+                pass
+
+
 async def test_external_cancellation_keeps_its_type_and_settles_history() -> None:
     """`task.cancel()` during a session propagates an untranslated `CancelledError` with history settled.
 
     A unit test because no recorded provider exchange can be interrupted mid-reply on replay. Pins
-    the substrate whole-run cancellation (#6497) will attach run state to: external cancellation
+    the whole-run cancellation substrate attaches run state to: external cancellation
     must keep its exception type — `asyncio.timeout()`, TaskGroup teardown, and Temporal all depend
     on that — while session teardown still records the cut-off reply as interrupted, so the
     conversation history survives the cancellation.
@@ -902,7 +939,7 @@ async def test_external_cancellation_keeps_its_type_and_settles_history() -> Non
     task = asyncio.create_task(talk())
     await mid_reply.wait()
     task.cancel()
-    with pytest.raises(asyncio.CancelledError):
+    with pytest.raises(asyncio.CancelledError) as exc_info:
         await task
 
     (session,) = sessions
@@ -911,6 +948,9 @@ async def test_external_cancellation_keeps_its_type_and_settles_history() -> Non
     response = next(message for message in session.all_messages() if isinstance(message, ModelResponse))
     assert response.state == 'interrupted'
     assert any(isinstance(part, SpeechPart) and part.transcript == 'cut off mid-' for part in response.parts)
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert cancelled.all_messages() == session.all_messages()
 
 
 async def test_agent_realtime_session_rejects_a_deferred_tool() -> None:

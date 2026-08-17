@@ -5416,6 +5416,30 @@ async def test_parallel_ordered_events_are_not_stranded_by_a_failing_sibling() -
                 _ = [e async for e in session]
 
 
+async def test_tool_can_cancel_realtime_session() -> None:
+    agent = Agent[None, str](deps_type=type(None))
+
+    @agent.tool
+    def cancel(ctx: RunContext[None]) -> str:
+        ctx.cancel()
+        return 'must be discarded'
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='cancel', args='{}'), ResponseDone()])
+    model = FakeRealtimeModel(conn)
+
+    session: _RealtimeSession | None = None
+    with pytest.raises(RunCancelled) as exc_info:
+        async with agent.realtime(model).session() as session:
+            _ = [e async for e in session]
+
+    assert session is not None
+    assert session.closed
+    parts = [part for message in exc_info.value.all_messages() for part in message.parts]
+    assert any(isinstance(part, ToolCallPart) for part in parts)
+    assert any(isinstance(part, ToolReturnPart) and part.outcome == 'interrupted' for part in parts)
+    assert not any(isinstance(item, ToolResult) for item in conn.sent)
+
+
 async def test_nested_run_cancellation_is_isolated_into_a_failed_tool_return() -> None:
     # A sub-agent run awaited inside a tool that cancels *itself* must not take the session with it.
     # The graph isolates exactly this into a failed tool return (#7199); the session's own cancellation
