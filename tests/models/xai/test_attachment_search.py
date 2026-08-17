@@ -91,7 +91,7 @@ async def test_xai_attachment_search_with_output(
 
 
 async def test_xai_attachment_search_history_payload(allow_model_requests: None):
-    """History preserves xAI's attachment-search type, ID, and function name."""
+    """Assert history serialization directly because cassette replay does not match request bodies."""
     attachment_search_call = chat_pb2.ToolCall(
         id='attachment_001',
         type=chat_pb2.ToolCallType.TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL,

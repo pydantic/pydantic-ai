@@ -721,7 +721,7 @@ class XaiModel(Model[AsyncClient]):
 
         return tool_defs, tool_choice
 
-    async def _create_chat(
+    async def _create_chat(  # noqa: C901
         self,
         messages: list[ModelMessage],
         model_settings: XaiModelSettings,
@@ -779,45 +779,24 @@ class XaiModel(Model[AsyncClient]):
                 xai_settings['reasoning_effort'] = reasoning_effort
 
         # Populate use_encrypted_content and include based on model settings
+        include: list[chat_pb2.IncludeOption] = []
         use_encrypted_content = model_settings.get('xai_include_encrypted_content') or False
-        include = [
-            option
-            for enabled, option in (
-                (
-                    model_settings.get('xai_include_code_execution_output'),
-                    chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT,
-                ),
-                (
-                    model_settings.get('xai_include_web_search_output'),
-                    chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT,
-                ),
-                (
-                    model_settings.get('xai_include_inline_citations'),
-                    chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS,
-                ),
-                (
-                    model_settings.get('xai_include_x_search_output')
-                    or any(
-                        isinstance(tool, XSearchTool) and tool.include_output
-                        for tool in model_request_parameters.native_tools
-                    ),
-                    chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT,
-                ),
-                (
-                    model_settings.get('xai_include_collections_search_output'),
-                    chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT,
-                ),
-                (
-                    model_settings.get('xai_include_attachment_search_output'),
-                    chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT,
-                ),
-                (
-                    model_settings.get('xai_include_mcp_output'),
-                    chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT,
-                ),
-            )
-            if enabled
-        ]
+        if model_settings.get('xai_include_code_execution_output'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_CODE_EXECUTION_CALL_OUTPUT)
+        if model_settings.get('xai_include_web_search_output'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_WEB_SEARCH_CALL_OUTPUT)
+        if model_settings.get('xai_include_inline_citations'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_INLINE_CITATIONS)
+        if model_settings.get('xai_include_x_search_output') or any(
+            isinstance(tool, XSearchTool) and tool.include_output for tool in model_request_parameters.native_tools
+        ):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_X_SEARCH_CALL_OUTPUT)
+        if model_settings.get('xai_include_collections_search_output'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_COLLECTIONS_SEARCH_CALL_OUTPUT)
+        if model_settings.get('xai_include_attachment_search_output'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT)
+        if model_settings.get('xai_include_mcp_output'):
+            include.append(chat_pb2.IncludeOption.INCLUDE_OPTION_MCP_CALL_OUTPUT)
 
         # Create and return chat instance
         return self._provider.client.chat.create(
