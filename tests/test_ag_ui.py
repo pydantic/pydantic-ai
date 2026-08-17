@@ -7976,6 +7976,35 @@ async def test_file_stream_matches_dumped_activity_message() -> None:
     assert snapshot_events[0]['content'] == activity.content
 
 
+@requires_ag_ui('0.1.19')
+async def test_file_stream_minimal_part_matches_dumped_activity_message() -> None:
+    """A file with no optional attributes emits the same minimal content as dumped history."""
+    image = BinaryImage(data=b'minimal file', media_type='image/png')
+    file_part = FilePart(content=image)
+    event_stream = AGUIEventStream(
+        run_input=create_input(UserMessage(id='user-1', content='Generate the file')),
+        ag_ui_version='0.1.19',
+        preserve_file_data=True,
+    )
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=file_part)
+        yield PartEndEvent(index=0, part=file_part)
+
+    events = [
+        json.loads(event_stream.encode_event(event).removeprefix('data: '))
+        async for event in event_stream.transform_stream(event_generator())
+    ]
+    snapshot_events = [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT']
+    assert len(snapshot_events) == 1
+
+    dumped = AGUIAdapter.dump_messages([ModelResponse(parts=[file_part])], preserve_file_data=True)
+    activity = next(message for message in dumped if isinstance(message, ActivityMessage))
+    assert snapshot_events[0]['activityType'] == activity.activity_type
+    assert snapshot_events[0]['content'] == activity.content
+    assert snapshot_events[0]['content'] == {'url': image.data_uri, 'media_type': 'image/png'}
+
+
 async def test_file_event_skipped_for_legacy_ag_ui() -> None:
     """File activity events are omitted when the negotiated AG-UI version predates them."""
     event_stream = AGUIEventStream(
