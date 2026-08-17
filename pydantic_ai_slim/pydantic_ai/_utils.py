@@ -72,18 +72,20 @@ _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
-_in_executor: ContextVar[bool] = ContextVar('_in_executor', default=False)
+_in_sync_callback: ContextVar[bool] = ContextVar('_in_sync_callback', default=False)
 
 
 def check_no_nested_sync_run() -> None:
-    """Reject sync agent entry points inside callbacks that Pydantic AI runs on worker threads.
+    """Reject sync agent entry points inside sync callbacks dispatched by Pydantic AI.
 
     Sync tools, output functions, and similar callbacks are dispatched through
-    [`run_in_executor`][pydantic_ai._utils.run_in_executor], which flags the callback's context.
-    Starting a second event loop there can deadlock if the nested run touches an async resource
-    bound to the parent run's loop, so we fail fast with guidance instead.
+    [`run_in_executor`][pydantic_ai._utils.run_in_executor], which flags the callback's context —
+    whether the callback runs on a worker thread or inline under [`disable_threads`][pydantic_ai._utils.disable_threads].
+    On a worker thread, a nested sync run starts a second event loop that can deadlock against an async
+    resource bound to the parent run's loop; inline, it would drive the already-running loop and fail
+    anyway. Either way we fail fast with guidance instead.
     """
-    if _in_executor.get():
+    if _in_sync_callback.get():
         raise UserError(
             '`Agent.run_sync()` and `Agent.run_stream_sync()` cannot be used inside a synchronous tool, '
             'output function, or other function called during an agent run, as they can deadlock the run. '
@@ -153,15 +155,15 @@ def using_thread_executor(executor: Executor) -> Generator[None]:
 
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    if _disable_threads.get():
-        return func(*args, **kwargs)
-
     def call_with_sync_agent_guard() -> _R:
-        token = _in_executor.set(True)
+        token = _in_sync_callback.set(True)
         try:
             return func(*args, **kwargs)
         finally:
-            _in_executor.reset(token)
+            _in_sync_callback.reset(token)
+
+    if _disable_threads.get():
+        return call_with_sync_agent_guard()
 
     executor = _thread_executor.get()
     if executor is not None:

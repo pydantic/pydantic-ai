@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pydantic_ai import Agent, UserError
+from pydantic_ai import Agent, UserError, _utils
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -43,6 +43,24 @@ async def test_run_stream_sync_from_sync_output_function_is_rejected() -> None:
 
     with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
         await outer_agent.run('delegate')
+
+
+async def test_run_sync_from_sync_tool_is_rejected_when_threads_disabled() -> None:
+    """Under `disable_threads()` (emscripten, Temporal) sync callbacks run inline; the same rule applies."""
+    inner_agent = Agent('test')
+
+    def call_tool(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('delegate', '{}')])
+
+    outer_agent = Agent(FunctionModel(call_tool))
+
+    @outer_agent.tool_plain
+    def delegate() -> str:
+        return inner_agent.run_sync('hello').output
+
+    with _utils.disable_threads():
+        with pytest.raises(UserError, match=r'cannot be used inside a synchronous tool'):
+            await outer_agent.run('delegate')
 
 
 async def test_async_tool_can_delegate_with_await() -> None:
