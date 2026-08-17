@@ -257,7 +257,6 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
         'claude-opus-5',
         'claude-sonnet-5',
         'claude-fable-5',
-        'claude-mythos-5',
     )
     downstream = anthropic_model_profile(model_name)
     supports_adaptive = bool((downstream or {}).get('anthropic_supports_adaptive_thinking', False))
