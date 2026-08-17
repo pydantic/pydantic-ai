@@ -5,7 +5,7 @@ import re
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, TypeAlias, cast, get_args, overload
@@ -20,9 +20,9 @@ from ..messages import (
     BinaryContent,
     CachePoint,
     Citation,
-    CitationAnchor,
     CitationSource,
     CompactionPart,
+    ContentCitationAnchor,
     DocumentCitationSource,
     FilePart,
     FileUrl,
@@ -2060,7 +2060,7 @@ def _map_grounding_citations(
             citations_by_part.setdefault(part_index, []).append(
                 Citation(
                     sources=sources,
-                    anchor=CitationAnchor(start=start, end=end, kind='content'),
+                    anchor=ContentCitationAnchor(start=start, end=end) if start < end else None,
                     provider_details={'confidence_scores': support.confidence_scores}
                     if support.confidence_scores
                     else None,
@@ -2074,10 +2074,10 @@ def _offset_citation(citation: Citation, offset: int) -> Citation:
         return citation
     return Citation(
         sources=citation.sources,
-        anchor=CitationAnchor(
+        anchor=replace(
+            citation.anchor,
             start=citation.anchor.start + offset,
             end=citation.anchor.end + offset,
-            kind=citation.anchor.kind,
         ),
         provider_details=citation.provider_details,
     )

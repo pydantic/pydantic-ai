@@ -21,7 +21,6 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     Citation,
-    CitationAnchor,
     CompactionPart,
     DocumentCitationSource,
     DocumentUrl,
@@ -29,6 +28,7 @@ from pydantic_ai import (
     FinalResultEvent,
     ImageGenerationTool,
     ImageUrl,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -235,7 +235,6 @@ async def test_openai_response_with_null_text_and_citation(allow_model_requests:
             citations=[
                 Citation(
                     sources=[WebCitationSource(url='https://example.com', title='Example')],
-                    anchor=CitationAnchor(start=0, end=0, kind='marker'),
                 )
             ],
         )
@@ -1836,7 +1835,7 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
                     title='Mount Columbia | mountain, Alberta, Canada | Britannica',
                 )
             ],
-            anchor=CitationAnchor(start=77, end=162, kind='marker'),
+            anchor=MarkerCitationAnchor(start=77, end=162),
         )
     ]
     assert annotation_event.delta.provider_details == snapshot(
@@ -12842,7 +12841,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
                     title='Mount Columbia | mountain, Alberta, Canada | Britannica',
                 )
             ],
-            anchor=CitationAnchor(start=126, end=211, kind='marker'),
+            anchor=MarkerCitationAnchor(start=126, end=211),
         )
     ]
     assert text_part.provider_details and 'annotations' in text_part.provider_details
@@ -14508,7 +14507,7 @@ async def test_openai_responses_done_uses_complete_text(allow_model_requests: No
         citations=[
             Citation(
                 sources=[WebCitationSource(url='https://example.com/france', title='France')],
-                anchor=CitationAnchor(start=0, end=6, kind='marker'),
+                anchor=MarkerCitationAnchor(start=0, end=6),
             )
         ],
     )

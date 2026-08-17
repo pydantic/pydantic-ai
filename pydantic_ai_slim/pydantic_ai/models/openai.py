@@ -11,6 +11,7 @@ from collections.abc import (
     Callable,
     Generator,
     Iterable,
+    Iterator,
     Sequence,
 )
 from contextlib import asynccontextmanager, contextmanager
@@ -46,13 +47,13 @@ from ..messages import (
     BinaryImage,
     CachePoint,
     Citation,
-    CitationAnchor,
     CompactionPart,
     DocumentCitationSource,
     DocumentUrl,
     FilePart,
     FinishReason,
     ImageUrl,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -708,7 +709,11 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """
 
     openai_include_raw_annotations: bool
-    """Whether to include raw annotations in `TextPart.provider_details`."""
+    """Whether to include raw annotations in `TextPart.provider_details`.
+
+    Normalized citations are always available through `TextPart.citations`; enable this only when the original
+    OpenAI annotation payload is also needed.
+    """
 
 
 class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
@@ -1925,6 +1930,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
 responses_output_text_annotations_ta = TypeAdapter(list[responses.response_output_text.Annotation])
 chat_annotations_ta = TypeAdapter(list[chat.chat_completion_message.Annotation])
+raw_annotations_ta = TypeAdapter(list[object])
 
 
 def _map_responses_citations(
@@ -1940,7 +1946,7 @@ def _map_responses_citations(
             citations.append(
                 Citation(
                     sources=[WebCitationSource(url=annotation.url, title=annotation.title)],
-                    anchor=CitationAnchor(start=start, end=end, kind='marker'),
+                    anchor=MarkerCitationAnchor(start=start, end=end) if start < end else None,
                 )
             )
         elif isinstance(annotation, responses.response_output_text.AnnotationFileCitation):
@@ -1963,7 +1969,7 @@ def _map_chat_citations(annotations: Sequence[BaseModel], text: str) -> list[Cit
             citations.append(
                 Citation(
                     sources=[WebCitationSource(url=annotation.url_citation.url, title=annotation.url_citation.title)],
-                    anchor=CitationAnchor(start=start, end=end, kind='marker'),
+                    anchor=MarkerCitationAnchor(start=start, end=end) if start < end else None,
                 )
             )
     return citations or None
@@ -3890,6 +3896,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _raw_text_content: str = field(default='', init=False)
+    _pending_raw_annotations: list[object] = field(default_factory=list[object], init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
@@ -3955,8 +3962,31 @@ class OpenAIStreamedResponse(StreamedResponse):
                 for event in self._map_part_delta(choice):
                     yield event
 
-            if self._refusal_text:
-                self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+            self._finish_refusal()
+            for event in self._flush_pending_chat_annotations():
+                yield event
+
+    def _finish_refusal(self) -> None:
+        if self._refusal_text:
+            self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+
+    def _flush_pending_chat_annotations(self) -> Iterator[ModelResponseStreamEvent]:
+        if not self._pending_raw_annotations:
+            return
+
+        part = self._parts_manager.get_part_by_vendor_id('content')
+        if not isinstance(part, TextPart):
+            yield from self._parts_manager.handle_text_delta(vendor_part_id='content', content='')
+            part = self._parts_manager.get_part_by_vendor_id('content')
+            assert isinstance(part, TextPart)
+        citations, provider_details = self._map_chat_annotations(self._pending_raw_annotations, part)
+        yield from self._parts_manager.handle_text_delta(
+            vendor_part_id='content',
+            content='',
+            provider_name=self.provider_name if provider_details is not None else None,
+            provider_details=provider_details,
+            citations=citations,
+        )
 
     def _validate_response(self) -> AsyncIterable[ChatCompletionChunk]:
         """Hook that validates incoming chunks.
@@ -4035,25 +4065,15 @@ class OpenAIStreamedResponse(StreamedResponse):
                 yield event
 
         raw_annotations = (choice.delta.model_extra or {}).get('annotations')
-        if raw_annotations and isinstance(part := self._parts_manager.get_part_by_vendor_id('content'), TextPart):
-            try:
-                annotations = chat_annotations_ta.validate_python(raw_annotations)
-            except ValidationError:  # pragma: no cover
-                citations = None
-                serialized_annotations = raw_annotations
-            else:
-                if self._raw_text_content == part.content:
-                    citations = _map_chat_citations(annotations, part.content)
-                else:
-                    # Annotation offsets address the raw provider text, not text transformed by
-                    # thinking-tag removal or leading-whitespace normalization.
-                    citations = None
-                serialized_annotations = chat_annotations_ta.dump_python(annotations, warnings=False)
-            provider_details = (
-                {'annotations': serialized_annotations}
-                if self._model_settings and self._model_settings.get('openai_include_raw_annotations')
-                else None
-            )
+        if raw_annotations:
+            part = self._parts_manager.get_part_by_vendor_id('content')
+            if self._pending_raw_annotations or not isinstance(part, TextPart):
+                try:
+                    self._pending_raw_annotations.extend(raw_annotations_ta.validate_python(raw_annotations))
+                except ValidationError:  # pragma: no cover
+                    self._pending_raw_annotations.append(raw_annotations)
+                return
+            citations, provider_details = self._map_chat_annotations(raw_annotations, part)
             yield from self._parts_manager.handle_text_delta(
                 vendor_part_id='content',
                 content='',
@@ -4061,6 +4081,29 @@ class OpenAIStreamedResponse(StreamedResponse):
                 provider_details=provider_details,
                 citations=citations,
             )
+
+    def _map_chat_annotations(
+        self, raw_annotations: object, part: TextPart
+    ) -> tuple[list[Citation] | None, dict[str, Any] | None]:
+        try:
+            annotations = chat_annotations_ta.validate_python(raw_annotations)
+        except ValidationError:  # pragma: no cover
+            citations = None
+            serialized_annotations = raw_annotations
+        else:
+            if self._raw_text_content == part.content:
+                citations = _map_chat_citations(annotations, part.content)
+            else:
+                # Annotation offsets address the raw provider text, not text transformed by
+                # thinking-tag removal or leading-whitespace normalization.
+                citations = None
+            serialized_annotations = chat_annotations_ta.dump_python(annotations, warnings=False)
+        provider_details = (
+            {'annotations': serialized_annotations}
+            if self._model_settings and self._model_settings.get('openai_include_raw_annotations')
+            else None
+        )
+        return citations, provider_details
 
     def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps tool call delta content to events.

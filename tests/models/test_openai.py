@@ -26,9 +26,9 @@ from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     Citation,
-    CitationAnchor,
     DocumentUrl,
     ImageUrl,
+    MarkerCitationAnchor,
     ModelAPIError,
     ModelHTTPError,
     ModelProfile,
@@ -4005,7 +4005,7 @@ async def test_openai_chat_url_citation(allow_model_requests: None):
             citations=[
                 Citation(
                     sources=[WebCitationSource(url='https://example.com', title='Example')],
-                    anchor=CitationAnchor(start=7, end=10, kind='marker'),
+                    anchor=MarkerCitationAnchor(start=7, end=10),
                 )
             ],
         )
@@ -4035,7 +4035,6 @@ async def test_openai_chat_citation_without_content(allow_model_requests: None):
             citations=[
                 Citation(
                     sources=[WebCitationSource(url='https://example.com', title='Example')],
-                    anchor=CitationAnchor(start=0, end=0, kind='marker'),
                 )
             ],
         )
@@ -4091,6 +4090,67 @@ async def test_openai_chat_stream_citation_after_text_transformation_is_ignored(
     assert result.all_messages()[1].parts == [TextPart('[1] extra')]
 
 
+async def test_openai_chat_stream_annotations_before_text(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=7, end_index=10
+        ),
+    )
+    stream = [
+        chunk([ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])]),
+        text_chunk('Answer [1]'),
+        chunk([ChoiceDelta.model_construct(role='assistant')], finish_reason='stop'),
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with Agent(model).run_stream(
+        'Question', model_settings=OpenAIChatModelSettings(openai_include_raw_annotations=True)
+    ) as result:
+        await result.get_output()
+
+    assert result.all_messages()[1].parts == [
+        TextPart(
+            'Answer [1]',
+            citations=[
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com', title='Example')],
+                    anchor=MarkerCitationAnchor(start=7, end=10),
+                )
+            ],
+            provider_name='openai',
+            provider_details={'annotations': [annotation.model_dump()]},
+        )
+    ]
+
+
+async def test_openai_chat_stream_citation_without_text(allow_model_requests: None):
+    annotation = chat.chat_completion_message.Annotation(
+        type='url_citation',
+        url_citation=chat.chat_completion_message.AnnotationURLCitation(
+            url='https://example.com', title='Example', start_index=0, end_index=0
+        ),
+    )
+    stream = [
+        chunk(
+            [ChoiceDelta.model_construct(role='assistant', annotations=[annotation.model_dump()])],
+            finish_reason='stop',
+        )
+    ]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+
+    async with model.request_stream([], {}, ModelRequestParameters()) as streamed:
+        _ = [event async for event in streamed]
+        response = streamed.get()
+
+    assert response.parts == [
+        TextPart(
+            '',
+            citations=[Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])],
+        )
+    ]
+
+
 async def test_openai_chat_raw_annotations_non_streaming(allow_model_requests: None):
     annotation = chat.chat_completion_message.Annotation(
         type='url_citation',
@@ -4138,7 +4198,7 @@ async def test_openai_chat_stream_citation_with_raw_annotations(allow_model_requ
     assert part.citations == [
         Citation(
             sources=[WebCitationSource(url='https://example.com', title='Example')],
-            anchor=CitationAnchor(start=7, end=10, kind='marker'),
+            anchor=MarkerCitationAnchor(start=7, end=10),
         )
     ]
     assert part.provider_details == {'annotations': [annotation.model_dump()]}

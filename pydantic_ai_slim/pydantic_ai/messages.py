@@ -1924,9 +1924,14 @@ CitationSource: TypeAlias = Annotated[WebCitationSource | DocumentCitationSource
 """A source referenced by a model-generated citation."""
 
 
+def _validate_citation_anchor(start: int, end: int) -> None:
+    if start < 0 or end <= start:
+        raise ValueError('Citation anchor must satisfy 0 <= start < end')
+
+
 @dataclass(repr=False, kw_only=True)
-class CitationAnchor:
-    """A range in the containing [`TextPart.content`][pydantic_ai.messages.TextPart.content]."""
+class ContentCitationAnchor:
+    """A supported content range in the containing [`TextPart.content`][pydantic_ai.messages.TextPart.content]."""
 
     start: int
     """The zero-based start character index, inclusive."""
@@ -1934,14 +1939,38 @@ class CitationAnchor:
     end: int
     """The zero-based end character index, exclusive."""
 
-    kind: Literal['content', 'marker']
-    """Whether the range identifies supported content or a rendered citation marker."""
+    kind: Literal['content'] = 'content'
+    """Anchor type identifier, used as a discriminator for deserialization."""
 
     def __post_init__(self) -> None:
-        if self.start < 0 or self.end < self.start:
-            raise ValueError('Citation anchor must satisfy 0 <= start <= end')
+        _validate_citation_anchor(self.start, self.end)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class MarkerCitationAnchor:
+    """A rendered citation marker range in the containing [`TextPart.content`][pydantic_ai.messages.TextPart.content]."""
+
+    start: int
+    """The zero-based start character index, inclusive."""
+
+    end: int
+    """The zero-based end character index, exclusive."""
+
+    kind: Literal['marker'] = 'marker'
+    """Anchor type identifier, used as a discriminator for deserialization."""
+
+    def __post_init__(self) -> None:
+        _validate_citation_anchor(self.start, self.end)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+CitationAnchor: TypeAlias = Annotated[
+    ContentCitationAnchor | MarkerCitationAnchor, pydantic.Field(discriminator='kind')
+]
+"""A content or citation-marker range in the containing [`TextPart.content`][pydantic_ai.messages.TextPart.content]."""
 
 
 @dataclass(repr=False)

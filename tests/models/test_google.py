@@ -28,7 +28,7 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     Citation,
-    CitationAnchor,
+    ContentCitationAnchor,
     DocumentCitationSource,
     DocumentUrl,
     FilePart,
@@ -5350,7 +5350,7 @@ def _assert_file_search_contexts(messages: list[ModelMessage], source_url: str) 
     cited_text = next(p for p in parts if isinstance(p, TextPart) and p.citations)
     assert cited_text.citations is not None
     citation = cited_text.citations[0]
-    assert citation.anchor == CitationAnchor(start=0, end=35, kind='content')
+    assert citation.anchor == ContentCitationAnchor(start=0, end=35)
     assert len(citation.sources) == 1
     source = citation.sources[0]
     assert isinstance(source, DocumentCitationSource)
@@ -5389,7 +5389,7 @@ def test_google_grounding_offsets_are_python_character_indices():
 
     anchor = citation.anchor
     assert anchor is not None
-    assert anchor == CitationAnchor(start=2, end=6, kind='content')
+    assert anchor == ContentCitationAnchor(start=2, end=6)
     assert text[anchor.start : anchor.end] == 'café'
 
 
@@ -5400,6 +5400,18 @@ def test_google_grounding_ignores_offset_inside_character():
     )
 
     assert _map_grounding_citations([Part(text='🙂')], metadata) == {}
+
+
+def test_google_zero_width_grounding_is_unanchored():
+    source = WebCitationSource(url='https://example.com')
+    metadata = GroundingMetadata(
+        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
+        grounding_supports=[GroundingSupport(grounding_chunk_indices=[0], segment=Segment(start_index=0, end_index=0))],
+    )
+
+    assert _map_grounding_citations([Part(text='answer')], metadata) == {
+        0: [Citation(sources=[source])],
+    }
 
 
 def test_google_grounding_mapping_edge_cases():
@@ -5510,7 +5522,7 @@ async def test_google_stream_citations_follow_provider_part_index_on_metadata_on
             citations=[
                 Citation(
                     sources=[WebCitationSource(url='https://example.com', title='Example')],
-                    anchor=CitationAnchor(start=5, end=11, kind='content'),
+                    anchor=ContentCitationAnchor(start=5, end=11),
                 )
             ],
         )
@@ -5583,7 +5595,7 @@ async def test_google_stream_citations_can_reference_earlier_grounding_chunks():
     assert text_part.citations == [
         Citation(
             sources=[WebCitationSource(url='https://example.com')],
-            anchor=CitationAnchor(start=0, end=6, kind='content'),
+            anchor=ContentCitationAnchor(start=0, end=6),
         )
     ]
 
@@ -5643,7 +5655,7 @@ async def test_google_stream_keeps_text_parts_separate_across_non_text_parts():
     assert text_parts[1].citations == [
         Citation(
             sources=[WebCitationSource(url='https://example.com')],
-            anchor=CitationAnchor(start=0, end=6, kind='content'),
+            anchor=ContentCitationAnchor(start=0, end=6),
         )
     ]
 
@@ -5695,7 +5707,7 @@ async def test_google_stream_reuses_provider_index_for_repeated_thinking_deltas(
             citations=[
                 Citation(
                     sources=[WebCitationSource(url='https://example.com')],
-                    anchor=CitationAnchor(start=0, end=6, kind='content'),
+                    anchor=ContentCitationAnchor(start=0, end=6),
                 )
             ],
         ),

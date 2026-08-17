@@ -20,7 +20,7 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     Citation,
-    CitationAnchor,
+    ContentCitationAnchor,
     DeferredToolRequests,
     DeferredToolRequestsEvent,
     DeferredToolResults,
@@ -31,6 +31,7 @@ from pydantic_ai import (
     ImageUrl,
     InstructionPart,
     InstrumentationSettings,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -700,7 +701,7 @@ def test_citation_message_history_round_trip():
                                     title='Paris',
                                 )
                             ],
-                            anchor=CitationAnchor(start=32, end=35, kind='marker'),
+                            anchor=MarkerCitationAnchor(start=32, end=35),
                         ),
                         Citation(sources=[DocumentCitationSource(file_id='file-123', title='report.pdf')]),
                     ],
@@ -751,10 +752,12 @@ def test_text_part_delta_appends_citations():
 
 
 def test_citation_invariants():
-    with pytest.raises(ValueError, match='0 <= start <= end'):
-        CitationAnchor(start=-1, end=0, kind='content')
-    with pytest.raises(ValueError, match='0 <= start <= end'):
-        CitationAnchor(start=2, end=1, kind='marker')
+    with pytest.raises(ValueError, match='0 <= start < end'):
+        ContentCitationAnchor(start=-1, end=0)
+    with pytest.raises(ValueError, match='0 <= start < end'):
+        MarkerCitationAnchor(start=2, end=1)
+    with pytest.raises(ValueError, match='0 <= start < end'):
+        ContentCitationAnchor(start=1, end=1)
     with pytest.raises(ValueError, match='at least one source'):
         Citation(sources=[])
     with pytest.raises(ValueError, match='at least one source field'):
