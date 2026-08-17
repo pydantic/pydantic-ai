@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 
 from typing_extensions import assert_never, overload
 
@@ -158,10 +158,12 @@ class FunctionModel(Model):
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
 
         if _utils.is_async_callable(self.function):
-            response = await self.function(messages, agent_info)
+            response = await cast('_AsyncFunctionDef', self.function)(messages, agent_info)
         else:
             # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
-            response_ = await _utils.await_maybe(await _utils.run_in_executor(self.function, messages, agent_info))
+            response_ = await _utils.await_maybe(
+                await _utils.run_in_executor(cast('_SyncFunctionDef', self.function), messages, agent_info)
+            )
             assert isinstance(response_, ModelResponse), response_
             response = response_
         response.model_name = self._model_name
@@ -305,6 +307,14 @@ BuiltinToolCallsReturns: TypeAlias = dict[int, NativeToolCallPart | NativeToolRe
 
 FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], ModelResponse | Awaitable[ModelResponse]]
 """A function used to generate a non-streamed response."""
+
+_AsyncFunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], Awaitable[ModelResponse]]
+_SyncFunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], ModelResponse | Awaitable[ModelResponse]]
+"""Precise dispatch targets for `FunctionModel.request`.
+
+`is_async_callable` can't narrow `FunctionDef` because its return type already allows both a bare
+`ModelResponse` and an awaitable, so each branch casts to the callable shape it actually calls.
+"""
 
 StreamFunctionDef: TypeAlias = Callable[
     [list[ModelMessage], AgentInfo], AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns]
