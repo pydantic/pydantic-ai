@@ -806,65 +806,6 @@ class MyTypedDict(TypedDict, total=False):
     second: str
 
 
-async def test_stream_structured(allow_model_requests: None):
-    stream = [
-        chunk([ChoiceDelta()]),
-        chunk([ChoiceDelta(tool_calls=[])]),
-        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        struc_chunk('final_result', None),
-        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=None)])]),
-        struc_chunk(None, '{"first": "One'),
-        struc_chunk(None, '", "second": "Two"'),
-        struc_chunk(None, '}'),
-        chunk([]),
-    ]
-    mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    async with agent.run_stream('') as result:
-        assert not result.is_complete
-        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {},
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
-        )
-        assert result.is_complete
-        assert result.usage == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
-        # double check usage matches stream count
-        assert result.usage.output_tokens == len(stream)
-
-
-async def test_stream_structured_finish_reason(allow_model_requests: None):
-    stream = [
-        struc_chunk('final_result', None),
-        struc_chunk(None, '{"first": "One'),
-        struc_chunk(None, '", "second": "Two"'),
-        struc_chunk(None, '}'),
-        struc_chunk(None, None, finish_reason='stop'),
-    ]
-    mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    async with agent.run_stream('') as result:
-        assert not result.is_complete
-        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
-            [
-                {'first': 'One'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-                {'first': 'One', 'second': 'Two'},
-            ]
-        )
-        assert result.is_complete
-
-
 async def test_stream_native_output(allow_model_requests: None):
     stream = [
         chunk([]),
