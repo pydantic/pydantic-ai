@@ -174,8 +174,9 @@ async def _anthropic_outbound(case: Case) -> list[dict[str, object]]:
     model = AnthropicModel(
         case.model_name or 'claude-sonnet-4-5', provider=AnthropicProvider(api_key='x'), profile=case.profile
     )
+    prepared = model.prepare_messages(case.history, ModelRequestParameters())
     _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
-        case.history, ModelRequestParameters(), AnthropicModelSettings()
+        prepared, ModelRequestParameters(), AnthropicModelSettings()
     )
     return [dict(message) for message in messages]
 
@@ -184,7 +185,8 @@ async def _xai_outbound(case: Case) -> list[dict[str, object]]:
     model = XaiModel(
         case.model_name or 'grok-4-fast-reasoning', provider=XaiProvider(api_key='x'), profile=case.profile
     )
-    messages = await model._map_messages(case.history, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    prepared = model.prepare_messages(case.history, ModelRequestParameters())
+    messages = await model._map_messages(prepared, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
     return [MessageToDict(m, preserving_proto_field_name=True) for m in messages]
 
 
@@ -194,7 +196,8 @@ async def _bedrock_outbound(case: Case) -> list[dict[str, object]]:
         provider=BedrockProvider(api_key='x', region_name='us-east-1'),
         profile=case.profile,
     )
-    _, messages = await model._map_messages(case.history, ModelRequestParameters(), None)  # pyright: ignore[reportPrivateUsage]
+    prepared = model.prepare_messages(case.history, ModelRequestParameters())
+    _, messages = await model._map_messages(prepared, ModelRequestParameters(), None)  # pyright: ignore[reportPrivateUsage]
     return [dict(message) for message in messages]
 
 

@@ -1127,6 +1127,12 @@ class BedrockConverseModel(Model[BaseClient]):
 
         return tool_config
 
+    def _thinking_rides_native_channel(self, part: ThinkingPart) -> bool:
+        """Bedrock only replays `reasoningContent` for the families whose profile opts into it."""
+        return super()._thinking_rides_native_channel(part) and self.profile.get(
+            'bedrock_send_back_thinking_parts', False
+        )
+
     async def _map_messages(  # noqa: C901
         self,
         messages: Sequence[ModelMessage],
@@ -1291,7 +1297,6 @@ class BedrockConverseModel(Model[BaseClient]):
             elif isinstance(message, ModelResponse):
                 flush_deferred_media()
                 content: list[ContentBlockOutputTypeDef] = []
-                carried_thinking: list[ContentBlockUnionTypeDef] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
@@ -1317,10 +1322,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         else:
                             start_tag, end_tag = profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             thinking_text = '\n'.join([start_tag, item.content, end_tag])
-                            if profile.get('mimics_assistant_message_formatting', False):
-                                carried_thinking.append({'text': thinking_text})
-                            else:
-                                content.append({'text': thinking_text})
+                            content.append({'text': thinking_text})
                     elif isinstance(item, NativeToolCallPart):
                         if item.provider_name == self.system:
                             if item.tool_name == CodeExecutionTool.kind:
@@ -1351,14 +1353,6 @@ class BedrockConverseModel(Model[BaseClient]):
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
-                if carried_thinking:
-                    # See `ModelProfile.mimics_assistant_message_formatting`: reasoning replayed in an
-                    # assistant turn teaches the model to write `<thinking>` tags into its visible
-                    # answers. Appended as a plain user turn rather than merged here, so the pass below
-                    # applies `bedrock_tool_result_colocatable_content` to it like any other user
-                    # content — for Claude that set contains `text`, so it does end up sharing the turn
-                    # with preceding tool results.
-                    bedrock_messages.append({'role': 'user', 'content': carried_thinking})
                 if content:
                     bedrock_messages.append({'role': 'assistant', 'content': content})
             else:

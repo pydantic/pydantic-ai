@@ -73,6 +73,7 @@ from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
 from ..profiles import (
     DEFAULT_PROFILE,
     DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
+    DEFAULT_THINKING_TAGS,
     ModelProfile,
     ModelProfileSpec,
     ToolAdditionMode,
@@ -780,7 +781,24 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if not self.profile.get('supports_inline_system_prompts', False):
             messages = _wrap_non_leading_system_prompts(messages)
 
+        if self.profile.get('mimics_assistant_message_formatting', False):
+            messages = _carry_non_native_thinking(
+                messages,
+                rides_native_channel=self._thinking_rides_native_channel,
+                thinking_tags=self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
+            )
+
         return messages
+
+    def _thinking_rides_native_channel(self, part: ThinkingPart) -> bool:
+        """Whether this model can replay `part` through its own reasoning channel.
+
+        A part fails this when it was produced by another provider or arrived without the signature the
+        channel authenticates, which is what a storage round-trip, a history processor, or another model
+        in a `FallbackModel` chain leaves behind. Adapters whose channel asks for more than a signature
+        narrow it further.
+        """
+        return part.provider_name == self.system and part.signature is not None
 
     def _translate_legacy_tool_reveals(
         self,
@@ -2089,6 +2107,58 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     if not opening and instructions is None:
         return []
     return [ModelRequest(parts=list(opening), instructions=instructions)]
+
+
+def _carry_non_native_thinking(
+    messages: list[ModelMessage],
+    *,
+    rides_native_channel: Callable[[ThinkingPart], bool],
+    thinking_tags: tuple[str, str],
+) -> list[ModelMessage]:
+    """Move reasoning that can't ride the native channel into a user message ahead of its turn.
+
+    See [`ModelProfile.mimics_assistant_message_formatting`][pydantic_ai.profiles.ModelProfile.mimics_assistant_message_formatting]:
+    a model with that quirk reads the assistant turns of a history as examples of how it is supposed to
+    write, so reasoning replayed there as tagged text teaches it to put those tags in the answers the
+    user reads. Carrying it in a user message keeps the reasoning and stops the imitation.
+
+    The carried reasoning gets a `ModelRequest` of its own rather than joining the preceding one: a
+    provider that rejects anything sharing a turn with a tool result would fail the merged shape, and
+    providers combine consecutive same-role turns themselves where they don't.
+
+    Returns the original list when nothing moved, so the identity check in `_make_request` can skip the
+    redundant `_clean_message_history` pass.
+    """
+    start_tag, end_tag = thinking_tags
+    new_messages: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if not isinstance(message, ModelResponse):
+            new_messages.append(message)
+            continue
+        carried = [
+            part
+            for part in message.parts
+            if isinstance(part, ThinkingPart) and part.content and not rides_native_channel(part)
+        ]
+        if not carried:
+            new_messages.append(message)
+            continue
+        changed = True
+        new_messages.append(
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='\n'.join([start_tag, part.content, end_tag]))
+                    for part in carried
+                ]
+            )
+        )
+        kept = [part for part in message.parts if part not in carried]
+        # A response holding nothing but carried reasoning has no turn left to render; dropping it here
+        # keeps every adapter from having to notice an assistant message with no content.
+        if kept:
+            new_messages.append(replace(message, parts=kept))
+    return new_messages if changed else messages
 
 
 def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:

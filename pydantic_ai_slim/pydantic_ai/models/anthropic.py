@@ -1892,8 +1892,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     | BetaMCPToolResultBlock
                     | BetaCompactionBlockParam
                 ] = []
-                carried_thinking_params: list[BetaTextBlockParam] = []
-                carry_thinking_in_user_turn = self.profile.get('mimics_assistant_message_formatting', False)
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
                         if response_part.content:
@@ -1928,11 +1926,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         elif response_part.content:  # pragma: no branch
                             start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
                             thinking_text = '\n'.join([start_tag, response_part.content, end_tag])
-                            thinking_param = BetaTextBlockParam(text=thinking_text, type='text')
-                            if carry_thinking_in_user_turn:
-                                carried_thinking_params.append(thinking_param)
-                            else:
-                                assistant_content_params.append(thinking_param)
+                            assistant_content_params.append(BetaTextBlockParam(text=thinking_text, type='text'))
                     elif isinstance(response_part, NativeToolCallPart):
                         if response_part.provider_name == self.system:
                             tool_use_id = _guard_tool_call_id(t=response_part)
@@ -2159,22 +2153,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(response_part)
-                if carried_thinking_params:
-                    # A model that imitates assistant formatting reads reasoning replayed in an
-                    # assistant turn as house style and starts writing `<thinking>` tags into the
-                    # answers the user reads (https://github.com/pydantic/pydantic-ai/issues/5869).
-                    #
-                    # Emitted as its own turn here rather than merged into the user message ahead of
-                    # it, which the API combines it with anyway: the position is known while mapping,
-                    # so a `system` entry, a response that renders no assistant turn, or two
-                    # responses in a row can't move the target out from under a backwards search.
-                    # It goes *ahead* of any `system` entry this request emitted, so that entry
-                    # still has no user turn to hop and keeps the cache boundary it was authored
-                    # with — see `_place_system_messages_before_generation`.
-                    insert_at = len(anthropic_messages)
-                    while insert_at > 0 and anthropic_messages[insert_at - 1]['role'] == 'system':
-                        insert_at -= 1
-                    anthropic_messages.insert(insert_at, BetaMessageParam(role='user', content=carried_thinking_params))
                 if len(assistant_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
