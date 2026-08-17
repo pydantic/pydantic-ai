@@ -183,8 +183,9 @@ Need deterministic, fast tests?
 | Cerebras | `cerebras:` | `cerebras:llama-4-scout-17b-16e-instruct` |
 | Heroku | `heroku:` | `heroku:claude-sonnet-4-6` |
 | Snowflake Cortex | `snowflake:` | `snowflake:claude-sonnet-4-6` |
+| Crusoe | `crusoe:` | `crusoe:zai/GLM-5.2` |
 
-**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For truly custom providers, subclass `Model` or use `OpenAIChatModel` with a custom `base_url`.
+**Additional prefixes:** `litellm:`, `nebius:`, `ovhcloud:`, `alibaba:`, `sambanova:`, `vercel:`, `moonshotai:`. For any other OpenAI-compatible endpoint, point `OpenAIChatModel` at it with `provider=OpenAIProvider(base_url=..., api_key=...)`. For anything that isn't OpenAI-compatible, subclass `Model`.
 
 ### Tool Decorator Comparison
 

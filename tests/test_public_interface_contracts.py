@@ -234,6 +234,26 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     ('AbstractAgent', 'run_stream_events'): frozenset({'infer_name'}),
     ('AbstractAgent', 'run_stream_sync'): frozenset({'infer_name'}),
     ('AbstractAgent', 'run_sync'): frozenset({'infer_name'}),
+    # Stored rather than delegated: `realtime()` builds an `AgentRealtime` that holds the whole
+    # configuration until `session()` opens the connection, so every keyword lands on a private
+    # dataclass field (`_deps=deps`) rather than on a same-named parameter. The rename is what the
+    # walk sees; nothing is dropped, and `AgentRealtime` passing them on is covered by the realtime
+    # session tests.
+    ('AbstractAgent', 'realtime'): frozenset(
+        {
+            'deps',
+            'model_settings',
+            'instructions',
+            'toolsets',
+            'capabilities',
+            'usage',
+            'usage_limits',
+            'metadata',
+            'conversation_id',
+            'run_id',
+            'message_history',
+        }
+    ),
     # Same for `infer_name`, plus `event_stream_handler`, which these two consume rather than
     # delegate: they default it to `self.event_stream_handler` and then drive the event stream
     # themselves against each node's stream, so there is no inner run to hand it to.

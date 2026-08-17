@@ -7,6 +7,7 @@ it **isolates nothing** — and doubles as the reference implementation of the p
 from __future__ import annotations as _annotations
 
 import asyncio
+import functools
 import os
 import shutil
 import signal
@@ -19,6 +20,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING
 
+import anyio
 from typing_extensions import Self
 
 from pydantic_ai._utils import run_in_executor
@@ -130,13 +132,20 @@ class LocalSandbox:
     def sandbox_id(self) -> str:
         return self._id
 
-    @property
-    def _root_path(self) -> Path:
-        # The default temp root is created lazily, so a constructed-but-unused
-        # sandbox doesn't leak a directory.
-        if self._root is None:
-            self._root = Path(tempfile.mkdtemp(prefix='pydantic-ai-sandbox-'))
-        return self._root
+    @functools.cached_property
+    def _root_lock(self) -> anyio.Lock:
+        # `anyio.Lock` binds to the event loop on which it is first used.
+        return anyio.Lock()
+
+    async def _root_path(self) -> Path:
+        # The default temp root is created lazily, so a constructed-but-unused sandbox doesn't
+        # leak a directory, and off the event loop, since `mkdtemp` is a blocking syscall. The
+        # lock is what makes the two safe together: without it, two concurrent first uses would
+        # each create a directory and one would leak.
+        async with self._root_lock:
+            if self._root is None:
+                self._root = await run_in_executor(lambda: Path(tempfile.mkdtemp(prefix='pydantic-ai-sandbox-')))
+            return self._root
 
     async def __aenter__(self) -> Self:
         return self
@@ -156,7 +165,7 @@ class LocalSandbox:
                 pass
 
     async def working_dir(self) -> str:
-        return str(self._root_path)
+        return str(await self._root_path())
 
     async def run(
         self,
@@ -175,7 +184,7 @@ class LocalSandbox:
                 raise TypeError('an argv sequence cannot be combined with shell=True; pass a single command string')
             spawn_coroutine = asyncio.create_subprocess_shell(
                 command,
-                cwd=cwd or self._root_path,
+                cwd=cwd or await self._root_path(),
                 env=merged_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -188,7 +197,7 @@ class LocalSandbox:
                 raise TypeError('a string command requires shell=True; pass an argv sequence otherwise')
             spawn_coroutine = asyncio.create_subprocess_exec(
                 *command,
-                cwd=cwd or self._root_path,
+                cwd=cwd or await self._root_path(),
                 env=merged_env,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

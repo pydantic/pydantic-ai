@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, ClassVar, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, cast
 
 from pydantic import ConfigDict, with_config
 from pydantic_core import PydanticSerializationError
@@ -47,6 +47,9 @@ from pydantic_ai.sandboxes import SandboxRef
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
+
+if TYPE_CHECKING:
+    pass
 
 from ._activity_execution import execute_activity
 from ._run_context import (
@@ -429,7 +432,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                         params.serialized_run_context,
                         deps=deps,
                         agent=self._agent,
-                            )
+                    )
                     await handler(run_context, self._single_event_stream(params.event))
 
             self.event_stream_handler_activity = register_activity(
@@ -450,7 +453,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                     params.serialized_run_context,
                     deps=deps,
                     agent=self._agent,
-                    )
+                )
                 model = await self._resolve_model_for_request(params.model_id, run_context)
             # The cancel activity shares `_model_activity_config`, whose default `heartbeat_timeout`
             # would otherwise fail a slow provider-teardown call for missed heartbeats.
@@ -561,7 +564,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         config: ActivityConfig = {'summary': 'create sandbox', **self.activity_config}
         result: _SandboxSetupResult | None = await execute_activity(
             activity=self.create_sandbox_activity,
-            args=[_SandboxSetupParams(serialized_run_context=self.run_context_type.serialize_run_context(ctx)), ctx.deps],
+            args=[
+                _SandboxSetupParams(serialized_run_context=self.run_context_type.serialize_run_context(ctx)),
+                ctx.deps,
+            ],
             **config,
         )
         if result is None:

@@ -133,6 +133,13 @@ Each case carries its own snapshot (not the central test body), so a reviewer ca
 Record cassettes with `--record-mode=rewrite`, verify playback without the flag, and review diffs.
 For detailed workflows see `.claude/skills/testing-skill/SKILL.md`.
 
+### Realtime WebSocket cassettes
+
+Realtime cassettes live in `tests/realtime/cassettes/<module>/<test>.yaml`. Record them with
+`uv run --env-file .env pytest --record-mode=rewrite <test>`; normal test runs replay them offline.
+Unlike HTTP VCR cassettes, they contain raw WebSocket frames, with secrets scrubbed and audio payloads
+truncated. The testing skill's `parse_cassette.py` is HTTP-only and does not apply to these cassettes.
+
 ### Asserting what goes out on the wire
 
 Four mechanisms, and they are not interchangeable — pick by what the test's claim is about.
@@ -153,6 +160,22 @@ Default for a test that asserts an outbound field: take the capture fixture and 
 
 #### Model requests
 - `allow_model_requests` - bypasses the default `ALLOW_MODEL_REQUESTS = False`
+
+#### Blocking-call detection
+- `blockbuster` (autouse) raises `BlockingError` when a scanned library frame blocks inside the event loop.
+- Scanned packages are `pydantic_ai`, `pydantic_graph`, `pydantic_evals`, and `clai`.
+- Test-only and third-party stacks are ignored. User callbacks remain covered while a scanned library frame is below them.
+- Fix blocking calls by offloading with `anyio.to_thread.run_sync`.
+- Add legitimate blocking calls to `BLOCKBUSTER_EXEMPTIONS` in `tests/conftest.py` with a reason.
+- Override `blockbuster_excluded_modules` when one integration module intentionally provides synchronous APIs.
+- Override `blockbuster_enabled` at the narrowest test or integration-module boundary that intentionally performs blocking work.
+- Use the narrowest module or test boundary. Do not replace the autouse `blockbuster` fixture.
+- Each pytest worker configures one detector per exclusion set and activates it separately for each test.
+- CI enables BlockBuster in Python 3.13 slim, evals, and standard jobs, plus unique compatibility or live-provider jobs.
+- The all-extras job disables BlockBuster because its stack-inspection overhead exceeds the seven-minute CI budget. Rebenchmark after [BlockBuster #61](https://github.com/cbornet/blockbuster/pull/61) is released in a compatible version, and re-enable it if the job stays within seven minutes.
+- Other Python-version lanes disable BlockBuster because they repeat the same dependency set.
+- Lowest-version lanes disable BlockBuster to keep jobs within the seven-minute CI budget. This leaves dependency-version-specific blocking behavior outside CI detection.
+- Local targeted tests enable BlockBuster by default.
 
 #### The `model` fixture (use with `indirect=True`)
 

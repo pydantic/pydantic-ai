@@ -15,7 +15,7 @@ from .agent import (
     capture_run_messages,
 )
 from .agent.spec import AgentSpec
-from .capabilities import AgentCapability, CapabilityFunc
+from .capabilities import AgentCapability, Capability, CapabilityFunc
 from .concurrency import (
     AbstractConcurrencyLimiter,
     AnyConcurrencyLimit,
@@ -60,6 +60,7 @@ from .messages import (
     AudioUrl,
     BaseToolCallPart,
     BaseToolReturnPart,
+    BinaryAudio,
     BinaryContent,
     BinaryImage,
     CachePoint,
@@ -100,6 +101,8 @@ from .messages import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
+    SpeechPart,
+    SpeechPartDelta,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -121,7 +124,7 @@ from .messages import (
     VideoMediaType,
     VideoUrl,
 )
-from .models import ModelRequestContext, ModelResolutionContext, ModelSelectionContext
+from .models import AbstractModel, ModelRequestContext, ModelResolutionContext, ModelSelectionContext
 from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
     AdvisorTool,
@@ -238,8 +241,11 @@ __all__ = (
     'AudioFormat',
     'AudioMediaType',
     'AudioUrl',
+    'SpeechPart',
+    'SpeechPartDelta',
     'BaseToolCallPart',
     'BaseToolReturnPart',
+    'BinaryAudio',
     'BinaryContent',
     'NativeToolCallPart',
     'NativeToolReturnPart',
@@ -346,6 +352,7 @@ __all__ = (
     'XSearchTool',
     # capabilities
     'AgentCapability',
+    'Capability',
     'CapabilityFunc',
     # sandboxes
     'LocalSandbox',
@@ -365,6 +372,7 @@ __all__ = (
     # format_prompt
     'format_as_xml',
     # models
+    'AbstractModel',
     'ModelRequestContext',
     'ModelResolutionContext',
     'ModelSelectionContext',

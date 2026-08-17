@@ -101,8 +101,9 @@ along with writes because they run against the same filesystem. The wrapper keep
 backend's identity, so a capability applies it in `get_sandbox` on every (re)connection.
 
 ```python
-from pydantic_ai import ReadOnlySandbox
+from pydantic_ai import LocalSandbox, ReadOnlySandbox
 
+backend = LocalSandbox()
 read_only = ReadOnlySandbox(backend)  # backend stays read-write for the application
 ```
 

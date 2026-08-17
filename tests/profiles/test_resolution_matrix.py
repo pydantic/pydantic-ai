@@ -150,6 +150,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'google_supports_server_side_tool_invocations': False,
     'google_supported_mime_types_in_tool_returns': (),
     'google_supports_thinking_level': False,
+    'google_supports_minimal_thinking_level': True,
     'google_supports_strict_tool_definition': False,
     # GrokModelProfile subclass defaults
     'grok_supports_builtin_tools': False,
@@ -1835,6 +1836,85 @@ def test_nebius_moonshotai():
     profile = NebiusProvider.model_profile('moonshotai/Kimi-K2-Instruct-0905')
     assert _normalize(profile) == snapshot(
         {'json_schema_transformer': OpenAIJsonSchemaTransformer, 'ignore_streamed_leading_whitespace': True}
+    )
+
+
+# =============================================================================
+# Crusoe — multi-lab routing, structured output forced on for every model
+# =============================================================================
+
+
+def test_crusoe_bare_name():
+    from pydantic_ai.providers.crusoe import CrusoeProvider
+
+    profile = CrusoeProvider.model_profile('some-model')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+        }
+    )
+
+
+def test_crusoe_meta_llama():
+    from pydantic_ai.providers.crusoe import CrusoeProvider
+
+    profile = CrusoeProvider.model_profile('meta-llama/Llama-3.3-70B-Instruct')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+        }
+    )
+
+
+def test_crusoe_deepseek():
+    from pydantic_ai.providers.crusoe import CrusoeProvider
+
+    profile = CrusoeProvider.model_profile('deepseek-ai/DeepSeek-V3-0324')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+        }
+    )
+
+
+def test_crusoe_zai():
+    """GLM's own profile doesn't claim structured output support; the Crusoe overlay adds it."""
+    from pydantic_ai.providers.crusoe import CrusoeProvider
+
+    profile = CrusoeProvider.model_profile('zai/GLM-5.2')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_thinking': True,
+            'zai_supports_reasoning_effort': True,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+        }
+    )
+
+
+def test_crusoe_harmony():
+    from pydantic_ai.providers.crusoe import CrusoeProvider
+
+    profile = CrusoeProvider.model_profile('openai/gpt-oss-120b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supports_inline_system_prompts': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'openai_supports_tool_choice_required': False,
+            'ignore_streamed_leading_whitespace': True,
+        }
     )
 
 

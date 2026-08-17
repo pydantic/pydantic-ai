@@ -61,6 +61,13 @@ def test_xai_provider_forwards_api_host_and_timeout(captured_client_kwargs: list
     assert captured_client_kwargs == [{'api_key': 'api-key', 'api_host': 'gateway.x.ai', 'timeout': 30}]
 
 
+def test_xai_provider_forwards_metadata(captured_client_kwargs: list[dict[str, object]]) -> None:
+    provider = XaiProvider(api_key='api-key', metadata=(('x-grok-conv-id', 'test-conv-id'),))
+
+    assert provider.client is not None  # triggers lazy client creation
+    assert captured_client_kwargs == [{'api_key': 'api-key', 'metadata': (('x-grok-conv-id', 'test-conv-id'),)}]
+
+
 def test_xai_provider_omits_unset_client_kwargs(captured_client_kwargs: list[dict[str, object]]) -> None:
     provider = XaiProvider(api_key='api-key')
 

@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import re
-
-import anyio
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext, UnavailableSandbox, UserError

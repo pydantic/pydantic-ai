@@ -1702,6 +1702,8 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
         and event.delta.provider_details
         and 'annotations' in event.delta.provider_details
     )
+    assert isinstance(annotation_event, PartDeltaEvent)
+    assert isinstance(annotation_event.delta, TextPartDelta)
     assert annotation_event.delta.provider_details == snapshot(
         {
             'annotations': [
@@ -13707,6 +13709,48 @@ async def test_openai_responses_compaction_without_encrypted_content_does_not_tr
                 TextPart(content='keep text'),
             ],
             provider_name='openai',
+        ),
+        ModelRequest.user_text_prompt('keep tail'),
+    ]
+
+    _, mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, cast(OpenAIResponsesModelSettings, {}), ModelRequestParameters()
+    )
+
+    assert mapped == snapshot(
+        [
+            {'role': 'user', 'content': 'keep before unrenderable boundary'},
+            {'role': 'assistant', 'content': 'keep text'},
+            {'role': 'user', 'content': 'keep tail'},
+        ]
+    )
+
+
+async def test_openai_responses_non_openai_provider_name_still_requires_encrypted_content(
+    allow_model_requests: None,
+):
+    """The render condition follows the adapter, not the provider's name.
+
+    This adapter serves providers under names other than `'openai'` — Azure among them — and it
+    sends only the encrypted compaction item. Keying the boundary on the name would treat an
+    unrenderable part as a trim boundary here and drop the pre-boundary history with nothing sent
+    in its place, which is a silent context loss rather than a size optimization.
+    """
+    model = OpenAIResponsesModel(
+        'gpt-5.2',
+        provider=AzureProvider(
+            azure_endpoint='https://example.openai.azure.com', api_version='2024-01-01', api_key='test'
+        ),
+    )
+    assert model.system == 'azure'
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('keep before unrenderable boundary'),
+        ModelResponse(
+            parts=[
+                CompactionPart(content='summary without payload', provider_name='azure'),
+                TextPart(content='keep text'),
+            ],
+            provider_name='azure',
         ),
         ModelRequest.user_text_prompt('keep tail'),
     ]

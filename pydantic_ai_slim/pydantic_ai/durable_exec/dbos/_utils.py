@@ -6,7 +6,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 
 DBOS_SANDBOX_UNAVAILABLE_REASON = (
     'RunContext.sandbox is not available inside a DBOS durable workflow. Pass a `SandboxRef` to the agent run '
-    "and attach a capability whose `get_sandbox` can connect to it."
+    'and attach a capability whose `get_sandbox` can connect to it.'
 )
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
@@ -461,6 +461,7 @@ def test_logfire(
                         'native_tools': [],
                         'tool_visibility': {'my_ret': 'visible'},
                         'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_tools': [],
                         'output_object': None,
@@ -1047,6 +1048,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'tool',
                         'output_object': None,
                         'output_tools': [
@@ -1355,6 +1357,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'native_tools': [],
                         'tool_visibility': {},
                         'revealed_tool_names': [],
+                        'deferred_capability_ids': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
