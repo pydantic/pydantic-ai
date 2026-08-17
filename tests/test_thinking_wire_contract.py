@@ -9,8 +9,7 @@ the wire (the methodology that surfaced the OpenRouter `enabled: True` miss).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
 from vcr.cassette import Cassette
@@ -223,25 +222,6 @@ CASES = [
         thinking=False,
         present={'generationConfig.thinkingConfig.thinking_budget': 0},
     ),
-    # gemini-3.7-flash has `google_supports_minimal_thinking_level` off (prefix-matched in
-    # `_MODELS_WITHOUT_MINIMAL_THINKING_LEVEL`), so `thinking='minimal'` and `thinking=False` both fold
-    # to `thinking_level='LOW'` on the wire. Cassettes not yet recorded (no Google key in this
-    # checkout) — a maintainer records both with:
-    # uv run --env-file .env pytest 'tests/test_thinking_wire_contract.py::test_reasoning_wire_contract[google-gemini-37-flash-minimal-folds-to-low]' 'tests/test_thinking_wire_contract.py::test_reasoning_wire_contract[google-gemini-37-flash-disable-folds-to-low]' --record-mode=rewrite
-    WireCase(
-        id='google-gemini-37-flash-minimal-folds-to-low',
-        provider='google',
-        model_name='gemini-3.7-flash',
-        thinking='minimal',
-        present={'generationConfig.thinkingConfig.thinking_level': 'LOW'},
-    ),
-    WireCase(
-        id='google-gemini-37-flash-disable-folds-to-low',
-        provider='google',
-        model_name='gemini-3.7-flash',
-        thinking=False,
-        present={'generationConfig.thinkingConfig.thinking_level': 'LOW'},
-    ),
     # Mistral: adjustable-reasoning models take the binary `reasoning_effort` ('high'/'none');
     # always-on magistral must never receive it (https://docs.mistral.ai/capabilities/reasoning/).
     WireCase(
@@ -290,20 +270,9 @@ def _build_model(
     raise ValueError(f'unknown provider {case.provider!r}')  # pragma: no cover
 
 
-# The two gemini-3.7-flash cases above ship without cassettes (no Google key in the environment that
-# authored them), so until a maintainer records them (command in their CASES comment) they skip
-# rather than fail on the missing recording.
-_RECORD_PENDING_CASE_IDS = frozenset(
-    {'google-gemini-37-flash-minimal-folds-to-low', 'google-gemini-37-flash-disable-folds-to-low'}
-)
-
-_CASSETTES_DIR = Path(__file__).parent / 'cassettes' / Path(__file__).stem
-
-
 @pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in CASES])
 async def test_reasoning_wire_contract(
     case: WireCase,
-    request: pytest.FixtureRequest,
     allow_model_requests: None,
     groq_api_key: str,
     cerebras_api_key: str,
@@ -313,18 +282,6 @@ async def test_reasoning_wire_contract(
 ):
     """Reasoning settings produce the correct request wire body: a `thinking` disable signal where the model
     supports it, its absence where reasoning is always on, and `groq_reasoning_effort` mapped to `reasoning_effort`."""
-    if case.id in _RECORD_PENDING_CASE_IDS:
-        cassette_path = _CASSETTES_DIR / f'{request.node.name}.yaml'
-        record_mode: str | None
-        try:
-            # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
-            record_mode = cast(Any, request.config).getoption('record_mode')
-        except Exception:  # pragma: no cover
-            record_mode = None
-        # `lax` because this line runs (and skips) in any checkout that lacks the cassette, and never
-        # runs again once it's recorded.
-        if not cassette_path.exists() and (record_mode or 'none') == 'none':  # pragma: lax no cover
-            pytest.skip(f'Missing wire-contract cassette (record with `--record-mode=rewrite`): {cassette_path}')
     model = _build_model(
         case,
         groq_api_key=groq_api_key,

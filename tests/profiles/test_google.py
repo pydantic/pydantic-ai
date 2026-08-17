@@ -10,6 +10,7 @@ from __future__ import annotations as _annotations
 
 from typing import Literal
 
+import pytest
 from pydantic import BaseModel
 
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
@@ -221,36 +222,22 @@ def test_model_profile_image_model():
     assert profile.get('supports_tools', True) is False
 
 
-def test_model_profile_gemini_3_7_flash_disables_minimal_thinking_level():
-    profile = google_model_profile('gemini-3.7-flash')
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        ('gemini-3.7-flash', False),
+        ('gemini-3-pro-preview', False),
+        ('gemini-3.1-pro-preview', False),
+        ('gemini-3-flash-preview', True),
+    ],
+)
+def test_model_profile_supports_minimal_thinking_level(model_name: str, expected: bool):
+    profile = google_model_profile(model_name)
     assert profile is not None
-    assert profile.get('google_supports_minimal_thinking_level', True) is False
+    assert profile.get('google_supports_minimal_thinking_level', True) is expected
 
 
-def test_model_profile_gemini_3_pro_preview_disables_minimal_thinking_level():
-    profile = google_model_profile('gemini-3-pro-preview')
-    assert profile is not None
-    assert profile.get('google_supports_minimal_thinking_level', True) is False
-
-
-def test_model_profile_gemini_3_1_pro_preview_disables_minimal_thinking_level():
-    profile = google_model_profile('gemini-3.1-pro-preview')
-    assert profile is not None
-    assert profile.get('google_supports_minimal_thinking_level', True) is False
-
-
-def test_model_profile_minimal_thinking_level_supported_by_default():
-    profile = google_model_profile('gemini-3.0-pro')
-    assert profile is not None
-    assert profile.get('google_supports_minimal_thinking_level', True) is True
-
-
-def test_model_profile_dated_variant_ids_disable_minimal_thinking_level():
-    """Dated/variant model IDs should disable MINIMAL like their bare IDs (prefix matching)."""
-    profile = google_model_profile('gemini-3-pro-preview-11-2025')
-    assert profile is not None
-    assert profile.get('google_supports_minimal_thinking_level', True) is False
-
-    profile = google_model_profile('gemini-3.7-flash-preview-08-2026')
+def test_model_profile_minimal_thinking_level_matches_model_prefix():
+    profile = google_model_profile('gemini-3-pro-preview-variant')
     assert profile is not None
     assert profile.get('google_supports_minimal_thinking_level', True) is False

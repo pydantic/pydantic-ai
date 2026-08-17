@@ -134,13 +134,10 @@ class GoogleModelProfile(ModelProfile, total=False):
     google_supports_minimal_thinking_level: bool
     """Whether the model accepts `thinking_level='MINIMAL'`. Default: `True`.
 
-    Disabled for models whose documented thinking levels start at `low` (see
-    `_MODELS_WITHOUT_MINIMAL_THINKING_LEVEL` — doc-derived, plus the 400 observed in
-    https://github.com/pydantic/pydantic-ai/issues/7466, not live-verified here). When disabled,
-    unified `thinking='minimal'` and `thinking=False` fall back to `thinking_level='LOW'`, the
-    closest available level.
-
-    See https://ai.google.dev/gemini-api/docs/thinking."""
+    When disabled, unified `thinking='minimal'` and `thinking=False` fall back to
+    `thinking_level='LOW'`.
+    See https://ai.google.dev/gemini-api/docs/thinking.
+    """
 
     google_supports_strict_tool_definition: bool
     """Whether the model supports Gemini's `VALIDATED` function-calling mode. Default: `False`.
@@ -162,10 +159,7 @@ _MODELS_WITHOUT_MINIMAL_THINKING_LEVEL: tuple[str, ...] = (
     'gemini-3-pro-preview',
     'gemini-3.1-pro-preview',
 )
-"""Gemini 3 models whose documented thinking levels start at `low`.
-
-Entries are ID prefixes matched with `str.startswith`, so dated/variant IDs
-(e.g. `gemini-3-pro-preview-11-2025`) resolve the same as the bare ID."""
+"""Model name prefixes whose documented thinking levels start at `low`."""
 
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
@@ -180,7 +174,6 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
     thinking_always_enabled = is_thinking_model and is_pro
-    supports_minimal_thinking_level = not model_name.startswith(_MODELS_WITHOUT_MINIMAL_THINKING_LEVEL)
     return GoogleModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_image_output=is_image_model,
@@ -194,7 +187,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_server_side_tool_invocations=is_3_or_newer,
         google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_3_or_newer else (),
         google_supports_thinking_level=is_3_or_newer,
-        google_supports_minimal_thinking_level=supports_minimal_thinking_level,
+        google_supports_minimal_thinking_level=not model_name.startswith(_MODELS_WITHOUT_MINIMAL_THINKING_LEVEL),
         google_supports_strict_tool_definition=supports_strict_tool_definition,
     )
 

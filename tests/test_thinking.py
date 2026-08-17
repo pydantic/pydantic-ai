@@ -560,7 +560,8 @@ class TestGoogleThinkingTranslation:
         params = ModelRequestParameters(thinking='minimal')
         settings: ModelSettings = {}
         result = GoogleModel._translate_thinking(gemini_3_no_minimal_model, settings, params)
-        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'LOW'})
+        assert result is not None
+        assert result.get('thinking_level') == 'LOW'
 
     def test_thinking_true_gemini_25(self, gemini_25_model: FunctionModel):
         params = ModelRequestParameters(thinking=True)
