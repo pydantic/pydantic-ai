@@ -121,9 +121,6 @@ Instead of plain text or structured data, you may want the output of your agent 
 
 Output functions are similar to [function tools](tools.md), but the model is forced to call one of them, the call ends the agent run, and the result is not passed back to the model.
 
-!!! warning "Use an async output function when delegating to another agent"
-    An output function that calls another agent must be `async def` and use `await delegate_agent.run(...)`. Do not call [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] from a synchronous output function: Pydantic AI rejects nested synchronous calls from callbacks it runs because they can deadlock on shared async resources. The parent agent can still be started with `run_sync()` from synchronous application code. See [Agent delegation](multi-agent-applications.md#agent-delegation).
-
 As with tool functions, output function arguments provided by the model are validated using Pydantic (with optional [validation context](#validation-context)), can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
 Output functions do not support [`ToolFailed`][pydantic_ai.exceptions.ToolFailed], which is reserved for [function-tool failures](tools-advanced.md#tool-failed). Here, `ToolFailed` is treated like any ordinary exception: an [`on_output_process_error` hook](hooks.md#error-hooks) can recover from it, otherwise it aborts the run.
