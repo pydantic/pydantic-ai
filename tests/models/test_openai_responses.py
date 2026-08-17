@@ -15847,13 +15847,13 @@ async def test_openai_responses_function_call_grouping_around_active_tool_search
             parts=[
                 ToolCallPart('read', {'path': 'a'}, tool_call_id='call-a'),
                 ThinkingPart(content='inspect ordinary result'),
-                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search-a'),
+                ToolCallPart('search_tools', {'queries': ['weather']}, tool_call_id='search-a'),
             ]
         ),
         ModelRequest(
             parts=[
                 ToolReturnPart('read', 'contents', tool_call_id='call-a'),
-                ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='search-a'),
+                ToolReturnPart('search_tools', {'discovered_tools': []}, tool_call_id='search-a'),
             ]
         ),
     ]
@@ -15875,11 +15875,9 @@ async def test_openai_responses_function_call_grouping_around_active_tool_search
             },
             {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
             {
-                'type': 'tool_search_output',
-                'execution': 'client',
-                'tools': [],
+                'type': 'function_call_output',
                 'call_id': 'search-a',
-                'status': 'completed',
+                'output': '{"discovered_tools":[]}',
             },
         ]
     )

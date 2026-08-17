@@ -5054,16 +5054,19 @@ def _group_settled_portable_function_calls(
 
     unsettled_call_counts: dict[str, int] = {}
     for part in parts:
-        if isinstance(part, ToolCallPart) and not (client_tool_search_active and isinstance(part, ToolSearchCallPart)):
+        if isinstance(part, ToolCallPart) and not (
+            client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
+        ):
             unsettled_call_counts[part.tool_call_id] = unsettled_call_counts.get(part.tool_call_id, 0) + 1
-    for following_message in messages[message_index + 1 :]:
+    for following_message_index in range(message_index + 1, len(messages)):
+        following_message = messages[following_message_index]
         if isinstance(following_message, ModelResponse):
             break
         for part in following_message.parts:
             if (
                 (
                     isinstance(part, ToolReturnPart)
-                    and not (client_tool_search_active and isinstance(part, ToolSearchReturnPart))
+                    and not (client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
                 )
                 or (
                     isinstance(part, RetryPromptPart)
@@ -5087,7 +5090,11 @@ def _group_settled_portable_function_calls(
         segment.clear()
 
     for part in parts:
-        if client_tool_search_active and isinstance(part, ToolSearchCallPart):
+        if (
+            client_tool_search_active
+            and isinstance(part, ToolCallPart)
+            and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME
+        ):
             flush_segment()
             grouped_parts.append(part)
         else:
