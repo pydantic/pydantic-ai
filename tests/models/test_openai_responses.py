@@ -55,7 +55,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
-from pydantic_ai.messages import INVALID_JSON_KEY, sanitize_messages
+from pydantic_ai.messages import INVALID_JSON_KEY, ToolSearchCallPart, ToolSearchReturnPart, sanitize_messages
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
@@ -15731,14 +15731,19 @@ async def test_openai_responses_web_search_tool_external_web_access_default_omit
     assert response_kwargs['tools'] == snapshot([{'type': 'web_search', 'search_context_size': 'medium'}])
 
 
-async def _replay_input(history: list[ModelMessage], *, group_function_calls: bool) -> list[dict[str, Any]]:
+async def _replay_input(
+    history: list[ModelMessage],
+    *,
+    group_function_calls: bool,
+    model_request_parameters: ModelRequestParameters | None = None,
+) -> list[dict[str, Any]]:
     model = OpenAIResponsesModel(
         'custom-model',
         provider=OpenAIProvider(api_key='not-used'),
         profile=OpenAIModelProfile(openai_responses_requires_function_call_grouping=group_function_calls),
     )
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        history, OpenAIResponsesModelSettings(), ModelRequestParameters()
+        history, OpenAIResponsesModelSettings(), model_request_parameters or ModelRequestParameters()
     )
     return [dict(item) for item in items]
 
@@ -15795,6 +15800,145 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
     )
 
 
+async def test_openai_responses_function_call_grouping_preserves_active_tool_search() -> None:
+    """Active tool search uses its specialized client-executed protocol, whose order is preserved."""
+    history = [
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search-a'),
+                ThinkingPart(content='inspect local results'),
+            ]
+        ),
+        ModelRequest(parts=[ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='search-a')]),
+    ]
+    model_request_parameters = ModelRequestParameters(native_tools=[ToolSearchTool(optional=True)])
+
+    expected = await _replay_input(
+        history, group_function_calls=False, model_request_parameters=model_request_parameters
+    )
+    assert expected == snapshot(
+        [
+            {
+                'type': 'tool_search_call',
+                'execution': 'client',
+                'arguments': {'queries': ['weather']},
+                'call_id': 'search-a',
+                'status': 'completed',
+            },
+            {'role': 'assistant', 'content': '<think>\ninspect local results\n</think>'},
+            {
+                'type': 'tool_search_output',
+                'execution': 'client',
+                'tools': [],
+                'call_id': 'search-a',
+                'status': 'completed',
+            },
+        ]
+    )
+    assert await _replay_input(
+        history, group_function_calls=True, model_request_parameters=model_request_parameters
+    ) == snapshot(expected)
+
+
+async def test_openai_responses_function_call_grouping_around_active_tool_search() -> None:
+    """Active tool search is a delimiter; settled ordinary calls still group within their segment."""
+    history = [
+        ModelResponse(
+            parts=[
+                ToolCallPart('read', {'path': 'a'}, tool_call_id='call-a'),
+                ThinkingPart(content='inspect ordinary result'),
+                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search-a'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('read', 'contents', tool_call_id='call-a'),
+                ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='search-a'),
+            ]
+        ),
+    ]
+
+    assert await _replay_input(
+        history,
+        group_function_calls=True,
+        model_request_parameters=ModelRequestParameters(native_tools=[ToolSearchTool(optional=True)]),
+    ) == snapshot(
+        [
+            {'role': 'assistant', 'content': '<think>\ninspect ordinary result\n</think>'},
+            {'name': 'read', 'arguments': '{"path":"a"}', 'call_id': 'call-a', 'type': 'function_call'},
+            {
+                'type': 'tool_search_call',
+                'execution': 'client',
+                'arguments': {'queries': ['weather']},
+                'call_id': 'search-a',
+                'status': 'completed',
+            },
+            {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+            {
+                'type': 'tool_search_output',
+                'execution': 'client',
+                'tools': [],
+                'call_id': 'search-a',
+                'status': 'completed',
+            },
+        ]
+    )
+
+
+async def test_openai_responses_function_call_grouping_ignores_active_tool_search_settlement() -> None:
+    """A colliding tool-search return or retry cannot settle an ordinary call."""
+    history = [
+        ModelResponse(
+            parts=[
+                ToolCallPart('read', {'path': 'a'}, tool_call_id='shared-id'),
+                ThinkingPart(content='ordinary call remains unsettled'),
+                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='shared-id'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='shared-id'),
+                RetryPromptPart('search again', tool_name='search_tools', tool_call_id='shared-id'),
+            ]
+        ),
+    ]
+    model_request_parameters = ModelRequestParameters(native_tools=[ToolSearchTool(optional=True)])
+
+    assert await _replay_input(
+        history, group_function_calls=True, model_request_parameters=model_request_parameters
+    ) == await _replay_input(history, group_function_calls=False, model_request_parameters=model_request_parameters)
+
+
+async def test_openai_responses_function_call_grouping_includes_local_tool_search_fallback() -> None:
+    """Inactive local tool search is an ordinary settled portable function call and is grouped."""
+    history = [
+        ModelResponse(
+            parts=[
+                ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='search-a'),
+                ThinkingPart(content='inspect local results'),
+            ]
+        ),
+        ModelRequest(parts=[ToolSearchReturnPart(content={'discovered_tools': []}, tool_call_id='search-a')]),
+    ]
+
+    assert await _replay_input(history, group_function_calls=True) == snapshot(
+        [
+            {'role': 'assistant', 'content': '<think>\ninspect local results\n</think>'},
+            {
+                'name': 'search_tools',
+                'arguments': '{"queries":["weather"]}',
+                'call_id': 'search-a',
+                'type': 'function_call',
+            },
+            {
+                'type': 'function_call_output',
+                'call_id': 'search-a',
+                'output': '{"discovered_tools":[]}',
+            },
+        ]
+    )
+
+
 @pytest.mark.parametrize(
     'history',
     [
@@ -15810,6 +15954,19 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
                 ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
             ],
             id='item-id',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(content='provider-owned item follows', id='reasoning-a'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            id='assistant-item-id',
         ),
         pytest.param(
             [
@@ -15849,6 +16006,19 @@ async def test_openai_responses_function_call_grouping_profile_on_off() -> None:
                 ModelRequest.user_text_prompt('continue'),
             ],
             id='unsettled-frontier',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='duplicate-call-id'),
+                        ThinkingPart(content='one duplicate remains unsettled'),
+                        ToolCallPart('view', {}, tool_call_id='duplicate-call-id'),
+                    ]
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='duplicate-call-id')]),
+            ],
+            id='duplicate-id-unsettled-frontier',
         ),
         pytest.param(
             [

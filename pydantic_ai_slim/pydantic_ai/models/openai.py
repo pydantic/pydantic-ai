@@ -3325,7 +3325,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
                 response_parts: Sequence[ModelResponsePart] = message.parts
                 if profile.get('openai_responses_requires_function_call_grouping', False):
-                    response_parts = _group_settled_portable_function_calls(messages, message_index, message)
+                    response_parts = _group_settled_portable_function_calls(
+                        messages, message_index, message, client_tool_search_active=client_tool_search_active
+                    )
                 for item in response_parts:
                     from_same_provider = item.provider_name == self.system or (
                         item.provider_name is None and message.provider_name == self.system
@@ -5032,39 +5034,66 @@ def _map_provider_details(
 
 
 def _group_settled_portable_function_calls(
-    messages: list[ModelMessage], message_index: int, message: ModelResponse
+    messages: list[ModelMessage],
+    message_index: int,
+    message: ModelResponse,
+    *,
+    client_tool_search_active: bool,
 ) -> Sequence[ModelResponsePart]:
     """Stable-group settled portable function calls for strict Responses replay."""
     parts = message.parts
-    first_call_index = next((index for index, part in enumerate(parts) if isinstance(part, ToolCallPart)), None)
-    if (
-        first_call_index is None
-        or not any(not isinstance(part, ToolCallPart) for part in parts[first_call_index + 1 :])
-        or any(isinstance(part, (NativeToolCallPart, NativeToolReturnPart, CompactionPart)) for part in parts)
-        or any(
-            (isinstance(part, (TextPart, ThinkingPart, FilePart)) and part.id is not None)
-            or (
-                isinstance(part, ToolCallPart)
-                and (part.id is not None or _split_combined_tool_call_id(part.tool_call_id)[1] is not None)
-            )
-            for part in parts
+    if any(isinstance(part, (NativeToolCallPart, NativeToolReturnPart, CompactionPart)) for part in parts) or any(
+        (isinstance(part, (TextPart, ThinkingPart, FilePart)) and part.id is not None)
+        or (
+            isinstance(part, ToolCallPart)
+            and (part.id is not None or _split_combined_tool_call_id(part.tool_call_id)[1] is not None)
         )
+        for part in parts
     ):
         return parts
 
-    unsettled_call_ids = [part.tool_call_id for part in parts if isinstance(part, ToolCallPart)]
+    unsettled_call_counts: dict[str, int] = {}
+    for part in parts:
+        if isinstance(part, ToolCallPart) and not (client_tool_search_active and isinstance(part, ToolSearchCallPart)):
+            unsettled_call_counts[part.tool_call_id] = unsettled_call_counts.get(part.tool_call_id, 0) + 1
     for following_message in messages[message_index + 1 :]:
         if isinstance(following_message, ModelResponse):
             break
         for part in following_message.parts:
             if (
-                isinstance(part, ToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
-            ) and part.tool_call_id in unsettled_call_ids:
-                unsettled_call_ids.remove(part.tool_call_id)
-    if unsettled_call_ids:
+                (
+                    isinstance(part, ToolReturnPart)
+                    and not (client_tool_search_active and isinstance(part, ToolSearchReturnPart))
+                )
+                or (
+                    isinstance(part, RetryPromptPart)
+                    and part.tool_name is not None
+                    and not (client_tool_search_active and part.tool_name == TOOL_SEARCH_FUNCTION_TOOL_NAME)
+                )
+            ) and (count := unsettled_call_counts.get(part.tool_call_id)):
+                if count == 1:
+                    del unsettled_call_counts[part.tool_call_id]
+                else:
+                    unsettled_call_counts[part.tool_call_id] = count - 1
+    if unsettled_call_counts:
         return parts
 
-    return sorted(parts, key=lambda part: isinstance(part, ToolCallPart))
+    grouped_parts: list[ModelResponsePart] = []
+    segment: list[ModelResponsePart] = []
+
+    def flush_segment() -> None:
+        grouped_parts.extend(part for part in segment if not isinstance(part, ToolCallPart))
+        grouped_parts.extend(part for part in segment if isinstance(part, ToolCallPart))
+        segment.clear()
+
+    for part in parts:
+        if client_tool_search_active and isinstance(part, ToolSearchCallPart):
+            flush_segment()
+            grouped_parts.append(part)
+        else:
+            segment.append(part)
+    flush_segment()
+    return grouped_parts
 
 
 def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
