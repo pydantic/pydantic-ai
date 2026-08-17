@@ -630,9 +630,8 @@ async def test_event_stream_file_default_noop():
     """
 
     class FileAgnosticStream(DummyUIEventStream):
-        async def handle_file(self, part: FilePart) -> AsyncIterator[str]:
-            async for e in UIEventStream.handle_file(self, part):
-                yield e
+        def handle_file(self, part: FilePart) -> AsyncIterator[str]:
+            return super(DummyUIEventStream, self).handle_file(part)
 
     async def event_generator():
         yield PartStartEvent(index=0, part=FilePart(content=BinaryImage(data=b'fake', media_type='image/png')))
