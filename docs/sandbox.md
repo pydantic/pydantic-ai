@@ -72,6 +72,72 @@ when the read was served without reaching EOF. For strict text decoding and writ
 [`Sandbox.read_text()`][pydantic_ai.sandboxes.Sandbox.read_text] and
 [`Sandbox.write_text()`][pydantic_ai.sandboxes.Sandbox.write_text].
 
+## Provider backends
+
+Anything a model can reach with untrusted input needs a real environment rather than
+`LocalSandbox`. [`E2BSandbox`][pydantic_ai.sandboxes.e2b.E2BSandbox] runs commands and file
+operations inside an [E2B](https://e2b.dev) cloud microVM. Install the `e2b` optional group and
+import it from its own module, so the SDK is only loaded by applications that use it:
+
+```bash
+pip/uv-add "pydantic-ai-slim[e2b]"
+```
+
+The supplier of a sandbox owns its lifecycle, so
+[`create()`][pydantic_ai.sandboxes.e2b.E2BSandbox.create] is an async context manager: it
+provisions an environment on entry and kills it when the block ends, including on failure. It
+authenticates with the `E2B_API_KEY` environment variable unless you pass `api_key=`.
+
+```python {title="e2b_sandbox.py" test="skip"}
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.sandboxes.e2b import E2BSandbox
+
+agent = Agent('anthropic:claude-sonnet-5')
+
+
+@agent.tool
+async def execute(ctx: RunContext[None], command: str) -> str:
+    result = await ctx.sandbox.run(command, shell=True, timeout=60)
+    return result.stdout if result.exit_code == 0 else f'[exit {result.exit_code}] {result.stderr}'
+
+
+async def main() -> None:
+    async with E2BSandbox.create(timeout=600) as sandbox:
+        result = await agent.run('Profile the script and fix the hot spot.', sandbox=sandbox)
+        print(result.output)
+```
+
+[`connect()`][pydantic_ai.sandboxes.e2b.E2BSandbox.connect] attaches to an environment that
+already exists without taking over its teardown, which is exactly what a capability's
+[`get_sandbox`][pydantic_ai.capabilities.AbstractCapability.get_sandbox] hook needs to turn a
+[`SandboxRef`][pydantic_ai.sandboxes.SandboxRef] back into a live backend, including
+[under durable execution](#durable-execution):
+
+```python {title="e2b_capability.py" test="skip"}
+from typing import Any
+
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.sandboxes import SandboxBackend, SandboxRef
+from pydantic_ai.sandboxes.e2b import E2BSandbox
+
+
+class E2BCapability(AbstractCapability[Any]):
+    async def get_sandbox(
+        self, ctx: RunContext[Any], ref: SandboxRef
+    ) -> SandboxBackend | None:
+        if ref.provider != 'e2b':
+            return None
+        return await E2BSandbox.connect(ref.sandbox_id)
+```
+
+Backends implement exactly what their platform supports. `E2BSandbox` adds native background
+processes ([`start()`][pydantic_ai.sandboxes.Sandbox.start]) on top of the required members, but
+not live output streaming — E2B's async SDK delivers output through callbacks its own event pump
+awaits, so bridging them into an iterator would either buffer without bound or stall the pump.
+`output_limit=` is unsupported for the same honesty reason it is on `LocalSandbox`: bound the
+output in-command instead, e.g. `| tail -c 10000`.
+
 ## Attaching a sandbox
 
 ### Directly, per run

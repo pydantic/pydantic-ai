@@ -20,3 +20,5 @@
             - SandboxProcess
             - SandboxOutputChunk
             - SandboxResult
+
+::: pydantic_ai.sandboxes.e2b
