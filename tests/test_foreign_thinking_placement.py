@@ -119,10 +119,9 @@ _THINKING_ONLY_HISTORY: list[ModelMessage] = [
     ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
     ModelResponse(parts=[ThinkingPart(content=_REASONING)]),
 ]
-# The response ahead of the reasoning called a server tool it never resolved. Anthropic then rejects the
-# request unless the user message following that response holds nothing but `tool_result` blocks, and
-# consecutive user turns are combined before that check runs, so giving the reasoning a turn of its own is
-# no escape either — it has to go back in the assistant turn, tags and all.
+# The response ahead of the reasoning called a server tool it never resolved. Anthropic rejects a
+# continued conversation carrying that call at all, whatever else is in it, so the mapper drops the call
+# before it reaches the wire — which leaves the reasoning free to take its usual user turn.
 _UNRESOLVED_SERVER_TOOL_HISTORY: list[ModelMessage] = [
     ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
     ModelResponse(
@@ -760,10 +759,10 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
         marks=(pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed'),),
     ),
     Case(
-        'anthropic-unresolved-server-tool-falls-back',
+        'anthropic-unresolved-server-tool-still-carries-in-user-turn',
         _anthropic_outbound,
         _UNRESOLVED_SERVER_TOOL_HISTORY,
-        carrying_roles={'assistant'},
+        carrying_roles={'user'},
         expected=snapshot(
             [
                 {
@@ -777,15 +776,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 },
                 {
                     'role': 'assistant',
-                    'content': [
-                        {
-                            'id': 'srvtoolu_01EoSNE7k4dUJyGatASCV5qs',
-                            'type': 'server_tool_use',
-                            'name': 'web_search',
-                            'input': {'query': '10-year Treasury duration'},
-                        },
-                        {'id': 'call-1', 'type': 'tool_use', 'name': 'lookup', 'input': {'tenor': 10}},
-                    ],
+                    'content': [{'id': 'call-1', 'type': 'tool_use', 'name': 'lookup', 'input': {'tenor': 10}}],
                 },
                 {
                     'role': 'user',
@@ -799,7 +790,7 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                     ],
                 },
                 {
-                    'role': 'assistant',
+                    'role': 'user',
                     'content': [
                         {
                             'text': """\
@@ -808,9 +799,12 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
 </thinking>\
 """,
                             'type': 'text',
-                        },
-                        {'text': 'The 10-year Treasury has more interest-rate risk.', 'type': 'text'},
+                        }
                     ],
+                },
+                {
+                    'role': 'assistant',
+                    'content': [{'text': 'The 10-year Treasury has more interest-rate risk.', 'type': 'text'}],
                 },
             ]
         ),
