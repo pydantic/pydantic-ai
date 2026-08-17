@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import inspect
 import re
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
@@ -158,7 +157,7 @@ class FunctionModel(Model):
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
 
-        if inspect.iscoroutinefunction(self.function):
+        if _utils.is_async_callable(self.function):
             response = await self.function(messages, agent_info)
         else:
             # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.

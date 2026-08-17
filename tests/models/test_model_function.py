@@ -3,11 +3,13 @@ import re
 from collections.abc import AsyncIterator, Awaitable
 from dataclasses import asdict
 from datetime import timezone
+from unittest import mock
 
 import pydantic_core
 import pytest
 from pydantic import BaseModel
 
+import pydantic_ai._utils as _utils
 from pydantic_ai import (
     Agent,
     ModelMessage,
@@ -141,6 +143,43 @@ def test_sync_function_returning_coroutine():
     agent = Agent(FunctionModel(sync_returning_coroutine))
     result = agent.run_sync('Hello')
     assert result.output == snapshot('coroutine awaited')
+
+
+class AsyncCallableModel:
+    # `FunctionModel.__init__` reads `__name__` unconditionally, so callable-instance functions need one.
+    __name__ = 'async_callable_model'
+
+    async def __call__(self, _messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('callable instance response')])
+
+
+def test_callable_instance_with_async_call_avoids_executor(monkeypatch: pytest.MonkeyPatch) -> None:
+    run_in_executor_spy = mock.AsyncMock()
+    monkeypatch.setattr(_utils, 'run_in_executor', run_in_executor_spy)
+
+    agent = Agent(FunctionModel(AsyncCallableModel()))
+    result = agent.run_sync('Hello')
+
+    assert result.output == snapshot('callable instance response')
+    # An instance with an async `__call__` must take the async branch in `FunctionModel.request`,
+    # not the sync executor path.
+    run_in_executor_spy.assert_not_called()
+
+
+class AsyncCallableStreamModel:
+    # Same `__name__` requirement as `AsyncCallableModel`.
+    __name__ = 'async_callable_stream_model'
+
+    async def __call__(self, _messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello '
+        yield 'world'
+
+
+async def test_stream_callable_instance_with_async_call() -> None:
+    # `request_stream` has no dispatch predicate; guard that callable instances keep streaming intact.
+    agent = Agent(FunctionModel(stream_function=AsyncCallableStreamModel()))
+    async with agent.run_stream('') as result:
+        assert await result.get_output() == snapshot('hello world')
 
 
 async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
