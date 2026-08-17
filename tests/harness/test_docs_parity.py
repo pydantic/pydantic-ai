@@ -146,6 +146,7 @@ _CAPABILITY_PAGE_META = {
     'system-reminders.md': ('system_reminders', 'System Reminders'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
+    'prompt-injection-defender.md': ('prompt_injection_defender', 'Prompt Injection Defender'),
     'spend.md': ('spend', 'Spend'),
     'localstack.md': ('localstack', 'LocalStack'),
     'stackone.md': ('stackone', 'StackOne'),
