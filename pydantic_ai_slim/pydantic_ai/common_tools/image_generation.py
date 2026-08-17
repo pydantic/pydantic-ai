@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic_ai._utils import await_maybe
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
@@ -70,8 +71,11 @@ class ImageGenerationSubagentTool:
     model: Model | KnownModelName | str | ImageGenerationFallbackModelFunc
     """The model to use for image generation, or a callable that returns one."""
 
-    native_tool: ImageGenerationTool
-    """The image generation tool configuration to pass to the subagent."""
+    native_tool: (
+        ImageGenerationTool
+        | Callable[[RunContext[Any]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None]
+    )
+    """The image generation configuration or outer-run factory to pass to the subagent."""
 
     instructions: str = 'Generate an image based on the user prompt. Do not ask clarifying questions.'
     """Instructions for the subagent that generates the image."""
@@ -95,10 +99,16 @@ class ImageGenerationSubagentTool:
             # static strings are already validated at factory time
             _check_image_only_model(model)
 
+        native_tool = self.native_tool
+        if callable(native_tool):
+            native_tool = await await_maybe(native_tool(ctx))
+        if native_tool is None:
+            native_tool = ImageGenerationTool()
+
         agent = Agent(
             model,
             output_type=BinaryImage,
-            capabilities=[NativeTool(self.native_tool)],
+            capabilities=[NativeTool(native_tool)],
             instructions=self.instructions,
         )
         try:
@@ -110,7 +120,8 @@ class ImageGenerationSubagentTool:
 
 def image_generation_tool(
     model: Model | KnownModelName | str | ImageGenerationFallbackModelFunc,
-    native_tool: ImageGenerationTool,
+    native_tool: ImageGenerationTool
+    | Callable[[RunContext[Any]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None],
     *,
     instructions: str = 'Generate an image based on the user prompt. Do not ask clarifying questions.',
 ) -> Tool[Any]:
@@ -119,7 +130,7 @@ def image_generation_tool(
     Args:
         model: The model to use for image generation (e.g. `'openai-responses:gpt-5.4'`),
             or a callable taking `RunContext` that returns a model.
-        native_tool: The image generation tool configuration to pass to the subagent.
+        native_tool: The image generation configuration, or a callable that resolves it from the outer run context.
         instructions: Instructions for the subagent that generates the image.
     """
     if isinstance(model, str):

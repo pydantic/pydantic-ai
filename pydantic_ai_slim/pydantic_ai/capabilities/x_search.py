@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from pydantic_ai._utils import await_maybe
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import XSearchTool
@@ -155,10 +156,26 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
             return False
         return self.allowed_x_handles is not None or self.excluded_x_handles is not None
 
-    def _resolved_native(self) -> XSearchTool:
+    def _resolved_native(
+        self,
+    ) -> XSearchTool | Callable[[RunContext[AgentDepsT]], Awaitable[XSearchTool | None] | XSearchTool | None]:
         """Get the XSearchTool for the fallback, with capability-level overrides applied."""
-        base = self.native if isinstance(self.native, XSearchTool) else XSearchTool()
         overrides = self._xsearch_kwargs()
-        if not overrides:
-            return base
-        return replace(base, **overrides)
+        if isinstance(self.native, XSearchTool):
+            return replace(self.native, **overrides) if overrides else self.native
+
+        if self.native is False:
+            return XSearchTool(**overrides)
+
+        native_factory = self.native
+        assert callable(native_factory)
+
+        async def resolve_native(ctx: RunContext[AgentDepsT]) -> XSearchTool | None:
+            native_tool = await await_maybe(native_factory(ctx))
+            if native_tool is None:
+                native_tool = XSearchTool()
+            else:
+                assert isinstance(native_tool, XSearchTool)
+            return replace(native_tool, **overrides) if overrides else native_tool
+
+        return resolve_native

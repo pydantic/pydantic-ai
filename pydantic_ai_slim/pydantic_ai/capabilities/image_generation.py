@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
+from pydantic_ai._utils import await_maybe
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import ImageAspectRatio, ImageGenerationModelName, ImageGenerationTool
@@ -27,8 +28,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     Image generation settings (`quality`, `size`, etc.) are forwarded to the
     [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] used by
     both the native and the local fallback subagent. When passing a custom `native`
-    instance, its settings are also used for the fallback subagent; capability-level
-    fields override any `native` instance settings.
+    instance or factory, its settings are also used for the fallback subagent; capability-level
+    fields override any `native` settings.
     """
 
     fallback_model: ImageGenerationFallbackModel
@@ -189,13 +190,32 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     def _native_unique_id(self) -> str:
         return ImageGenerationTool.kind
 
-    def _resolved_native(self) -> ImageGenerationTool:
+    def _resolved_native(
+        self,
+    ) -> (
+        ImageGenerationTool
+        | Callable[[RunContext[AgentDepsT]], Awaitable[ImageGenerationTool | None] | ImageGenerationTool | None]
+    ):
         """Get the ImageGenerationTool for the fallback, with capability-level overrides applied."""
-        base = self.native if isinstance(self.native, ImageGenerationTool) else ImageGenerationTool()
         overrides = self._image_gen_kwargs()
-        if not overrides:
-            return base
-        return replace(base, **overrides)
+        if isinstance(self.native, ImageGenerationTool):
+            return replace(self.native, **overrides) if overrides else self.native
+
+        if self.native is False:
+            return ImageGenerationTool(**overrides)
+
+        native_factory = self.native
+        assert callable(native_factory)
+
+        async def resolve_native(ctx: RunContext[AgentDepsT]) -> ImageGenerationTool | None:
+            native_tool = await await_maybe(native_factory(ctx))
+            if native_tool is None:
+                native_tool = ImageGenerationTool()
+            else:
+                assert isinstance(native_tool, ImageGenerationTool)
+            return replace(native_tool, **overrides) if overrides else native_tool
+
+        return resolve_native
 
     def _default_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
         if self.fallback_model is None:

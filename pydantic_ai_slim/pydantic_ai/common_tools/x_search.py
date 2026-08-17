@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic_ai._utils import await_maybe
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
@@ -45,8 +46,8 @@ class XSearchSubagentTool:
     model: Model | KnownModelName | str | XSearchFallbackModelFunc
     """The model to use for X search, or a callable that returns one."""
 
-    native_tool: XSearchTool
-    """The X search tool configuration to pass to the subagent."""
+    native_tool: XSearchTool | Callable[[RunContext[Any]], Awaitable[XSearchTool | None] | XSearchTool | None]
+    """The X search tool configuration or outer-run factory to pass to the subagent."""
 
     instructions: str = 'Search X/Twitter based on the user query. Return a comprehensive summary of the results.'
     """Instructions for the subagent that performs the X search."""
@@ -65,10 +66,16 @@ class XSearchSubagentTool:
                 result = await result
             model = result
 
+        native_tool = self.native_tool
+        if callable(native_tool):
+            native_tool = await await_maybe(native_tool(ctx))
+        if native_tool is None:
+            native_tool = XSearchTool()
+
         agent = Agent(
             model,
             output_type=str,
-            capabilities=[NativeTool(self.native_tool)],
+            capabilities=[NativeTool(native_tool)],
             instructions=self.instructions,
         )
         try:
@@ -80,7 +87,7 @@ class XSearchSubagentTool:
 
 def x_search_tool(
     model: Model | KnownModelName | str | XSearchFallbackModelFunc,
-    native_tool: XSearchTool,
+    native_tool: XSearchTool | Callable[[RunContext[Any]], Awaitable[XSearchTool | None] | XSearchTool | None],
     *,
     instructions: str = 'Search X/Twitter based on the user query. Return a comprehensive summary of the results.',
 ) -> Tool[Any]:
@@ -90,7 +97,7 @@ def x_search_tool(
         model: The model to use for X search. Must be an xAI model that natively
             supports the `XSearchTool` native tool, e.g. `'xai:grok-4.3'`.
             Can also be a callable taking `RunContext` that returns such a model.
-        native_tool: The X search tool configuration to pass to the subagent.
+        native_tool: The X search tool configuration, or a callable that resolves it from the outer run context.
         instructions: Instructions for the subagent that performs the X search.
     """
     return Tool[Any](

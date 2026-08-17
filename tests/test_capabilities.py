@@ -25,7 +25,7 @@ from pydantic_ai import Capability as TopLevelCapability, _agent_graph
 from pydantic_ai._enqueue import PendingMessage
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._spec import CapabilitySpec, NamedSpec
-from pydantic_ai._utils import Some
+from pydantic_ai._utils import Some, await_maybe
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import Agent
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -7899,6 +7899,49 @@ class TestXSearchCapability:
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
 
+    async def test_xsearch_callable_native_config_is_used_by_fallback(self, allow_model_requests: None):
+        """The fallback subagent resolves callable native config with the outer run context."""
+        seen_native_tools: list[list[AbstractNativeTool]] = []
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen_native_tools.append(info.model_request_parameters.native_tools)
+            return ModelResponse(parts=[TextPart(content='summary of recent tweets')])
+
+        inner_model = FunctionModel(
+            inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool}))
+        )
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='x_search', args='{"query": "latest news"}')])
+
+        def native_factory(ctx: RunContext[str]) -> XSearchTool:
+            return XSearchTool(allowed_x_handles=[ctx.deps])
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent[str, str](
+            outer_model,
+            deps_type=str,
+            capabilities=[XSearch(native=native_factory, fallback_model=inner_model, include_output=True)],
+        )
+
+        result = await agent.run('What is happening on X?', deps='pydantic')
+
+        assert result.output == 'done'
+        assert seen_native_tools == [[XSearchTool(allowed_x_handles=['pydantic'], include_output=True)]]
+
+    async def test_xsearch_callable_native_none_keeps_fallback_overrides(self):
+        """A callable native factory returning None retains the existing fallback defaults."""
+
+        async def native_factory(ctx: RunContext[None]) -> None:
+            return None
+
+        cap = XSearch(native=native_factory, fallback_model='xai:grok-4-1-fast-non-reasoning', include_output=True)
+        native = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
+        assert callable(native)
+        assert await await_maybe(native(_build_run_context())) == XSearchTool(include_output=True)
+
     async def test_xsearch_callable_fallback_model(self, allow_model_requests: None):
         """XSearch with callable fallback_model resolves the model per-run."""
 
@@ -8308,6 +8351,54 @@ class TestImageGenerationCapability:
         # Callable native can't be resolved at init time, but local fallback is still created
         assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
+
+    async def test_image_generation_callable_native_config_is_used_by_fallback(self, allow_model_requests: None):
+        """The fallback subagent resolves callable native config with the outer run context."""
+        seen_native_tools: list[list[AbstractNativeTool]] = []
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen_native_tools.append(info.model_request_parameters.native_tools)
+            return ModelResponse(parts=[FilePart(content=BinaryImage(data=b'png', media_type='image/png'))])
+
+        inner_model = FunctionModel(
+            inner_model_fn,
+            profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool}), supports_image_output=True),
+        )
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+                return ModelResponse(parts=[TextPart(content='done')])
+            return ModelResponse(parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "test"}')])
+
+        async def native_factory(ctx: RunContext[str]) -> ImageGenerationTool:
+            return ImageGenerationTool(model=ctx.deps, quality='high')
+
+        outer_model = FunctionModel(outer_model_fn, profile=ModelProfile(supported_native_tools=frozenset()))
+        agent = Agent[str, str](
+            outer_model,
+            deps_type=str,
+            capabilities=[ImageGeneration(native=native_factory, fallback_model=inner_model, output_format='jpeg')],
+        )
+
+        result = await agent.run('Generate an image', deps='gpt-image-2')
+
+        assert result.output == 'done'
+        assert seen_native_tools == [[ImageGenerationTool(model='gpt-image-2', quality='high', output_format='jpeg')]]
+
+    async def test_image_generation_callable_native_none_keeps_fallback_overrides(self):
+        """A callable native factory returning None retains the existing fallback defaults."""
+
+        async def native_factory(ctx: RunContext[None]) -> None:
+            return None
+
+        cap = ImageGeneration(
+            native=native_factory,
+            fallback_model='openai-responses:gpt-5.4',
+            output_format='jpeg',
+        )
+        native = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
+        assert callable(native)
+        assert await await_maybe(native(_build_run_context())) == ImageGenerationTool(output_format='jpeg')
 
     def test_image_generation_fallback_model_and_local_conflict(self):
         """ImageGeneration(fallback_model=..., local=func) raises UserError."""
