@@ -20,8 +20,8 @@ from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
-    from mcp import CreateMessageResult
-    from mcp.types import TextContent
+    # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
+    from mcp.types import CreateMessageResult, TextContent
 
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
@@ -131,6 +131,27 @@ def test_assistant_text_history():
     )
 
 
+def test_standing_system_prompt_history():
+    history = [
+        ModelRequest(parts=[SystemPromptPart(content='standing system content'), UserPromptPart(content='1')]),
+        ModelResponse(parts=[TextPart(content='text content')], model_name='test-model'),
+    ]
+
+    result = CreateMessageResult(
+        role='assistant', content=TextContent(type='text', text='text content'), model='test-model'
+    )
+    create_message = AsyncMock(return_value=result)
+    agent = Agent(model=MCPSamplingModel(fake_session(create_message)))
+    agent.run_sync('2', message_history=history)
+
+    sampling_messages = create_message.call_args.args[0]
+    assert create_message.call_args.kwargs['system_prompt'] == 'standing system content'
+    assert all(
+        not isinstance(message.content, TextContent) or message.content.text != 'standing system content'
+        for message in sampling_messages
+    )
+
+
 def test_assistant_text_history_complex():
     history = [
         ModelRequest(
@@ -154,3 +175,9 @@ def test_assistant_text_history_complex():
     agent = Agent(model=MCPSamplingModel(fake_session(create_message)))
     result = agent.run_sync('1', message_history=history)
     assert result.output == snapshot('text content')
+    sampling_messages = create_message.call_args.args[0]
+    assert create_message.call_args.kwargs['system_prompt'] == ''
+    assert any(
+        isinstance(message.content, TextContent) and message.content.text == '<system>system content</system>'
+        for message in sampling_messages
+    )

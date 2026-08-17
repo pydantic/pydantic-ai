@@ -64,7 +64,7 @@ from pydantic_ai._output import (
     PromptedOutput,
     TextOutput,
 )
-from pydantic_ai.agent import AgentRunResult, WrapperAgent
+from pydantic_ai.agent import AbstractAgent, AgentRunResult, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Hooks,
@@ -88,6 +88,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.output import OutputObjectDefinition, StructuredDict, ToolOutput
 from pydantic_ai.providers import Provider
+from pydantic_ai.realtime import RealtimeModelSettings
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
@@ -99,9 +100,10 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.cohere import CohereProvider
+    from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
-    from pydantic_ai.providers.github import GitHubProvider
+    from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
@@ -122,9 +124,10 @@ else:
         from pydantic_ai.providers.alibaba import AlibabaProvider
         from pydantic_ai.providers.azure import AzureProvider
         from pydantic_ai.providers.cerebras import CerebrasProvider
+        from pydantic_ai.providers.crusoe import CrusoeProvider
         from pydantic_ai.providers.deepseek import DeepSeekProvider
         from pydantic_ai.providers.fireworks import FireworksProvider
-        from pydantic_ai.providers.github import GitHubProvider
+        from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
         from pydantic_ai.providers.heroku import HerokuProvider
         from pydantic_ai.providers.moonshotai import MoonshotAIProvider
         from pydantic_ai.providers.nebius import NebiusProvider
@@ -138,7 +141,7 @@ else:
         from pydantic_ai.providers.vllm import VLLMProvider
     except ImportError:  # pragma: lax no cover
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None
-        FireworksProvider = GitHubProvider = HerokuProvider = None
+        CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None
         MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
         OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None
         TogetherProvider = VercelProvider = VLLMProvider = None
@@ -4627,6 +4630,17 @@ async def test_agent_name():
     assert my_agent.name == 'my_agent'
 
 
+def test_agent_name_inferred_from_realtime():
+    # `realtime()` infers the agent name from the calling frame like `run`/`iter`, so an unnamed agent's
+    # realtime session span is labelled with the variable name rather than a generic fallback.
+    my_realtime_agent = Agent('test')
+
+    assert my_realtime_agent.name is None
+
+    my_realtime_agent.realtime('openai:gpt-realtime')
+    assert my_realtime_agent.name == 'my_realtime_agent'
+
+
 async def test_agent_name_already_set():
     my_agent = Agent('test', name='fig_tree')
 
@@ -8198,6 +8212,7 @@ def test_binary_content_serializable():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': 'test',
                 'provider_name': 'test',
@@ -8272,6 +8287,7 @@ def test_image_url_serializable_missing_media_type():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': 'test',
                 'timestamp': IsStr(),
@@ -8352,6 +8368,7 @@ def test_image_url_serializable():
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
                     'details': {},
+                    'cost': None,
                 },
                 'model_name': 'test',
                 'timestamp': IsStr(),
@@ -8974,6 +8991,7 @@ async def test_azure_provider_lifecycle_closes_client():
     assert http_client.is_closed
 
 
+@pytest.mark.filterwarnings('ignore:`GitHubProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning')
 @pytest.mark.parametrize(
     'provider_factory',
     [
@@ -8989,9 +9007,10 @@ async def test_azure_provider_lifecycle_closes_client():
             id='azure',
         ),
         pytest.param(lambda: CerebrasProvider(api_key='t'), marks=[requires_openai], id='cerebras'),
+        pytest.param(lambda: CrusoeProvider(api_key='t'), marks=[requires_openai], id='crusoe'),
         pytest.param(lambda: DeepSeekProvider(api_key='t'), marks=[requires_openai], id='deepseek'),
         pytest.param(lambda: FireworksProvider(api_key='t'), marks=[requires_openai], id='fireworks'),
-        pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),
+        pytest.param(lambda: GitHubProvider(api_key='t'), marks=[requires_openai], id='github'),  # pyright: ignore[reportDeprecated]
         pytest.param(lambda: HerokuProvider(api_key='t'), marks=[requires_openai], id='heroku'),
         pytest.param(lambda: LiteLLMProvider(api_key='t'), marks=[requires_litellm], id='litellm'),
         pytest.param(lambda: MoonshotAIProvider(api_key='t'), marks=[requires_openai], id='moonshotai'),
@@ -10304,6 +10323,16 @@ async def test_wrapper_agent():
     assert run.result.output == snapshot(Foo(a=0, b='a'))
     assert test_model.last_model_request_parameters is not None
     assert [t.name for t in test_model.last_model_request_parameters.function_tools] == snapshot(['bar'])
+
+
+async def test_abstract_agent_system_prompt_parts_default_is_empty():
+    """A custom `AbstractAgent` subclass that doesn't resolve system prompts inherits an empty default.
+
+    `Agent` and `WrapperAgent` both override `system_prompt_parts`, so the base default is only reached
+    by a third-party subclass; call it directly on an agent to pin that documented behavior.
+    """
+    agent = Agent('test')
+    assert await AbstractAgent.system_prompt_parts(agent) == []
 
 
 async def test_thinking_only_response_retry():
@@ -12699,7 +12728,7 @@ class TestCallableAgentLevelSettings:
 
     def test_callable_sees_model_settings_from_model(self):
         """The callable should see `ctx.model_settings` set to the model's base settings."""
-        seen_settings: list[ModelSettings | None] = []
+        seen_settings: list[ModelSettings | RealtimeModelSettings | None] = []
 
         def dynamic_settings(ctx: RunContext) -> ModelSettings:
             seen_settings.append(ctx.model_settings)
@@ -12726,7 +12755,7 @@ class TestCallableRunLevelSettings:
 
     def test_callable_run_sees_merged_agent_settings(self):
         """Run-level callable should see merged model+agent settings via ctx.model_settings."""
-        seen_settings: list[ModelSettings | None] = []
+        seen_settings: list[ModelSettings | RealtimeModelSettings | None] = []
 
         def run_settings(ctx: RunContext) -> ModelSettings:
             seen_settings.append(ctx.model_settings)
@@ -14120,3 +14149,94 @@ async def test_agent_graph_sleep_streaming_with_delay() -> None:
 def test_agent_rejects_non_positive_tool_timeout(tool_timeout: float):
     with pytest.raises(UserError, match='tool_timeout must be > 0'):
         Agent('test', tool_timeout=tool_timeout)
+
+
+def test_system_prompt_sync_function_returning_coroutine():
+    """A plain `def` system prompt that returns a coroutine has its awaited string used as content.
+
+    On the old dispatch (`is_async_callable` was False for a plain `def`), the coroutine object was
+    embedded as the `SystemPromptPart` content instead of the string it resolves to.
+    """
+
+    async def _async_prompt() -> str:
+        return 'Async system prompt'
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(return_model))
+
+    @agent.system_prompt
+    def system_prompt() -> Any:
+        return _async_prompt()
+
+    result = agent.run_sync('Hello')
+    assert result.all_messages()[0] == snapshot(
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='Async system prompt', timestamp=IsNow(tz=timezone.utc)),
+                UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            timestamp=IsNow(tz=timezone.utc),
+            run_id=IsStr(),
+            conversation_id=IsStr(),
+        )
+    )
+
+
+def test_output_validator_sync_function_returning_coroutine():
+    """A plain `def` output validator that returns a coroutine has the coroutine awaited.
+
+    On the old dispatch the coroutine object was returned as the validated output (and a `ModelRetry`
+    raised from within the awaited coroutine was never seen); here the awaited value and retry are honored.
+    """
+
+    async def _validate(o: Foo) -> Foo:
+        if o.a == 42:
+            return o
+        raise ModelRetry('"a" should be 42')
+
+    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            args_json = '{"a": 41, "b": "foo"}'
+        else:
+            args_json = '{"a": 42, "b": "foo"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_model), output_type=Foo)
+
+    @agent.output_validator
+    def validate_output(o: Foo) -> Any:
+        return _validate(o)
+
+    result = agent.run_sync('Hello')
+    assert isinstance(result.output, Foo)
+    assert result.output == snapshot(Foo(a=42, b='foo'))
+
+
+def test_tool_sync_function_returning_coroutine():
+    """A plain `def` tool that returns a coroutine has the coroutine awaited before returning.
+
+    On the old dispatch the coroutine object itself was returned as the tool result instead of the
+    string it resolves to, so the model never saw the real value.
+    """
+
+    async def _compute() -> str:
+        return 'tool result value'
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('my_tool', {})])
+        tool_return = next(p for m in messages for p in m.parts if isinstance(p, ToolReturnPart))
+        assert isinstance(tool_return.content, str)
+        return ModelResponse(parts=[TextPart(tool_return.content)])
+
+    agent = Agent(FunctionModel(call_tool))
+
+    @agent.tool_plain
+    def my_tool() -> Any:
+        return _compute()
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('tool result value')

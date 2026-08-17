@@ -27,6 +27,12 @@ jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
+    # `pull-requests: read` is for the lock-regeneration guard's PR file listing. Reading
+    # it works today on `contents: read` alone only because this repo is public; declaring
+    # it keeps the step working on a private fork or mirror.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -38,8 +44,11 @@ jobs:
           enable-cache: true
           cache-suffix: lint
 
+      # `--no-extra mcp-tasks` everywhere `--all-extras` appears: the extra lives in the
+      # FastMCP 4 / MCP SDK v2 lock fork, which `tool.uv.conflicts` bars from co-installing
+      # with the FastMCP 3 dev environment (the `test-fastmcp-4` job covers that universe).
       - name: Install dependencies
-        run: uv sync --all-extras --all-packages --group lint
+        run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
 
       # pyright typechecks the gh-aw shim (.github/scripts/pydantic_ai_gh_aw_shim),
       # which imports pydantic-ai-harness. The harness depends on pydantic-ai-slim,
@@ -57,6 +66,66 @@ jobs:
           uv run pytest
           .github/scripts/test_pydantic_ai_runner.py
           .github/scripts/test_issue_pr_attention_monitor.py
+          .github/scripts/test_agentic_workflow_guard.py
+          .github/scripts/test_agent_spend_report.py
+          .github/scripts/test_protect_github_dir.py
+
+      # The tests above import the shim inside this job's workspace venv, which is not
+      # the environment it runs in: gh-aw executes it via `uv run --script` against the
+      # runner's own locked dependency set. Run it there, with no argv, so it reaches
+      # the empty-prompt short-circuit without touching the network. This catches
+      # general shim breakage — a syntax error, a bad import, a module the runner lock
+      # doesn't carry. It is not what guards against importing an unreleased
+      # `pydantic_ai` symbol: the runner's workspace source (#6998) does that, by making
+      # the shim's library the same checkout as its code. The shim exits non-zero on
+      # that path, so the assertion is on its output, never its status: `|| true` holds
+      # whether or not the shell has `pipefail` (the default `run` shell here is
+      # `bash -e`, but `shell: bash` would add it).
+      - name: Smoke-test the gh-aw shim against the runner's own dependencies
+        run: |
+          uv run --script .github/scripts/pydantic-ai-runner 2>&1 | tee /tmp/shim-smoke.log || true
+          grep -q 'empty prompt' /tmp/shim-smoke.log
+
+      # Every check except lock freshness reads the tree alone, so run them on `main`
+      # too. Two independently-green PRs can still merge into a drifted `main` — the
+      # classic case being one that bumps the gh-aw compiler while another adds a lock
+      # at the old version — and without this the drift first surfaces as a red `lint`
+      # on whichever contributor next opens a PR, about workflows they never touched.
+      - name: Check agentic workflow policy
+        env:
+          UV_NO_SYNC: "1"
+        run: uv run python .github/scripts/agentic_workflow_guard.py check
+
+      # Actions runs the `*.lock.yml`, never the `*.md`, so a source edited without
+      # its recompiled lock is a silent no-op. The checkout is shallow, so feed the
+      # guard the PR's file list rather than a `git diff` range.
+      - name: Check agentic workflow locks were regenerated
+        if: github.event_name == 'pull_request'
+        env:
+          UV_NO_SYNC: "1"
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # `gh pr view --json files` truncates at 100 files, which would silently hide an
+          # un-recompiled lock on a large PR. Paginate the REST endpoint instead — and since
+          # that endpoint itself hard-caps at 3,000 files, fail closed when the list comes
+          # back short rather than let the guard pass on an incomplete changeset.
+          total=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files')
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | {filename, previous_filename, status} | tojson' > /tmp/pr-files.jsonl
+          # One JSON object per changed file, so this is the count to compare against.
+          retrieved=$(wc -l < /tmp/pr-files.jsonl | tr -d '[:space:]')
+          # A renamed file reports only its new path in `filename`; the old path lives in
+          # `previous_filename`. Without it, renaming a source away from its lock leaves the
+          # lock orphaned and runnable, and the guard never sees the old source as gone.
+          jq -r '.filename, (select(.status == "renamed") | .previous_filename)' \
+            /tmp/pr-files.jsonl > /tmp/changed-files.txt
+          if [ "$retrieved" -lt "$total" ]; then
+            echo "::error::Retrieved only $retrieved of $total changed files (the PR files API caps at 3000)." \
+              "Lock freshness cannot be verified for this PR, so failing closed rather than passing blind."
+            exit 1
+          fi
+          uv run python .github/scripts/agentic_workflow_guard.py check --changed-file-list /tmp/changed-files.txt
 
       - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
         with:
@@ -69,6 +138,7 @@ jobs:
 
       - run: uv build --all-packages
       - run: ls -lh dist/
+      - run: uvx twine check --strict dist/*
 
   # mypy and lint are a bit slower than other jobs, so we run them separately
   mypy:
@@ -88,7 +158,9 @@ jobs:
 
       - run: make typecheck-mypy
 
-  docs:
+  # The unified-docs repository renders and validates published documentation.
+  # Keep this source-repository check for assets that live alongside Pydantic AI docs.
+  docs-assets:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -98,21 +170,9 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: true
-          cache-suffix: docs
+          cache-suffix: docs-assets
 
-      - run: uv sync --group docs
-
-      - run: make docs
-
-      - run: tree -sh site
-
-      - name: Store docs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: site
-          path: site
-
-      # check all docs images are tinified, You'll need an API key from https://tinify.com/ to fix this if it fails
+      # Check all documentation images are tinified. You will need a Tinify API key to fix failures.
       - run: uvx tinicly docs --check
 
   test:
@@ -146,10 +206,21 @@ jobs:
           - name: standard
             command: ""
           - name: all-extras
-            command: "--all-extras"
+            command: "--all-extras --no-extra mcp-tasks"
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
+      # Rebenchmark all-extras after https://github.com/cbornet/blockbuster/pull/61 is released
+      # in a compatible version; enable it if the job stays within seven minutes.
+      BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' && matrix.install.name != 'all-extras' }}
+      # Disables Temporal's workflow deadlock detector (temporalio reads this to set the
+      # per-activation budget to `None` instead of 2s). That budget is wall-clock, so it measures
+      # runner contention as readily as a blocking call: `tests/test_temporal.py`,
+      # `tests/test_prefect.py` and `tests/test_dbos.py` each pin an xdist group, putting three
+      # durable-execution servers on four vCPUs, and a descheduled workflow thread trips it as
+      # `TMPRL1101`. The cost: a genuine in-workflow blocking call now hangs to the job timeout
+      # instead of failing in 2s.
+      TEMPORAL_DEBUG: '1'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -205,7 +276,7 @@ jobs:
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --all-extras python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
+            if uv run --all-extras --no-extra mcp-tasks python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."
@@ -265,6 +336,11 @@ jobs:
     env:
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
+      # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
+      # repeating its stack-inspection overhead here pushes lowest-version jobs past the CI budget.
+      BLOCKBUSTER_ENABLED: false
+      # See the note on the `test` job: same runner shape, same deadlock-detector false positives.
+      TEMPORAL_DEBUG: '1'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -298,7 +374,7 @@ jobs:
           restore-keys: |
             temporal-cli-${{ runner.os }}-${{ runner.arch }}-lowest-
 
-      - run: uv sync --all-extras --resolution lowest-direct
+      - run: uv sync --all-extras --no-extra mcp-tasks --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 
@@ -388,11 +464,63 @@ jobs:
           enable-cache: true
           cache-suffix: examples
 
-      - run: uv run --all-extras python tests/import_examples.py
+      - run: uv run --all-extras --no-extra mcp-tasks python tests/import_examples.py
+
+  test-fastmcp-4:
+    name: test FastMCP 4 compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: true
+      COVERAGE_PROCESS_START: ./pyproject.toml
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: fastmcp-4
+
+      - run: mkdir .coverage
+
+      # Keep the normal matrix locked to FastMCP 3 while `--with` gives these tests an isolated
+      # FastMCP 4 environment without mutating the project environment.
+      # TODO: Drop these package-specific cutoffs after 2026-08-14, when the pinned artifacts clear
+      # the workspace's seven-day cooldown. Unrelated dependencies remain subject to the cooldown.
+      # uv only opts direct requirements into prereleases, so the two beta distributions that
+      # FastMCP pins transitively must also be named as direct requirements.
+      - run: >-
+          uv run
+          --all-extras
+          --no-extra mcp-tasks
+          --all-packages
+          --with "fastmcp[tasks]==4.0.0b2"
+          --with "fastmcp-slim==4.0.0b2"
+          --with "fastmcp-tasks==4.0.0b2"
+          --exclude-newer-package "fastmcp=2026-08-08T00:00:00Z"
+          --exclude-newer-package "fastmcp-slim=2026-08-08T00:00:00Z"
+          --exclude-newer-package "fastmcp-tasks=2026-08-08T00:00:00Z"
+          --exclude-newer-package "mcp=2026-08-08T00:00:00Z"
+          --exclude-newer-package "mcp-types=2026-08-08T00:00:00Z"
+          coverage run -m pytest
+          tests/test_mcp.py
+          tests/models/test_mcp_sampling.py
+        env:
+          COVERAGE_FILE: .coverage/.coverage.fastmcp-4
+
+      - name: store coverage files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-fastmcp-4
+          path: .coverage
+          include-hidden-files: true
 
   coverage:
     runs-on: ubuntu-latest
-    needs: [test, test-lowest-versions]
+    needs: [test, test-lowest-versions, test-fastmcp-4]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -433,11 +561,12 @@ jobs:
     needs:
       - lint
       - mypy
-      - docs
+      - docs-assets
       - test
       - test-lowest-versions
       - test-temporal-latest
       - test-examples
+      - test-fastmcp-4
       - coverage
     runs-on: ubuntu-latest
 

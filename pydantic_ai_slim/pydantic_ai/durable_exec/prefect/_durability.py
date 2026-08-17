@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from prefect import task
 from prefect.context import FlowRunContext
@@ -28,6 +28,9 @@ from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from ._model import _stamp_response_provenance  # pyright: ignore[reportPrivateUsage]
 from ._toolset import prefectify_toolset as _default_prefectify_toolset, with_non_retryable_errors
 from ._types import TaskConfig, default_task_config
+
+if TYPE_CHECKING:
+    pass
 
 
 @dataclass(init=False)

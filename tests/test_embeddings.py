@@ -11,6 +11,7 @@ from typing import Any, Literal, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlparse
 
+import anyio
 import httpx
 import pytest
 from pytest_mock import MockerFixture
@@ -37,7 +38,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, try_import
+from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, TestEnv, try_import
 
 pytestmark = [
     pytest.mark.anyio,
@@ -857,6 +858,19 @@ class TestBedrock:
             )
         )
 
+    @pytest.mark.parametrize('max_concurrency', [0, -1])
+    async def test_titan_v2_rejects_invalid_max_concurrency(
+        self, bedrock_provider: BedrockProvider, max_concurrency: int
+    ):
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+        embedder = Embedder(model, settings=BedrockEmbeddingSettings(bedrock_max_concurrency=max_concurrency))
+
+        with (
+            anyio.fail_after(1),
+            pytest.raises(UserError, match=f'bedrock_max_concurrency must be >= 1, got {max_concurrency}'),
+        ):
+            await embedder.embed_query('hello')
+
     async def test_cohere_v3_minimal(self, bedrock_provider: BedrockProvider):
         """Test Cohere V3 with default settings (1024 dimensions, truncate=NONE)."""
         model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=bedrock_provider)
@@ -1638,9 +1652,16 @@ class TestGoogle:
         assert model.system == 'google'
         assert urlparse(model.base_url).hostname == 'generativelanguage.googleapis.com'
 
-    async def test_infer_model_google_cloud(self):
-        with patch.dict(os.environ, {'GOOGLE_API_KEY': 'mock-api-key'}):
-            model = infer_embedding_model('google-cloud:gemini-embedding-001')
+    async def test_infer_model_google_cloud(self, env: TestEnv):
+        for name in {
+            'GOOGLE_APPLICATION_CREDENTIALS',
+            'GOOGLE_CLOUD_PROJECT',
+            'GOOGLE_CLOUD_LOCATION',
+            'GEMINI_API_KEY',
+        }:
+            env.remove(name)
+        env.set('GOOGLE_API_KEY', 'mock-api-key')
+        model = infer_embedding_model('google-cloud:gemini-embedding-001')
         assert isinstance(model, GoogleEmbeddingModel)
         assert model.model_name == 'gemini-embedding-001'
         assert model.system == 'google-cloud'
@@ -2143,6 +2164,46 @@ async def test_instrument_all():
 
     Embedder.instrument_all(False)
     assert get_model() is model
+
+
+class ExplicitPortEmbeddingModel(TestEmbeddingModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:8000/v1'
+
+
+class MalformedPortEmbeddingModel(TestEmbeddingModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://example.com:notaport/v1'
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize(
+    'model_type,expected_server_attributes',
+    [
+        pytest.param(
+            ExplicitPortEmbeddingModel,
+            snapshot({'server.address': 'example.com', 'server.port': 8000}),
+            id='explicit-port',
+        ),
+        pytest.param(MalformedPortEmbeddingModel, snapshot({}), id='malformed-port'),
+    ],
+)
+async def test_instrumented_embedding_model_server_attributes(
+    model_type: type[TestEmbeddingModel], expected_server_attributes: dict[str, str | int], capfire: CaptureLogfire
+):
+    """A `base_url` whose port isn't an integer omits the server attributes instead of failing the request.
+
+    `urlparse` accepts the URL and only raises when `hostname`/`port` are read, so this is a unit test:
+    no real provider produces a `base_url` that survives client construction and fails at attribute-building.
+    """
+    model = InstrumentedEmbeddingModel(model_type(), InstrumentationSettings())
+
+    await model.embed('Hello, world!', input_type='query')
+
+    [span] = capfire.exporter.exported_spans_as_dict()
+    assert {k: v for k, v in span['attributes'].items() if k.startswith('server.')} == expected_server_attributes
 
 
 def test_override():

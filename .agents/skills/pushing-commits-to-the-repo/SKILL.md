@@ -1,14 +1,26 @@
 ---
 name: pushing-commits-to-the-repo
-description: What to do before and after you push — run a local review, watch CI to green, triage
-  every review comment to a reply and a reaction, and escalate genuine design trade-offs to
-  maintainers. Use whenever you push a commit to a PR.
+description: What to do when you open a PR and every time you push — label the PR, run a local
+  review, watch CI to green, triage every review comment to a reply and a reaction, and escalate
+  genuine design trade-offs to maintainers. Use whenever you open a PR or push a commit to one.
 ---
 
 # pushing-commits-to-the-repo
 
 Pushing starts a loop; it does not end the task. **Work stops only when CI is green AND no comment
 is left unresolved.**
+
+## When you open the PR
+
+Apply a label — the repo triages and filters by them. Fetch the real list first with
+`gh label list --limit 100`, because the set changes and a guessed label silently fails to
+apply. Pick the one naming what the PR *is* (`bug`, `feature`, `docs`, `chore`, `refactor`) and
+add a topic label (`anthropic`, `MCP`, `evals`, …) where one fits:
+`gh pr edit <number> --add-label <label>`.
+
+Labelling needs triage permission on the repo (Pydantic team members and their agents). If it
+fails, quote the actual error rather than concluding you lack permission. Size labels are
+applied automatically — don't set them.
 
 ## Before you push
 - Commit the exact state you intend to push. Leave nothing staged, unstaged or uncommitted unless

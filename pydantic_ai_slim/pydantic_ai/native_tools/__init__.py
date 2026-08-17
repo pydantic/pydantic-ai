@@ -130,6 +130,9 @@ class WebSearchTool(AbstractNativeTool):
     """A native tool that allows your agent to search the web for information.
 
     The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
+    OpenRouter uses its Beta web-search server tool, which lets the model decide whether to search and how often.
+    It accepts the portable settings below, though their effect depends on OpenRouter's selected
+    search engine and downstream provider.
 
     Supported by:
 
@@ -158,6 +161,7 @@ class WebSearchTool(AbstractNativeTool):
     * Anthropic
     * OpenAI Responses
     * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
+    * OpenRouter, see <https://openrouter.ai/docs/guides/features/server-tools/web-search#configuration>
     """
 
     blocked_domains: list[str] | None = None
@@ -170,6 +174,7 @@ class WebSearchTool(AbstractNativeTool):
     * Anthropic, see <https://docs.anthropic.com/en/docs/build-with-claude/tool-use/web-search-tool#domain-filtering>
     * Groq, see <https://console.groq.com/docs/agentic-tooling#search-settings>
     * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
+    * OpenRouter, see <https://openrouter.ai/docs/guides/features/server-tools/web-search#configuration>
     """
 
     allowed_domains: list[str] | None = None
@@ -183,14 +188,19 @@ class WebSearchTool(AbstractNativeTool):
     * Groq, see <https://console.groq.com/docs/agentic-tooling#search-settings>
     * OpenAI Responses, see <https://platform.openai.com/docs/guides/tools-web-search>
     * xAI, see <https://docs.x.ai/docs/guides/tools/search-tools#web-search-parameters>
+    * OpenRouter, see <https://openrouter.ai/docs/guides/features/server-tools/web-search#configuration>
     """
 
     max_uses: int | None = None
     """If provided, the tool will stop searching the web after the given number of uses.
 
+    For OpenRouter, this limit is enforced with a non-native search engine or Anthropic's native
+    search. Other native providers ignore it.
+
     Supported by:
 
     * Anthropic
+    * OpenRouter
     """
 
     external_web_access: bool | None = None
@@ -218,6 +228,7 @@ class WebSearchUserLocation(TypedDict, total=False):
     * Anthropic
     * OpenAI Responses
     * xAI
+    * OpenRouter
     """
 
     city: str
@@ -635,6 +646,30 @@ class FileSearchTool(AbstractNativeTool):
     For OpenAI, these are the IDs of vector stores created via the OpenAI API.
     For Google, these are file search store names that have been uploaded and processed via the Gemini Files API.
     For xAI, these are collection IDs for the xAI collections search tool.
+    """
+
+    max_num_results: int | None = None
+    """The maximum number of results to return.
+
+    Supported by:
+
+    * xAI (mapped to collections search `limit`, defaults to 10 server-side)
+    """
+
+    instructions: str | None = None
+    """Optional instructions that guide how the collections search results are interpreted and ranked.
+
+    Supported by:
+
+    * xAI
+    """
+
+    retrieval_mode: Literal['hybrid', 'semantic', 'keyword'] | None = None
+    """The retrieval strategy for the search.
+
+    Supported by:
+
+    * xAI (defaults to `hybrid` server-side)
     """
 
     kind: str = 'file_search'

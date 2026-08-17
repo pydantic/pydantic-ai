@@ -1,6 +1,6 @@
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from dataclasses import asdict
 from datetime import timezone
 
@@ -15,13 +15,20 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     RunContext,
+    SpeechPart,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+    _estimate_usage,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.result import RunUsage
 from pydantic_ai.usage import RequestUsage
@@ -117,6 +124,23 @@ def test_simple():
             ),
         ]
     )
+
+
+async def _sync_returning_coroutine_impl(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('coroutine awaited')])
+
+
+def sync_returning_coroutine(messages: list[ModelMessage], info: AgentInfo) -> Awaitable[ModelResponse]:
+    # A plain `def` that returns a coroutine: not detected by `iscoroutinefunction`, so it's run in the
+    # executor and its return value must still be awaited (via `await_maybe`) rather than asserted to be a
+    # `ModelResponse` directly.
+    return _sync_returning_coroutine_impl(messages, info)
+
+
+def test_sync_function_returning_coroutine():
+    agent = Agent(FunctionModel(sync_returning_coroutine))
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot('coroutine awaited')
 
 
 async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
@@ -522,6 +546,11 @@ async def test_stream_text():
             ]
         )
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=50, output_tokens=2))
+
+
+async def test_speech_response_estimates_transcript_tokens() -> None:
+    response = ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='hello spoken world')])
+    assert _estimate_usage([response]) == RequestUsage(input_tokens=50, output_tokens=3)
 
 
 class Foo(BaseModel):
