@@ -979,7 +979,7 @@ print(result.output)
     For agents that let the model decide whether to call a tool, start vLLM with `--enable-auto-tool-choice` and select the model-specific parser with `--tool-call-parser`. See the [vLLM tool calling guide](https://docs.vllm.ai/en/stable/features/tool_calling/) for supported models and parser values.
 
 !!! note "Multiple system messages are merged by default"
-    Some vLLM chat templates reject multiple leading system messages, so `VLLMProvider` merges them by default. To opt out, pass an [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] with `openai_chat_supports_multiple_system_messages=True`. Templates that reject the `system` role entirely require a compatible custom `--chat-template` or no system prompts. See [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message) and the [vLLM server guide](https://docs.vllm.ai/en/stable/serving/openai_compatible_server/#chat-template).
+    Some vLLM chat templates reject multiple leading system messages, so `VLLMProvider` merges them by default. To opt out, pass an [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] with `openai_chat_supports_multiple_system_messages=True`. See [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message).
 
 ### Nebius AI Studio
 
