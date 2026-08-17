@@ -30,7 +30,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.messages import CachePoint, NativeToolSearchCallPart
+from pydantic_ai.messages import CachePoint, NativeToolSearchCallPart, ThinkingPart
 from pydantic_ai.models import ModelRequestParameters
 
 from ..._inline_snapshot import snapshot
@@ -266,6 +266,88 @@ async def test_dropped_call_keeps_the_cache_boundary():
                 ],
             },
             {'role': 'assistant', 'content': [{'text': 'It is 8.1.', 'type': 'text'}]},
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'In one sentence: does a longer duration mean more interest-rate risk?', 'type': 'text'}
+                ],
+            },
+        ]
+    )
+
+
+_THINKING = ThinkingPart(content='Searching for the duration.', signature='sig', provider_name='anthropic')
+
+
+async def test_dropped_call_skips_a_block_that_cannot_carry_the_boundary():
+    """The breakpoint walks back past a `thinking` block, which takes no `cache_control`.
+
+    An assistant turn that reasons before calling a server tool renders `[thinking, server_tool_use]`,
+    so the block right before the dropped one is routinely one that would raise if handed the boundary.
+    """
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='x'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+        ModelResponse(parts=[TextPart(content='Searching.'), _THINKING, _SEARCH_CALL], provider_name='anthropic'),
+        ModelRequest(parts=[UserPromptPart(content=[CachePoint(), _FOLLOW_UP])]),
+    ]
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        history, ModelRequestParameters(), AnthropicModelSettings()
+    )
+    assert [dict(message) for message in messages] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [{'text': 'Look up the 10-year Treasury duration, then add 2 and 2.', 'type': 'text'}],
+            },
+            {
+                'role': 'assistant',
+                'content': [
+                    {'text': 'Searching.', 'type': 'text', 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}},
+                    {'thinking': 'Searching for the duration.', 'signature': 'sig', 'type': 'thinking'},
+                ],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'In one sentence: does a longer duration mean more interest-rate risk?', 'type': 'text'}
+                ],
+            },
+        ]
+    )
+
+
+async def test_dropped_call_hands_the_boundary_back_a_message_when_its_turn_cannot_carry_it():
+    """A turn left holding only a `thinking` block passes the breakpoint to the message before it.
+
+    Nothing in the assistant turn can carry `cache_control` once the call is gone, and dropping the
+    breakpoint instead would silently re-process the whole tail on every later request.
+    """
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='x'))
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+        ModelResponse(parts=[_THINKING, _SEARCH_CALL], provider_name='anthropic'),
+        ModelRequest(parts=[UserPromptPart(content=[CachePoint(), _FOLLOW_UP])]),
+    ]
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        history, ModelRequestParameters(), AnthropicModelSettings()
+    )
+    assert [dict(message) for message in messages] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'text': 'Look up the 10-year Treasury duration, then add 2 and 2.',
+                        'type': 'text',
+                        'cache_control': {'type': 'ephemeral', 'ttl': '5m'},
+                    }
+                ],
+            },
+            {
+                'role': 'assistant',
+                'content': [{'thinking': 'Searching for the duration.', 'signature': 'sig', 'type': 'thinking'}],
+            },
             {
                 'role': 'user',
                 'content': [
