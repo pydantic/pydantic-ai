@@ -30,16 +30,18 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.messages import CachePoint, NativeToolSearchCallPart, ThinkingPart
+from pydantic_ai.capabilities import NativeTool, ToolSearch
+from pydantic_ai.messages import CachePoint, ModelResponsePart, NativeToolSearchCallPart, ThinkingPart
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.native_tools import MCPServerTool
+from pydantic_ai.native_tools import MCPServerTool, WebSearchTool
 
 from ..._inline_snapshot import snapshot
 from ...conftest import try_import
 from ..conftest import AnthropicModelFactory, RequestCapture, message_shape
+from ..test_anthropic import MockAnthropic, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
-    from anthropic.types.beta import BetaMCPToolResultBlock, BetaTextBlock
+    from anthropic.types.beta import BetaMCPToolResultBlock, BetaTextBlock, BetaUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -51,6 +53,7 @@ pytestmark = [
 
 _SEARCH_ID = 'srvtoolu_01EoSNE7k4dUJyGatASCV5qs'
 _TOOL_CALL_ID = 'toolu_01WjXqPrN8vKsRt2YbLmZdQe'
+_MCP_CALL_ID = 'mcptoolu_01AbCdEfGhIjKlMnOpQrStUv'
 _QUESTION = 'Look up the 10-year Treasury duration, then add 2 and 2.'
 _FOLLOW_UP = 'In one sentence: does a longer duration mean more interest-rate risk?'
 
@@ -70,6 +73,20 @@ _RENDERABLE_RESULT = [
 ]
 
 
+_MCP_CALL = NativeToolCallPart(
+    tool_name=f'{MCPServerTool.kind}:docs',
+    args={'tool_name': 'ask_question', 'tool_args': {'question': 'What is the 10-year Treasury duration?'}},
+    tool_call_id=_MCP_CALL_ID,
+    provider_name='anthropic',
+)
+_MCP_RETURN = NativeToolReturnPart(
+    tool_name=f'{MCPServerTool.kind}:docs',
+    content={'content': [{'type': 'text', 'text': '8.1'}], 'is_error': False},
+    tool_call_id=_MCP_CALL_ID,
+    provider_name='anthropic',
+)
+
+
 def _search_return(content: object) -> NativeToolReturnPart:
     return NativeToolReturnPart(
         tool_name='web_search', content=content, tool_call_id=_SEARCH_ID, provider_name='anthropic'
@@ -78,12 +95,12 @@ def _search_return(content: object) -> NativeToolReturnPart:
 
 # The conversation continues past the tool-result turn, which is what turns a survivable in-flight call
 # into a permanently unsendable history.
-def _continued_history(*response_parts: object) -> list[ModelMessage]:
+def _continued_history(*response_parts: ModelResponsePart) -> list[ModelMessage]:
     return [
         ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
         ModelResponse(
             parts=[
-                *response_parts,  # pyright: ignore[reportArgumentType]
+                *response_parts,
                 ToolCallPart(tool_name='add', args={'a': 2, 'b': 2}, tool_call_id=_TOOL_CALL_ID),
             ]
         ),
@@ -222,6 +239,38 @@ CASES = [
             ]
         ),
     ),
+    Case(
+        # `mcp_tool_use` is the other block type Anthropic pairs, and it fails the same way: an
+        # unpaired one is rejected with `mcp_tool_use with id ... was found without a corresponding
+        # mcp_tool_result block`, measured live against a control with the call removed.
+        'mcp-result-never-arrived-drops-the-call',
+        _continued_history(_MCP_CALL),
+        expected=snapshot(
+            [
+                ('user', ['text']),
+                ('assistant', ['tool_use']),
+                ('user', ['tool_result']),
+                ('assistant', ['text']),
+                ('user', ['text']),
+            ]
+        ),
+    ),
+    Case(
+        'in-flight-mcp-call-is-kept',
+        [
+            ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+            ModelResponse(parts=[_MCP_CALL, ToolCallPart(tool_name='add', args={}, tool_call_id=_TOOL_CALL_ID)]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='add', content='4', tool_call_id=_TOOL_CALL_ID)]),
+        ],
+        follow_up=False,
+        expected=snapshot(
+            [
+                ('user', ['text']),
+                ('assistant', ['mcp_tool_use', 'tool_use']),
+                ('user', ['tool_result']),
+            ]
+        ),
+    ),
 ]
 
 
@@ -238,6 +287,39 @@ async def test_drop_unpaired_native_tool_calls(case: Case):
         history, ModelRequestParameters(), AnthropicModelSettings()
     )
     assert message_shape({'messages': [dict(message) for message in messages]}) == case.expected
+
+
+async def test_mcp_call_answered_by_its_replayed_result_is_kept():
+    """A replayed MCP result pairs its call, so neither block is dropped.
+
+    Asserted whole rather than through `message_shape`, which subscripts blocks: the result comes back
+    as an SDK model, and it is the `tool_use_id` on that model that has to match the call's `id`.
+    """
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='x'))
+    _, messages = await model._map_message(  # pyright: ignore[reportPrivateUsage]
+        _continued_history(_MCP_CALL, _MCP_RETURN), ModelRequestParameters(), AnthropicModelSettings()
+    )
+    assert [dict(message) for message in messages][1] == snapshot(
+        {
+            'role': 'assistant',
+            'content': [
+                {
+                    'id': 'mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                    'type': 'mcp_tool_use',
+                    'server_name': 'docs',
+                    'name': 'ask_question',
+                    'input': {'question': 'What is the 10-year Treasury duration?'},
+                },
+                BetaMCPToolResultBlock(
+                    content=[BetaTextBlock(text='8.1', type='text')],
+                    is_error=False,
+                    tool_use_id='mcptoolu_01AbCdEfGhIjKlMnOpQrStUv',
+                    type='mcp_tool_result',
+                ),
+                {'id': 'toolu_01WjXqPrN8vKsRt2YbLmZdQe', 'type': 'tool_use', 'name': 'add', 'input': {'a': 2, 'b': 2}},
+            ],
+        }
+    )
 
 
 async def test_dropped_call_keeps_the_cache_boundary():
@@ -361,9 +443,6 @@ async def test_dropped_call_hands_the_boundary_back_a_message_when_its_turn_cann
     )
 
 
-_MCP_CALL_ID = 'mcptoolu_01AbCdEfGhIjKlMnOpQrStUv'
-
-
 async def test_dropped_call_skips_a_block_that_is_not_a_mapping():
     """A replayed MCP result renders as a Pydantic model, which subscripting would raise on.
 
@@ -461,6 +540,51 @@ async def test_dropped_call_hands_its_cache_boundary_to_the_block_before_it():
     )
 
 
+async def test_orphaned_tool_search_call_is_dropped_through_an_agent_run(allow_model_requests: None):
+    """The tool-search drop reaches the wire through an agent run, not only through the mapper.
+
+    Anthropic occasionally emits a `tool_search_tool_*` server tool use alongside a client `tool_use`
+    and ends the turn before delivering the corresponding result block
+    (https://github.com/anthropics/anthropic-sdk-python/issues/1325), so this is the shape a
+    `ToolSearch()` run actually stores. Reported by @kclisp on PR #5143.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='ok', type='text')], BetaUsage(input_tokens=5, output_tokens=5))
+    )
+    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, capabilities=[ToolSearch()])
+
+    @agent.tool_plain
+    def send_status(message: str) -> str:  # pragma: no cover
+        return 'ok'
+
+    @agent.tool_plain(defer_loading=True)
+    def pay_rent() -> str:  # pragma: no cover
+        return 'paid'
+
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('pay rent and send status'),
+        ModelResponse(
+            parts=[
+                NativeToolSearchCallPart(
+                    tool_call_id='srv_orphan',
+                    provider_name='anthropic',
+                    args={'queries': ['pay.*']},
+                    provider_details={'strategy': 'regex'},
+                ),
+                ToolCallPart(tool_name='send_status', args={'message': 'looking'}, tool_call_id='cl_1'),
+            ],
+            provider_name='anthropic',
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='send_status', content='ok', tool_call_id='cl_1')]),
+    ]
+    await agent.run('continue', message_history=history)
+
+    assert message_shape(get_mock_chat_completion_kwargs(mock_client)[0]) == snapshot(
+        [('user', ['text']), ('assistant', ['tool_use']), ('user', ['tool_result', 'text'])]
+    )
+
+
 @pytest.mark.vcr
 async def test_unpaired_native_tool_call_history_is_accepted(
     allow_model_requests: None,
@@ -497,3 +621,49 @@ async def test_unpaired_native_tool_call_history_is_accepted(
     assert result.output == snapshot(
         "Yes, a longer duration means more interest-rate risk because the bond's price will be more sensitive to changes in interest rates."
     )
+
+
+@pytest.mark.vcr
+async def test_in_flight_native_tool_call_history_is_accepted(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+):
+    """Anthropic answers a history whose unpaired call is still in flight, so keeping it is safe.
+
+    The kept side of the same claim the drop rests on. Dropping a call here would break a pause-turn
+    resume, whose whole point is to continue it, and the payload still goes out unpaired — so the
+    recorded 200 is the assertion, with the body read off the wire pinning that the call survived.
+    """
+    model: AnthropicModel = anthropic_model('claude-sonnet-4-5', capture=True)
+    agent = Agent(model, capabilities=[NativeTool(WebSearchTool())])
+
+    @agent.tool_plain
+    def add(a: int, b: int) -> str:
+        """Add two numbers."""
+        return '4'  # pragma: no cover
+
+    result = await agent.run(
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+            ModelResponse(
+                parts=[
+                    _SEARCH_CALL,
+                    ToolCallPart(tool_name='add', args={'a': 2, 'b': 2}, tool_call_id=_TOOL_CALL_ID),
+                ]
+            ),
+            ModelRequest(parts=[ToolReturnPart(tool_name='add', content='4', tool_call_id=_TOOL_CALL_ID)]),
+        ]
+    )
+
+    body = request_capture.body('/v1/messages')
+    assert message_shape(body) == snapshot(
+        [('user', ['text']), ('assistant', ['server_tool_use', 'tool_use']), ('user', ['tool_result'])]
+    )
+    assert result.output == snapshot("""\
+Based on the search results, the duration of a 10-year Treasury note is approximately 8.95 years (this example was given when yields were at 1.30%). However, it's important to note that the exact duration varies depending on current market conditions, coupon rates, and yield levels.
+
+The duration typically ranges between 7 to 9 years for 10-year Treasury securities based on the examples found in the search results.
+
+And 2 + 2 = **4**\
+""")
