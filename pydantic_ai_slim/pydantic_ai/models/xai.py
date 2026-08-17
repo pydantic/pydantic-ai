@@ -229,6 +229,8 @@ class XaiModelSettings(ModelSettings, total=False):
     xai_include_attachment_search_output: bool
     """Whether to include the attachment search results in the response.
 
+    Defaults to `False`.
+
     Corresponds to `INCLUDE_OPTION_ATTACHMENT_SEARCH_CALL_OUTPUT` in the xAI SDK.
     """
 
