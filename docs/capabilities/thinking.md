@@ -60,6 +60,14 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 | Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
 | Bedrock Mantle | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | Served on the Responses API, so effort rides the `reasoning` object; `thinking=False` → `effort='none'` |
 
+## Thinking in message history
+
+Pydantic AI always sends a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from message history back to the model. Reasoning is usually load-bearing for the turns that follow it, so dropping it would cost the model context it produced for itself.
+
+Where the provider's own reasoning channel is available — a signed thinking block, an encrypted reasoning item, a dedicated `reasoning` field — that is what carries it. That channel needs the signature the provider minted, so it is only open for a part that still has one and came from that same provider. A part that lost its signature on a round trip through storage, was rebuilt by a [history processor](../message-history.md#processing-message-history), or came from another model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] chain can't use it; Pydantic AI then writes the reasoning out as text in the model's thinking tags rather than dropping it.
+
+Anthropic is the exception to *where* that text goes — see [Thinking carried over from another model](#thinking-carried-over-from-another-model).
+
 ## OpenAI
 
 When using the [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], text output inside `<think>` tags are converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
@@ -119,7 +127,7 @@ Anthropic reports how many thinking tokens it used in [`RunUsage.details`][pydan
 
 ### Thinking carried over from another model
 
-A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] in message history can't always be sent back through Anthropic's native reasoning channel: it may have lost its signature on a round trip through storage, been rebuilt by a [history processor](../message-history.md#processing-message-history), or come from a different model in a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] chain. Pydantic AI still sends the reasoning, as text.
+Reasoning that can't ride Anthropic's native reasoning channel — see [Thinking in message history](#thinking-in-message-history) for when that happens — is sent as text, but not from the turn it was produced in.
 
 !!! warning "Claude imitates formatting it sees in assistant turns"
     Sending that text in the assistant turn teaches Claude that writing thinking tags is part of its own house style, and it starts emitting them in the answers your users read — which, once persisted to history, reinforces itself every turn.

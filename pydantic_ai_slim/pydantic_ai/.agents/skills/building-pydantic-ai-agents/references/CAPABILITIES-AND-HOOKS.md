@@ -54,6 +54,8 @@ Supported effort values:
 - `'high'`
 - `'xhigh'`
 
+Thinking is model parity, not a per-model feature: every model sends a `ThinkingPart` from message history back, through the provider's native reasoning channel where the part still carries that provider's signature and as text in the model's thinking tags where it doesn't. You do not have to strip thinking from history before switching models.
+
 ## Intercept Agent Lifecycle with Hooks
 
 Use `Hooks` for decorator-based lifecycle interception.
