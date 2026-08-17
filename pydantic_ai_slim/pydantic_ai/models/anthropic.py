@@ -2194,7 +2194,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         # Pair against the rendered blocks: a result can arrive in a later response, or exist as a
         # `NativeToolReturnPart` but fail to render. Anthropic accepts an unpaired native call only
-        # while the payload ends at the tool-result turn answering the concurrent client call.
+        # while every later message is a user turn containing only concurrent client-tool results.
         returned_native_tool_call_ids: set[str] = set()
         for message in anthropic_messages:
             content = message['content']
@@ -2226,16 +2226,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     # Tool search is retried instead of preserved in flight because Bedrock rejects
                     # that shape even though the direct Anthropic API accepts other native tools there.
                     # Keep a cache boundary on the nearest preceding cacheable block. Moving it
-                    # forward would cache content the user placed outside the boundary.
+                    # forward would cache content the user placed outside the boundary. If no such
+                    # block exists, the boundary disappears with the block that carried it.
                     if (cache_control := block.get('cache_control')) is not None:
                         carriers: list[BetaContentBlockParam] = []
-                        for param in kept:
-                            param_value = param
-                            if is_str_dict(param) and param['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
-                                carriers.append(param_value)
-                        _add_cache_control_param(
-                            carriers or _last_message_content(anthropic_messages[:index]), cache_control
-                        )
+                        for preceding_content in [
+                            preceding_message['content'] for preceding_message in anthropic_messages[:index]
+                        ] + [kept]:
+                            assert isinstance(preceding_content, list)
+                            for param in preceding_content:
+                                param_value = param
+                                if is_str_dict(param) and param['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
+                                    carriers.append(param_value)
+                        if carriers:
+                            _add_cache_control_param(carriers, cache_control)
                     continue
                 kept.append(block_param)
 
