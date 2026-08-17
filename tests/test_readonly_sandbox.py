@@ -34,14 +34,20 @@ class _Fs:
     def __init__(self, files: dict[str, bytes] | None = None) -> None:
         self.files = files or {}
 
-    async def read_bytes(self, path: str) -> bytes:
+    def _content(self, path: str) -> bytes:
+        """Honors the protocol's missing-path contract: `FileNotFoundError`, not `KeyError`."""
+        if path not in self.files:  # pragma: no cover
+            raise FileNotFoundError(path)
         return self.files[path]
+
+    async def read_bytes(self, path: str) -> bytes:
+        return self._content(path)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         self.files[path] = data
 
     async def stat(self, path: str) -> _Entry:
-        return _Entry(name=path.rsplit('/', 1)[-1], path=path, is_dir=False, size=len(self.files[path]))
+        return _Entry(name=path.rsplit('/', 1)[-1], path=path, is_dir=False, size=len(self._content(path)))
 
     async def list_dir(self, path: str) -> Sequence[_Entry]:
         return [await self.stat(p) for p in self.files]
@@ -49,8 +55,9 @@ class _Fs:
     async def make_dir(self, path: str) -> None:
         pass  # pragma: no cover
 
-    async def remove(self, path: str) -> None:
-        self.files.pop(path)  # pragma: no cover
+    async def remove(self, path: str) -> None:  # pragma: no cover
+        self._content(path)
+        del self.files[path]
 
     async def exists(self, path: str) -> bool:
         return path in self.files

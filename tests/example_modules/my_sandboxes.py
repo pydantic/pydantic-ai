@@ -36,14 +36,21 @@ class ContainerFilesystem:
     def __init__(self) -> None:
         self._files: dict[str, bytes] = {}
 
-    async def read_bytes(self, path: str) -> bytes:
+    def _content(self, path: str) -> bytes:
+        """Honors the protocol's missing-path contract: `FileNotFoundError`, not `KeyError`."""
+        if path not in self._files:
+            raise FileNotFoundError(path)
         return self._files[path]
+
+    async def read_bytes(self, path: str) -> bytes:
+        return self._content(path)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         self._files[path] = data
 
     async def stat(self, path: str) -> ContainerFileEntry:
-        return ContainerFileEntry(name=posixpath.basename(path), path=path, is_dir=False, size=len(self._files[path]))
+        size = len(self._content(path))
+        return ContainerFileEntry(name=posixpath.basename(path), path=path, is_dir=False, size=size)
 
     async def list_dir(self, path: str) -> Sequence[ContainerFileEntry]:
         prefix = path.rstrip('/') + '/'
@@ -53,6 +60,7 @@ class ContainerFilesystem:
         pass
 
     async def remove(self, path: str) -> None:
+        self._content(path)
         del self._files[path]
 
     async def exists(self, path: str) -> bool:

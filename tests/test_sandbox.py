@@ -57,15 +57,22 @@ class _Fs:
         self.files: dict[str, bytes] = {}
         self.reads: list[str] = []
 
+    def _content(self, path: str) -> bytes:
+        """Honors the protocol's missing-path contract: `FileNotFoundError`, not `KeyError`."""
+        try:
+            return self.files[path]
+        except KeyError:
+            raise FileNotFoundError(path) from None
+
     async def read_bytes(self, path: str) -> bytes:
         self.reads.append(path)
-        return self.files[path]
+        return self._content(path)
 
     async def write_bytes(self, path: str, data: bytes) -> None:
         self.files[path] = data
 
     async def stat(self, path: str) -> _Entry:
-        return _Entry(name=path.rsplit('/', 1)[-1], path=path, is_dir=False, size=len(self.files[path]))
+        return _Entry(name=path.rsplit('/', 1)[-1], path=path, is_dir=False, size=len(self._content(path)))
 
     async def list_dir(self, path: str) -> Sequence[_Entry]:
         return [await self.stat(p) for p in self.files]
@@ -74,7 +81,8 @@ class _Fs:
         pass
 
     async def remove(self, path: str) -> None:
-        self.files.pop(path, None)
+        self._content(path)
+        del self.files[path]
 
     async def exists(self, path: str) -> bool:
         return path in self.files
@@ -392,11 +400,12 @@ async def test_read_file_falls_back_to_full_read_without_sed():
 
 async def test_read_file_missing_file_falls_back_to_filesystem_error():
     """A missing file makes the slice attempt exit non-zero, so the filesystem read runs
-    and surfaces the authoritative error.
+    and surfaces the authoritative error: `FileNotFoundError`, as the protocol requires of
+    every filesystem.
     """
     backend = FakeSandbox('missing')
 
-    with pytest.raises(KeyError):
+    with pytest.raises(FileNotFoundError):
         await Sandbox(backend).read_file('nope.txt', limit=3)
 
     assert backend.fs.reads == ['/workspace/nope.txt']

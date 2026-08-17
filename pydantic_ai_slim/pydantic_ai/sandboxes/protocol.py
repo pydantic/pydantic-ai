@@ -171,7 +171,13 @@ class SupportsStream(Protocol):
     """
 
     def stream(self) -> AsyncIterator[SandboxOutputChunk]:
-        """Iterate over the process's output as it is produced."""
+        """Iterate over the process's output as it is produced.
+
+        Consuming or skipping the stream never changes
+        [`wait()`][pydantic_ai.sandboxes.SandboxProcess.wait]: it returns the complete result
+        either way. The stream is single-consumer: callers must not assume that a second or
+        concurrent `stream()` call is supported.
+        """
         ...
 
 
@@ -182,6 +188,9 @@ class SandboxFilesystem(Protocol):
     [`Sandbox.resolve`][pydantic_ai.sandboxes.Sandbox.resolve] to turn model-supplied
     relative paths into absolute ones first. The backend SPI is bytes-only: decoding policy lives
     in the [`Sandbox`][pydantic_ai.sandboxes.Sandbox] facade's text helpers.
+
+    Operations on a path that does not exist raise the builtin `FileNotFoundError`: backends
+    translate their SDK's own missing-file exception.
     """
 
     async def read_bytes(self, path: str) -> bytes:
@@ -251,6 +260,8 @@ class SupportsStart(Protocol):
         [`wait()`][pydantic_ai.sandboxes.SandboxProcess.wait] over
         [`run()`][pydantic_ai.sandboxes.SandboxBackend.run] when output produced before a timeout or
         kill matters. Arguments as for `run()`.
+
+        The `timeout=` deadline runs from `start()`, not from the first `wait()`.
         """
         ...
 
@@ -302,14 +313,18 @@ class SandboxBackend(Protocol):
     ) -> SandboxResult:
         """Execute a command and wait for it to complete.
 
+        When the awaiting task is cancelled, implementations must not knowingly leave the command
+        running in the sandbox; a backend whose platform offers no way to stop a running command
+        must document that limitation.
+
         Args:
             command: An argv sequence, or a shell string with `shell=True`.
             shell: Whether to interpret `command` with the sandbox's shell.
             cwd: Absolute working directory for the command; defaults to the sandbox's
                 [`working_dir`][pydantic_ai.sandboxes.SandboxBackend.working_dir].
             env: Extra environment variables for the command.
-            timeout: Deadline in seconds. On expiry the command is killed and an exception
-                deriving from `TimeoutError` is raised.
+            timeout: Deadline in seconds, measured from this call. On expiry the command is killed
+                and an exception deriving from `TimeoutError` is raised.
         """
         ...
 
