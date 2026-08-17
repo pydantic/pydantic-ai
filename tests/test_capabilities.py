@@ -7942,6 +7942,34 @@ class TestXSearchCapability:
         assert callable(native)
         assert await await_maybe(native(_build_run_context())) == XSearchTool(include_output=True)
 
+    def test_xsearch_native_false_keeps_fallback_overrides(self):
+        """Disabling the outer native tool retains fallback-native configuration."""
+        cap = XSearch(native=False, fallback_model='xai:grok-4-1-fast-non-reasoning', include_output=True)
+
+        assert cap.get_native_tools() == []
+        assert cap._resolved_native() == XSearchTool(include_output=True)  # pyright: ignore[reportPrivateUsage]
+
+    async def test_xsearch_subagent_dynamic_native_none_uses_default(self, allow_model_requests: None):
+        """The subagent supplies a default native tool when its dynamic factory returns None."""
+        from pydantic_ai.common_tools.x_search import XSearchSubagentTool
+
+        seen_native_tools: list[list[AbstractNativeTool]] = []
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen_native_tools.append(info.model_request_parameters.native_tools)
+            return ModelResponse(parts=[TextPart(content='summary')])
+
+        def native_factory(ctx: RunContext[Any]) -> None:
+            return None
+
+        inner_model = FunctionModel(
+            inner_model_fn, profile=ModelProfile(supported_native_tools=frozenset({XSearchTool}))
+        )
+        subagent = XSearchSubagentTool(model=inner_model, native_tool=native_factory)
+
+        assert await subagent(_build_run_context(), 'latest news') == 'summary'
+        assert seen_native_tools == [[XSearchTool()]]
+
     async def test_xsearch_callable_fallback_model(self, allow_model_requests: None):
         """XSearch with callable fallback_model resolves the model per-run."""
 
@@ -8399,6 +8427,40 @@ class TestImageGenerationCapability:
         native = cap._resolved_native()  # pyright: ignore[reportPrivateUsage]
         assert callable(native)
         assert await await_maybe(native(_build_run_context())) == ImageGenerationTool(output_format='jpeg')
+
+    def test_image_generation_native_false_keeps_fallback_overrides(self):
+        """Disabling the outer native tool retains fallback-native configuration."""
+        cap = ImageGeneration(
+            native=False,
+            fallback_model='openai-responses:gpt-5.4',
+            output_format='jpeg',
+        )
+
+        assert cap.get_native_tools() == []
+        assert cap._resolved_native() == ImageGenerationTool(output_format='jpeg')  # pyright: ignore[reportPrivateUsage]
+
+    async def test_image_generation_subagent_dynamic_native_none_uses_default(self, allow_model_requests: None):
+        """The subagent supplies a default native tool when its dynamic factory returns None."""
+        from pydantic_ai.common_tools.image_generation import ImageGenerationSubagentTool
+
+        image = BinaryImage(data=b'png', media_type='image/png')
+        seen_native_tools: list[list[AbstractNativeTool]] = []
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen_native_tools.append(info.model_request_parameters.native_tools)
+            return ModelResponse(parts=[FilePart(content=image)])
+
+        def native_factory(ctx: RunContext[Any]) -> None:
+            return None
+
+        inner_model = FunctionModel(
+            inner_model_fn,
+            profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool}), supports_image_output=True),
+        )
+        subagent = ImageGenerationSubagentTool(model=inner_model, native_tool=native_factory)
+
+        assert await subagent(_build_run_context(), 'test') == image
+        assert seen_native_tools == [[ImageGenerationTool()]]
 
     def test_image_generation_fallback_model_and_local_conflict(self):
         """ImageGeneration(fallback_model=..., local=func) raises UserError."""
