@@ -1135,7 +1135,7 @@ def _write_notices(repo: str, notices: Sequence[Notice]) -> None:
         payload = {
             'text': '\n'.join(
                 [
-                    '<!channel> *Maintainer attention requested*',
+                    f'<!channel> *Maintainer attention requested in {_slack_escape(repo)}*',
                     *details,
                     '',
                     '*Expected action:* Open each item and make its next maintainer decision there. Reply, review, '

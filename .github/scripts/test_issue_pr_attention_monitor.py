@@ -1061,6 +1061,7 @@ def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path
     assert json.loads(values['notice_items']) == [notice_ref(7, 0, transition_id='event-7', recipients=['DouweM'])]
     text = json.loads(values['slack_payload'])['text']
     assert text.count('<!channel>') == 1
+    assert '*Maintainer attention requested in pydantic/pydantic-ai*' in text
     assert '#7 Handle &lt;unsafe&gt; fake owner &lt;!channel&gt;' in text
     assert 'owner @DouweM' in text
     # A login is the only untrusted value the status line carries, and it is
@@ -1590,6 +1591,17 @@ def test_compiled_lock_keeps_agent_read_only_and_stable_artifact_name():
     assert agent_permissions['pull-requests'] == 'read'
     assert set(agent_permissions.values()) == {'read'}
     assert decision_permissions['pull-requests'] == 'write'
+    assert 'workflow_call:' in text
+    assert "github.repository == 'pydantic/pydantic-ai-harness'" in text
+    source_checkouts = [
+        step
+        for job in jobs.values()
+        for step in job.get('steps', [])
+        if step.get('uses', '').startswith('actions/checkout@de0fac2e')
+    ]
+    assert source_checkouts
+    assert all(step['with']['repository'] == '${{ job.workflow_repository }}' for step in source_checkouts)
+    assert all(step['with']['ref'] == '${{ job.workflow_sha }}' for step in source_checkouts)
     assert 'name: attention-candidates-${{ github.run_id }}' in text
     # The run_attempt suffix must stay gone: "Re-run failed jobs" bumps the
     # attempt number, but only the original run_id upload exists.
@@ -1609,9 +1621,18 @@ def test_operations_workflow_routes_all_notices_to_the_triage_channel():
     assert 'needs.notify.outputs.notice_items' in text
     assert 'steps.prepare.outputs.slack_payload' in text
     assert 'Post actionable attention digest to the triage channel' in text
+    assert 'workflow_call:' in text
+    assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:' in text
+    assert "github.repository == 'pydantic/pydantic-ai-harness'" in text
     assert jobs['reconcile']['permissions']['pull-requests'] == 'write'
     assert jobs['notify']['permissions']['pull-requests'] == 'read'
     assert jobs['finalize']['permissions']['pull-requests'] == 'write'
+    for job_name in ('reconcile', 'notify', 'finalize'):
+        checkout = next(
+            step for step in jobs[job_name]['steps'] if step.get('uses', '').startswith('actions/checkout@')
+        )
+        assert checkout['with']['repository'] == '${{ job.workflow_repository }}'
+        assert checkout['with']['ref'] == '${{ job.workflow_sha }}'
 
 
 def test_monitor_imports_with_stdlib_only():
