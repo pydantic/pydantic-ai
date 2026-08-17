@@ -145,6 +145,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     _builtin_tool_call_ids: dict[str, str] = field(default_factory=dict[str, str])
     _error: bool = False
     _cancelled_run: bool = False
+    # Track whether a TextMessageStartEvent has been emitted for the current
+    # message_id.  When a response contains only tool calls (no TextPart),
+    # before_response() mints a synthetic message_id but handle_text_start()
+    # is never called, so _handle_tool_call_start() emits ToolCallStartEvent
+    # with a parent_message_id that no emitted event refers to.  The flag lets
+    # us emit a TextMessageStartEvent lazily when the first tool call arrives.
+    # See https://github.com/pydantic/pydantic-ai/issues/7527
+    _text_message_start_sent: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
         self._use_reasoning = parse_ag_ui_version(self.ag_ui_version) >= REASONING_VERSION
@@ -199,6 +207,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         # Prevent parts from a subsequent response being tied to parts from an earlier response.
         # See https://github.com/pydantic/pydantic-ai/issues/3316
         self.new_message_id()
+        self._text_message_start_sent = False
         return
         yield  # Make this an async generator
 
@@ -267,6 +276,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         else:
             message_id = self.new_message_id()
             yield TextMessageStartEvent(message_id=message_id)
+            self._text_message_start_sent = True
 
         if part.content:  # pragma: no branch
             yield TextMessageContentEvent(message_id=message_id, delta=part.content)
@@ -335,6 +345,14 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     ) -> AsyncIterator[BaseEvent]:
         tool_call_id = tool_call_id or part.tool_call_id
         parent_message_id = self.message_id
+
+        # When a response contains only tool calls (no TextPart), no
+        # TextMessageStartEvent has been emitted for the synthetic message_id
+        # that before_response() created.  Emit one now so the client can
+        # build an assistant message to own the tool call.
+        if not self._text_message_start_sent:
+            yield TextMessageStartEvent(message_id=parent_message_id)
+            self._text_message_start_sent = True
 
         yield ToolCallStartEvent(
             tool_call_id=tool_call_id, tool_call_name=part.tool_name, parent_message_id=parent_message_id
