@@ -623,6 +623,65 @@ async def test_unpaired_native_tool_call_history_is_accepted(
     )
 
 
+# The server name on the block has to match a declared MCP server, so the live call names the one
+# `test_anthropic_mcp_servers` already records against.
+_LIVE_MCP_CALL = NativeToolCallPart(
+    tool_name=f'{MCPServerTool.kind}:deepwiki',
+    args={
+        'tool_name': 'ask_question',
+        'tool_args': {'question': 'What is pydantic-ai?', 'repoName': 'pydantic/pydantic-ai'},
+    },
+    tool_call_id='mcptoolu_01SAss3KEwASziHZoMR6HcZU',
+    provider_name='anthropic',
+)
+
+
+@pytest.mark.vcr
+async def test_in_flight_mcp_call_history_is_accepted(
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+):
+    """Anthropic answers a history carrying an unpaired `mcp_tool_use` whose result is in flight.
+
+    The in-flight exemption is written against the block type rather than one tool, and a continued
+    conversation is what was measured as rejected for `mcp_tool_use`. This records the other side for
+    the same block type, so keeping it rests on a 200 rather than on the `server_tool_use` result.
+    """
+    model: AnthropicModel = anthropic_model('claude-sonnet-4-5', capture=True)
+    agent = Agent(model, capabilities=[NativeTool(MCPServerTool(id='deepwiki', url='https://mcp.deepwiki.com/mcp'))])
+
+    @agent.tool_plain
+    def add(a: int, b: int) -> str:
+        """Add two numbers."""
+        return '4'  # pragma: no cover
+
+    result = await agent.run(
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
+            ModelResponse(
+                parts=[
+                    _LIVE_MCP_CALL,
+                    ToolCallPart(tool_name='add', args={'a': 2, 'b': 2}, tool_call_id=_TOOL_CALL_ID),
+                ]
+            ),
+            ModelRequest(parts=[ToolReturnPart(tool_name='add', content='4', tool_call_id=_TOOL_CALL_ID)]),
+        ]
+    )
+
+    body = request_capture.body('/v1/messages')
+    assert message_shape(body) == snapshot(
+        [('user', ['text']), ('assistant', ['mcp_tool_use', 'tool_use']), ('user', ['tool_result'])]
+    )
+    assert result.output == snapshot("""\
+I apologize, but I don't have the ability to look up the 10-year Treasury duration. The tools available to me are limited to asking questions about GitHub repositories and performing basic mathematical operations.
+
+However, I can tell you that **2 + 2 = 4**.
+
+Regarding the 10-year Treasury duration, typically the duration of a 10-year U.S. Treasury bond is approximately 8-9 years (it's less than the maturity because duration accounts for the present value of all cash flows including coupon payments). However, the exact duration varies based on the current yield and coupon rate. You would need to check current financial data sources like Bloomberg, the U.S. Treasury website, or financial news outlets for the most accurate current duration figure.\
+""")
+
+
 @pytest.mark.vcr
 async def test_in_flight_native_tool_call_history_is_accepted(
     allow_model_requests: None,
