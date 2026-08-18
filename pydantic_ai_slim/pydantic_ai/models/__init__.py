@@ -2332,12 +2332,13 @@ def _announce_tool_availability_delta_messages(
     # rendering is deterministic; no finer positional fidelity is required within one request.
     transformed: list[ModelMessage] = []
     changed = False
-    first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+    leading_request_pending = True
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(
             isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
         ):
             transformed.append(message)
+            leading_request_pending = leading_request_pending and not isinstance(message, ModelRequest)
             continue
 
         changed = True
@@ -2358,15 +2359,18 @@ def _announce_tool_availability_delta_messages(
         # parts at all, which providers reject.
         if replacement_parts:
             request = replace(message, parts=replacement_parts)
-            # The first request's opening system run is the standing prompt the adapters hoist out
-            # of the message; it must keep its position rather than sort behind the tool results.
-            start = _standing_system_prompt_count(request) if message is first_request else 0
+            # The leading kept request's opening system run is the standing prompt the adapters
+            # hoist out of the message; it must keep its position rather than sort behind the tool
+            # results. Position in the output decides: a dropped empty-delta request ahead of this
+            # one passes the leading role along.
+            start = _standing_system_prompt_count(request) if leading_request_pending else 0
             tail = replacement_parts[start:]
             tail.sort(
                 # Anthropic requires tool results to lead the message that answers a tool call
                 key=lambda p: 0 if isinstance(p, ToolReturnPart | RetryPromptPart) else 1
             )
             transformed.append(replace(request, parts=[*replacement_parts[:start], *tail]))
+            leading_request_pending = False
 
     return transformed if changed else messages
 

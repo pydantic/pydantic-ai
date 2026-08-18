@@ -1711,6 +1711,9 @@ def test_standing_system_prompt_stays_ahead_of_sorted_tool_returns() -> None:
     tool = ToolDefinition(name='first_tool', defer_loading=True)
     prepared = model.prepare_messages(
         [
+            # Drops out entirely (its only delta names a tool that is no longer served), passing
+            # the leading role to the next request.
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['withdrawn_tool'])]),
             ModelRequest(
                 parts=[
                     SystemPromptPart(content='standing'),
