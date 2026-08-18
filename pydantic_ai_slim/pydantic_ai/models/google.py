@@ -441,6 +441,15 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> Literal['MINIMAL', 'L
     return level_by_effort[thinking]
 
 
+def _resolve_google_thinking_level(
+    thinking: ThinkingEffort, profile: GoogleModelProfile
+) -> Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']:
+    """Map unified thinking to the closest thinking level the model supports."""
+    if thinking == 'minimal' and not profile.get('google_supports_minimal_thinking_level', True):
+        return 'LOW'
+    return _thinking_effort_to_level(thinking)
+
+
 @dataclass(init=False)
 class GoogleModel(Model[Client]):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
@@ -853,13 +862,14 @@ class GoogleModel(Model[Client]):
         profile = self.profile
         if thinking is False:
             if profile.get('google_supports_thinking_level', False):
-                return ThinkingConfigDict(thinking_level=cast(Any, 'MINIMAL'))
+                # Gemini represents `thinking=False` as its lowest supported thinking level.
+                return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
             return ThinkingConfigDict(thinking_budget=0)
         if profile.get('google_supports_thinking_level', False):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             return ThinkingConfigDict(
-                include_thoughts=True, thinking_level=cast(Any, _thinking_effort_to_level(thinking))
+                include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
             )
         else:
             if thinking is True:
