@@ -14,7 +14,7 @@ import pytest
 from pydantic_ai import Agent, RunContext, UnavailableSandbox, UserError
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapperCapability
-from pydantic_ai.durable_exec._sandbox import contributes_sandbox, run_sandbox_supplier
+from pydantic_ai.durable_exec._sandbox import contributes_sandbox, run_sandbox_supplier, sandbox_suppliers
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -110,7 +110,8 @@ async def test_stream_support_is_separate_from_process_protocol():
     assert isinstance(streaming, SupportsStream)
 
 
-_SED_WINDOW_EXPR = re.compile(r'^(\d+),(\d+)p$')
+# The facade's bounded slice form: print the window, then quit at its last line.
+_SED_WINDOW_EXPR = re.compile(r'^(\d+),(\d+)p;\2q$')
 
 
 class FakeSandbox:
@@ -367,9 +368,10 @@ async def test_read_file_shell_slice_reports_totals_at_eof():
     assert backend.fs.reads == []
 
 
-async def test_read_file_shell_slice_empty_window_has_unknown_total():
-    """`sed` prints nothing both for an offset past EOF and for a short file, so an empty
-    shell window cannot claim a total.
+async def test_read_file_empty_shell_window_falls_back_to_the_authoritative_read():
+    """`sed` prints nothing for an offset past EOF, an empty file, and (under BSD `sed`,
+    which exits 0 for it) a directory — indistinguishable cases, so an empty slice is
+    inconclusive and the filesystem read answers, here with the real total.
     """
     backend = FakeSandbox('sliced-past-eof')
     backend.fs.files['/workspace/file'] = b'one\n'
@@ -379,7 +381,96 @@ async def test_read_file_shell_slice_empty_window_has_unknown_total():
     assert window.lines == ()
     assert window.start_line == 10
     assert window.has_more is False
-    assert window.total_lines is None
+    assert window.total_lines == 1
+    assert backend.fs.reads == ['/workspace/file']
+
+
+class _RunOnlySandbox:
+    """The smallest legal backend — the four required members, no `fs`, no `start` —
+    delegating to a `FakeSandbox` so its `sed` emulation serves the slice."""
+
+    provider = 'run-only'
+
+    def __init__(self, inner: FakeSandbox) -> None:
+        self._inner = inner
+
+    @property
+    def sandbox_id(self) -> str:
+        return self._inner.sandbox_id
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> FakeSandboxResult:
+        return await self._inner.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+
+    async def working_dir(self) -> str:
+        return await self._inner.working_dir()
+
+
+async def test_read_file_windowed_works_without_filesystem_support():
+    """A backend with only the required members still serves windowed reads through the
+    `sed` slice; only the fallback (and `limit=None`) needs `SupportsFilesystem`, so the
+    filesystem must not be resolved before the slice is attempted.
+    """
+    inner = FakeSandbox('run-only')
+    inner.fs.files['/workspace/file'] = b'one\ntwo\nthree\n'
+    sandbox = Sandbox(_RunOnlySandbox(inner))
+
+    window = await sandbox.read_file('file', offset=1, limit=2)
+    assert window.lines == ('one', 'two')
+    assert window.has_more is True
+    assert inner.fs.reads == []
+
+    with pytest.raises(NotImplementedError, match='SupportsFilesystem'):
+        await sandbox.read_file('file')
+
+
+async def test_shell_slice_is_bounded_and_stops_at_the_window():
+    """The slice is an optimization, so it must not cost more than what it optimizes: a
+    deadline bounds a wedged path (a FIFO never produces output), and the quit command
+    stops `sed` at the window instead of scanning a large file to EOF.
+    """
+    backend = FakeSandbox('bounded')
+    backend.fs.files['/workspace/file'] = b'one\ntwo\nthree\n'
+    calls: list[tuple[list[str], float | None]] = []
+
+    class _Recorder(_RunOnlySandbox):
+        async def run(
+            self,
+            command: str | Sequence[str],
+            *,
+            shell: bool = False,
+            cwd: str | None = None,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> FakeSandboxResult:
+            assert not isinstance(command, str)
+            calls.append((list(command), timeout))
+            return await super().run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
+
+    window = await Sandbox(_Recorder(backend)).read_file('file', offset=1, limit=2)
+    assert window.lines == ('one', 'two')
+    ((argv, timeout),) = calls
+    assert argv == ['sed', '-n', '1,3p;3q', '/workspace/file']
+    assert timeout is not None
+
+
+async def test_run_and_start_reject_a_relative_cwd():
+    """A relative `cwd` has no sandbox meaning — a backend resolving it against ambient
+    host state is exactly the one-environment break the protocol forbids — so the facade
+    rejects it before any backend sees it.
+    """
+    sandbox = Sandbox(FakeSandbox('cwd'))
+    with pytest.raises(ValueError, match='absolute'):
+        await sandbox.run(['true'], cwd='subdir')
+    with pytest.raises(ValueError, match='absolute'):
+        await sandbox.start(['true'], cwd='subdir')
 
 
 async def test_read_file_falls_back_to_full_read_without_sed():
@@ -709,6 +800,16 @@ def test_contributes_sandbox_detection():
     assert contributes_sandbox(WrapperCapability(wrapped=SandboxCapability())) is True
     assert contributes_sandbox(SandboxCapability(id='deferred-sandbox', defer_loading=True)) is False
     assert contributes_sandbox(CombinedCapability([SandboxCapability(), ConnectOnlySandboxCapability()])) is True
+
+
+def test_sandbox_suppliers_deduplicates_a_capability_reachable_twice():
+    """One capability reachable both directly and through a wrapper is one supplier: the
+    wrapper branch recurses with a fresh visited set, so the outer walk must filter its
+    results, or every count- or iteration-based consumer double-processes the supplier.
+    """
+    supplier = SandboxCapability()
+    tree = CombinedCapability([supplier, WrapperCapability(wrapped=supplier)])
+    assert sandbox_suppliers(tree) == [supplier]
 
 
 def test_run_sandbox_supplier_only_reports_the_winner():

@@ -326,6 +326,83 @@ async def test_working_dir_and_resolve(tmp_path: Path):
     assert await sandbox.resolve('x', base='/elsewhere') == '/elsewhere/x'
 
 
+async def test_symlinked_root_with_dotdot_keeps_one_environment(tmp_path: Path):
+    """A root spelled through `symlink/..` must not split `run()` and `fs` into two directories.
+
+    The kernel resolves the symlink *before* applying `..` (landing in the link target's
+    parent), while lexical normalization deletes the `link` segment as text (landing in the
+    spelling's parent) — two different directories. Canonicalizing the root at construction is
+    what keeps the protocol's one-environment contract: a file written by a command is visible
+    to `fs` reads of the same relative path.
+    """
+    data = tmp_path / 'data'
+    data.mkdir()
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    (repo / 'link').symlink_to(data)
+
+    sandbox = Sandbox(LocalSandbox(repo / 'link' / '..'))
+    working_dir = await sandbox.working_dir()
+    assert working_dir == str(tmp_path)  # where `chdir` actually lands, canonically spelled
+
+    result = await sandbox.run(['sh', '-c', 'echo hello > from_run.txt'])
+    assert result.exit_code == 0
+    assert await sandbox.read_text('from_run.txt') == 'hello\n'
+
+
+async def test_relative_cwd_is_rejected(tmp_path: Path):
+    """A relative `cwd` would resolve against the host process's working directory — outside
+    the sandbox root — so the backend rejects it instead of silently escaping."""
+    sandbox = LocalSandbox(tmp_path)
+    with pytest.raises(ValueError, match='absolute'):
+        await sandbox.run(['pwd'], cwd='subdir')
+
+
+def test_relative_root_is_rejected():
+    """A relative `root` would depend on the host process's CWD at some later moment (root
+    canonicalization is lazy, and the host may `chdir` in between), so it is rejected at
+    construction — same contract as a relative `cwd=` at run time."""
+    with pytest.raises(ValueError, match='absolute'):
+        LocalSandbox('work')
+
+
+async def test_timeout_with_denied_group_kill_still_raises_timeout(monkeypatch: pytest.MonkeyPatch):
+    """The timeout contract promises a `TimeoutError` even when a hardened host denies the
+    group kill: the denial rides along as the cause instead of replacing the promised type."""
+    async with LocalSandbox() as sandbox:
+
+        def deny_killpg(pgid: int, sig: int) -> None:
+            raise PermissionError('signal denied')
+
+        monkeypatch.setattr(os, 'killpg', deny_killpg)
+        with pytest.raises(TimeoutError, match='denied') as exc_info:
+            await sandbox.run(['sleep', '30'], timeout=0.1)
+        assert isinstance(exc_info.value.__cause__, PermissionError)
+
+
+async def test_read_file_on_a_directory_raises(tmp_path: Path):
+    """BSD `sed` exits 0 with no output for a directory, so the slice can't tell it from an
+    empty file; the inconclusive empty window must fall back for the filesystem to raise the
+    authoritative `IsADirectoryError` instead of reporting an empty file."""
+    (tmp_path / 'adir').mkdir()
+    sandbox = Sandbox(LocalSandbox(tmp_path))
+    with pytest.raises(IsADirectoryError):
+        await sandbox.read_file('adir', limit=5)
+
+
+async def test_default_temp_root_is_reported_canonically():
+    """`working_dir()` must be filesystem-canonical even for the lazily created temp root.
+
+    On macOS, `mkdtemp` hands back a path under the symlinked `/var`; reporting that spelling
+    makes every string comparison against kernel-resolved paths (e.g. a command's `pwd -P`)
+    silently false. Only the backend can canonicalize its own world, so it must do so before
+    reporting.
+    """
+    async with LocalSandbox() as sandbox:
+        working_dir = await sandbox.working_dir()
+        assert working_dir == os.path.realpath(working_dir)
+
+
 async def test_filesystem_round_trip_with_parent_creation(tmp_path: Path):
     backend = LocalSandbox(tmp_path)
     sandbox = Sandbox(backend)

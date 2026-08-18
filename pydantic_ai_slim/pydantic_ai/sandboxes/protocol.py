@@ -322,6 +322,9 @@ class SandboxBackend(Protocol):
             shell: Whether to interpret `command` with the sandbox's shell.
             cwd: Absolute working directory for the command; defaults to the sandbox's
                 [`working_dir`][pydantic_ai.sandboxes.SandboxBackend.working_dir].
+                Implementations must reject a relative path with `ValueError`: resolving it
+                against ambient state (such as a local backend's host process working
+                directory) would silently escape the sandbox root.
             env: Extra environment variables for the command.
             timeout: Deadline in seconds, measured from this call. On expiry the command is killed
                 and an exception deriving from `TimeoutError` is raised.
@@ -329,5 +332,12 @@ class SandboxBackend(Protocol):
         ...
 
     async def working_dir(self) -> str:
-        """The sandbox's default working directory (absolute POSIX path)."""
+        """The sandbox's default working directory (absolute POSIX path).
+
+        The path must be filesystem-canonical: symlinks resolved and no `.`/`..` segments.
+        Only the backend can resolve paths inside its own environment, and consumers join
+        model-supplied relative paths onto this value textually — a non-canonical spelling
+        (e.g. one containing `symlink/..`) makes `run` (which resolves paths like the kernel)
+        and `fs` (which operates on the spelling) disagree about the same relative path.
+        """
         ...

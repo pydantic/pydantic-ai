@@ -40,6 +40,12 @@ the reference.
 
 __all__ = ('FileWindow', 'Sandbox', 'SandboxResolver')
 
+_SHELL_SLICE_TIMEOUT = 10
+"""Deadline in seconds for the `sed` fast path in `read_file`.
+
+The slice is an optimization, so a slow or wedged attempt (a FIFO path, a stalled mount)
+falls back to the authoritative filesystem read instead of hanging the run without bound."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class FileWindow:
@@ -205,6 +211,7 @@ class Sandbox:
         Delegates to [`SandboxBackend.run`][pydantic_ai.sandboxes.SandboxBackend.run]; arguments
         and contracts are documented there.
         """
+        _require_absolute_cwd(cwd)
         backend = await self._ensure_backend()
         return await backend.run(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
 
@@ -223,6 +230,7 @@ class Sandbox:
         otherwise raises `NotImplementedError` — background the command over
         [`run()`][pydantic_ai.sandboxes.Sandbox.run] with `shell=True` instead.
         """
+        _require_absolute_cwd(cwd)
         backend = await self._ensure_backend()
         if isinstance(backend, SupportsStart):
             return await backend.start(command, shell=shell, cwd=cwd, env=env, timeout=timeout)
@@ -232,7 +240,11 @@ class Sandbox:
         )
 
     async def working_dir(self) -> str:
-        """The sandbox's default working directory (absolute POSIX path)."""
+        """The sandbox's default working directory (absolute, filesystem-canonical POSIX path).
+
+        The canonicality contract is documented on
+        [`SandboxBackend.working_dir`][pydantic_ai.sandboxes.SandboxBackend.working_dir].
+        """
         return await (await self._ensure_backend()).working_dir()
 
     async def resolve(self, path: str, *, base: str | None = None) -> str:
@@ -248,7 +260,11 @@ class Sandbox:
         return posixpath.normpath(posixpath.join(base or await self.working_dir(), path))
 
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
-        """Read text from `path`, resolving relative paths through the backend first."""
+        """Read text from `path`, resolving relative paths through the backend first.
+
+        Decoding is strict: undecodable bytes raise `UnicodeDecodeError`. For a lossy,
+        model-facing view use [`read_file`][pydantic_ai.sandboxes.Sandbox.read_file].
+        """
         resolved_path = await self.resolve(path)
         return (await self.fs.read_bytes(resolved_path)).decode(encoding)
 
@@ -262,6 +278,11 @@ class Sandbox:
 
         `offset` is the 1-based first line and `limit` is the maximum number of lines. When
         `limit` is `None`, the window extends through EOF.
+
+        This is a model-facing view: content is decoded as UTF-8 with U+FFFD replacement for
+        undecodable bytes. Use [`read_text`][pydantic_ai.sandboxes.Sandbox.read_text] for
+        strict decoding or `fs.read_bytes` for exact bytes. Reading a special file that never
+        ends (a FIFO, a device) blocks the way the underlying filesystem read does.
         """
         if offset < 1:
             raise ValueError('`offset` must be at least 1')
@@ -269,25 +290,30 @@ class Sandbox:
             raise ValueError('`limit` must be at least 1')
 
         resolved_path = await self.resolve(path)
-        filesystem = await self._filesystem()
         if limit is not None:
+            # Before the filesystem lookup: a backend with only `run()` can still serve
+            # windowed reads through the slice.
             window = await self._read_file_via_shell(resolved_path, offset, limit)
             if window is not None:
                 return window
 
-        data = await filesystem.read_bytes(resolved_path)
+        data = await (await self._filesystem()).read_bytes(resolved_path)
         return _window_from_data(data, offset, limit)
 
     async def _read_file_via_shell(self, path: str, offset: int, limit: int) -> FileWindow | None:
         """Slice a line window with `sed` inside the sandbox, so only the window crosses the wire.
 
-        Returns `None` on any failure (no usable `sed`, `run()` unsupported, missing file);
-        the caller falls back to a full filesystem read, which stays the authoritative source
-        of errors. `total_lines` is only reported when the slice provably reached EOF.
+        Returns `None` on any failure or inconclusive result (no usable `sed`, `run()`
+        unsupported, a slice that timed out, empty output); the caller falls back to a full
+        filesystem read, which stays the authoritative source of results and errors.
+        `total_lines` is only reported when the slice provably reached EOF.
         """
+        end = offset + limit  # one extra line, to learn whether more exist
         try:
             # argv, never shell=True: the path is an argument, not shell-interpreted text.
-            result = await self.run(['sed', '-n', f'{offset},{offset + limit}p', path])
+            # `{end}q` stops `sed` at the window instead of scanning to EOF, and the timeout
+            # bounds the optimization on paths that never finish.
+            result = await self.run(['sed', '-n', f'{offset},{end}p;{end}q', path], timeout=_SHELL_SLICE_TIMEOUT)
         except Exception:
             return None
         if result.exit_code != 0:
@@ -296,10 +322,24 @@ class Sandbox:
         lines = list(_split_lines(result.stdout))
         if lines and lines[-1] == '':
             lines.pop()
-        if len(lines) > limit:  # we asked for one extra line to learn whether more exist
+        if not lines:
+            # Empty output is ambiguous: an offset past EOF, an empty file, and (under BSD
+            # `sed`, which exits 0 for it) a directory all look identical. The filesystem
+            # read answers authoritatively — and cheaply, except in the rare past-EOF case.
+            return None
+        if len(lines) > limit:
             return FileWindow(lines=tuple(lines[:limit]), start_line=offset, has_more=True, total_lines=None)
-        total_lines = offset - 1 + len(lines) if lines else None
-        return FileWindow(lines=tuple(lines), start_line=offset, has_more=False, total_lines=total_lines)
+        return FileWindow(lines=tuple(lines), start_line=offset, has_more=False, total_lines=offset - 1 + len(lines))
+
+
+def _require_absolute_cwd(cwd: str | None) -> None:
+    # A relative cwd has no sandbox meaning: backends would resolve it against ambient state
+    # (the host process's working directory for a local backend), outside the sandbox root.
+    if cwd is not None and not posixpath.isabs(cwd):
+        raise ValueError(
+            f'cwd must be an absolute POSIX path, got {cwd!r}; '
+            'resolve relative paths with `sandbox.resolve()` first'
+        )
 
 
 def _window_from_data(data: bytes, offset: int, limit: int | None) -> FileWindow:

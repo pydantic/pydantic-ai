@@ -30,8 +30,11 @@ def sandbox_suppliers(capability: AbstractCapability[Any]) -> list[AbstractCapab
         create_sandbox = type(leaf).create_sandbox
         if isinstance(leaf, WrapperCapability) and create_sandbox is WrapperCapability.create_sandbox:
             for supplier in sandbox_suppliers(leaf.wrapped):
-                seen.add(id(supplier))
-                suppliers.append(supplier)
+                # The recursive call starts a fresh `seen`, so filter against ours: a
+                # capability reachable both directly and through a wrapper is one supplier.
+                if id(supplier) not in seen:
+                    seen.add(id(supplier))
+                    suppliers.append(supplier)
             return
         if create_sandbox not in (AbstractCapability.create_sandbox, BaseDurabilityCapability.create_sandbox):
             suppliers.append(leaf)
