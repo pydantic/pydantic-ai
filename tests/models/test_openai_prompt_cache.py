@@ -792,18 +792,11 @@ async def test_openai_responses_cache_instructions_ignored_without_support(allow
     assert request['input'] == [{'role': 'user', 'content': 'Where is order 1234?'}]
 
 
-@pytest.mark.parametrize('state_setting', ['openai_conversation_id', 'openai_previous_response_id'])
-async def test_openai_responses_cache_instructions_skipped_with_server_side_state(
-    allow_model_requests: None, state_setting: str
-):
-    """Input messages are persisted server-side, so instructions stay in the top-level field."""
+async def test_openai_responses_cache_instructions_skipped_with_conversation_id(allow_model_requests: None):
+    """A conversation persists its input messages, so instructions stay in the top-level field."""
     mock_client = MockOpenAIResponses.create_mock(responses_completion())
     model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
-    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
-    if state_setting == 'openai_conversation_id':
-        settings['openai_conversation_id'] = 'state_123'
-    else:
-        settings['openai_previous_response_id'] = 'state_123'
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True, openai_conversation_id='conv_123')
 
     await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
 
@@ -1001,7 +994,12 @@ async def test_openai_responses_cache_instructions_not_relocated_across_chained_
 
     requests = get_mock_responses_kwargs(mock_client)
     assert [request['instructions'] for request in requests] == ['Support policies.', 'Support policies.']
-    assert not any('prompt_cache_breakpoint' in str(request['input']) for request in requests)
+    assert [request['input'] for request in requests] == snapshot(
+        [
+            [{'role': 'user', 'content': 'Where is order 1234?'}],
+            [{'role': 'user', 'content': 'And order 5678?'}],
+        ]
+    )
 
 
 async def test_openai_responses_cache_instructions_not_relocated_after_compaction(allow_model_requests: None):
@@ -1029,7 +1027,12 @@ async def test_openai_responses_cache_instructions_not_relocated_after_compactio
 
     request = get_mock_responses_kwargs(mock_client)[0]
     assert request['instructions'] == 'Support policies.'
-    assert not any('prompt_cache_breakpoint' in str(item) for item in request['input'])
+    assert request['input'] == snapshot(
+        [
+            {'id': None, 'encrypted_content': 'encrypted', 'type': 'compaction'},
+            {'role': 'user', 'content': 'And order 5678?'},
+        ]
+    )
 
 
 async def test_openai_chat_cache_instructions_with_cache_point(allow_model_requests: None):
