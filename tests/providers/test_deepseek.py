@@ -52,7 +52,15 @@ def test_deep_seek_model_profile():
 
 
 def test_deep_seek_responses_function_call_grouping_profile_matrix() -> None:
-    for model_name in ('deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro'):
+    # 'deepseek-v4-turbo' stands in for an unreleased SKU: the fact is set for every DeepSeek model,
+    # so a new alias cannot silently miss the grouping fix.
+    for model_name in (
+        'deepseek-chat',
+        'deepseek-reasoner',
+        'deepseek-v4-flash',
+        'deepseek-v4-pro',
+        'deepseek-v4-turbo',
+    ):
         model = OpenAIResponsesModel(model_name, provider=DeepSeekProvider(api_key='api-key'))
         assert model.profile.get('openai_responses_supports_interleaved_function_calls', True) is False
     openai_model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='api-key'))
