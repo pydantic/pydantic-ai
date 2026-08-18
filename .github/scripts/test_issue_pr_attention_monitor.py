@@ -4,6 +4,7 @@ import datetime as dt
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -88,12 +89,19 @@ class FakeClient(monitor.GitHubClient):
             return {**self.items[number], 'review_comments': len(self.review_comments.get(number, []))}
         if path.startswith('/search/issues?'):
             query = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
-            requested_state = 'closed' if 'is:closed' in query.get('q', [''])[0] else 'open'
+            terms = query.get('q', [''])[0]
+            if 'is:closed' in terms:
+                states = {'closed'}
+            elif 'is:open' in terms:
+                states = {'open'}
+            else:
+                states = {'open', 'closed'}
+            positive = re.search(r'(?<!-)label:"([^"]+)"', terms)
+            requested_label = positive.group(1) if positive else monitor._ACTION_LABEL
             values = [
                 value
                 for value in self.items.values()
-                if value['state'] == requested_state
-                and monitor._ACTION_LABEL in {str(label['name']) for label in value['labels']}
+                if value['state'] in states and requested_label in {str(label['name']) for label in value['labels']}
             ]
             per_page = int(query.get('per_page', ['30'])[0])
             page = int(query.get('page', ['1'])[0])
@@ -1492,7 +1500,10 @@ def test_sweep_restores_eligibility_after_new_activity():
     )
     assert any(call[0] == 'DELETE' and monitor._ESCALATED_LABEL in call[1] for call in client.calls)
     assert any(
-        call[0] == 'GET' and monitor._ESCALATED_LABEL in urllib.parse.unquote(call[1]) and 'direction=desc' in call[1]
+        call[0] == 'GET'
+        and call[1].startswith('/search/issues?')
+        and monitor._ESCALATED_LABEL in urllib.parse.unquote_plus(call[1])
+        and 'order=desc' in call[1]
         for call in client.calls
     )
 
@@ -1536,6 +1547,53 @@ def test_sweep_returns_unresolved_escalation_to_active_queue_after_cooldown():
     )
     assert {label['name'] for label in client.items[7]['labels']} == {monitor._ACTION_LABEL}
     assert ('POST', '/repos/r/issues/7/assignees', {'assignees': [monitor._FALLBACK_OWNER]}) in client.calls
+
+
+def test_mixed_resurface_state_restarts_sla_instead_of_reescalating():
+    client = FakeClient(
+        {7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL], assignees=[monitor._FALLBACK_OWNER])}
+    )
+    client.timelines[7] = [
+        label_event(monitor._ESCALATED_LABEL, created_at='2026-07-10T00:00:00Z'),
+        label_event(monitor._ACTION_LABEL, created_at='2026-07-19T00:00:00Z'),
+    ]
+    notices: list[monitor.Notice] = []
+
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == ([], [])
+    assert notices == []
+    assert {label['name'] for label in client.items[7]['labels']} == {monitor._ACTION_LABEL}
+
+
+def test_dormant_sweep_rotation_reaches_escalations_behind_a_cooling_page():
+    def build_client() -> FakeClient:
+        cooling = '2026-07-19T00:00:00Z'
+        values = {
+            number: item(number, labels=[monitor._ESCALATED_LABEL], updated_at=cooling) for number in range(1, 26)
+        }
+        values[26] = item(26, labels=[monitor._ESCALATED_LABEL])
+        client = FakeClient(values)
+        for number in range(1, 26):
+            client.timelines[number] = [label_event(monitor._ESCALATED_LABEL, created_at=cooling)]
+        client.timelines[26] = [
+            label_event(monitor._ESCALATED_LABEL, created_at='2026-07-12T00:00:00Z'),
+            {
+                'event': 'unlabeled',
+                'created_at': '2026-07-12T00:00:01Z',
+                'actor': {'login': 'github-actions[bot]'},
+                'label': {'name': monitor._ACTION_LABEL},
+            },
+        ]
+        return client
+
+    lines: list[str] = []
+    # Two consecutive slots alternate between the two dormant pages, so the
+    # eligible item behind a full page of cooling escalations is reached.
+    for offset in (dt.timedelta(), dt.timedelta(hours=6)):
+        swept, failures = monitor.reconcile(build_client(), 'r', now=NOW + offset)
+        assert failures == []
+        lines.extend(swept)
+
+    assert lines.count('#26: returned unresolved attention to the active queue') == 1
 
 
 def test_sweep_removes_a_foreign_escalation_marker():

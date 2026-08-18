@@ -931,6 +931,26 @@ def _finish_delivery_receipt(
     return False
 
 
+def _effective_stage(
+    client: GitHubClient, repo: str, number: int, labels: set[str], events: Sequence[dict[str, Any]]
+) -> Literal[0, 1, 2]:
+    stage = _stage(labels)
+    if stage != 2:
+        return stage
+    resurfaced = _transition(events, 0)
+    escalated = _transition(events, 2)
+    if resurfaced is None or escalated is None or resurfaced[0] <= escalated[0]:
+        return stage
+    # A resurface that added the action label but failed to remove the
+    # escalation marker would re-enter stage 2 and queue a duplicate
+    # escalation from the old transition. The newer action label is
+    # authoritative: shed the stale marker so its label event starts the
+    # restarted SLA instead.
+    _remove_label(client, repo, number, _ESCALATED_LABEL)
+    labels.discard(_ESCALATED_LABEL)
+    return _stage(labels)
+
+
 def _reconcile_item(
     client: GitHubClient,
     repo: str,
@@ -949,9 +969,9 @@ def _reconcile_item(
         return None
     if _ACTION_LABEL not in labels:
         return None
-    current_stage = _stage(labels)
     events = client.last_pages(f'/repos/{repo}/issues/{number}/events', count=_EVENT_PAGE_LIMIT)
     timeline = client.last_pages(f'/repos/{repo}/issues/{number}/timeline', count=3)
+    current_stage = _effective_stage(client, repo, number, labels, events)
     transition = _transition(events, current_stage)
     if transition is None:
         raise RuntimeError('Could not find the current attention transition')
@@ -1081,17 +1101,18 @@ def reconcile(
             failures.append(f'#{number}: {type(exc).__name__}: {exc}')
     if len(closed) == _CLOSED_CLEANUP_LIMIT or len(active) == _ACTIVE_OPEN_LIMIT:
         lines.append('additional attention items remain for a later rotated batch')
-    encoded_escalated = urllib.parse.quote(_ESCALATED_LABEL, safe='')
-    dormant = cast(
-        list[dict[str, Any]],
-        client.get(
-            # state=all so a dormant item closed while escalated still sheds
-            # its marker instead of carrying it forever.
-            f'/repos/{repo}/issues?state=all&labels={encoded_escalated}'
-            # Recent-first ensures that renewed activity on an old escalated
-            # issue cannot sit behind the oldest 25 dormant items.
-            f'&sort=updated&direction=desc&per_page={_RECONCILE_LIMIT}'
-        ),
+    dormant = _rotated_search(
+        client,
+        # No is:open qualifier so a dormant item closed while escalated still
+        # sheds its marker instead of carrying it forever.
+        f'repo:{repo} label:"{_ESCALATED_LABEL}"',
+        # Recent-first keeps renewed activity on an old escalated issue from
+        # sitting behind the oldest dormant items, while slot rotation still
+        # reaches every page so a full page of items inside the cooldown
+        # cannot strand older, already-eligible escalations indefinitely.
+        order='desc',
+        limit=_RECONCILE_LIMIT,
+        slot=slot,
     )
     for item in dormant:
         number = int(item['number'])
