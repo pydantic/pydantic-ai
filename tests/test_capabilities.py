@@ -5,6 +5,7 @@ import contextvars
 import inspect
 import re
 import threading
+import time
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -12348,6 +12349,21 @@ class TestHooksCapability:
         assert exc_info.value.timeout == 0.01
         assert isinstance(exc_info.value, AgentRunError)
         assert isinstance(exc_info.value, TimeoutError)
+
+    async def test_timeout_sync_hook(self):
+        """A sync hook runs in a worker thread, which is abandoned when its deadline expires."""
+        hooks = Hooks()
+
+        @hooks.on.before_model_request(timeout=0.01)
+        def slow_sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            time.sleep(0.1)
+            return request_context  # pragma: no cover
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        with pytest.raises(HookTimeoutError) as exc_info:
+            await agent.run('hello')
+        assert exc_info.value.hook_name == 'before_model_request'
+        assert exc_info.value.func_name == 'slow_sync_hook'
 
     async def test_has_wrap_node_run(self):
         hooks = Hooks()

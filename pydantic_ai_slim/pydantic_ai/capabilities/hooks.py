@@ -241,7 +241,7 @@ async def _call_entry(entry: _HookEntry[Any], hook_name: str, *args: Any, **kwar
     func = entry.func
     if entry.timeout is not None:
         try:
-            with anyio.fail_after(entry.timeout):
+            with anyio.fail_after(entry.timeout), _utils.abandon_threads_on_cancel():
                 return await _call_func(func, *args, **kwargs)
         except TimeoutError:
             raise HookTimeoutError(
