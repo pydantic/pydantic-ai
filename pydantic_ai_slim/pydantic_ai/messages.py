@@ -2474,6 +2474,15 @@ ModelRequestPart = Annotated[
 """A message part sent by Pydantic AI to a model."""
 
 
+def _tool_results_first_sort_key(part: ModelRequestPart) -> int:  # pyright: ignore[reportUnusedFunction]
+    """Stable-sort key placing the parts that answer tool calls ahead of a request's other parts.
+
+    Providers such as Anthropic require every tool result answering an assistant turn to lead the
+    next message, ahead of any other content.
+    """
+    return 0 if isinstance(part, ToolReturnPart | RetryPromptPart) else 1
+
+
 def _model_response_part_discriminator(v: Any) -> str | None:
     """Callable discriminator for [`ModelResponsePart`][pydantic_ai.messages.ModelResponsePart].
 

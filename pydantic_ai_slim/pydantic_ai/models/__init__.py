@@ -66,6 +66,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -2317,10 +2318,10 @@ def _announce_tool_availability_delta_messages(
     * It had to fabricate a `tool_call_id`, and two deltas over the same tool names produced the same
       one — duplicate ids in a history that providers requiring uniqueness reject.
 
-    A `SystemPromptPart` also replaces the delta *in place*, where the pair had to be spliced across
-    two messages: the fabricated `ModelResponse` went in ahead of the rebuilt `ModelRequest`, so a
-    delta sharing a request with a user prompt put the assistant's turn before it and reordered the
-    conversation.
+    A `SystemPromptPart` also stays inside the delta's own message, where the pair had to be spliced
+    across two messages: the fabricated `ModelResponse` went in ahead of the rebuilt `ModelRequest`,
+    so a delta sharing a request with a user prompt put the assistant's turn before it and reordered
+    the conversation. Within that message the announcements render after the request's tool results.
 
     On a model that takes a mid-conversation system message this lands as a real one, carrying the
     operator authority the statement deserves; elsewhere `_wrap_non_leading_system_prompts` — which
@@ -2332,11 +2333,14 @@ def _announce_tool_availability_delta_messages(
     # rendering is deterministic; no finer positional fidelity is required within one request.
     transformed: list[ModelMessage] = []
     changed = False
+    is_first_kept_request = True
     for message in messages:
-        if not isinstance(message, ModelRequest) or not any(
-            isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
-        ):
+        if not isinstance(message, ModelRequest):
             transformed.append(message)
+            continue
+        if not any(isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts):
+            transformed.append(message)
+            is_first_kept_request = False
             continue
 
         changed = True
@@ -2356,7 +2360,17 @@ def _announce_tool_availability_delta_messages(
         # A request whose only part was an empty delta would otherwise reach the adapter with no
         # parts at all, which providers reject.
         if replacement_parts:
-            transformed.append(replace(message, parts=replacement_parts))
+            # Anthropic requires the tool results answering the previous turn to open the message,
+            # so the announcements sort to the back. One exception: system prompts opening the
+            # history's first request are the agent's standing prompt, which the adapters lift into
+            # the provider's dedicated system field based on exactly this position, so they stay at
+            # the front.
+            request = replace(message, parts=replacement_parts)
+            keep = _standing_system_prompt_count(request) if is_first_kept_request else 0
+            head, tail = replacement_parts[:keep], replacement_parts[keep:]
+            tail.sort(key=_tool_results_first_sort_key)
+            transformed.append(replace(request, parts=[*head, *tail]))
+            is_first_kept_request = False
 
     return transformed if changed else messages
 

@@ -2929,10 +2929,7 @@ def _merge_consecutive_messages(messages: list[_messages.ModelMessage]) -> list[
                 # turn -- a real regression -- just to preserve fields the model request node never reads.
             ):
                 parts = [*last_message.parts, *message.parts]
-                parts.sort(
-                    # Tool return parts always need to be at the start
-                    key=lambda x: 0 if isinstance(x, _messages.ToolReturnPart | _messages.RetryPromptPart) else 1
-                )
+                parts.sort(key=_messages._tool_results_first_sort_key)  # pyright: ignore[reportPrivateUsage]
                 merged_message = _messages.ModelRequest(
                     parts=parts,
                     instructions=last_message.instructions or message.instructions,
