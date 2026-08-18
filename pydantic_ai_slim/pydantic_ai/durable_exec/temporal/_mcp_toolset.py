@@ -25,7 +25,7 @@ from ._toolset import (
     CallToolParams,
     GetToolsParams,
     heartbeating,
-    resolve_tool_activity_config,
+    resolve_tool_temporal_wrapping,
     tool_result_payload_errors,
 )
 
@@ -86,14 +86,22 @@ def temporalize_mcp_toolset(
     )
 
     def resolve_tool_config(tool: ToolsetTool[Any] | None, name: str) -> ToolConfig:
-        config = resolve_tool_activity_config(tool, name, tool_activity_config)
+        config = resolve_tool_temporal_wrapping(tool, name, tool_activity_config)
         # The constructor-dict path raises above, so tool metadata is the only route that reaches here.
-        if config is False:  # pragma: no cover
-            raise UserError(
-                f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled), '
-                'but MCP tools require the use of IO and so cannot be run outside of an activity.'
-            )
-        return config
+        match config:
+            case False:
+                raise UserError(
+                    f'Temporal activity config for MCP tool {name!r} has been explicitly set to `False` (activity disabled), '
+                    'but MCP tools require the use of IO and so cannot be run outside of an activity.'
+                )
+            case {'child_workflow': _}:
+                raise UserError(
+                    f'Temporal metadata for MCP tool {name!r} configures it to run as a child workflow, '
+                    'but MCP tools require the use of IO and so cannot be run inside a child workflow.'
+                )
+            case _:
+                pass
+        return cast('ToolConfig', config)
 
     async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> dict[str, ToolDefinition]:
         config: ActivityConfig = {'summary': f'get tools: {toolset.id}', **activity_config}

@@ -315,6 +315,7 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
         in_durable_context: Callable[[], bool],
         lifecycle: Lifecycle,
         durable_registrations: list[Any] | None,
+        durable_container_registrations: list[Any] | None = None,
         durable_config: Mapping[str, Any] | None = None,
     ):
         super().__init__(wrapped)
@@ -322,6 +323,8 @@ class DurableToolsetBase(WrapperToolset[AgentDepsT]):
         self._lifecycle = lifecycle
         self.durable_registrations = durable_registrations or []
         """Opaque engine handles that must be registered with the engine (e.g. Temporal activities)."""
+        self.durable_container_registrations = durable_container_registrations or []
+        """Opaque engine handles for durable containers that must be registered with the engine (e.g. Temporal workflow classes)."""
         self.durable_config = durable_config
         """The engine's base per-operation config for this toolset (e.g. a Temporal `ActivityConfig`)."""
 
@@ -371,6 +374,7 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
         resolve_tool_config: ResolveToolConfig,
         lifecycle: Lifecycle,
         durable_registrations: list[Any] | None = None,
+        durable_container_registrations: list[Any] | None = None,
         durable_config: Mapping[str, Any] | None = None,
     ):
         super().__init__(
@@ -378,6 +382,7 @@ class DurableFunctionToolset(DurableToolsetBase[AgentDepsT]):
             in_durable_context=in_durable_context,
             lifecycle=lifecycle,
             durable_registrations=durable_registrations,
+            durable_container_registrations=durable_container_registrations,
             durable_config=durable_config,
         )
         self._call_tool_operation = call_tool_operation

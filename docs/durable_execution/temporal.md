@@ -469,6 +469,59 @@ agent = Agent(
 !!! tip "Configuring third-party tools"
     [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] is the recommended path when the activity config doesn't belong on the tool definition — for example, tools defined in third-party packages, or a group of tools that share the same timeout profile but live in different files.
 
+### Child workflows
+
+A tool that performs multiple I/O operations of its own may need more granular durability than a single activity can give it — for example, a tool that delegates to a nested [`Agent.run()`][pydantic_ai.agent.AbstractAgent.run] for a sub-agent. By default, that whole nested run collapses into a single activity: no per-call retries for the nested agent's own model and tool calls, and no durability for the nested run itself. Tagging the tool to run as a **child workflow** instead fixes this: the tool's own code runs directly as workflow code, so if it calls a nested agent that itself carries [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], that nested run's model and tool calls become ordinary activities again — scoped to the child workflow's own history, with its own event budget, timeout, retry, and cancellation policy, and a distinct identity in the Temporal UI.
+
+Set the `'temporal'` metadata key to `{'child_workflow': ChildWorkflowConfig(...)}` instead of an `ActivityConfig`:
+
+```python {title="temporal_child_workflow.py" test="skip"}
+from datetime import timedelta
+
+from temporalio.workflow import ChildWorkflowConfig
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.durable_exec.temporal import TemporalDurability
+from pydantic_ai.toolsets import FunctionToolset
+
+research_toolset = FunctionToolset(id='research')
+delegate_agent = Agent('openai:gpt-5.6-sol', name='delegate', capabilities=[TemporalDurability()])  # (1)!
+
+
+@research_toolset.tool(
+    metadata={
+        'temporal': {
+            'child_workflow': ChildWorkflowConfig(execution_timeout=timedelta(minutes=10)),  # (2)!
+        }
+    }
+)
+async def delegate_task(ctx: RunContext[None], task: str) -> str:
+    result = await delegate_agent.run(task, deps=ctx.deps)  # (3)!
+    return result.output
+
+
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    name='research',
+    toolsets=[research_toolset],
+    capabilities=[TemporalDurability()],
+)
+```
+
+1. The nested agent needs its own [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] capability for its model and tool calls to become activities — without it, its whole run just executes as ordinary (undurable) workflow code. `delegate_agent` also needs to be registered with the worker just like `agent` (for example, by listing it alongside `agent` in the workflow's `__pydantic_ai_agents__`) — otherwise the worker has no plugin for its activities and the delegated run can never complete.
+2. `execution_timeout` is a hard, server-side timeout — the recommended way to bound a delegated run. Prefer it over `parent_close_policy` for cancellation: cancelling an in-flight nested agent run cooperatively (rather than letting Temporal terminate it via `execution_timeout`) can deadlock the parent workflow's event loop under this SDK's async runtime.
+3. The tool's own code runs directly as workflow code — no `workflow.execute_activity` involved for the tool call itself. Delegating to a nested durable agent run here is what makes that safe.
+
+A bare `{'child_workflow': {}}` (or the [`SetToolMetadata`][pydantic_ai.capabilities.SetToolMetadata] equivalent) uses Temporal's own defaults for every `ChildWorkflowConfig` field. As with a plain `ActivityConfig`, a base config for every child-workflow-tagged tool on an agent can be set via `TemporalDurability(child_workflow_config=...)`, merged underneath the per-tool config.
+
+The child workflow's `id` defaults to a value derived from the parent workflow's own ID and the tool call's ID, which is deterministic and replay-stable: a parent replay reattaches to the same child rather than starting a duplicate. Overriding `id` is your responsibility if you need idempotency across a **fresh execution attempt** of the parent (as opposed to a replay) — the default doesn't dedupe against that case.
+
+!!! warning "`FunctionToolset` tools only, and only `async`"
+    Only tools on a static [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can be tagged `child_workflow` — dynamic and MCP tools require I/O to resolve, which isn't possible in workflow code. The tool must be `async`, for the same reason non-async tools can't opt out of activity wrapping with `metadata={'temporal': False}`. The tool's own top-level code must also be workflow-safe and deterministic: delegate real work to a nested durable agent run (or other durable operations) rather than performing I/O directly.
+
+!!! warning "No event streaming across the child workflow boundary"
+    Events from inside a `child_workflow`-tagged tool's nested run aren't delivered to the parent's `event_stream_handler` — only the tool's final result crosses back. The nested agent can still stream to its own handler (passed to its own `TemporalDurability`), decoupled from the parent's — for example, writing progress to a store the frontend polls independently.
+
 ## Activity Retries
 
 On top of the automatic retries for request failures that Temporal will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, with improper `Retry-After` handling.

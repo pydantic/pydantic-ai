@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import gc
+import importlib
 import inspect
 import os
 import re
 import sys
 import uuid
 import warnings
+import weakref
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
@@ -139,7 +142,7 @@ try:
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
-    from temporalio.common import RetryPolicy
+    from temporalio.common import RawValue, RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.converter import (
@@ -149,11 +152,16 @@ try:
         PayloadCodec,
         StorageDriver,
     )
-    from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError
+    from temporalio.exceptions import (
+        ActivityError,
+        ApplicationError,
+        CancelledError as TemporalCancelledError,
+        ChildWorkflowError,
+    )
     from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
-    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker, WorkerConfig
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
-    from temporalio.workflow import ActivityCancellationType, ActivityConfig
+    from temporalio.workflow import ActivityCancellationType, ActivityConfig, ChildWorkflowConfig
 
     from pydantic_ai.durable_exec._toolset import (
         CallToolResult,
@@ -186,18 +194,17 @@ try:
         TemporalFunctionToolset,
         temporalize_function_toolset,
     )
-    from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
-    from pydantic_ai.durable_exec.temporal._model import (
-        TemporalModel,
-    )
+    from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset, temporalize_mcp_toolset
+    from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext, deserialize_run_context
     from pydantic_ai.durable_exec.temporal._toolset import (
         CallToolParams,
         GetToolsParams,
         TemporalWrapperToolset,
         heartbeating,
-        resolve_tool_activity_config,
+        resolve_tool_temporal_wrapping,
         toolset_temporal_activities,
+        toolset_temporal_workflows,
     )
 
     from .temporal_sandbox_workflow import PydanticAIPluginSandboxWorkflow
@@ -1947,6 +1954,23 @@ async def test_toolset_without_id():
         TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))  # pyright: ignore[reportDeprecated]
 
 
+async def test_durability_function_toolset_without_id():
+    """A function toolset without an `id` is rejected at construction, naming what the ID is for.
+
+    The ID names both the toolset's activity and, for `child_workflow`-tagged tools, its own
+    per-toolset child workflow, so there's nothing to build a valid Temporal name from without it.
+    """
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'FunctionToolset needs to have a unique `id` in order to be used with Temporal. '
+            "The ID is used to name the toolset's activity and, for `child_workflow`-tagged tools, "
+            'its own per-toolset child workflow.'
+        ),
+    ):
+        Agent(model, name='no_toolset_id_agent', toolsets=[FunctionToolset()], capabilities=[TemporalDurability()])
+
+
 async def test_capability_contributed_toolset_id_from_capability():
     """A capability's `id` flows to its contributed leaf toolset, so combining a capability with a
     function toolset or MCP server can be used under Temporal instead of tripping the
@@ -2162,6 +2186,9 @@ async def test_temporal_wrapper_toolset_extension_surface():
     toolset = _CustomTemporalToolset(FunctionToolset[None](id='custom_wrapped'))
     assert toolset.id == 'custom_wrapped'
     assert toolset_temporal_activities(toolset) == [sentinel_activity]
+    # Child-workflow dispatch is a `DurableToolsetBase` feature: a custom wrapper contributes no
+    # workflow classes, so nothing extra is registered on the worker for it.
+    assert toolset_temporal_workflows(toolset) == []
 
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     assert await toolset.for_run_step(ctx) is toolset
@@ -2199,6 +2226,71 @@ async def test_temporal_dynamic_toolset_rejects_activity_opt_out():
     )
     with pytest.raises(UserError, match='activity disabled'):
         await durable.call_tool('boom', {}, ctx, tool)
+
+
+async def test_temporal_dynamic_toolset_rejects_child_workflow():
+    """`metadata={'temporal': {'child_workflow': ...}}` is also rejected for dynamic-toolset tools.
+
+    Resolving the dynamic toolset and calling the tool would still require I/O even inside a
+    child workflow, the same reasoning that rejects `False` above.
+    """
+    durable = temporalize_dynamic_toolset(
+        DynamicToolset(lambda ctx: None, id='dyn_child_workflow_opt_out'),
+        activity_name_prefix='agent__dyn_child_workflow_opt_out',
+        activity_config={},
+        tool_activity_config={'boom': {'child_workflow': {}}},  # pyright: ignore[reportArgumentType]
+        deps_type=type(None),
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tool = ToolsetTool(
+        toolset=durable, tool_def=ToolDefinition(name='boom'), max_retries=1, args_validator=TOOL_SCHEMA_VALIDATOR
+    )
+    with pytest.raises(UserError, match='cannot run inside a child workflow'):
+        await durable.call_tool('boom', {}, ctx, tool)
+
+
+def test_temporal_mcp_toolset_rejects_activity_disabled():
+    """`metadata={'temporal': False}` is rejected for MCP tools, like the constructor-dict form is.
+
+    `temporalize_mcp_toolset` rejects the constructor-dict form up front (covered by
+    `test_temporal_agent_mcp_server_activity_disabled`), so tool metadata is the only route that
+    reaches the check inside the wrapper — hence resolving the config directly here, as the
+    `child_workflow` test below does.
+    """
+    durable = temporalize_mcp_toolset(
+        MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp_activity_opt_out'),
+        activity_name_prefix='agent__mcp_activity_opt_out',
+        activity_config={},
+        tool_activity_config={},
+        deps_type=type(None),
+    )
+    tool = ToolsetTool(
+        toolset=durable,
+        tool_def=ToolDefinition(name='boom', metadata={'temporal': False}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    with pytest.raises(UserError, match='cannot be run outside of an activity'):
+        durable._resolve_tool_config(tool, 'boom')  # pyright: ignore[reportPrivateUsage]
+
+
+def test_temporal_mcp_toolset_rejects_child_workflow():
+    """`metadata={'temporal': {'child_workflow': ...}}` is rejected for MCP tools too.
+
+    MCP tools require I/O, whether run as an activity or as a child workflow's own workflow code.
+    """
+    durable = temporalize_mcp_toolset(
+        MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp_child_workflow_opt_out'),
+        activity_name_prefix='agent__mcp_child_workflow_opt_out',
+        activity_config={},
+        tool_activity_config={'boom': {'child_workflow': {}}},  # pyright: ignore[reportArgumentType]
+        deps_type=type(None),
+    )
+    tool = ToolsetTool(
+        toolset=durable, tool_def=ToolDefinition(name='boom'), max_retries=1, args_validator=TOOL_SCHEMA_VALIDATOR
+    )
+    with pytest.raises(UserError, match='cannot be run inside a child workflow'):
+        durable._resolve_tool_config(tool, 'boom')  # pyright: ignore[reportPrivateUsage]
 
 
 # --- DynamicToolset instructions refresh across run steps (issue #5282 follow-up) ---
@@ -7037,6 +7129,820 @@ async def test_durability_agent_with_tools_in_workflow(client: Client):
         assert output == 'The country is: France'
 
 
+# --- Durability with child-workflow-tagged tools ---
+
+
+def _child_workflow_nested_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Model function for the nested (delegated-to) agent: echoes the last user prompt."""
+    for msg in reversed(messages):  # pragma: no branch
+        for part in msg.parts:  # pragma: no branch
+            if isinstance(part, UserPromptPart):  # pragma: no branch
+                return ModelResponse(parts=[TextPart(content=f'Nested echo: {part.content}')])
+    return ModelResponse(parts=[TextPart(content='no prompt')])  # pragma: no cover
+
+
+_child_workflow_nested_fn_model = FunctionModel(_child_workflow_nested_model_fn)
+child_workflow_nested_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+child_workflow_nested_agent = Agent(
+    _child_workflow_nested_fn_model,
+    name='child_workflow_nested_agent',
+    capabilities=[child_workflow_nested_durability],
+)
+
+
+async def delegate_task(task: str) -> str:
+    """Delegate `task` to a nested agent that carries its own `TemporalDurability`.
+
+    Tagged to run as a Temporal child workflow: this function's own code runs directly as
+    workflow code (not wrapped in an activity), so `child_workflow_nested_agent.run(task)`'s
+    model activity is scheduled under *this* child workflow, not the parent's.
+    """
+    result = await child_workflow_nested_agent.run(task)
+    return result.output
+
+
+child_workflow_delegate_toolset = FunctionToolset[object](id='child_workflow_delegate_toolset')
+child_workflow_delegate_toolset.add_function(delegate_task, metadata={'temporal': {'child_workflow': {}}})
+
+
+def _child_workflow_parent_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Model function for the parent agent: calls `delegate_task` then echoes its result."""
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(content=f'Parent got: {part.content}')])
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(tool_name='delegate_task', args={'task': 'go'})])
+    return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+
+_child_workflow_parent_fn_model = FunctionModel(_child_workflow_parent_model_fn)
+child_workflow_parent_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+child_workflow_parent_agent = Agent(
+    _child_workflow_parent_fn_model,
+    name='child_workflow_parent_agent',
+    toolsets=[child_workflow_delegate_toolset],
+    capabilities=[child_workflow_parent_durability],
+)
+
+
+@workflow.defn
+class ChildWorkflowDelegateWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await child_workflow_parent_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_child_workflow_tool_runs_nested_agent(client: Client):
+    """A `child_workflow`-tagged tool's nested `agent.run()` gets its own history, isolated from the parent's.
+
+    The delegate tool is scheduled as a Temporal child workflow (not an activity); the nested
+    agent's own model call becomes an activity *of that child workflow*, so it never appears in
+    the parent's own scheduled-activity count.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ChildWorkflowDelegateWorkflow],
+        plugins=[AgentPlugin(child_workflow_parent_agent), AgentPlugin(child_workflow_nested_agent)],
+    ):
+        wf = await client.start_workflow(
+            ChildWorkflowDelegateWorkflow.run,
+            args=['go'],
+            id='ChildWorkflowDelegateWorkflow_basic',
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result == 'Parent got: Nested echo: go'
+    # Two parent-level model activities (the initial tool-call decision and the final text after
+    # the tool result) -- the nested agent's own model activity runs inside the child workflow,
+    # so it's absent here.
+    assert _scheduled_activity_count(history) == 2
+    assert any(event.HasField('start_child_workflow_execution_initiated_event_attributes') for event in history.events)
+
+
+async def buggy_delegate() -> str:
+    # Runs as workflow code in this same process, unlike an activity, so it is measured.
+    raise ValueError('boom')
+
+
+buggy_child_workflow_toolset = FunctionToolset[object](id='buggy_child_workflow_toolset')
+buggy_child_workflow_toolset.add_function(buggy_delegate, metadata={'temporal': {'child_workflow': {}}})
+
+
+def _buggy_child_workflow_parent_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(tool_name='buggy_delegate', args={})])
+    return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+
+buggy_child_workflow_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+buggy_child_workflow_agent = Agent(
+    FunctionModel(_buggy_child_workflow_parent_model_fn),
+    name='child_workflow_buggy_agent',
+    toolsets=[buggy_child_workflow_toolset],
+    capabilities=[buggy_child_workflow_durability],
+)
+
+
+@workflow.defn
+class BuggyChildWorkflowWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await buggy_child_workflow_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_durability_child_workflow_tool_bug_fails_cleanly(client: Client):
+    """A bug in a `child_workflow`-tagged tool's own code fails the workflow, not silently retries.
+
+    Regression test for an error-propagation gap found during review: an exception that isn't
+    already a Temporal `FailureError` fails the workflow *task* by default, which Temporal retries
+    forever -- the per-toolset child-workflow class converts it to an `ApplicationError` so the
+    child fails promptly and cleanly instead, which surfaces to the parent as a `ChildWorkflowError`
+    (not directly as an `ApplicationError`, unlike a same-shaped activity failure -- one extra layer
+    of wrapping for the extra hop through the child workflow).
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BuggyChildWorkflowWorkflow],
+        plugins=[AgentPlugin(buggy_child_workflow_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                BuggyChildWorkflowWorkflow.run,
+                args=['go'],
+                id='BuggyChildWorkflowWorkflow_test',
+                task_queue=TASK_QUEUE,
+            )
+    assert isinstance(exc_info.value.__cause__, ChildWorkflowError)
+    application_error = exc_info.value.__cause__.cause
+    assert isinstance(application_error, ApplicationError)
+    assert application_error.type == 'ValueError'
+    assert application_error.message == 'boom'
+
+
+def sync_delegate() -> str:  # pragma: no cover -- never actually called
+    return 'unreachable'
+
+
+sync_child_workflow_toolset = FunctionToolset[object](id='sync_child_workflow_toolset')
+sync_child_workflow_toolset.add_function(sync_delegate, metadata={'temporal': {'child_workflow': {}}})
+
+
+def _sync_child_workflow_reject_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(tool_name='sync_delegate', args={})])
+    return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+
+sync_child_workflow_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)
+sync_child_workflow_agent = Agent(
+    FunctionModel(_sync_child_workflow_reject_model_fn),
+    name='child_workflow_sync_agent',
+    toolsets=[sync_child_workflow_toolset],
+    capabilities=[sync_child_workflow_durability],
+)
+
+
+@workflow.defn
+class SyncChildWorkflowRejectWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await sync_child_workflow_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_durability_child_workflow_rejects_sync_tool(client: Client):
+    """A non-async tool tagged `{'child_workflow': ...}` raises `UserError`, same as `False` does.
+
+    Non-async tools run in threads, which aren't supported inside workflow code any more than
+    inside an activity-disabled inline call.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SyncChildWorkflowRejectWorkflow],
+        plugins=[AgentPlugin(sync_child_workflow_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            "Temporal metadata for tool 'sync_delegate' configures it to run as a child workflow, but "
+            'non-async tools are run in threads which are not supported inside a workflow. Make the tool '
+            'function async instead.',
+        ):
+            await client.execute_workflow(
+                SyncChildWorkflowRejectWorkflow.run,
+                args=['go'],
+                id='SyncChildWorkflowRejectWorkflow_test',
+                task_queue=TASK_QUEUE,
+            )
+
+
+# --- Child-workflow class isolation / collision behavior ---
+
+
+async def _marker_a_tool() -> str:
+    return 'marker-A'
+
+
+async def _marker_b_tool() -> str:
+    return 'marker-B'
+
+
+def _marker_parent_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(content=f'Parent got: {part.content}')])
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(tool_name='marker_tool', args={})])
+    return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+
+_COLLIDING_TOOLSET_ID = 'collision_toolset'
+_COLLIDING_AGENT_NAME = 'collision_agent'
+
+_marker_a_toolset = FunctionToolset[object](id=_COLLIDING_TOOLSET_ID)
+_marker_a_toolset.add_function(
+    _marker_a_tool,
+    name='marker_tool',
+    metadata={'temporal': {'child_workflow': {}}},
+)
+_marker_a_agent = Agent(
+    FunctionModel(_marker_parent_model_fn),
+    name=_COLLIDING_AGENT_NAME,
+    toolsets=[_marker_a_toolset],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+_marker_b_toolset = FunctionToolset[object](id=_COLLIDING_TOOLSET_ID)
+_marker_b_toolset.add_function(
+    _marker_b_tool,
+    name='marker_tool',
+    metadata={'temporal': {'child_workflow': {}}},
+)
+_marker_b_agent = Agent(
+    FunctionModel(_marker_parent_model_fn),
+    name=_COLLIDING_AGENT_NAME,
+    toolsets=[_marker_b_toolset],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class _MarkerAWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _marker_a_agent.run(prompt)
+        return result.output
+
+
+@workflow.defn
+class _MarkerBWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _marker_b_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_child_workflow_per_toolset_class_isolates_cross_worker_bindings(client: Client):
+    """Two same-named agents with same-id toolsets on separate Workers never misroute child workflows.
+
+    Under the old shared `_ToolCallWorkflow` + `_child_workflow_handlers` dict, the second binding
+    silently overwrote the first in process-global state, so the first Worker's child workflow would
+    run the second toolset's tool. With one dynamically-built class per toolset, each sandbox
+    resolves its own class and the two bindings are isolated.
+    """
+    task_queue_a = f'{TASK_QUEUE}-cross-a'
+    task_queue_b = f'{TASK_QUEUE}-cross-b'
+    async with Worker(
+        client,
+        task_queue=task_queue_a,
+        workflows=[_MarkerAWorkflow],
+        plugins=[AgentPlugin(_marker_a_agent)],
+    ):
+        async with Worker(
+            client,
+            task_queue=task_queue_b,
+            workflows=[_MarkerBWorkflow],
+            plugins=[AgentPlugin(_marker_b_agent)],
+        ):
+            result_a = await client.execute_workflow(
+                _MarkerAWorkflow.run,
+                args=['go'],
+                id='MarkerAWorkflow_cross',
+                task_queue=task_queue_a,
+            )
+            result_b = await client.execute_workflow(
+                _MarkerBWorkflow.run,
+                args=['go'],
+                id='MarkerBWorkflow_cross',
+                task_queue=task_queue_b,
+            )
+
+    assert result_a == 'Parent got: marker-A'
+    assert result_b == 'Parent got: marker-B'
+
+
+def _temporalize_for_class_lookup(toolset_id: str) -> type[Any]:
+    """Build a per-toolset child-workflow class the way `TemporalDurability` does, and return it.
+
+    The class is built per toolset regardless of whether any tool asks for `child_workflow`, so the
+    toolset needs no tools to exercise how the class is stored and looked up.
+    """
+    durable_toolset = temporalize_function_toolset(
+        FunctionToolset[None](id=toolset_id),
+        activity_name_prefix=f'test__{toolset_id}',
+        activity_config=BASE_ACTIVITY_CONFIG,
+        tool_activity_config={},
+        deps_type=type(None),
+    )
+    (workflow_class,) = durable_toolset.durable_container_registrations
+    return cast('type[Any]', workflow_class)
+
+
+def test_durability_child_workflow_class_resolves_as_module_attribute():
+    """The per-toolset class is reachable as an attribute of its module, by name.
+
+    Unit test: the sandboxed runner resolves the class by exec'ing
+    `from {__module__} import {__name__}` inside the sandbox, which needs the module to answer for a
+    name that is deliberately not a real module attribute (holding every class ever built strongly
+    would grow the namespace for as long as the worker lives -- see the retention test below).
+    `test_durability_child_workflow_per_toolset_class_isolates_cross_worker_bindings` covers the
+    sandbox path end to end; this pins the lookup itself, hit and miss.
+    """
+    workflow_class = _temporalize_for_class_lookup('module_attr_toolset')
+    module = importlib.import_module(workflow_class.__module__)
+
+    assert getattr(module, workflow_class.__name__) is workflow_class
+    assert workflow_class.__name__ not in vars(module)
+    with pytest.raises(AttributeError, match="has no attribute '_ToolCallWorkflow_never_built'"):
+        getattr(module, '_ToolCallWorkflow_never_built')
+
+
+def test_durability_child_workflow_class_is_released_with_its_binding():
+    """A class stops being reachable once nothing holds the binding it belongs to.
+
+    A worker's sandbox re-imports the workflow module on every workflow task, re-running the
+    module-level `Agent(...)` construction and building a fresh class each time, so anything that
+    keeps every class alive (as assigning it into the module namespace did) is an unbounded leak in
+    a long-lived worker, not just a tidiness concern.
+    """
+    workflow_class = _temporalize_for_class_lookup('released_toolset')
+    class_name = workflow_class.__name__
+    module = importlib.import_module(workflow_class.__module__)
+    reference = weakref.ref(workflow_class)
+
+    del workflow_class
+    gc.collect()
+
+    assert reference() is None
+    with pytest.raises(AttributeError):
+        getattr(module, class_name)
+
+
+def _colliding_child_workflow_class(durability: TemporalDurability) -> type[Any]:
+    """The per-toolset workflow class for the shared `collision_toolset` id."""
+    for wf in durability.temporal_workflows:
+        if 'collision_toolset' in wf.__name__:
+            return wf
+    raise AssertionError('colliding child-workflow class not found')  # pragma: no cover
+
+
+async def test_durability_child_workflow_same_worker_collision_fails_loudly(client: Client):
+    """Two colliding per-toolset workflow classes on the same Worker are rejected immediately.
+
+    The workflow *type name* is deterministic (agent name + toolset id), so two such bindings on
+    one Worker produce a duplicate workflow-name error from Temporal — the same per-Worker check
+    that already protects activities.
+    """
+    durability_a = TemporalDurability.from_agent(_marker_a_agent)
+    durability_b = TemporalDurability.from_agent(_marker_b_agent)
+    assert durability_a is not None and durability_b is not None
+    wf_a = _colliding_child_workflow_class(durability_a)
+    wf_b = _colliding_child_workflow_class(durability_b)
+    assert wf_a is not wf_b
+
+    with pytest.raises(ValueError, match='More than one workflow named'):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[wf_a, wf_b],
+        ):
+            pass  # pragma: no cover
+
+
+def test_durability_child_workflow_same_worker_collision_via_plugins_names_the_collision():
+    """Combining two colliding agents through `AgentPlugin`s raises a `UserError` naming both toolsets.
+
+    Passing the raw classes straight to `Worker(workflows=[...])` (the test above) only gets
+    Temporal's own generic "More than one workflow named X" at `Worker()` construction. Going through
+    `AgentPlugin`/`PydanticAIPlugin.configure_worker` -- the way real callers combine agents -- catches
+    the same collision earlier, with a message identifying which two toolsets collided.
+    """
+    config: WorkerConfig = {'workflows': [], 'activities': []}
+    config = AgentPlugin(_marker_a_agent).configure_worker(config)
+    # `_marker_a_agent`/`_marker_b_agent` share a name, so both their explicit `collision_toolset`-id
+    # toolset *and* their implicit per-agent (`'<agent>'`-id) toolset collide; whichever the merge
+    # reaches first is the one named, so match generically rather than pin a specific toolset id.
+    with pytest.raises(
+        UserError,
+        match=r"Two different toolsets are both registered for child-workflow dispatch under the workflow name 'agent__collision_agent__toolset__.+__call_tool_workflow'",
+    ):
+        AgentPlugin(_marker_b_agent).configure_worker(config)
+
+
+@workflow.defn(dynamic=True)
+class _DynamicPassthroughWorkflow:
+    """A worker's catch-all workflow handler, registered without a workflow type name of its own."""
+
+    @workflow.run
+    async def run(self, args: Sequence[RawValue]) -> str:  # pragma: no cover -- never executed
+        return 'dynamic'
+
+
+def test_durability_child_workflow_merge_keeps_nameless_dynamic_workflow():
+    """A dynamic workflow has no type name to collide on, so it passes through the merge untouched.
+
+    A worker can register its catch-all `@workflow.defn(dynamic=True)` handler alongside an agent
+    whose toolsets contribute per-toolset child-workflow classes.
+    """
+    config: WorkerConfig = {'workflows': [_DynamicPassthroughWorkflow], 'activities': []}
+    config = AgentPlugin(child_workflow_parent_agent).configure_worker(config)
+    workflows = list(config.get('workflows', []))  # type: ignore[reportUnknownMemberType]
+    assert _DynamicPassthroughWorkflow in workflows
+    assert any(wf.__name__.startswith('_ToolCallWorkflow_child_workflow_delegate_toolset') for wf in workflows)
+
+
+def test_durability_child_workflow_merge_skipped_for_deprecated_temporal_agent():
+    """The deprecated `TemporalAgent` wrapper contributes no child-workflow classes at all.
+
+    Its `AgentPlugin` leaves the worker config's workflow list exactly as it found it, rather than
+    running an empty list through the dedupe/collision merge.
+    """
+    temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(model=model, name='plugin_without_workflows_agent'),
+        activity_config=BASE_ACTIVITY_CONFIG,
+    )
+    config: WorkerConfig = {'workflows': [], 'activities': []}
+    config = AgentPlugin(temporal_agent).configure_worker(config)
+    assert config.get('workflows') == []  # type: ignore[reportUnknownMemberType]
+
+
+async def test_durability_child_workflow_rejects_direct_start(client: Client):
+    """Starting the child-workflow type directly (not as a child) raises a `UserError`.
+
+    Regression test for the security review finding that the workflow type is public and registered
+    on the worker, so any client with queue access could start it directly. The per-toolset class
+    preserves the parent-is-None rejection from the old shared `_ToolCallWorkflow`.
+    """
+    durability = TemporalDurability.from_agent(_marker_a_agent)
+    assert durability is not None
+    child_workflow_class = _colliding_child_workflow_class(durability)
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[_MarkerAWorkflow, child_workflow_class],
+        plugins=[AgentPlugin(_marker_a_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            "'agent__collision_agent__toolset__collision_toolset__call_tool_workflow' must be started "
+            'as a child workflow of an agent run, not invoked directly.',
+        ):
+            await client.execute_workflow(
+                child_workflow_class.run,
+                args=[
+                    CallToolParams(
+                        name='marker_tool',
+                        tool_args={},
+                        serialized_run_context=None,
+                        tool_def=None,
+                    ),
+                    None,
+                ],
+                id='DirectStartChildWorkflow_test',
+                task_queue=TASK_QUEUE,
+            )
+
+
+async def plain_activity_tool() -> str:  # pragma: no cover -- only ever dispatched as an activity
+    return 'plain'
+
+
+untagged_child_workflow_toolset = FunctionToolset[object](id='untagged_child_workflow_toolset')
+untagged_child_workflow_toolset.add_function(plain_activity_tool)
+
+untagged_child_workflow_agent = Agent(
+    FunctionModel(_child_workflow_parent_model_fn),
+    name='child_workflow_untagged_agent',
+    toolsets=[untagged_child_workflow_toolset],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+_UNTAGGED_CHILD_WORKFLOW_NAME = (
+    'agent__child_workflow_untagged_agent__toolset__untagged_child_workflow_toolset__call_tool_workflow'
+)
+
+
+@workflow.defn
+class UntaggedToolChildWorkflowParent:
+    """Stands in for a caller reaching the child-workflow type from inside a workflow of its own.
+
+    Starting it directly from a client is already rejected (the parent-is-None check), but the same
+    hand-built `CallToolParams` can be sent from any workflow the caller controls, so it can't be
+    the only check.
+    """
+
+    @workflow.run
+    async def run(self, serialized_run_context: dict[str, Any]) -> Any:
+        return await workflow.execute_child_workflow(
+            _UNTAGGED_CHILD_WORKFLOW_NAME,
+            args=[
+                CallToolParams(
+                    name='plain_activity_tool',
+                    tool_args={},
+                    serialized_run_context=serialized_run_context,
+                    tool_def=None,
+                ),
+                None,
+            ],
+            id=f'{workflow.info().workflow_id}--untagged-tool-child',
+        )
+
+
+async def test_durability_child_workflow_refuses_tool_not_tagged_for_it(client: Client):
+    """A well-formed request for a tool that was never tagged `child_workflow` is refused.
+
+    The child-workflow type is registered for the whole toolset, so it re-checks the tool's own
+    current config instead of trusting that whoever started it went through the normal
+    activity-vs-child-workflow dispatch: `plain_activity_tool` belongs to the toolset but runs as
+    an activity, and asking for it here doesn't get it run as workflow code.
+    """
+    serialized_run_context = TemporalRunContext.serialize_run_context(
+        RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    )
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UntaggedToolChildWorkflowParent],
+        plugins=[AgentPlugin(untagged_child_workflow_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                UntaggedToolChildWorkflowParent.run,
+                args=[serialized_run_context],
+                id='UntaggedToolChildWorkflowParent_test',
+                task_queue=TASK_QUEUE,
+            )
+    assert isinstance(exc_info.value.__cause__, ChildWorkflowError)
+    application_error = exc_info.value.__cause__.cause
+    assert isinstance(application_error, ApplicationError)
+    assert application_error.type == 'UserError'
+    assert application_error.message == (
+        "Tool 'plain_activity_tool' is not configured to run as a `child_workflow`; refusing to run it as one."
+    )
+
+
+def _failing_nested_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ValueError('nested model boom')
+
+
+failing_nested_child_workflow_agent = Agent(
+    FunctionModel(_failing_nested_model_fn),
+    name='child_workflow_failing_nested_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+async def delegate_to_failing_agent() -> str:
+    result = await failing_nested_child_workflow_agent.run('go')
+    return result.output  # pragma: no cover -- the nested run always fails
+
+
+failing_nested_child_workflow_toolset = FunctionToolset[object](id='failing_nested_child_workflow_toolset')
+failing_nested_child_workflow_toolset.add_function(
+    delegate_to_failing_agent, metadata={'temporal': {'child_workflow': {}}}
+)
+
+
+def _failing_nested_parent_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(tool_name='delegate_to_failing_agent', args={})])
+    return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+
+failing_nested_child_workflow_parent_agent = Agent(
+    FunctionModel(_failing_nested_parent_model_fn),
+    name='child_workflow_failing_nested_parent_agent',
+    toolsets=[failing_nested_child_workflow_toolset],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class FailingNestedChildWorkflowWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await failing_nested_child_workflow_parent_agent.run(prompt)
+        return result.output  # pragma: no cover -- the child workflow always fails
+
+
+async def test_durability_child_workflow_propagates_nested_temporal_failure(client: Client):
+    """A Temporal failure from inside a `child_workflow`-tagged tool propagates unwrapped.
+
+    The nested durable agent run's own model activity fails, so an `ActivityError` reaches the
+    child workflow's code. Unlike a plain Python exception (which is converted to an
+    `ApplicationError` so the child fails promptly instead of wedging its workflow task), it's
+    already a Temporal failure and is re-raised as-is — the parent sees the whole chain, one layer
+    per hop, with the original error type and message at the bottom.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FailingNestedChildWorkflowWorkflow],
+        plugins=[
+            AgentPlugin(failing_nested_child_workflow_parent_agent),
+            AgentPlugin(failing_nested_child_workflow_agent),
+        ],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                FailingNestedChildWorkflowWorkflow.run,
+                args=['go'],
+                id='FailingNestedChildWorkflowWorkflow_test',
+                task_queue=TASK_QUEUE,
+            )
+    child_workflow_error = exc_info.value.__cause__
+    assert isinstance(child_workflow_error, ChildWorkflowError)
+    activity_error = child_workflow_error.cause
+    assert isinstance(activity_error, ActivityError)
+    application_error = activity_error.cause
+    assert isinstance(application_error, ApplicationError)
+    assert application_error.type == 'ValueError'
+    assert application_error.message == 'nested model boom'
+
+
+async def slow_delegate() -> str:
+    await asyncio.sleep(30)
+    return 'never'  # pragma: no cover -- always cancelled first
+
+
+slow_child_workflow_toolset = FunctionToolset[object](id='slow_child_workflow_toolset')
+slow_child_workflow_toolset.add_function(slow_delegate, metadata={'temporal': {'child_workflow': {}}})
+
+
+def _slow_child_workflow_parent_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(tool_name='slow_delegate', args={})])
+    return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+
+slow_child_workflow_agent = Agent(
+    FunctionModel(_slow_child_workflow_parent_model_fn),
+    name='child_workflow_slow_agent',
+    toolsets=[slow_child_workflow_toolset],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class WaitForChildWorkflowTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            await asyncio.wait_for(slow_child_workflow_agent.run('go'), timeout=0.5)
+        except asyncio.TimeoutError:
+            return 'timed out cleanly'
+        return 'completed'  # pragma: no cover
+
+
+async def test_wait_for_child_workflow_timeout_does_not_livelock(client: Client):
+    """Timing out an agent run whose tool is a child workflow ends both cleanly, without spinning.
+
+    The child-workflow wait needs the same cancellation handling as an activity wait: awaiting the
+    handle directly from a task inside an anyio cancel scope makes anyio re-deliver cancellation
+    every loop turn, and the resolution can only arrive in a later activation, so the workflow task
+    spins until Temporal's deadlock detector fails it — and then retries identically forever.
+
+    The child workflow ends up *cancelled* rather than *failed*, which is why its handler re-raises
+    `asyncio.CancelledError` instead of converting it to an `ApplicationError` like any other
+    exception escaping a tool.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WaitForChildWorkflowTimeoutWorkflow],
+        plugins=[AgentPlugin(slow_child_workflow_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        wf = await client.start_workflow(
+            WaitForChildWorkflowTimeoutWorkflow.run,
+            id=f'{WaitForChildWorkflowTimeoutWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result == 'timed out cleanly'
+    assert any(event.HasField('child_workflow_execution_canceled_event_attributes') for event in history.events)
+
+
+async def configured_delegate() -> str:
+    return 'configured'
+
+
+configured_child_workflow_toolset = FunctionToolset[object](id='configured_child_workflow_toolset')
+configured_child_workflow_toolset.add_function(
+    configured_delegate,
+    # Overrides the capability-level `execution_timeout` below, like a per-tool `ActivityConfig`
+    # overrides `activity_config`.
+    metadata={'temporal': {'child_workflow': {'execution_timeout': timedelta(seconds=30)}}},
+)
+
+
+def _configured_child_workflow_parent_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    for msg in reversed(messages):
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(content=f'Parent got: {part.content}')])
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(tool_name='configured_delegate', args={})])
+    return ModelResponse(parts=[TextPart(content='no tools')])  # pragma: no cover
+
+
+configured_child_workflow_agent = Agent(
+    FunctionModel(_configured_child_workflow_parent_model_fn),
+    name='child_workflow_configured_agent',
+    toolsets=[configured_child_workflow_toolset],
+    capabilities=[
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            child_workflow_config=ChildWorkflowConfig(
+                execution_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=1, non_retryable_error_types=['CustomError']),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class ConfiguredChildWorkflowWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await configured_child_workflow_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_child_workflow_config_is_the_base_for_tagged_tools(client: Client):
+    """`TemporalDurability(child_workflow_config=...)` configures every `child_workflow`-tagged tool.
+
+    Per-tool metadata is merged on top of it (the `execution_timeout` here), and its `retry_policy`
+    gets the framework's non-retryable error types added the same way an `ActivityConfig`'s does, so
+    a deterministic failure like a `UserError` fails the child workflow instead of being retried
+    forever.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ConfiguredChildWorkflowWorkflow],
+        plugins=[AgentPlugin(configured_child_workflow_agent)],
+    ):
+        wf = await client.start_workflow(
+            ConfiguredChildWorkflowWorkflow.run,
+            args=['go'],
+            id='ConfiguredChildWorkflowWorkflow_test',
+            task_queue=TASK_QUEUE,
+        )
+        result = await wf.result()
+        history = await wf.fetch_history()
+
+    assert result == 'Parent got: configured'
+    initiated = [
+        event.start_child_workflow_execution_initiated_event_attributes
+        for event in history.events
+        if event.HasField('start_child_workflow_execution_initiated_event_attributes')
+    ]
+    assert len(initiated) == 1
+    assert initiated[0].workflow_execution_timeout.ToTimedelta() == timedelta(seconds=30)
+    assert initiated[0].retry_policy.maximum_attempts == 1
+    assert list(initiated[0].retry_policy.non_retryable_error_types) == [
+        'CustomError',
+        'UserError',
+        'PydanticUserError',
+        'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
+        'PayloadSizeError',
+    ]
+
+
 # --- Durability outside workflow (transparent passthrough) ---
 
 
@@ -7468,6 +8374,23 @@ def test_durability_rejects_unknown_activity_config_keys(kwargs: dict[str, Any],
     """
     with pytest.raises(UserError, match=re.escape(expected)):
         TemporalDurability(**kwargs)
+
+
+@pytest.mark.parametrize(
+    'child_workflow_config',
+    [
+        pytest.param({'exec_timeout': timedelta(minutes=5)}, id='unknown-key'),
+        pytest.param({'execution_timeout': 'five minutes'}, id='unusable-value'),
+    ],
+)
+def test_durability_rejects_unusable_child_workflow_config(child_workflow_config: dict[str, Any]):
+    """A `ChildWorkflowConfig` Temporal can't use fails at construction, for the same reason.
+
+    `child_workflow_config` is splatted into `workflow.start_child_workflow()` one level up from
+    `start_activity()`, where a `TypeError` would equally fail the workflow *task* forever.
+    """
+    with pytest.raises(UserError, match=re.escape('Invalid Temporal `ChildWorkflowConfig` in `child_workflow_config`')):
+        TemporalDurability(child_workflow_config=cast('ChildWorkflowConfig', child_workflow_config))
 
 
 def test_durability_coerces_activity_config_values():
@@ -8408,11 +9331,11 @@ def test_durability_tool_metadata_disables_activity():
     assert bound is not None
 
     # Should have wrapped the toolset (capability discovered it at for_agent time);
-    # the per-tool skip is applied at call time via resolve_tool_activity_config.
+    # the per-tool skip is applied at call time via resolve_tool_temporal_wrapping.
     assert 'meta_toolset' in bound._toolsets_by_id  # pyright: ignore[reportPrivateUsage]
 
 
-def test_resolve_tool_activity_config_reads_metadata():
+def test_resolve_tool_temporal_wrapping_reads_metadata():
     """Tool metadata takes priority while defaults and caller-owned retry policies stay intact."""
     configured_retry_policy = RetryPolicy(maximum_attempts=3, non_retryable_error_types=['CustomError'])
     metadata_config = ActivityConfig(
@@ -8435,9 +9358,11 @@ def test_resolve_tool_activity_config_reads_metadata():
     )
 
     # Metadata wins over the per-tool dict.
-    resolved = resolve_tool_activity_config(tool, 'fn_tool', {'fn_tool': ActivityConfig(summary='from_dict')})
+    resolved = resolve_tool_temporal_wrapping(tool, 'fn_tool', {'fn_tool': ActivityConfig(summary='from_dict')})
     assert resolved is not metadata_config
     assert resolved is not False
+    assert 'child_workflow' not in resolved
+    resolved = cast('ActivityConfig', resolved)
     assert metadata_config.get('retry_policy') is configured_retry_policy
     assert configured_retry_policy.non_retryable_error_types == ['CustomError']
     retry_policy = resolved.get('retry_policy')
@@ -8452,8 +9377,10 @@ def test_resolve_tool_activity_config_reads_metadata():
     ]
 
     inherited_retry_policy = RetryPolicy(maximum_attempts=7)
-    resolved_without_override = resolve_tool_activity_config(None, 'fn_tool', {})
+    resolved_without_override = resolve_tool_temporal_wrapping(None, 'fn_tool', {})
     assert resolved_without_override is not False
+    assert 'child_workflow' not in resolved_without_override
+    resolved_without_override = cast('ActivityConfig', resolved_without_override)
     assert resolved_without_override == {}
     assert ActivityConfig(retry_policy=inherited_retry_policy) | resolved_without_override == {
         'retry_policy': inherited_retry_policy
@@ -8461,16 +9388,16 @@ def test_resolve_tool_activity_config_reads_metadata():
 
     # `False` in metadata also wins.
     tool.tool_def.metadata = {'temporal': False}
-    assert resolve_tool_activity_config(tool, 'fn_tool', {}) is False
+    assert resolve_tool_temporal_wrapping(tool, 'fn_tool', {}) is False
 
     # Invalid metadata (e.g. a string from a misuse like `metadata={'temporal': '5s'}`)
     # raises `UserError` instead of silently passing the wrong shape to Temporal.
     tool.tool_def.metadata = {'temporal': '5s'}
     with pytest.raises(UserError, match=r"Tool 'fn_tool' has invalid 'temporal' metadata"):
-        resolve_tool_activity_config(tool, 'fn_tool', {})
+        resolve_tool_temporal_wrapping(tool, 'fn_tool', {})
 
 
-def test_resolve_tool_activity_config_restores_round_tripped_types():
+def test_resolve_tool_temporal_wrapping_restores_round_tripped_types():
     """A config that came back from an activity as JSON is validated into Temporal's own types.
 
     A `DynamicToolset`'s tools are discovered inside the get-tools activity, so their
@@ -8496,8 +9423,10 @@ def test_resolve_tool_activity_config_restores_round_tripped_types():
         args_validator=None,  # pyright: ignore[reportArgumentType]
     )
 
-    resolved = resolve_tool_activity_config(tool, 'slow', {})
+    resolved = resolve_tool_temporal_wrapping(tool, 'slow', {})
     assert resolved is not False
+    assert 'child_workflow' not in resolved
+    resolved = cast('ActivityConfig', resolved)
     assert resolved.get('start_to_close_timeout') == timedelta(minutes=5)
     assert resolved.get('heartbeat_timeout') == timedelta(seconds=30)
     assert resolved.get('cancellation_type') == ActivityCancellationType.TRY_CANCEL
@@ -8514,7 +9443,7 @@ def test_resolve_tool_activity_config_restores_round_tripped_types():
     ]
 
 
-def test_resolve_tool_activity_config_rejects_unusable_config():
+def test_resolve_tool_temporal_wrapping_rejects_unusable_config():
     """What validation can't restore fails the workflow with a `UserError` instead of livelocking it.
 
     `UserError` is in `workflow_failure_exception_types`, so it terminates the workflow; anything
@@ -8528,13 +9457,116 @@ def test_resolve_tool_activity_config_rejects_unusable_config():
         args_validator=None,  # pyright: ignore[reportArgumentType]
     )
     with pytest.raises(UserError, match=r"Tool 'slow' has an invalid Temporal `ActivityConfig`"):
-        resolve_tool_activity_config(tool, 'slow', {})
+        resolve_tool_temporal_wrapping(tool, 'slow', {})
 
     # A misspelled key is reported rather than dropped: `execute_activity` would reject it too,
     # but as a workflow-task failure.
     tool.tool_def.metadata = {'temporal': {'start_to_close_timout': timedelta(minutes=5)}}
     with pytest.raises(UserError, match=r'Extra inputs are not permitted'):
-        resolve_tool_activity_config(tool, 'slow', {})
+        resolve_tool_temporal_wrapping(tool, 'slow', {})
+
+
+def test_resolve_tool_temporal_wrapping_reads_child_workflow_metadata():
+    """`{'child_workflow': ChildWorkflowConfig(...)}` resolves distinctly from a plain `ActivityConfig`.
+
+    Its `retry_policy` (if any) gets the same non-retryable-error normalization as an
+    `ActivityConfig`'s: it governs retrying the entire child workflow execution, the direct
+    analog one level up.
+    """
+    configured_retry_policy = RetryPolicy(maximum_attempts=3, non_retryable_error_types=['CustomError'])
+    fn_toolset = FunctionToolset[None](id='resolve_child_workflow_toolset')
+    tool = ToolsetTool[None](
+        toolset=fn_toolset,
+        tool_def=ToolDefinition(
+            name='delegate',
+            metadata={
+                'temporal': {
+                    'child_workflow': ChildWorkflowConfig(
+                        task_queue='delegate-queue', retry_policy=configured_retry_policy
+                    )
+                }
+            },
+        ),
+        max_retries=0,
+        args_validator=None,  # pyright: ignore[reportArgumentType]
+    )
+
+    resolved = resolve_tool_temporal_wrapping(tool, 'delegate', {})
+    assert resolved is not False
+    assert 'child_workflow' in resolved
+    child_workflow_config = resolved['child_workflow']
+    assert child_workflow_config.get('task_queue') == 'delegate-queue'
+    retry_policy = child_workflow_config.get('retry_policy')
+    assert retry_policy is not None
+    assert retry_policy.non_retryable_error_types == [
+        'CustomError',
+        'UserError',
+        'PydanticUserError',
+        'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
+        'PayloadSizeError',
+    ]
+
+    # A bare `{'child_workflow': {}}` (all Temporal defaults) resolves too.
+    tool.tool_def.metadata = {'temporal': {'child_workflow': {}}}
+    assert resolve_tool_temporal_wrapping(tool, 'delegate', {}) == {'child_workflow': {}}
+
+
+def test_resolve_tool_temporal_wrapping_rejects_mixed_child_workflow_keys():
+    """`{'child_workflow': ..., other keys}` is invalid: `child_workflow` must be the only key."""
+    fn_toolset = FunctionToolset[None](id='mixed_child_workflow_toolset')
+    tool = ToolsetTool[None](
+        toolset=fn_toolset,
+        tool_def=ToolDefinition(name='delegate', metadata={'temporal': {'child_workflow': {}, 'summary': 'oops'}}),
+        max_retries=0,
+        args_validator=None,  # pyright: ignore[reportArgumentType]
+    )
+    with pytest.raises(UserError, match=r"\{'child_workflow': \.\.\.\} must be the only key when configuring a tool"):
+        resolve_tool_temporal_wrapping(tool, 'delegate', {})
+
+
+def test_resolve_tool_temporal_wrapping_restores_round_tripped_child_workflow_types():
+    """A `child_workflow` config that came back from an activity as JSON validates the same way."""
+    fn_toolset = FunctionToolset[None](id='round_trip_child_workflow_toolset')
+    tool = ToolsetTool[None](
+        toolset=fn_toolset,
+        tool_def=ToolDefinition(
+            name='delegate',
+            metadata={
+                'temporal': {
+                    'child_workflow': {
+                        'execution_timeout': 'PT5M',
+                        'retry_policy': {'initial_interval': 'PT1S', 'maximum_attempts': 2},
+                    }
+                }
+            },
+        ),
+        max_retries=0,
+        args_validator=None,  # pyright: ignore[reportArgumentType]
+    )
+    resolved = resolve_tool_temporal_wrapping(tool, 'delegate', {})
+    assert resolved is not False
+    assert 'child_workflow' in resolved
+    child_workflow_config = resolved['child_workflow']
+    assert child_workflow_config.get('execution_timeout') == timedelta(minutes=5)
+    retry_policy = child_workflow_config.get('retry_policy')
+    assert retry_policy is not None
+    assert retry_policy.initial_interval == timedelta(seconds=1)
+
+
+def test_resolve_tool_temporal_wrapping_rejects_unusable_child_workflow_config():
+    """What validation can't restore for `child_workflow` also raises `UserError`, not a livelock."""
+    fn_toolset = FunctionToolset[None](id='unusable_child_workflow_toolset')
+    tool = ToolsetTool[None](
+        toolset=fn_toolset,
+        tool_def=ToolDefinition(
+            name='delegate', metadata={'temporal': {'child_workflow': {'execution_timeout': 'five minutes'}}}
+        ),
+        max_retries=0,
+        args_validator=None,  # pyright: ignore[reportArgumentType]
+    )
+    with pytest.raises(UserError, match=r"Tool 'delegate' has an invalid Temporal `ChildWorkflowConfig`"):
+        resolve_tool_temporal_wrapping(tool, 'delegate', {})
 
 
 @pytest.mark.parametrize(
