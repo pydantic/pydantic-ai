@@ -73,7 +73,7 @@ print(result.output)
 Both sync and async hook functions are accepted. Sync functions are run in a thread pool, so a slow one won't hold up the rest of the run.
 
 !!! note "Sync hooks run on a separate thread"
-    A sync hook executes on a different thread than the run itself. It can read [`contextvars.ContextVar`][contextvars.ContextVar] values, but values it sets are not visible outside the hook — including context set through libraries that use context variables internally, such as tracing and logging integrations — and asyncio APIs like `asyncio.get_running_loop()` are unavailable. Use an async hook for any of those.
+    Pydantic AI assumes that a sync hook contains blocking code (if it didn't, it could be async), so it runs sync hooks on a worker thread to keep the rest of the run responsive. Two things follow: a value the hook sets on a [`contextvars.ContextVar`][contextvars.ContextVar] is not visible outside the hook, and asyncio APIs like `asyncio.get_running_loop()` are unavailable. Reading context variables still works, but the write limitation also applies to libraries that use them internally, such as tracing and logging integrations. If your hook needs any of these, make it async.
 
 ### On-demand hooks
 
