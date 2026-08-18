@@ -2317,10 +2317,10 @@ def _announce_tool_availability_delta_messages(
     * It had to fabricate a `tool_call_id`, and two deltas over the same tool names produced the same
       one — duplicate ids in a history that providers requiring uniqueness reject.
 
-    A `SystemPromptPart` also replaces the delta *in place*, where the pair had to be spliced across
-    two messages: the fabricated `ModelResponse` went in ahead of the rebuilt `ModelRequest`, so a
-    delta sharing a request with a user prompt put the assistant's turn before it and reordered the
-    conversation.
+    A `SystemPromptPart` also stays inside the delta's own message, where the pair had to be spliced
+    across two messages: the fabricated `ModelResponse` went in ahead of the rebuilt `ModelRequest`,
+    so a delta sharing a request with a user prompt put the assistant's turn before it and reordered
+    the conversation. Within that message the announcements render after the request's tool results.
 
     On a model that takes a mid-conversation system message this lands as a real one, carrying the
     operator authority the statement deserves; elsewhere `_wrap_non_leading_system_prompts` — which
@@ -2332,6 +2332,7 @@ def _announce_tool_availability_delta_messages(
     # rendering is deterministic; no finer positional fidelity is required within one request.
     transformed: list[ModelMessage] = []
     changed = False
+    first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(
             isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
@@ -2356,7 +2357,16 @@ def _announce_tool_availability_delta_messages(
         # A request whose only part was an empty delta would otherwise reach the adapter with no
         # parts at all, which providers reject.
         if replacement_parts:
-            transformed.append(replace(message, parts=replacement_parts))
+            request = replace(message, parts=replacement_parts)
+            # The first request's opening system run is the standing prompt the adapters hoist out
+            # of the message; it must keep its position rather than sort behind the tool results.
+            start = _standing_system_prompt_count(request) if message is first_request else 0
+            tail = replacement_parts[start:]
+            tail.sort(
+                # Anthropic requires tool results to lead the message that answers a tool call
+                key=lambda p: 0 if isinstance(p, ToolReturnPart | RetryPromptPart) else 1
+            )
+            transformed.append(replace(request, parts=[*replacement_parts[:start], *tail]))
 
     return transformed if changed else messages
 
