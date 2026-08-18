@@ -7,11 +7,27 @@ from typing import Any
 
 from typing_extensions import Self
 
+from .._instructions import normalize_toolset_instructions
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
 from ..exceptions import UserError
 from ..messages import InstructionPart
 from .abstract import AbstractToolset, ToolsetTool
+from .wrapper import WrapperToolset
+
+
+def _instruction_source(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+    """The toolset whose `id` keys the instruction blocks reached through `toolset`.
+
+    A wrapper reports no `id` of its own — it isn't itself a registered toolset — but
+    `WrapperToolset.get_instructions` keys what it passes through with the *wrapped* toolset's id,
+    and a capability's contributed toolset always arrives inside a `CapabilityOwnedToolset`.
+    Unwrapping is what makes one toolset reached through two different wrappers a single source
+    rather than a false conflict: `Agent(toolsets=[shared.filtered(...), shared.prefixed('p')])`.
+    """
+    while isinstance(toolset, WrapperToolset):
+        toolset = toolset.wrapped
+    return toolset
 
 
 @dataclass(kw_only=True)
@@ -35,7 +51,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover
+        return None
 
     @property
     def label(self) -> str:
@@ -106,13 +122,30 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     ) -> AbstractToolset[AgentDepsT]:
         return replace(self, toolsets=[toolset.visit_and_replace(visitor) for toolset in self.toolsets])
 
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[str | InstructionPart] | None:
+    async def get_instructions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
         results = await gather(*(ts.get_instructions(ctx) for ts in self.toolsets))
-        parts: list[str | InstructionPart] = []
-        for r in results:
-            if r is not None:
-                if isinstance(r, (str, InstructionPart)):
-                    parts.append(r)
-                else:
-                    parts.extend(r)
+        parts: list[InstructionPart] = []
+        # An `InstructionPart.id` has to name one block, so two toolsets contributing under one
+        # `toolset:<id>` would leave an application unable to tell whose text it is addressing.
+        # Checked as the blocks are keyed rather than when the agent is built: a shared id makes
+        # nothing ambiguous until both toolsets actually contribute one, and most never do. That
+        # also exempts the ids the framework assigns on the user's behalf for free -- `durable_exec`
+        # feeds the agent's own function toolset back through `override(toolsets=...)` alongside the
+        # one `_build_toolset_list` prepends, and neither carries instructions.
+        sources_by_id: dict[str, AbstractToolset[AgentDepsT]] = {}
+        for toolset, result in zip(self.toolsets, results):
+            toolset_parts = normalize_toolset_instructions(result, toolset.id)
+            source = _instruction_source(toolset)
+            for part in toolset_parts:
+                if part.id is None:
+                    continue
+                if (existing := sources_by_id.setdefault(part.id, source)) is not source:
+                    raise UserError(
+                        f'Two toolsets have the same `id` {existing.id!r} and both contribute instructions, '
+                        f'so {part.id!r} would address blocks from each. '
+                        'Toolset `id`s must be unique among all toolsets registered with the same agent.'
+                    )
+            parts.extend(toolset_parts)
         return parts or None

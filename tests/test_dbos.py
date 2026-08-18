@@ -118,7 +118,7 @@ except ImportError:  # pragma: lax no cover
 from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.capabilities import ProcessEventStream, ResolveModelId, SelectModel, Toolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset, ToolsetTool
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._inline_snapshot import snapshot
@@ -958,14 +958,18 @@ async def test_capability_contributed_toolset_id_from_capability():
 
 async def test_capability_contributed_toolsets_with_colliding_derived_id():
     """Two genuinely different MCP servers whose URLs derive the same id would silently collide on the
-    per-run tool-defs cache key under DBOS (the second server returning the first's cached tools). The
-    DBOS wrapper guards against duplicate leaf ids at construction, telling the user to set explicit ids.
+    per-run tool-defs cache key under DBOS (the second server returning the first's cached tools).
 
     Both `MCP(url=...)` capabilities leave `cap.id=None` (so the agent-level capability-id uniqueness
     check passes), yet both derive `a.com-api` from their URLs' host + last path segment.
 
-    This isn't a VCR test: the collision is rejected during local `DBOSAgent` construction, before any
-    model or MCP request, so there's no network round-trip to record.
+    A plain `Agent` lets this through: it only rejects a shared id where the id has to become an
+    instruction key, and neither server has been connected to, so neither has contributed a block.
+    DBOS needs more — the id keys each server's step names whether or not it says anything to the
+    model — so its own leaf walk is what reports this, naming the toolset to change.
+
+    This isn't a VCR test: the collision is rejected during local construction, before any model or
+    MCP request, so there's no network round-trip to record.
     """
     with pytest.raises(
         UserError,
@@ -981,6 +985,34 @@ async def test_capability_contributed_toolsets_with_colliding_derived_id():
                 model,
                 name='colliding_capability_agent',
                 capabilities=[MCP(url='https://a.com/api'), MCP(url='https://a.com/v2/api')],
+            )
+        )
+
+
+async def test_nested_toolsets_with_colliding_id():
+    """DBOS reports the shape of the collision, not just that there is one.
+
+    Its guard walks the leaves, so it sees a duplicate however deeply the toolset tree nests it, and
+    names the `MCPToolset` the user has to change. The id keys the MCP server's step names across
+    the whole workflow, so DBOS needs it unique whether or not the server contributes instructions.
+    """
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
+            "but more than one leaf toolset uses the id 'dup'. "
+            "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
+            'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
+        ),
+    ):
+        DBOSAgent(  # pyright: ignore[reportDeprecated]
+            Agent(
+                model,
+                name='colliding_nested_agent',
+                toolsets=[
+                    CombinedToolset([MCPToolset('https://a.com/api', id='dup')]),
+                    MCPToolset('https://a.com/v2/api', id='dup'),
+                ],
             )
         )
 

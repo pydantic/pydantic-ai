@@ -104,6 +104,7 @@ from ..toolsets._dynamic import (
     ToolsetFunc,
 )
 from ..toolsets._tool_search import parse_discovered_tools
+from ..toolsets.abstract import AGENT_TOOLSET_ID
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
@@ -381,7 +382,7 @@ class _ResolvedSpec:
     """Result of resolving an AgentSpec for use at run/override time."""
 
     capability: CombinedCapability[Any] | None
-    instructions: list[str | SystemPromptFunc[Any]]
+    instructions: list[_instructions.AgentInstruction[Any]]
     model: str | None
     model_settings: ModelSettings | None
     metadata: dict[str, Any] | None
@@ -451,7 +452,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _output_schema: _output.OutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
-    _instructions: list[str | SystemPromptFunc[AgentDepsT]] = dataclasses.field(repr=False)
+    _instructions: list[_instructions.SourcedInstruction[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
@@ -630,6 +631,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         _inject_auto_capabilities(capabilities)
 
         self._root_capability = CombinedCapability(capabilities)
+        _validate_capability_ids(self._root_capability.capabilities)
 
         # Keep the constructor value untouched while capabilities bind. A capability may interpret
         # model IDs itself, so eagerly inferring a string here could construct the wrong provider
@@ -648,7 +650,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type)
         self._output_validators = []
 
-        self._instructions = _instructions.normalize_instructions(instructions)
+        # The agent's own literal instructions are one addressable block; instruction functions are
+        # only addressable if `@agent.instructions(id=...)` declares an id for them.
+        self._instructions = _instructions.source_agent_instructions(_instructions.normalize_instructions(instructions))
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -707,8 +711,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_native_tools: ContextVar[_utils.Option[Sequence[AgentNativeTool[AgentDepsT]]]] = ContextVar(
             '_override_native_tools', default=None
         )
-        self._override_instructions: ContextVar[_utils.Option[list[str | SystemPromptFunc[AgentDepsT]]]] = ContextVar(
-            '_override_instructions', default=None
+        self._override_instructions: ContextVar[_utils.Option[list[_instructions.AgentInstruction[AgentDepsT]]]] = (
+            ContextVar('_override_instructions', default=None)
         )
         self._override_metadata: ContextVar[_utils.Option[AgentMetadata[AgentDepsT]]] = ContextVar(
             '_override_metadata', default=None
@@ -731,7 +735,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Initialize capability-contributed fields before binding so `for_agent` can safely
         # inspect `agent.toolsets`. Contributions from the bound capability are extracted below.
         self._cap_toolsets: list[AgentToolset[AgentDepsT]] = []
-        self._cap_instructions: list[str | SystemPromptFunc[AgentDepsT]] = []
+        self._cap_instructions: list[_instructions.SourcedInstruction[AgentDepsT]] = []
         self._cap_native_tools: list[AgentNativeTool[AgentDepsT]] = []
         self._cap_model_settings: AgentModelSettings[AgentDepsT] | None = None
 
@@ -758,10 +762,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         _validate_capability_ids(static_capabilities)
 
         # Extract capability-contributed configuration (after for_agent so caps can provide instructions etc.)
-        self._cap_instructions = _instructions.normalize_instructions(self._root_capability.get_instructions())
+        self._cap_instructions = self._root_capability._collect_instructions()  # pyright: ignore[reportPrivateUsage]
         self._cap_native_tools = list(self._root_capability.get_native_tools())
         _validate_native_tool_ids(self._cap_native_tools, source='agent capabilities')
         self._cap_model_settings = self._root_capability.get_model_settings()
+
+        # Constructing the combined view validates stable toolset identities at registration time,
+        # before a run attempts to mint instruction ids or dispatch tools.
+        CombinedToolset(self.toolsets)
 
     @overload
     @classmethod
@@ -1620,7 +1628,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         # Build instructions with per-run capability contributions
-        instructions_literal, instructions_functions = self._get_instructions(
+        static_instruction_parts, instructions_functions = self._get_instructions(
             additional_instructions=instructions,
             cap_instructions=cap_instructions,
         )
@@ -1628,15 +1636,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         async def get_instructions(
             run_context: RunContext[AgentDepsT],
         ) -> list[_messages.InstructionPart] | None:
-            parts: list[_messages.InstructionPart] = []
-
-            if instructions_literal:
-                parts.append(_messages.InstructionPart(content=instructions_literal, dynamic=False))
+            parts: list[_messages.InstructionPart] = [*static_instruction_parts]
 
             for func in instructions_functions:
-                text = await func.run(run_context)
+                text = await func.runner.run(run_context)
                 if text:
-                    parts.append(_messages.InstructionPart(content=text, dynamic=True))
+                    parts.append(_messages.InstructionPart(content=text, dynamic=True, id=func.id))
 
             return parts or None
 
@@ -1744,8 +1749,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
             deferred_tool_results=deferred_tool_results,
-            instructions=instructions_literal,
-            instructions_functions=instructions_functions,
+            instructions=_messages.InstructionPart.join(static_instruction_parts),
+            instructions_functions=[func.runner for func in instructions_functions],
             system_prompts=self._system_prompts,
             system_prompt_functions=self._system_prompt_functions,
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
@@ -2147,12 +2152,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def instructions(self, func: Callable[[], Awaitable[str | None]], /) -> Callable[[], Awaitable[str | None]]: ...
 
     @overload
-    def instructions(self, /) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
+    def instructions(
+        self, /, *, id: str | None = None
+    ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]]: ...
 
     def instructions(
         self,
         func: SystemPromptFunc[AgentDepsT] | None = None,
         /,
+        *,
+        id: str | None = None,
     ) -> Callable[[SystemPromptFunc[AgentDepsT]], SystemPromptFunc[AgentDepsT]] | SystemPromptFunc[AgentDepsT]:
         """Decorator to register an instructions function.
 
@@ -2178,19 +2187,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         async def async_instructions(ctx: RunContext[str]) -> str:
             return f'{ctx.deps} is the best'
         ```
+
+        Args:
+            func: The instructions function to register.
+            id: An optional ID for the instruction block this function produces, used as
+                `'agent:<id>'` on [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an
+                application can address this block specifically, where the bare `'agent'` key addresses
+                the agent's literal instructions. See [instruction blocks](../agent.md#instruction-blocks).
         """
-        if func is None:
+        instruction_id = (
+            _instructions.declared_instruction_id(_instructions.AGENT_INSTRUCTION_ID, id) if id is not None else None
+        )
 
-            def decorator(
-                func_: SystemPromptFunc[AgentDepsT],
-            ) -> SystemPromptFunc[AgentDepsT]:
-                self._instructions.append(func_)
-                return func_
+        def decorator(
+            func_: SystemPromptFunc[AgentDepsT],
+        ) -> SystemPromptFunc[AgentDepsT]:
+            self._instructions.append(_instructions.SourcedInstruction(func_, id=instruction_id))
+            return func_
 
-            return decorator
-        else:
-            self._instructions.append(func)
-            return func
+        return decorator if func is None else decorator(func)
 
     async def system_prompt_parts(
         self,
@@ -2927,7 +2942,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             source_cap = None
         if source_cap is not None:
-            instructions = _instructions.normalize_instructions(source_cap.get_instructions())
+            instructions = source_cap._collect_instructions()  # pyright: ignore[reportPrivateUsage]
             native_tools = list(source_cap.get_native_tools())
             model_settings = source_cap.get_model_settings()
             cap_toolset = source_cap.get_toolset()
@@ -2975,9 +2990,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _get_instructions(
         self,
         additional_instructions: AgentInstructions[AgentDepsT] = None,
-        cap_instructions: list[str | SystemPromptFunc[AgentDepsT]] | None = None,
-    ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
-        """Prepare agent-level instructions, splitting them into literal strings and functions.
+        cap_instructions: list[_instructions.SourcedInstruction[AgentDepsT]] | None = None,
+    ) -> tuple[list[_messages.InstructionPart], list[_instructions.SourcedInstructionRunner[AgentDepsT]]]:
+        """Prepare agent-level instructions, splitting them into static parts and functions.
 
         Toolset instructions are collected separately during run execution.
 
@@ -2986,34 +3001,74 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_instructions: Instructions from capabilities, resolved at run time.
 
         Returns:
-            A tuple of (literal_instructions, instruction_functions) where:
-            - literal_instructions: Combined literal string instructions or None
-            - instruction_functions: List of instruction functions that need to be evaluated at runtime
+            A tuple of (static_parts, instruction_functions) where:
+            - static_parts: Literal instructions, as one `InstructionPart` per source
+            - instruction_functions: Instruction functions that need to be evaluated at runtime,
+              each with the id its output should be addressed by
         """
         override_instructions = self._override_instructions.get()
+        instructions: list[_instructions.SourcedInstruction[AgentDepsT]]
         if override_instructions:
-            # Override replaces all instructions, including capability contributions.
-            instructions = override_instructions.value
+            # Override replaces all instructions, including capability contributions, so what it
+            # provides takes the place of (and the id of) the agent's own instructions.
+            instructions = _instructions.source_agent_instructions(override_instructions.value)
         else:
-            instructions = self._instructions.copy()
+            instructions = [*self._instructions]
             instructions.extend(cap_instructions if cap_instructions is not None else self._cap_instructions)
             if additional_instructions is not None:
-                instructions.extend(_instructions.normalize_instructions(additional_instructions))
+                # Instructions passed to a specific run are already the caller's to change, and
+                # aren't part of the agent's own configured block.
+                instructions.extend(
+                    _instructions.source_instructions(
+                        _instructions.normalize_instructions(additional_instructions), None
+                    )
+                )
 
-        literal_parts: list[str] = []
-        functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
+        static_parts: list[_messages.InstructionPart] = []
+        functions: list[_instructions.SourcedInstructionRunner[AgentDepsT]] = []
+        # Literals sharing an id make up a single addressable block: `Agent(instructions=['a', 'b'])`
+        # is one `'agent'` part, not two competing for the key. An unidentified literal is a block of
+        # its own -- there is no key to merge it under, and fusing them would render two anonymous
+        # sources as one.
+        group: list[_messages.InstructionPart] = []
+        group_key: str | None = None
 
-        for instruction in instructions:
-            if isinstance(instruction, str):
-                literal_parts.append(instruction)
+        def flush_group() -> None:
+            if content := _messages.InstructionPart.join(group):
+                static_parts.append(_messages.InstructionPart(content=content, id=group[0].id))
+            group.clear()
+
+        for sourced in instructions:
+            instruction = sourced.instruction
+            if isinstance(instruction, _messages.InstructionPart):
+                if not (content := instruction.content.strip()):
+                    continue
+                # An author who writes a part is describing one block, so it never merges into a
+                # neighbour: its `dynamic` (which decides what falls inside the cacheable prefix)
+                # applies to that text alone. `sourced.id` is the part's own id already resolved
+                # against its source's key.
+                flush_group()
+                group_key = None
+                static_parts.append(dataclasses.replace(instruction, content=content, id=sourced.id))
+            elif isinstance(instruction, str):
+                if not (content := instruction.strip()):
+                    continue
+                if group and (sourced.id is None or group_key != sourced.id):
+                    flush_group()
+                group_key = sourced.id
+                group.append(_messages.InstructionPart(content=content, id=sourced.id))
             else:
                 # TemplateStr instances land here too: they are callable with a
                 # RunContext parameter, so SystemPromptRunner handles them like
                 # any other system prompt function.
-                functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
+                functions.append(
+                    _instructions.SourcedInstructionRunner(
+                        _system_prompt.SystemPromptRunner[AgentDepsT](instruction), id=sourced.id
+                    )
+                )
+        flush_group()
 
-        literal = '\n'.join(literal_parts).strip() or None
-        return literal, functions
+        return static_parts, functions
 
     def _get_toolset(
         self,
@@ -3402,19 +3457,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # Evaluate literal + dynamic instructions once, then fold in toolset-contributed
             # instructions, mirroring the run/iter graph. Capability-contributed instructions come from
             # the resolved capabilities (like `iter`), not just the init-time snapshot.
-            literal, instruction_functions = self._get_instructions(
+            static_instruction_parts, instruction_functions = self._get_instructions(
                 additional_instructions=instructions, cap_instructions=resolved_caps.instructions
             )
-            # Build `InstructionPart`s (static literal first, then dynamic functions, then dynamic toolset
+            # Build `InstructionPart`s (static parts first, then dynamic functions, then dynamic toolset
             # instructions) and join with the canonical `InstructionPart.join` — same double-newline
-            # separator and static-before-dynamic ordering as the graph run. KEEP IN SYNC with the graph's
-            # `_get_instructions` / `ModelRequestNode`.
-            instruction_parts: list[_messages.InstructionPart] = []
-            if literal:
-                instruction_parts.append(_messages.InstructionPart(content=literal, dynamic=False))
+            # separator, static-before-dynamic ordering, and per-source `id`s as the graph run.
+            # KEEP IN SYNC with the graph's `_get_instructions` / `ModelRequestNode`.
+            instruction_parts: list[_messages.InstructionPart] = [*static_instruction_parts]
             for fn in instruction_functions:
-                if text := await fn.run(run_context):
-                    instruction_parts.append(_messages.InstructionPart(content=text, dynamic=True))
+                if text := await fn.runner.run(run_context):
+                    instruction_parts.append(_messages.InstructionPart(content=text, dynamic=True, id=fn.id))
             instruction_parts.extend(
                 _instructions.normalize_toolset_instructions(await tool_manager.toolset.get_instructions(run_context))
             )
@@ -3933,6 +3986,7 @@ def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) ->
             )
         if cap.id is None:
             continue
+        _instructions.validate_instruction_id_segment(cap.id, kind='Capability id')
         if cap.id in explicit_ids:
             raise exceptions.UserError(
                 f'Capability id {cap.id!r} is used by multiple capabilities. '
@@ -3979,7 +4033,7 @@ class _ResolvedRunCapabilities(Generic[AgentDepsT]):
 
     run_capability: AbstractCapability[AgentDepsT]
     capabilities: dict[str, AbstractCapability[AgentDepsT]]
-    instructions: list[str | SystemPromptFunc[AgentDepsT]] | None
+    instructions: list[_instructions.SourcedInstruction[AgentDepsT]] | None
     native_tools: list[AgentNativeTool[AgentDepsT]]
     model_settings: AgentModelSettings[AgentDepsT] | None
     toolsets: list[AgentToolset[AgentDepsT]] | None
@@ -4114,7 +4168,7 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
 
     @property
     def id(self) -> str:
-        return '<agent>'
+        return AGENT_TOOLSET_ID
 
     @property
     def label(self) -> str:

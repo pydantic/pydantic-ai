@@ -23,6 +23,13 @@ if TYPE_CHECKING:
     from .set_metadata import SetMetadataToolset
 
 
+AGENT_TOOLSET_ID = '<agent>'
+"""The [`id`][pydantic_ai.toolsets.AbstractToolset.id] of the function toolset an agent builds for its own tools."""
+
+OUTPUT_TOOLSET_ID = '<output>'
+"""The [`id`][pydantic_ai.toolsets.AbstractToolset.id] of the toolset an agent builds for its output tools."""
+
+
 class SchemaValidatorProt(Protocol):
     """Protocol for a Pydantic Core `SchemaValidator` or `PluggableSchemaValidator` (which is private but API-compatible)."""
 
@@ -93,6 +100,10 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         If you're implementing a concrete implementation that users can instantiate more than once, you should let them optionally pass a custom ID to the constructor and return that here.
 
         A toolset needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
+
+        IDs wrapped in angle brackets (`'<agent>'` for an agent's own function toolset, `'<output>'` for
+        its output tools) name a role the framework fills on the user's behalf rather than a registered
+        toolset. Don't return one from your own toolset.
         """
         raise NotImplementedError()
 
