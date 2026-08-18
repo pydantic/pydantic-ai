@@ -595,6 +595,8 @@ DeepSeek [documents](https://api-docs.deepseek.com/guides/responses_api) which p
 - Image and document inputs are replaced with placeholder text rather than rejected.
 - Reasoning is configured with `openai_reasoning_effort` (or the unified [`thinking`](../capabilities/thinking.md) setting); `openai_reasoning_summary` is accepted but produces no summary.
 
+One difference is handled for you rather than ignored: DeepSeek treats an assistant item that follows a function call as closing that call's output group, so replaying a turn that interleaves function calls with thinking or text would be rejected with `No tool output found for tool call ...`. Pydantic AI groups those calls after the other items when building the request. Only the request is reordered — the [message history](../message-history.md) you hold is unchanged.
+
 ### Alibaba Cloud Model Studio (DashScope)
 
 To use Qwen models via [Alibaba Cloud Model Studio (DashScope)](https://www.alibabacloud.com/en/product/modelstudio), you can set the `ALIBABA_API_KEY` (or `DASHSCOPE_API_KEY`) environment variable and use [`AlibabaProvider`][pydantic_ai.providers.alibaba.AlibabaProvider] by name:
