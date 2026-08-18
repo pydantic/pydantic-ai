@@ -646,20 +646,25 @@ class BedrockConverseModel(Model[BaseClient]):
         return self._provider.name
 
     def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the longest retention requested by supported Bedrock cache settings or the unified `cache` setting."""
+        """Resolve the longest retention requested by supported Bedrock cache settings or the unified `cache` setting.
+
+        Mirrors `_translate_cache` precedence: when any explicit `bedrock_cache_*` setting is
+        present, the unified value contributes nothing, since it also adds nothing to the request.
+        """
         settings = merge_model_settings(self.settings, model_settings) or {}
-        return self._max_prompt_cache_retention(
-            settings.get('bedrock_cache_instructions')
-            if self.profile.get('bedrock_supports_prompt_caching', False)
-            else None,
-            settings.get('bedrock_cache_messages')
-            if self.profile.get('bedrock_supports_prompt_caching', False)
-            else None,
-            settings.get('bedrock_cache_tool_definitions')
-            if self.profile.get('bedrock_supports_tool_caching', False)
-            else None,
-            self._resolved_cache_setting(settings),
-        )
+        if any(key in settings for key in _CACHE_SETTINGS_KEYS):
+            return self._max_prompt_cache_retention(
+                settings.get('bedrock_cache_instructions')
+                if self.profile.get('bedrock_supports_prompt_caching', False)
+                else None,
+                settings.get('bedrock_cache_messages')
+                if self.profile.get('bedrock_supports_prompt_caching', False)
+                else None,
+                settings.get('bedrock_cache_tool_definitions')
+                if self.profile.get('bedrock_supports_tool_caching', False)
+                else None,
+            )
+        return self._max_prompt_cache_retention(self._resolved_cache_setting(settings))
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -705,7 +710,7 @@ class BedrockConverseModel(Model[BaseClient]):
             )
         # Pass unmerged model_settings; base class does its own merge
         prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
-        if model_request_parameters.cache is not None:
+        if model_request_parameters.cache:
             prepared_settings = self._translate_cache(
                 cast(BedrockModelSettings, prepared_settings or {}), model_request_parameters.cache
             )
@@ -721,10 +726,12 @@ class BedrockConverseModel(Model[BaseClient]):
         """
         if any(key in model_settings for key in _CACHE_SETTINGS_KEYS):
             return model_settings
-        ttl: Literal['5m', '1h'] = cache if cache in ('5m', '1h') else '5m'
+        # `True` stays `True` so no explicit `ttl` reaches the wire, matching what
+        # `bedrock_cache_instructions=True` sends; only a requested retention is forwarded.
+        value: Literal[True, '5m', '1h'] = cache if cache in ('5m', '1h') else True
         translated = model_settings.copy()
-        translated['bedrock_cache_instructions'] = ttl
-        translated['bedrock_cache_tool_definitions'] = ttl
+        translated['bedrock_cache_instructions'] = value
+        translated['bedrock_cache_tool_definitions'] = value
         return translated
 
     @property

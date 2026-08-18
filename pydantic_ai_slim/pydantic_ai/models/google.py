@@ -6,7 +6,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Any, Literal, cast, get_args, overload
 from uuid import uuid4
@@ -547,7 +547,7 @@ class GoogleModel(Model[Client]):
                     'Use `output_type=PromptedOutput(...)` instead.'
                 )
         merged_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
-        if model_request_parameters.cache is not None and not (merged_settings or {}).get('google_cached_content'):
+        if model_request_parameters.cache and not (merged_settings or {}).get('google_cached_content'):
             warnings.warn(
                 'The unified `cache` setting adds nothing to a Google request: Gemini caches prompts '
                 'implicitly, and explicit caching requires a pre-created cache resource passed via '
@@ -555,6 +555,14 @@ class GoogleModel(Model[Client]):
                 UserWarning,
             )
         return merged_settings, model_request_parameters
+
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Gemini caching claims no resolvable retention.
+
+        The implicit cache retention is undocumented and a `google_cached_content` resource
+        manages its own TTL, so the unified `cache` setting resolves no retention either.
+        """
+        return None
 
     async def request(
         self,

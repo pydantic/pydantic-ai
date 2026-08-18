@@ -129,7 +129,7 @@ To request Bedrock's `'reserved'` tier (which requires a pre-purchased capacity 
 
 Bedrock supports [prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html) on Anthropic models so you can reuse expensive context across requests.
 
-The provider-agnostic way to enable it is the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting: on supporting Bedrock models, `cache=True` (or a retention like `cache='1h'`) places cache points at the end of the tool definitions and static instructions, equivalent to `bedrock_cache_instructions` plus `bedrock_cache_tool_definitions` below. The provider-specific `bedrock_cache_*` settings take precedence when set.
+The provider-agnostic way to enable it is the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting: on supporting Bedrock models, `cache=True` places cache points at the end of the tool definitions and static instructions, equivalent to `bedrock_cache_instructions` plus `bedrock_cache_tool_definitions` below. Requested retentions snap to the default tier, since AWS grants the extended TTL to only a subset of Claude models; use the `bedrock_cache_*='1h'` settings directly on models that support it. The provider-specific `bedrock_cache_*` settings take precedence when set.
 
 Beyond that, Pydantic AI provides four provider-specific ways to use prompt caching:
 

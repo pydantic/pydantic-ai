@@ -626,15 +626,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return self._model_name
 
     def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the longest retention requested by active Anthropic cache settings or the unified `cache` setting."""
+        """Resolve the longest retention requested by active Anthropic cache settings or the unified `cache` setting.
+
+        Mirrors `_translate_cache` precedence: when any explicit `anthropic_cache*` setting is
+        present, the unified value contributes nothing, since it also adds nothing to the request.
+        """
         settings = merge_model_settings(self.settings, model_settings) or {}
-        return self._max_prompt_cache_retention(
-            settings.get('anthropic_cache'),
-            settings.get('anthropic_cache_instructions'),
-            settings.get('anthropic_cache_tool_definitions'),
-            settings.get('anthropic_cache_messages'),
-            self._resolved_cache_setting(settings),
-        )
+        if any(key in settings for key in _CACHE_SETTINGS_KEYS):
+            return self._max_prompt_cache_retention(*(settings.get(key) for key in _CACHE_SETTINGS_KEYS))
+        return self._max_prompt_cache_retention(self._resolved_cache_setting(settings))
 
     @property
     def system(self) -> str:
@@ -838,7 +838,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             filtered: ModelSettings = {**prepared_settings}
             self._drop_unsupported_sampling_settings(filtered)
             prepared_settings = filtered or None
-        if model_request_parameters.cache is not None:
+        if model_request_parameters.cache:
             prepared_settings = self._translate_cache(
                 cast(AnthropicModelSettings, prepared_settings or {}), model_request_parameters.cache
             )

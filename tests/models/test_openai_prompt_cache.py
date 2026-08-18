@@ -301,6 +301,23 @@ async def test_openai_chat_prompt_cache_options_sent_for_any_model(allow_model_r
     ]
 
 
+async def test_openrouter_unified_cache_adds_cache_control(allow_model_requests: None):
+    """The unified `cache` setting flows through `OpenRouterModel.prepare_request` into a
+    `cache_control` breakpoint on the system instructions for a supporting downstream provider."""
+    c = chat.ChatCompletion.model_validate({**chat_completion().model_dump(), 'provider': 'Anthropic'})
+    mock_client = AsyncOpenAI(api_key='test-key')
+    create = AsyncMock(return_value=c)
+    mock_client.chat.completions.create = create
+    model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=OpenRouterProvider(openai_client=mock_client))
+
+    await Agent(model, instructions='Stable instructions.', model_settings={'cache': '1h'}).run('Hi')
+
+    request = create.call_args.kwargs
+    system_message = request['messages'][0]
+    assert system_message['role'] == 'system'
+    assert system_message['content'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
+
+
 async def test_openrouter_chat_cache_point_dropped_for_openai_models(allow_model_requests: None):
     """`OpenRouterModel` translates `CachePoint` into `cache_control`, which is dropped for
     providers without `cache_control` support; the OpenAI breakpoint mapping never applies."""

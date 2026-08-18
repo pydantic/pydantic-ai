@@ -460,7 +460,7 @@ class ModelSettings(TypedDict, total=False):
     """Enable or configure prompt caching for the model request.
 
     - `True`: Enable prompt caching with the provider's default retention.
-    - `False`: No library-managed caching (same as omitting the setting).
+    - `False`: No library-managed caching (overrides a `cache` value in the model's default settings).
     - `'5m'`/`'30m'`/`'1h'`: Enable prompt caching with a specific retention, snapped down to
       the nearest tier the provider supports.
 

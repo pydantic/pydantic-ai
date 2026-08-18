@@ -650,7 +650,7 @@ def _openrouter_settings_to_openai_settings(
     # no automatic caching mode, so the library places breakpoints at the stable prompt boundaries
     # (end of tool definitions, end of static instructions); the downstream-provider profile gates
     # still apply when these settings are consumed.
-    if model_request_parameters.cache is not None and not any(key in model_settings for key in _CACHE_SETTINGS_KEYS):
+    if model_request_parameters.cache and not any(key in model_settings for key in _CACHE_SETTINGS_KEYS):
         cache = model_request_parameters.cache
         ttl: Literal['5m', '1h'] = cache if cache in ('5m', '1h') else '5m'
         model_settings['openrouter_cache_instructions'] = ttl
@@ -702,18 +702,22 @@ class OpenRouterModel(OpenAIChatModel):
         settings = merge_model_settings(self.settings, model_settings) or {}
         if not self._resolved_profile.get('openrouter_supports_cache_ttl', False):
             return None
-        return self._max_prompt_cache_retention(
-            settings.get('openrouter_cache_instructions')
-            if self._resolved_profile.get('openrouter_supports_cache_control', False)
-            else None,
-            settings.get('openrouter_cache_messages')
-            if self._resolved_profile.get('openrouter_supports_cache_control', False)
-            else None,
-            settings.get('openrouter_cache_tool_definitions')
-            if self._resolved_profile.get('openrouter_supports_tool_cache', False)
-            else None,
-            self._resolved_cache_setting(settings),
-        )
+        # Mirrors the unified-cache translation precedence: when any explicit `openrouter_cache_*`
+        # setting is present, the unified value contributes nothing, since it also adds nothing to
+        # the request.
+        if any(key in settings for key in _CACHE_SETTINGS_KEYS):
+            return self._max_prompt_cache_retention(
+                settings.get('openrouter_cache_instructions')
+                if self._resolved_profile.get('openrouter_supports_cache_control', False)
+                else None,
+                settings.get('openrouter_cache_messages')
+                if self._resolved_profile.get('openrouter_supports_cache_control', False)
+                else None,
+                settings.get('openrouter_cache_tool_definitions')
+                if self._resolved_profile.get('openrouter_supports_tool_cache', False)
+                else None,
+            )
+        return self._max_prompt_cache_retention(self._resolved_cache_setting(settings))
 
     def _build_cache_control(self, ttl: OpenRouterCacheTTL = '5m') -> dict[str, str]:
         """Build a `cache_control` dict for the downstream provider.

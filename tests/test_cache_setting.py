@@ -42,7 +42,7 @@ with try_import() as openai_imports:
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 with try_import() as google_imports:
-    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = [
@@ -121,9 +121,7 @@ class TestPrepareRequestCacheResolution:
 
     def test_cache_stripped_but_other_settings_kept(self):
         model = _make_model(supports_cache=True)
-        settings, params = model.prepare_request(
-            ModelSettings(cache=True, temperature=0.5), ModelRequestParameters()
-        )
+        settings, params = model.prepare_request(ModelSettings(cache=True, temperature=0.5), ModelRequestParameters())
         assert settings == {'temperature': 0.5}
         assert params.cache is True
 
@@ -157,9 +155,7 @@ class TestExcessCachePoints:
 
     def test_reserved_exceeding_max_raises(self):
         with pytest.raises(UserError, match='Too many cache points for test request'):
-            excess_cache_points(
-                [], max_points=4, reserved=5, is_cache_point=lambda b: True, description='test request'
-            )
+            excess_cache_points([], max_points=4, reserved=5, is_cache_point=lambda b: True, description='test request')
 
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
@@ -200,6 +196,16 @@ class TestAnthropicCacheTranslation:
         )
         assert settings == {'anthropic_cache_messages': True}
 
+    def test_profile_without_auto_cache_uses_stable_boundaries(self):
+        """A profile that disclaims automatic caching gets library-placed breakpoints instead."""
+        model = AnthropicModel(
+            'claude-sonnet-4-5',
+            provider=AnthropicProvider(api_key='test'),
+            profile=ModelProfile(supports_auto_cache=False),
+        )
+        settings, _ = model.prepare_request(ModelSettings(cache=True), ModelRequestParameters())
+        assert settings == {'anthropic_cache_instructions': '5m', 'anthropic_cache_tool_definitions': '5m'}
+
     def test_provider_profile_flags(self):
         profile = self._model().profile
         assert profile.get('supports_cache') is True
@@ -216,7 +222,7 @@ class TestBedrockCacheTranslation:
 
     def test_cache_true_translates_to_stable_boundaries(self):
         settings = self._model()._translate_cache(BedrockModelSettings(), True)
-        assert settings == {'bedrock_cache_instructions': '5m', 'bedrock_cache_tool_definitions': '5m'}
+        assert settings == {'bedrock_cache_instructions': True, 'bedrock_cache_tool_definitions': True}
 
     def test_cache_retention_forwarded(self):
         settings = self._model()._translate_cache(BedrockModelSettings(), '1h')
@@ -230,7 +236,7 @@ class TestBedrockCacheTranslation:
         profile = BedrockProvider.model_profile('anthropic.claude-sonnet-4-5-20250929-v1:0')
         assert profile is not None
         assert profile.get('supports_cache') is True
-        assert profile.get('supported_cache_retentions') == ('5m', '1h')
+        assert profile.get('supported_cache_retentions') == ('5m',)
         assert profile.get('max_cache_points') == 4
         assert profile.get('supports_auto_cache', False) is False
 
@@ -299,7 +305,7 @@ class TestGoogleCacheWarning:
             self._model().prepare_request(ModelSettings(cache=True), ModelRequestParameters())
 
     def test_cache_with_cached_content_does_not_warn(self):
-        settings: ModelSettings = {'cache': True, 'google_cached_content': 'cachedContents/foo'}
+        settings = GoogleModelSettings(cache=True, google_cached_content='cachedContents/foo')
         self._model().prepare_request(settings, ModelRequestParameters())
 
     def test_no_cache_setting_does_not_warn(self):
@@ -322,6 +328,17 @@ class TestResolvePromptCacheRetentionUnified:
         model = _make_model(supports_cache=False)
         assert model.resolve_prompt_cache_retention(ModelSettings(cache='1h')) is None
 
+    def test_fallback_model_resolves_none(self):
+        from pydantic_ai.models.fallback import FallbackModel
+
+        model = FallbackModel(_make_model(supports_cache=True))
+        assert model.resolve_prompt_cache_retention(ModelSettings(cache='1h')) is None
+
+    @pytest.mark.skipif(not google_imports(), reason='google not installed')
+    def test_google_model_resolves_none(self):
+        model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test'))
+        assert model.resolve_prompt_cache_retention(ModelSettings(cache=True)) is None
+
     def test_wrapper_model_delegates_to_wrapped(self):
         from pydantic_ai.models.wrapper import WrapperModel
 
@@ -329,8 +346,11 @@ class TestResolvePromptCacheRetentionUnified:
         assert WrapperModel(model).resolve_prompt_cache_retention(ModelSettings(cache='1h')) == timedelta(hours=1)
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
-    def test_anthropic_longest_wins_across_unified_and_provider_settings(self):
+    def test_anthropic_explicit_settings_shadow_unified_value(self):
+        """Retention mirrors translation precedence: an explicit `anthropic_cache*` setting makes
+        the unified value contribute nothing, since it also adds nothing to the request."""
         model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
         settings = AnthropicModelSettings(cache='1h', anthropic_cache_instructions='5m')
-        assert model.resolve_prompt_cache_retention(settings) == timedelta(hours=1)
+        assert model.resolve_prompt_cache_retention(settings) == timedelta(minutes=5)
         assert model.resolve_prompt_cache_retention(AnthropicModelSettings(cache=True)) == timedelta(minutes=5)
+        assert model.resolve_prompt_cache_retention(AnthropicModelSettings(cache='1h')) == timedelta(hours=1)
