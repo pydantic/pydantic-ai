@@ -479,7 +479,7 @@ async def test_unknown_tool_retry_steers_to_search_when_nothing_is_callable_yet(
     result = await agent.run('hello')
 
     assert result.output == snapshot(
-        "Unknown tool name: 'bogus_op'. No tools are available yet: search for the tool you need, then call it once you've seen its schema."
+        "Unknown tool name: 'bogus_op'. No tools are available yet: search for the tools you need."
     )
 
 

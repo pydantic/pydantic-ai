@@ -508,10 +508,7 @@ class ToolManager(Generic[AgentDepsT]):
             if available:
                 msg = f'Available tools: {", ".join(f"{n!r}" for n in available)}'
             elif self.tools:
-                msg = (
-                    'No tools are available yet: search for the tool you need, '
-                    "then call it once you've seen its schema."
-                )
+                msg = 'No tools are available yet: search for the tools you need.'
             else:
                 msg = 'No tools available.'
             raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
