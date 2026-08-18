@@ -281,8 +281,10 @@ class LocalSandbox:
         )
 
     async def _kill_and_reap(self, process: asyncio.subprocess.Process) -> PermissionError | None:
-        """Kill the group and reap the direct child, reporting a denied group kill instead of
-        raising it, so the caller decides which exception its contract owes."""
+        """Kill the group and reap the direct child, reporting a denied group kill.
+
+        Reported instead of raised, so the caller decides which exception its contract owes.
+        """
         try:
             self._kill(process)
         except PermissionError as error:

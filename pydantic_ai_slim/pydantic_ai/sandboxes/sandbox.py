@@ -337,8 +337,7 @@ def _require_absolute_cwd(cwd: str | None) -> None:
     # (the host process's working directory for a local backend), outside the sandbox root.
     if cwd is not None and not posixpath.isabs(cwd):
         raise ValueError(
-            f'cwd must be an absolute POSIX path, got {cwd!r}; '
-            'resolve relative paths with `sandbox.resolve()` first'
+            f'cwd must be an absolute POSIX path, got {cwd!r}; resolve relative paths with `sandbox.resolve()` first'
         )
 
 
