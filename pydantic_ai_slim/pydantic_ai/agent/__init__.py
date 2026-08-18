@@ -1308,6 +1308,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # run would otherwise consume it and attach the outer handle to the wrong run.
         binding = take_run_binding()
 
+        # The controller likewise exists before any user-supplied setup code, so `RunContext.cancel()`
+        # from a capability/toolset `for_run()` hook records the request instead of raising. Delivery
+        # still waits for `bind()` below: setup hooks are never interrupted, and a request recorded
+        # here ends the run at the first await after binding, before any model request (#7386).
+        cancellation = binding.cancellation if binding is not None else RunCancellation()
+
         # A bare `int` overrides both budgets; a partial `retries={'tools': ...}` / `{'output': ...}`
         # dict overrides only the named budget for this run (riding `ToolManager.default_max_retries`).
         retry_overrides = _normalize_agent_retry_overrides(retries)
@@ -1548,6 +1554,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             pending_messages=state.pending_messages,
             run_id=state.run_id,
             conversation_id=state.conversation_id,
+            _cancellation=cancellation,
         )
 
         # Resolve run metadata up front so capability and toolset `for_run` hooks
@@ -1738,7 +1745,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
-            cancellation=binding.cancellation if binding is not None else RunCancellation(),
+            cancellation=cancellation,
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
