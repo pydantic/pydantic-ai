@@ -216,6 +216,7 @@ _FULL_PROFILE = RealtimeModelProfile(
     supports_interruption=True,
     supports_output_truncation=True,
     supports_session_seeding=True,
+    supports_tool_updates=True,
     supported_native_tools=SUPPORTED_NATIVE_TOOLS,
     audio_input_sample_rate=DEFAULT_AUDIO_SAMPLE_RATE,
     audio_output_sample_rate=DEFAULT_AUDIO_SAMPLE_RATE,
