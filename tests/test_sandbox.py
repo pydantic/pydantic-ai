@@ -421,6 +421,7 @@ async def test_read_file_windowed_works_without_filesystem_support():
     inner = FakeSandbox('run-only')
     inner.fs.files['/workspace/file'] = b'one\ntwo\nthree\n'
     sandbox = Sandbox(_RunOnlySandbox(inner))
+    assert sandbox.sandbox_id == 'fake-run-only'  # identity forwards without filesystem support
 
     window = await sandbox.read_file('file', offset=1, limit=2)
     assert window.lines == ('one', 'two')
