@@ -135,7 +135,7 @@ def assert_model_boundary_payloads(root_span: _Span, expected_event_kinds: Seque
     for event in events:
         event_kind = event['event_kind']
         assert isinstance(event_kind, str)
-        message = event['request'] if event_kind == 'model_request' else event['response']
+        message = event['request'] if event_kind.startswith('model_request') else event['response']
         assert isinstance(message, dict)
         run_id = message['run_id']
         conversation_id = message['conversation_id']
@@ -143,7 +143,7 @@ def assert_model_boundary_payloads(root_span: _Span, expected_event_kinds: Seque
         assert isinstance(conversation_id, str)
         run_ids.add(run_id)
         conversation_ids.add(conversation_id)
-        if event_kind == 'model_request':
+        if event_kind == 'model_request_end':
             requests.append(message)
         elif event_kind == 'model_response_end':
             provider_response_id = message['provider_response_id']

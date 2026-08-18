@@ -141,7 +141,7 @@ ModelResponseState: TypeAlias = Literal['complete', 'incomplete', 'suspended', '
   finished generating.
 """
 
-ModelRequestState: TypeAlias = Literal['complete', 'interrupted']
+ModelRequestState: TypeAlias = Literal['complete', 'incomplete', 'interrupted']
 """Lifecycle state of a model request."""
 
 ForceDownloadMode: TypeAlias = bool | Literal['allow-local']
@@ -1775,6 +1775,11 @@ class ModelRequest:
 
     state: ModelRequestState = 'complete'
     """Lifecycle state of the request.
+
+    Set to `'incomplete'` on the provisional snapshots streamed while the request is still being assembled —
+    the [`ModelRequestStartEvent`][pydantic_ai.messages.ModelRequestStartEvent] boundary and the growing
+    requests yielded by [`run_stream_messages`][pydantic_ai.agent.AbstractAgent.run_stream_messages] as tool
+    returns land — before the authoritative `'complete'` request is committed.
 
     Set to `'interrupted'` when the request was being assembled (e.g. collecting tool returns) and
     the run was abnormally terminated by an exception or cancellation before the request was sent to the model.
@@ -3427,8 +3432,28 @@ ModelResponseStreamEvent = Annotated[
 
 
 @dataclass(repr=False, kw_only=True)
-class ModelRequestEvent:
-    """An event indicating that a complete request was committed to the agent's message history.
+class ModelRequestStartEvent:
+    """An event indicating that a model request has started being assembled.
+
+    Emitted when the request turn begins: at the start of a run, or as tool calls begin executing and
+    their returns are collected into the next request. The snapshot is provisional — agent hooks and
+    history processors may still rewrite it, and its parts keep growing as tool returns land — so the
+    authoritative request arrives with the paired
+    [`ModelRequestEndEvent`][pydantic_ai.messages.ModelRequestEndEvent].
+    """
+
+    request: ModelRequest
+    """The initial request snapshot, carrying the request parts assembled so far, before agent hooks and processors run."""
+
+    event_kind: Literal['model_request_start'] = 'model_request_start'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class ModelRequestEndEvent:
+    """An event indicating that a model request was finalized and committed to the agent's message history.
 
     The request is the canonical message history after agent hooks and processors. Providers may
     still normalize it before sending it to the model. A final output-tool return request is
@@ -3436,9 +3461,9 @@ class ModelRequestEvent:
     """
 
     request: ModelRequest
-    """The complete model request committed to the message history."""
+    """The authoritative final request committed to the message history, after agent hooks and processors have run."""
 
-    event_kind: Literal['model_request'] = 'model_request'
+    event_kind: Literal['model_request_end'] = 'model_request_end'
     """Event type identifier, used as a discriminator."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
@@ -3649,7 +3674,8 @@ HandleResponseEvent = Annotated[
 """An event yielded when handling a model response, indicating tool calls and results."""
 
 AgentStreamEvent = Annotated[
-    ModelRequestEvent
+    ModelRequestStartEvent
+    | ModelRequestEndEvent
     | ModelResponseStartEvent
     | ModelResponseEndEvent
     | ModelResponseStreamEvent

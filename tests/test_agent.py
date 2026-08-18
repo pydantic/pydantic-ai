@@ -37,7 +37,8 @@ from pydantic_ai import (
     ModelProfile,
     ModelRequest,
     ModelRequestContext,
-    ModelRequestEvent,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
     ModelResponseEndEvent,
     ModelResponsePart,
@@ -4166,14 +4167,21 @@ async def test_run_stream_events_include_message_boundaries() -> None:
         events = [event async for event in stream]
 
     event_types = [type(event) for event in events]
+    request_starts = [index for index, event_type in enumerate(event_types) if event_type is ModelRequestStartEvent]
+    request_ends = [index for index, event_type in enumerate(event_types) if event_type is ModelRequestEndEvent]
     first_response_start = event_types.index(ModelResponseStartEvent)
     first_response_end = event_types.index(ModelResponseEndEvent)
     tool_call = event_types.index(FunctionToolCallEvent)
-    second_request = event_types.index(ModelRequestEvent, 1)
 
-    assert event_types[0] is ModelRequestEvent
-    assert first_response_start < first_response_end < tool_call < second_request
-    assert event_types[second_request + 1] is ModelResponseStartEvent
+    # Two request turns (initial prompt, tool return), each bracketed by a start/end boundary.
+    assert len(request_starts) == len(request_ends) == 2
+    assert event_types[0] is ModelRequestStartEvent
+    assert event_types[1] is ModelRequestEndEvent
+    # The second request turn opens as tools begin executing — before its returns are collected — and
+    # closes before the second response starts.
+    second_request_start, second_request_end = request_starts[1], request_ends[1]
+    assert first_response_start < first_response_end < second_request_start <= tool_call < second_request_end
+    assert event_types[second_request_end + 1] is ModelResponseStartEvent
     assert event_types[-2] is ModelResponseEndEvent
     assert event_types[-1] is AgentRunResultEvent
     response_starts = [event for event in events if isinstance(event, ModelResponseStartEvent)]
@@ -4181,6 +4189,11 @@ async def test_run_stream_events_include_message_boundaries() -> None:
         event.response.parts == [] and event.response.state == 'incomplete' and event.response.usage == RequestUsage()
         for event in response_starts
     )
+    # The request-turn start snapshot is provisional (`incomplete`); the paired end carries the committed request.
+    request_starts_events = [event for event in events if isinstance(event, ModelRequestStartEvent)]
+    assert all(event.request.state == 'incomplete' for event in request_starts_events)
+    request_ends_events = [event for event in events if isinstance(event, ModelRequestEndEvent)]
+    assert all(event.request.state == 'complete' for event in request_ends_events)
 
 
 async def test_run_stream_messages_projects_complete_and_partial_messages() -> None:
@@ -4207,6 +4220,45 @@ async def test_run_stream_messages_projects_complete_and_partial_messages() -> N
     assert messages[-1].result.output == 'streamed'
 
 
+async def test_run_stream_messages_streams_partial_request_as_tools_run() -> None:
+    """A tool-return request is projected `incomplete` as its returns land, then once as committed.
+
+    Not a VCR test: this verifies the request half of the partial-message projection.
+    """
+
+    async def stream_fn(messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='call-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_fn))
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'result'
+
+    async with agent.run_stream_messages('go') as stream:
+        messages = [message async for message in stream]
+
+    tool_requests = [
+        message
+        for message in messages
+        if isinstance(message, ModelRequest) and message.parts and isinstance(message.parts[0], ToolReturnPart)
+    ]
+    incomplete = [request for request in tool_requests if request.state == 'incomplete']
+    committed = [request for request in tool_requests if request.state == 'complete']
+    # The tool return streams into an `incomplete` snapshot before the request is committed exactly once.
+    assert incomplete
+    assert all(
+        isinstance(part, ToolReturnPart) and part.content == 'result'
+        for request in incomplete
+        for part in request.parts
+    )
+    assert len(committed) == 1
+    assert isinstance(messages[-1], AgentRunResultEvent)
+
+
 async def test_run_stream_events_include_request_for_skipped_model() -> None:
     """A short-circuited model call still commits its request boundary.
 
@@ -4225,7 +4277,8 @@ async def test_run_stream_events_include_request_for_skipped_model() -> None:
         events = [event async for event in stream]
 
     assert [type(event) for event in events] == [
-        ModelRequestEvent,
+        ModelRequestStartEvent,
+        ModelRequestEndEvent,
         ModelResponseStartEvent,
         ModelResponseEndEvent,
         AgentRunResultEvent,
@@ -4250,7 +4303,7 @@ async def test_run_stream_events_skip_resume_does_not_reemit_prior_request() -> 
     async with agent.run_stream_events(message_history=history) as stream:
         events = [event async for event in stream]
 
-    assert not any(isinstance(event, ModelRequestEvent) for event in events)
+    assert not any(isinstance(event, ModelRequestEndEvent) for event in events)
     assert isinstance(events[-1], AgentRunResultEvent)
 
 
@@ -4288,7 +4341,7 @@ async def test_skip_suspended_resume_emits_no_request_event(streaming: bool) -> 
         result = await agent.run(message_history=history, event_stream_handler=event_stream_handler)
         assert result.output == 'skipped'
 
-    assert not any(isinstance(event, ModelRequestEvent) for event in events)
+    assert not any(isinstance(event, ModelRequestEndEvent) for event in events)
 
 
 async def test_run_stream_events_skip_emits_queued_requests_once() -> None:
@@ -4323,7 +4376,7 @@ async def test_run_stream_events_skip_emits_queued_requests_once() -> None:
     async with agent.run_stream_events('go') as stream:
         events = [event async for event in stream]
 
-    requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
+    requests = [event.request for event in events if isinstance(event, ModelRequestEndEvent)]
     assert [part.content for request in requests for part in request.parts if isinstance(part, UserPromptPart)] == [
         'go',
         'queued',
@@ -4360,7 +4413,7 @@ async def test_run_stream_events_end_each_response_before_wrap_retry() -> None:
     async with agent.run_stream_events('go') as stream:
         events = [event async for event in stream]
 
-    request_positions = [index for index, event in enumerate(events) if isinstance(event, ModelRequestEvent)]
+    request_positions = [index for index, event in enumerate(events) if isinstance(event, ModelRequestEndEvent)]
     start_positions = [index for index, event in enumerate(events) if isinstance(event, ModelResponseStartEvent)]
     end_positions = [index for index, event in enumerate(events) if isinstance(event, ModelResponseEndEvent)]
     assert len(request_positions) == len(start_positions) == len(end_positions) == 2
@@ -4398,7 +4451,7 @@ async def test_run_stream_events_skip_boundaries_for_pre_handler_wrap_retry() ->
     async with agent.run_stream_events('go') as stream:
         events = [event async for event in stream]
 
-    assert sum(isinstance(event, ModelRequestEvent) for event in events) == 2
+    assert sum(isinstance(event, ModelRequestEndEvent) for event in events) == 2
     assert sum(isinstance(event, ModelResponseStartEvent) for event in events) == 1
     assert sum(isinstance(event, ModelResponseEndEvent) for event in events) == 1
 
@@ -4416,7 +4469,7 @@ async def test_run_stream_events_include_output_tool_return_request() -> None:
     async with agent.run_stream_events('go') as stream:
         events = [event async for event in stream]
 
-    requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
+    requests = [event.request for event in events if isinstance(event, ModelRequestEndEvent)]
     assert len(requests) == 2
     assert isinstance(requests[-1].parts[0], ToolReturnPart)
     assert isinstance(events[-1], AgentRunResultEvent)
@@ -4437,10 +4490,13 @@ async def test_run_stream_messages_include_output_tool_return_once() -> None:
 
     result_event = messages[-1]
     assert isinstance(result_event, AgentRunResultEvent)
+    # Committed requests only: the request also arrives as `incomplete` partials as its tool return streams in.
     tool_return_requests = [
         message
         for message in messages
-        if isinstance(message, ModelRequest) and isinstance(message.parts[0], ToolReturnPart)
+        if isinstance(message, ModelRequest)
+        and message.state != 'incomplete'
+        and isinstance(message.parts[0], ToolReturnPart)
     ]
     assert tool_return_requests == [result_event.result.new_messages()[-1]]
 
@@ -4491,7 +4547,10 @@ async def test_run_stream_messages_yields_enqueued_messages_once() -> None:
     assert enqueued_contents == ['First enqueued message', 'Second enqueued message']
     result_event = messages[-1]
     assert isinstance(result_event, AgentRunResultEvent)
-    projected_requests = [message for message in messages if isinstance(message, ModelRequest)]
+    # Committed requests only: tool-return requests also arrive as `incomplete` partials as they assemble.
+    projected_requests = [
+        message for message in messages if isinstance(message, ModelRequest) and message.state != 'incomplete'
+    ]
     assert [
         part.content
         for message in projected_requests
@@ -4550,7 +4609,10 @@ async def test_run_stream_messages_yields_when_idle_requests_in_order() -> None:
 
     result_event = messages[-1]
     assert isinstance(result_event, AgentRunResultEvent)
-    projected_requests = [message for message in messages if isinstance(message, ModelRequest)]
+    # Committed requests only: tool-return requests also arrive as `incomplete` partials as they assemble.
+    projected_requests = [
+        message for message in messages if isinstance(message, ModelRequest) and message.state != 'incomplete'
+    ]
     result_requests = [message for message in result_event.result.new_messages() if isinstance(message, ModelRequest)]
     assert projected_requests == result_requests
     assert [
@@ -4628,7 +4690,7 @@ async def test_run_stream_events_rebuilt_queue_translates_origin_across_truncati
     async with agent.run_stream_events('go') as stream:
         events = [event async for event in stream]
 
-    requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
+    requests = [event.request for event in events if isinstance(event, ModelRequestEndEvent)]
     expected = ['go', 'first idle', 'second idle', 'third idle'] if truncate == 'prefix' else ['go', 'first idle']
     assert [
         part.content for request in requests for part in request.parts if isinstance(part, UserPromptPart)
@@ -4659,7 +4721,7 @@ async def test_run_stream_events_does_not_reemit_rewritten_history_requests() ->
     async with agent.run_stream_events('new', message_history=history) as stream:
         events = [event async for event in stream]
 
-    requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
+    requests = [event.request for event in events if isinstance(event, ModelRequestEndEvent)]
     assert len(requests) == 1
     assert isinstance(requests[0].parts[0], UserPromptPart)
     assert requests[0].parts[0].content == 'new'
@@ -4774,7 +4836,7 @@ async def test_run_stream_events_full_history_rebuild_preserves_request_boundary
     async with agent.run_stream_events(None if resume else 'current', message_history=history) as stream:
         events = [event async for event in stream]
 
-    requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
+    requests = [event.request for event in events if isinstance(event, ModelRequestEndEvent)]
     assert [part.content for request in requests for part in request.parts if isinstance(part, UserPromptPart)] == (
         [] if resume else ['current']
     )
@@ -4815,7 +4877,7 @@ async def test_run_stream_events_request_boundaries_match_new_messages() -> None
 
     result_event = events[-1]
     assert isinstance(result_event, AgentRunResultEvent)
-    requests = [event.request for event in events if isinstance(event, ModelRequestEvent)]
+    requests = [event.request for event in events if isinstance(event, ModelRequestEndEvent)]
     assert requests == [message for message in result_event.result.new_messages() if isinstance(message, ModelRequest)]
     assert [part.content for request in requests for part in request.parts if isinstance(part, UserPromptPart)] == [
         'appended'
@@ -4863,7 +4925,7 @@ async def test_run_stream_messages_skips_partials_without_a_response_start() -> 
 async def test_run_stream_messages_yields_enqueued_non_request_messages() -> None:
     """An enqueued `ModelResponse` reaches the projection through its delivery event.
 
-    Enqueued requests surface as `ModelRequestEvent`s once committed, so the projection takes only the
+    Enqueued requests surface as `ModelRequestEndEvent`s once committed, so the projection takes only the
     other messages out of the delivery event rather than yielding a request twice.
 
     Not a VCR test: queue delivery is framework-owned state.

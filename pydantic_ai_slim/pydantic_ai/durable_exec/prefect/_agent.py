@@ -788,7 +788,8 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             print([type(event).__name__ for event in collected])
             '''
             [
-                'ModelRequestEvent',
+                'ModelRequestStartEvent',
+                'ModelRequestEndEvent',
                 'ModelResponseStartEvent',
                 'PartStartEvent',
                 'FinalResultEvent',

@@ -877,7 +877,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             print([type(event).__name__ for event in collected])
             '''
             [
-                'ModelRequestEvent',
+                'ModelRequestStartEvent',
+                'ModelRequestEndEvent',
                 'ModelResponseStartEvent',
                 'PartStartEvent',
                 'FinalResultEvent',

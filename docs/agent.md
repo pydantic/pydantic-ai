@@ -104,7 +104,21 @@ async def main():
     print(collected)
     """
     [
-        ModelRequestEvent(
+        ModelRequestStartEvent(
+            request=ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of Mexico?',
+                        timestamp=datetime.datetime(...),
+                    )
+                ],
+                timestamp=datetime.datetime(...),
+                run_id='...',
+                conversation_id='...',
+                state='incomplete',
+            )
+        ),
+        ModelRequestEndEvent(
             request=ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -278,7 +292,7 @@ Unlike `run_stream()`, it always runs the agent graph to completion even if text
 For convenience, a [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] method is also available as a wrapper around `run(event_stream_handler=...)`. It is an async context manager that yields an async iterator over [`AgentStreamEvent`s][pydantic_ai.messages.AgentStreamEvent] ending with an [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] carrying the final run result.
 
 !!! note
-    Each event stream now includes a [`ModelRequestEvent`][pydantic_ai.messages.ModelRequestEvent] when a canonical request is committed, a [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] before its part events, and a [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] after the final response is committed. These boundaries are ordered and pairable in one flattened `run_stream_events()` stream, but can cross node-scoped capability or event-handler invocations. They distinguish an in-progress response from the authoritative history message.
+    Each event stream brackets every model message with boundary events: a [`ModelRequestStartEvent`][pydantic_ai.messages.ModelRequestStartEvent] and [`ModelRequestEndEvent`][pydantic_ai.messages.ModelRequestEndEvent] around each request, and a [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] and [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] around each response. The start events open the message before its content — a request while its tool returns are still being collected, a response before its part events — while the end events carry the authoritative message committed to history, after `before_model_request`/`after_model_request` hooks and history processors have run. These boundaries are ordered and pairable in one flattened `run_stream_events()` stream, but can cross node-scoped capability or event-handler invocations. They distinguish an in-progress message from the authoritative history message.
 
     To combine raw events and streamed output, use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] as described in the next section, which lets you [iterate over the agent graph](#iterating-over-an-agents-graph) and [stream both events and output](#streaming-all-events-and-output) at every step. See [Making structured responses appear faster](output.md#making-structured-responses-appear-faster) for a focused example using validated structured output.
 

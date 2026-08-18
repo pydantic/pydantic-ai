@@ -39,7 +39,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelRequestContext,
-    ModelRequestEvent,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
     ModelResponseEndEvent,
     ModelResponseStartEvent,
@@ -4618,7 +4619,16 @@ async def test_unknown_tool_call_events():
 
     assert event_parts == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -4645,6 +4655,15 @@ async def test_unknown_tool_call_events():
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                )
+            ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
                 )
             ),
             FunctionToolCallEvent(
@@ -4679,7 +4698,7 @@ async def test_unknown_tool_call_events():
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         RetryPromptPart(
@@ -4721,6 +4740,15 @@ async def test_unknown_tool_call_events():
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='unknown_tool',
@@ -4755,7 +4783,16 @@ async def test_output_tool_success_events():
 
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -4779,6 +4816,15 @@ async def test_output_tool_success_events():
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             OutputToolCallEvent(
                 part=ToolCallPart(
                     tool_name='final_result',
@@ -4795,7 +4841,7 @@ async def test_output_tool_success_events():
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         ToolReturnPart(
@@ -4839,7 +4885,16 @@ async def test_output_tool_events():
 
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -4866,6 +4921,15 @@ async def test_output_tool_events():
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                )
+            ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
                 )
             ),
             OutputToolCallEvent(
@@ -4907,7 +4971,7 @@ async def test_output_tool_events():
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         RetryPromptPart(
@@ -5284,7 +5348,16 @@ async def test_deferred_tool_iter():
     )
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -5341,6 +5414,15 @@ async def test_deferred_tool_iter():
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
             ),
@@ -5393,13 +5475,15 @@ async def test_deferred_tool_requests_and_results_events():
     # as the approved call executes.
     assert event_kinds == snapshot(
         [
-            'model_request',
+            'model_request_start',
+            'model_request_end',
             'model_response_end',
+            'model_request_start',
             'function_tool_call',
             'deferred_tool_requests',
             'deferred_tool_results',
             'function_tool_result',
-            'model_request',
+            'model_request_end',
             'model_response_end',
         ]
     )
@@ -5440,7 +5524,16 @@ async def test_tool_raises_call_deferred_approval_required_iter():
 
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='test', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -5496,6 +5589,15 @@ async def test_tool_raises_call_deferred_approval_required_iter():
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()), args_valid=True
             ),
@@ -5546,7 +5648,16 @@ async def test_run_event_stream_handler():
     assert result.output == snapshot('{"ret_a":"a-apple"}')
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -5583,6 +5694,15 @@ async def test_run_event_stream_handler():
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
@@ -5594,7 +5714,7 @@ async def test_run_event_stream_handler():
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         ToolReturnPart(
@@ -5689,7 +5809,16 @@ def test_run_sync_event_stream_handler():
     assert result.output == snapshot('{"ret_a":"a-apple"}')
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -5726,6 +5855,15 @@ def test_run_sync_event_stream_handler():
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
@@ -5737,7 +5875,7 @@ def test_run_sync_event_stream_handler():
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         ToolReturnPart(
@@ -5805,7 +5943,16 @@ async def test_run_stream_event_stream_handler():
 
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -5842,6 +5989,15 @@ async def test_run_stream_event_stream_handler():
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
@@ -5853,7 +6009,7 @@ async def test_run_stream_event_stream_handler():
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         ToolReturnPart(
@@ -5999,7 +6155,16 @@ async def test_stream_tool_returning_user_content():
 
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -6036,6 +6201,15 @@ async def test_stream_tool_returning_user_content():
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()), args_valid=True
             ),
@@ -6051,7 +6225,7 @@ async def test_stream_tool_returning_user_content():
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         ToolReturnPart(
@@ -6135,7 +6309,16 @@ async def test_run_stream_events():
 
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='Hello', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -6172,6 +6355,15 @@ async def test_run_stream_events():
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
             ),
@@ -6183,7 +6375,7 @@ async def test_run_stream_events():
                     timestamp=IsNow(tz=timezone.utc),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         ToolReturnPart(
@@ -6371,7 +6563,16 @@ async def test_args_validator_failure_events():
 
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -6414,6 +6615,15 @@ async def test_args_validator_failure_events():
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
                 args_valid=False,
@@ -6426,7 +6636,7 @@ async def test_args_validator_failure_events():
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         RetryPromptPart(
@@ -6476,6 +6686,15 @@ async def test_args_validator_failure_events():
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
                 args_valid=True,
@@ -6488,7 +6707,7 @@ async def test_args_validator_failure_events():
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         ToolReturnPart(
@@ -6557,7 +6776,16 @@ async def test_args_validator_event_args_valid_field():
 
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='call add_numbers with x=1 and y=2', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -6604,6 +6832,15 @@ async def test_args_validator_event_args_valid_field():
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
@@ -6618,7 +6855,7 @@ async def test_args_validator_event_args_valid_field():
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         ToolReturnPart(
@@ -6700,7 +6937,16 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
     assert validator_calls == snapshot([(1, 2, False)])
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='add 1 and 2', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='add 1 and 2', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -6752,6 +6998,15 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
                     timestamp=IsDatetime(),
                     run_id=IsStr(),
                     conversation_id=IsStr(),
+                )
+            ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
                 )
             ),
             FunctionToolCallEvent(

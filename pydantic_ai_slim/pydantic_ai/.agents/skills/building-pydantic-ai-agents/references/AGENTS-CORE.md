@@ -117,7 +117,7 @@ Pick a run method based on the interaction pattern:
 - `run_stream_messages()` when the caller needs complete requests and partial/final response messages across the whole run
 - `iter()` when the caller needs step-by-step control over the agent loop
 
-Use `event_stream_handler=` with `run()` or `run_stream()` when the user wants progress updates without manually consuming the event stream. The stream includes `ModelRequestEvent`, response boundaries and deltas, tool call/result events, and framework events such as `EnqueuedMessagesEvent` when queued messages enter run history:
+Use `event_stream_handler=` with `run()` or `run_stream()` when the user wants progress updates without manually consuming the event stream. The stream includes request and response boundaries (`ModelRequestStartEvent`/`ModelRequestEndEvent`, `ModelResponseStartEvent`/`ModelResponseEndEvent`), part deltas, tool call/result events, and framework events such as `EnqueuedMessagesEvent` when queued messages enter run history:
 
 ```python
 from collections.abc import AsyncIterable

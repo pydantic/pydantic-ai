@@ -14,7 +14,8 @@ from pydantic_ai import (
     AgentStreamEvent,
     FinalResultEvent,
     ModelRequest,
-    ModelRequestEvent,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
     ModelResponseEndEvent,
     ModelResponseStartEvent,
@@ -73,7 +74,13 @@ async def test_code_execution_stream(
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert agent_run.result is not None

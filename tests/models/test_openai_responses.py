@@ -27,7 +27,8 @@ from pydantic_ai import (
     ImageGenerationTool,
     ImageUrl,
     ModelRequest,
-    ModelRequestEvent,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
     ModelResponseEndEvent,
     ModelResponseStartEvent,
@@ -2456,7 +2457,13 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             continue
                         event_parts.append(event)
 
@@ -5261,7 +5268,13 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             continue
                         event_parts.append(event)
 
@@ -7120,7 +7133,13 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             continue
                         event_parts.append(event)
 
@@ -8759,7 +8778,13 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             continue
                         event_parts.append(event)
 
@@ -12119,7 +12144,13 @@ async def test_openai_responses_model_file_search_tool_stream(
                 if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                     async with node.stream(agent_run.ctx) as request_stream:
                         async for event in request_stream:
-                            if isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                            if isinstance(
+                                event,
+                                ModelRequestStartEvent
+                                | ModelRequestEndEvent
+                                | ModelResponseStartEvent
+                                | ModelResponseEndEvent,
+                            ):
                                 continue
                             event_parts.append(event)
 
@@ -13728,7 +13759,13 @@ async def test_openai_responses_phase_streamed_without_deltas(allow_model_reques
             if Agent.is_model_request_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             continue
                         events.append(event)
                 # The run would go on to retry this text-less response; only the stream matters here.

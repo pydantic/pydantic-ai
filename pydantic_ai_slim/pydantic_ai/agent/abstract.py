@@ -1215,7 +1215,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AsyncIterator[_messages.ModelMessage | AgentRunResultEvent[RunOutputDataT]]]: ...
 
-    def run_stream_messages(
+    def run_stream_messages(  # noqa: C901
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -1276,9 +1276,23 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 async def messages() -> AsyncIterator[_messages.ModelMessage | AgentRunResultEvent[Any]]:
                     parts_manager: ModelResponsePartsManager | None = None
                     response_start: _messages.ModelResponse | None = None
+                    request_start: _messages.ModelRequest | None = None
+                    request_parts: list[_messages.ModelRequestPart] = []
                     async for event in events:
-                        if isinstance(event, _messages.ModelRequestEvent):
+                        if isinstance(event, _messages.ModelRequestStartEvent):
+                            # Hold the provisional request so tool returns can stream into it below; the
+                            # complete request is yielded once, on the paired `ModelRequestEndEvent`.
+                            request_start = event.request
+                            request_parts = list(event.request.parts)
+                        elif isinstance(event, _messages.ToolResultEvent):
+                            if request_start is None:
+                                continue
+                            request_parts.append(event.part)
+                            yield replace(request_start, parts=list(request_parts), state='incomplete')
+                        elif isinstance(event, _messages.ModelRequestEndEvent):
                             yield event.request
+                            request_start = None
+                            request_parts = []
                         elif isinstance(event, _messages.ModelResponseStartEvent):
                             response_start = event.response
                             parts_manager = ModelResponsePartsManager(models.ModelRequestParameters())
@@ -1400,7 +1414,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             print([type(event).__name__ for event in collected])
             '''
             [
-                'ModelRequestEvent',
+                'ModelRequestStartEvent',
+                'ModelRequestEndEvent',
                 'ModelResponseStartEvent',
                 'PartStartEvent',
                 'FinalResultEvent',

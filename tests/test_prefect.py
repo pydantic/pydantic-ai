@@ -29,7 +29,8 @@ from pydantic_ai import (
     FunctionToolset,
     ModelMessage,
     ModelRequest,
-    ModelRequestEvent,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
     ModelResponseEndEvent,
     ModelResponseStartEvent,
@@ -302,7 +303,7 @@ def test_model_boundary_payloads_require_tool_call_ids() -> None:
             BasicSpan(
                 content=json.dumps(
                     {
-                        'event_kind': 'model_request',
+                        'event_kind': 'model_request_end',
                         'request': {'parts': [], 'run_id': 'run', 'conversation_id': 'conversation'},
                     }
                 )
@@ -324,7 +325,7 @@ def test_model_boundary_payloads_require_tool_call_ids() -> None:
     )
 
     with pytest.raises(AssertionError, match='tool_call_id'):
-        assert_model_boundary_payloads(root_span, ['model_request', 'model_response_end'])
+        assert_model_boundary_payloads(root_span, ['model_request_end', 'model_response_end'])
 
 
 async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: CaptureLogfire) -> None:
@@ -398,16 +399,20 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
     assert_model_boundary_payloads(
         root_span,
         [
-            'model_request',
+            'model_request_start',
+            'model_request_end',
             'model_response_start',
             'model_response_end',
-            'model_request',
+            'model_request_start',
+            'model_request_end',
             'model_response_start',
             'model_response_end',
-            'model_request',
+            'model_request_start',
+            'model_request_end',
             'model_response_start',
             'model_response_end',
-            'model_request',
+            'model_request_start',
+            'model_request_end',
         ],
     )
 
@@ -432,7 +437,16 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"request":{"parts":[{"content":"Tell me: the capital of the country; the weather there; the product name","timestamp":null,"part_kind":"user-prompt"}],"timestamp":null,"instructions":null,"kind":"request","run_id":null,"conversation_id":null,"metadata":null,"state":"complete"},"event_kind":"model_request"}'
+                                            content='{"request":{"parts":[{"content":"Tell me: the capital of the country; the weather there; the product name","timestamp":null,"part_kind":"user-prompt"}],"timestamp":null,"instructions":null,"kind":"request","run_id":null,"conversation_id":null,"metadata":null,"state":"incomplete"},"event_kind":"model_request_start"}'
+                                        ),
+                                    ],
+                                ),
+                                BasicSpan(
+                                    content=IsStr(regex=r'Handle Stream Event-\w+'),
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content='{"request":{"parts":[{"content":"Tell me: the capital of the country; the weather there; the product name","timestamp":null,"part_kind":"user-prompt"}],"timestamp":null,"instructions":null,"kind":"request","run_id":null,"conversation_id":null,"metadata":null,"state":"complete"},"event_kind":"model_request_end"}'
                                         ),
                                     ],
                                 ),
@@ -479,6 +493,15 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
+                                            content='{"request":{"parts":[],"timestamp":null,"instructions":null,"kind":"request","run_id":null,"conversation_id":null,"metadata":null,"state":"incomplete"},"event_kind":"model_request_start"}'
+                                        ),
+                                    ],
+                                ),
+                                BasicSpan(
+                                    content=IsStr(regex=r'Handle Stream Event-\w+'),
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
                                             content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
                                         ),
                                     ],
@@ -503,7 +526,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"request":{"parts":[{"tool_name":"get_country","content":"Mexico","tool_call_id":null,"tool_kind":null,"metadata":null,"timestamp":null,"outcome":"success","part_kind":"tool-return"}],"timestamp":null,"instructions":null,"kind":"request","run_id":null,"conversation_id":null,"metadata":null,"state":"complete"},"event_kind":"model_request"}'
+                                            content='{"request":{"parts":[{"tool_name":"get_country","content":"Mexico","tool_call_id":null,"tool_kind":null,"metadata":null,"timestamp":null,"outcome":"success","part_kind":"tool-return"}],"timestamp":null,"instructions":null,"kind":"request","run_id":null,"conversation_id":null,"metadata":null,"state":"complete"},"event_kind":"model_request_end"}'
                                         ),
                                     ],
                                 ),
@@ -571,6 +594,15 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
+                                            content='{"request":{"parts":[],"timestamp":null,"instructions":null,"kind":"request","run_id":null,"conversation_id":null,"metadata":null,"state":"incomplete"},"event_kind":"model_request_start"}'
+                                        ),
+                                    ],
+                                ),
+                                BasicSpan(
+                                    content=IsStr(regex=r'Handle Stream Event-\w+'),
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=2'),
+                                        BasicSpan(
                                             content='{"part":{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
                                         ),
                                     ],
@@ -629,7 +661,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"request":{"parts":[{"tool_name":"get_weather","content":"sunny","tool_call_id":null,"tool_kind":null,"metadata":null,"timestamp":null,"outcome":"success","part_kind":"tool-return"},{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":null,"tool_kind":null,"metadata":null,"timestamp":null,"outcome":"success","part_kind":"tool-return"}],"timestamp":null,"instructions":null,"kind":"request","run_id":null,"conversation_id":null,"metadata":null,"state":"complete"},"event_kind":"model_request"}'
+                                            content='{"request":{"parts":[{"tool_name":"get_weather","content":"sunny","tool_call_id":null,"tool_kind":null,"metadata":null,"timestamp":null,"outcome":"success","part_kind":"tool-return"},{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":null,"tool_kind":null,"metadata":null,"timestamp":null,"outcome":"success","part_kind":"tool-return"}],"timestamp":null,"instructions":null,"kind":"request","run_id":null,"conversation_id":null,"metadata":null,"state":"complete"},"event_kind":"model_request_end"}'
                                         ),
                                     ],
                                 ),
@@ -796,6 +828,15 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
+                                            content='{"request":{"parts":[],"timestamp":null,"instructions":null,"kind":"request","run_id":null,"conversation_id":null,"metadata":null,"state":"incomplete"},"event_kind":"model_request_start"}'
+                                        ),
+                                    ],
+                                ),
+                                BasicSpan(
+                                    content=IsStr(regex=r'Handle Stream Event-\w+'),
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
                                             content='{"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"output_tool_call"}'
                                         ),
                                     ],
@@ -816,7 +857,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"request":{"parts":[{"tool_name":"final_result","content":"Final result processed.","tool_call_id":null,"tool_kind":null,"metadata":null,"timestamp":null,"outcome":"success","part_kind":"tool-return"}],"timestamp":null,"instructions":null,"kind":"request","run_id":null,"conversation_id":null,"metadata":null,"state":"complete"},"event_kind":"model_request"}'
+                                            content='{"request":{"parts":[{"tool_name":"final_result","content":"Final result processed.","tool_call_id":null,"tool_kind":null,"metadata":null,"timestamp":null,"outcome":"success","part_kind":"tool-return"}],"timestamp":null,"instructions":null,"kind":"request","run_id":null,"conversation_id":null,"metadata":null,"state":"complete"},"event_kind":"model_request_end"}'
                                         ),
                                     ],
                                 ),
@@ -1111,7 +1152,16 @@ async def test_prefect_agent_run_stream_events(allow_model_requests: None):
         events = [event async for event in event_stream]
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='What is the capital of Mexico?', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='What is the capital of Mexico?', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),

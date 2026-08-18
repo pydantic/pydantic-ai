@@ -331,7 +331,9 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             'complex_agent__mcp_server__mcp.get_tools',
             'event_stream_handler',
             'event_stream_handler',
+            'event_stream_handler',
             'complex_agent__model.request_stream',
+            'event_stream_handler',
             'event_stream_handler',
             'event_stream_handler',
             'event_stream_handler',
@@ -343,11 +345,13 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             'complex_agent__model.request_stream',
             'event_stream_handler',
             'event_stream_handler',
+            'event_stream_handler',
             'get_weather',
             'event_stream_handler',
             'event_stream_handler',
             'event_stream_handler',
             'complex_agent__model.request_stream',
+            'event_stream_handler',
             'event_stream_handler',
             'event_stream_handler',
             'event_stream_handler',
@@ -381,16 +385,20 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
     assert_model_boundary_payloads(
         root_span,
         [
-            'model_request',
+            'model_request_start',
+            'model_request_end',
             'model_response_start',
             'model_response_end',
-            'model_request',
+            'model_request_start',
+            'model_request_end',
             'model_response_start',
             'model_response_end',
-            'model_request',
+            'model_request_start',
+            'model_request_end',
             'model_response_start',
             'model_response_end',
-            'model_request',
+            'model_request_start',
+            'model_request_end',
         ],
     )
 
@@ -413,7 +421,16 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
-                                    content='{"request": {"parts": [{"content": "Tell me: the capital of the country; the weather there; the product name", "timestamp": null, "part_kind": "user-prompt"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request"}'
+                                    content='{"request": {"parts": [{"content": "Tell me: the capital of the country; the weather there; the product name", "timestamp": null, "part_kind": "user-prompt"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_request_start"}'
+                                ),
+                            ],
+                        ),
+                        BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=1'),
+                                BasicSpan(
+                                    content='{"request": {"parts": [{"content": "Tell me: the capital of the country; the weather there; the product name", "timestamp": null, "part_kind": "user-prompt"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request_end"}'
                                 ),
                             ],
                         ),
@@ -469,6 +486,15 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=1'),
                                 BasicSpan(
+                                    content='{"request": {"parts": [], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_request_start"}'
+                                ),
+                            ],
+                        ),
+                        BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=1'),
+                                BasicSpan(
                                     content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                 ),
                             ],
@@ -515,7 +541,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=2'),
                                 BasicSpan(
-                                    content='{"request": {"parts": [{"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request"}'
+                                    content='{"request": {"parts": [{"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request_end"}'
                                 ),
                             ],
                         ),
@@ -577,6 +603,15 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=2'),
                                 BasicSpan(
+                                    content='{"request": {"parts": [], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_request_start"}'
+                                ),
+                            ],
+                        ),
+                        BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=2'),
+                                BasicSpan(
                                     content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                 ),
                             ],
@@ -596,7 +631,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=3'),
                                 BasicSpan(
-                                    content='{"request": {"parts": [{"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request"}'
+                                    content='{"request": {"parts": [{"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request_end"}'
                                 ),
                             ],
                         ),
@@ -763,6 +798,15 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=3'),
                                 BasicSpan(
+                                    content='{"request": {"parts": [], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_request_start"}'
+                                ),
+                            ],
+                        ),
+                        BasicSpan(
+                            content='event_stream_handler',
+                            children=[
+                                BasicSpan(content='ctx.run_step=3'),
+                                BasicSpan(
                                     content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
                                 ),
                             ],
@@ -781,7 +825,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                             children=[
                                 BasicSpan(content='ctx.run_step=3'),
                                 BasicSpan(
-                                    content='{"request": {"parts": [{"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request"}'
+                                    content='{"request": {"parts": [{"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request_end"}'
                                 ),
                             ],
                         ),

@@ -37,7 +37,8 @@ from pydantic_ai import (
     MCPServerTool,
     ModelMessage,
     ModelRequest,
-    ModelRequestEvent,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
     ModelResponseEndEvent,
     ModelResponseStartEvent,
@@ -2330,7 +2331,13 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert agent_run.result is not None
@@ -2651,7 +2658,13 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert agent_run.result is not None
@@ -3175,7 +3188,13 @@ async def test_xai_builtin_mcp_server_tool_stream(allow_model_requests: None, xa
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert agent_run.result is not None
@@ -3671,7 +3690,13 @@ async def test_xai_stream_events_with_reasoning(allow_model_requests: None, xai_
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert agent_run.result is not None

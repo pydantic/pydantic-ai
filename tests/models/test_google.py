@@ -35,7 +35,8 @@ from pydantic_ai import (
     ImageUrl,
     ModelMessage,
     ModelRequest,
-    ModelRequestEvent,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
     ModelResponseEndEvent,
     ModelResponseStartEvent,
@@ -680,7 +681,13 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert event_parts == snapshot(
@@ -1252,7 +1259,13 @@ async def test_google_model_web_search_tool_stream(allow_model_requests: None, g
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert agent_run.result is not None
@@ -1599,7 +1612,13 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert agent_run.result is not None
@@ -2131,7 +2150,13 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert agent_run.result is not None
@@ -3475,7 +3500,13 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert agent_run.result is not None
@@ -5210,7 +5241,11 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     async with node.stream(agent_run.ctx) as request_stream:
                         async for event in request_stream:
                             if not isinstance(
-                                event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent
+                                event,
+                                ModelRequestStartEvent
+                                | ModelRequestEndEvent
+                                | ModelResponseStartEvent
+                                | ModelResponseEndEvent,
                             ):
                                 event_parts.append(event)
 
@@ -6126,7 +6161,20 @@ async def test_google_streaming_tool_call_thought_signature(
     )
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='What is the capital of the user country? Call the tool', timestamp=IsDatetime()
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         UserPromptPart(
@@ -6198,6 +6246,15 @@ async def test_google_streaming_tool_call_thought_signature(
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='get_country',
@@ -6216,7 +6273,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         ToolReturnPart(

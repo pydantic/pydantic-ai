@@ -383,7 +383,11 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     resumed_request: _messages.ModelRequest | None
     resumed_request_index: int | None
     last_emitted_request: _messages.ModelRequest | None = None
-    """The most recent request announced by a `ModelRequestEvent`, so a step never re-announces it."""
+    """The most recent request announced by a `ModelRequestEndEvent`, so a step never re-announces it."""
+
+    request_turn_open: bool = False
+    """Whether a `ModelRequestStartEvent` has been emitted whose paired `ModelRequestEndEvent` hasn't, so the
+    request turn is announced exactly once whether it opened at tool execution or at the request node."""
 
     model: models.Model
     model_selector: ModelSelector[DepsT] | None
@@ -1142,7 +1146,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request=ctx.deps.resumed_request,
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
-            self._emit_request_event(ctx, build_run_context(ctx))
+            self._emit_request_end_events(ctx, build_run_context(ctx))
             self._did_stream = True
             ctx.state.usage.requests += 1
             # instruction_parts=None is fine here: the model isn't called, we just need MRP for the wrapper
@@ -1385,7 +1389,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 resumed_request=ctx.deps.resumed_request,
                 resumed_request_index=ctx.deps.resumed_request_index,
             )
-            self._emit_request_event(ctx, build_run_context(ctx))
+            self._emit_request_end_events(ctx, build_run_context(ctx))
             ctx.state.usage.requests += 1
             return await self._finish_handling(ctx, e.response)
 
@@ -1446,12 +1450,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         return await self._finish_handling(ctx, model_response)
 
-    def _emit_request_event(
+    def _emit_request_end_events(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
         run_context: RunContext[DepsT],
     ) -> None:
-        """Emit the canonical requests this node commits to history.
+        """Emit the canonical requests this node commits to history, closing the open request turn.
 
         History alternates requests and responses, so the trailing run of `ModelRequest`s holds this step's
         own request plus any a capability committed alongside it — drained `enqueue` messages land either
@@ -1475,8 +1479,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return
 
         ctx.deps.last_emitted_request = trailing_requests[0]
+        ctx.deps.request_turn_open = False
         for request in reversed(trailing_requests):
-            run_context._emit_event(_messages.ModelRequestEvent(request=request))  # pyright: ignore[reportPrivateUsage]
+            run_context._emit_event(_messages.ModelRequestEndEvent(request=request))  # pyright: ignore[reportPrivateUsage]
 
     async def _prepare_request(
         self,
@@ -1512,6 +1517,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             retry=ctx.state.output_retries_used,
             max_retries=ctx.deps.tool_manager.default_max_retries,
         )
+
+        # Open the request turn for the run's first request and retries, where no tool-execution step ran
+        # ahead of this node to open it. The snapshot is the provisional pre-hook request; the authoritative
+        # one follows in `ModelRequestEndEvent` after hooks and processors run below. A resume-without-prompt
+        # run reuses a trailing history request as prior context — not a new request — so it gets no boundary,
+        # matching the `ModelRequestEndEvent` scan that excludes it via `new_message_index`.
+        if not self.is_resuming_without_prompt:
+            _open_request_turn(ctx, run_context, replace(self.request, state='incomplete'))
 
         # This will raise errors for any tool name conflicts.
         # Note: for_run_step may already have been called by UserPromptNode for the
@@ -1587,7 +1600,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             resumed_request=ctx.deps.resumed_request,
             resumed_request_index=ctx.deps.resumed_request_index,
         )
-        self._emit_request_event(ctx, run_context)
+        self._emit_request_end_events(ctx, run_context)
 
         # Merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
         # but don't store it in the message history on state. This is just for the benefit of model classes that want clear user/assistant boundaries.
@@ -2092,6 +2105,22 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             max_retries=ctx.deps.tool_manager.default_max_retries,
         )
 
+        # The request turn opens here, before tool returns are collected, so they stream into a growing
+        # request between this `ModelRequestStartEvent` and the `ModelRequestEndEvent` that commits it (in
+        # the following request node, or in `_handle_final_result` for a final output-tool return). Every
+        # completion of this method commits such a request, so the turn is always closed.
+        _open_request_turn(
+            ctx,
+            run_context,
+            _messages.ModelRequest(
+                parts=[],
+                run_id=ctx.state.run_id,
+                conversation_id=ctx.state.conversation_id,
+                timestamp=now_utc(),
+                state='incomplete',
+            ),
+        )
+
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
@@ -2271,7 +2300,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 timestamp=now_utc(),
             )
             messages.append(request)
-            build_run_context(ctx)._emit_event(_messages.ModelRequestEvent(request=request))  # pyright: ignore[reportPrivateUsage]
+            # Commit the final output-tool return request, closing the turn `_handle_tool_calls` opened.
+            ctx.deps.last_emitted_request = request
+            ctx.deps.request_turn_open = False
+            build_run_context(ctx)._emit_event(_messages.ModelRequestEndEvent(request=request))  # pyright: ignore[reportPrivateUsage]
 
         return End(final_result)
 
@@ -2354,6 +2386,24 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     # tool-defs caching.
     run_context = replace(run_context, validation_context=validation_context)
     return run_context
+
+
+def _open_request_turn(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
+    run_context: RunContext[DepsT],
+    request: _messages.ModelRequest,
+) -> None:
+    """Announce that a request turn has started, unless one is already open.
+
+    The turn opens either as tool calls begin executing (where the request is still being assembled from
+    their returns, so `request` is an empty snapshot) or, for a run's first request and retries, at the
+    request node itself (where `request` is the provisional pre-hook request). Both carry
+    `state='incomplete'`: the authoritative request arrives with the paired `ModelRequestEndEvent`.
+    """
+    if ctx.deps.request_turn_open:
+        return
+    ctx.deps.request_turn_open = True
+    run_context._emit_event(_messages.ModelRequestStartEvent(request=request))  # pyright: ignore[reportPrivateUsage]
 
 
 def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:

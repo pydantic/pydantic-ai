@@ -29,6 +29,7 @@ from pydantic_ai import (
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -3929,6 +3930,7 @@ async def test_builtin_tool_call() -> None:
 
 async def test_event_stream_back_to_back_text():
     async def event_generator():
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))
         yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
         yield PartEndEvent(index=0, part=TextPart(content='Hello world'), next_part_kind='text')
@@ -3980,6 +3982,7 @@ async def test_event_stream_back_to_back_text():
 
 async def test_event_stream_multiple_responses_with_tool_calls():
     async def event_generator():
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(index=0, part=TextPart(content='Hello'))
         yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world'))
         yield PartEndEvent(index=0, part=TextPart(content='Hello world'), next_part_kind='tool-call')
@@ -4028,6 +4031,7 @@ async def test_event_stream_multiple_responses_with_tool_calls():
             part=ToolReturnPart(tool_name='tool_call_2', content='Bye!', tool_call_id='tool_call_2')
         )
 
+        yield ModelResponseStartEvent(response=ModelResponse(parts=[]))
         yield PartStartEvent(
             index=0,
             part=ToolCallPart(tool_name='tool_call_3', args='{}', tool_call_id='tool_call_3'),

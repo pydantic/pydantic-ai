@@ -39,7 +39,8 @@ from pydantic_ai import (
     FunctionToolset,
     ModelMessage,
     ModelRequest,
-    ModelRequestEvent,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
     ModelResponseEndEvent,
     ModelResponseStartEvent,
@@ -953,7 +954,21 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"request": {"parts": [{"content": "Tell me: the capital of the country; the weather there; the product name", "timestamp": null, "part_kind": "user-prompt"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request"}'
+                                            content='{"request": {"parts": [{"content": "Tell me: the capital of the country; the weather there; the product name", "timestamp": null, "part_kind": "user-prompt"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_request_start"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content='{"request": {"parts": [{"content": "Tell me: the capital of the country; the weather there; the product name", "timestamp": null, "part_kind": "user-prompt"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request_end"}'
                                         ),
                                     ],
                                 )
@@ -1016,6 +1031,20 @@ async def test_complex_agent_run_in_workflow(
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
                                             content='{"response": {"parts": [{"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 364, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 40, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}, "cost": "0.00131"}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": null, "finish_reason": "tool_call", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_response_end"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content='{"request": {"parts": [], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_request_start"}'
                                         ),
                                     ],
                                 )
@@ -1100,7 +1129,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"request": {"parts": [{"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request"}'
+                                            content='{"request": {"parts": [{"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request_end"}'
                                         ),
                                     ],
                                 )
@@ -1182,6 +1211,20 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
+                                            content='{"request": {"parts": [], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_request_start"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=2'),
+                                        BasicSpan(
                                             content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                         ),
                                     ],
@@ -1223,7 +1266,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"request": {"parts": [{"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request"}'
+                                            content='{"request": {"parts": [{"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request_end"}'
                                         ),
                                     ],
                                 )
@@ -1410,6 +1453,20 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
+                                            content='{"request": {"parts": [], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_request_start"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
                                             content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
                                         ),
                                     ],
@@ -1438,7 +1495,7 @@ async def test_complex_agent_run_in_workflow(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"request": {"parts": [{"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request"}'
+                                            content='{"request": {"parts": [{"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request_end"}'
                                         ),
                                     ],
                                 )
@@ -1651,7 +1708,21 @@ async def test_complex_agent_run(allow_model_requests: None):
     )
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Tell me: the capital of the country; the weather there; the product name',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         UserPromptPart(
@@ -1731,6 +1802,15 @@ async def test_complex_agent_run(allow_model_requests: None):
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
                 args_valid=True,
@@ -1757,7 +1837,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         ToolReturnPart(
@@ -1848,6 +1928,15 @@ async def test_complex_agent_run(allow_model_requests: None):
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
@@ -1862,7 +1951,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         ToolReturnPart(
@@ -2091,6 +2180,15 @@ async def test_complex_agent_run(allow_model_requests: None):
                     conversation_id=IsStr(),
                 )
             ),
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             OutputToolCallEvent(
                 part=ToolCallPart(
                     tool_name='final_result',
@@ -2107,7 +2205,7 @@ async def test_complex_agent_run(allow_model_requests: None):
                     timestamp=IsDatetime(),
                 )
             ),
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[
                         ToolReturnPart(
@@ -2888,7 +2986,7 @@ async def test_temporal_agent_run_stream_events(allow_model_requests: None):
         events = [event async for event in event_stream]
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='What is the capital of Mexico?', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -8102,7 +8200,8 @@ async def test_durability_run_stream_in_workflow(client: Client) -> None:
     assert deltas == snapshot(['Streamed response'])
     assert _run_stream_handler_events == snapshot(
         [
-            ('ModelRequestEvent', True),
+            ('ModelRequestStartEvent', True),
+            ('ModelRequestEndEvent', True),
             ('ModelResponseStartEvent', True),
             ('PartStartEvent', True),
             ('FinalResultEvent', True),
@@ -8151,14 +8250,16 @@ async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
 
     assert events == snapshot(
         [
-            'ModelRequestEvent',
+            'ModelRequestStartEvent',
+            'ModelRequestEndEvent',
             'ModelResponseStartEvent',
             'PartStartEvent',
             'PartEndEvent',
             'ModelResponseEndEvent',
+            'ModelRequestStartEvent',
             'FunctionToolCallEvent',
             'FunctionToolResultEvent',
-            'ModelRequestEvent',
+            'ModelRequestEndEvent',
             'ModelResponseStartEvent',
             'PartStartEvent',
             'FinalResultEvent',

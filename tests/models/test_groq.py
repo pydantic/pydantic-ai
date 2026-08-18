@@ -25,7 +25,8 @@ from pydantic_ai import (
     ModelAPIError,
     ModelHTTPError,
     ModelRequest,
-    ModelRequestEvent,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
     ModelResponseEndEvent,
     ModelResponseStartEvent,
@@ -1167,7 +1168,13 @@ async def test_groq_model_web_search_tool_stream(allow_model_requests: None, gro
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert agent_run.result is not None
@@ -2059,7 +2066,13 @@ async def test_groq_model_thinking_part_iter(allow_model_requests: None, groq_ap
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     result = agent_run.result
@@ -3411,7 +3424,13 @@ Enjoy your homemade Uruguayan alfajores!\
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     result = agent_run.result

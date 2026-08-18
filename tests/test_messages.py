@@ -29,7 +29,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
-    ModelRequestEvent,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
     ModelResponseEndEvent,
     ModelResponseStartEvent,
@@ -537,7 +538,8 @@ def test_model_message_boundary_events_round_trip():
     adapter: TypeAdapter[AgentStreamEvent] = TypeAdapter(AgentStreamEvent)
 
     for event in (
-        ModelRequestEvent(request=request),
+        ModelRequestStartEvent(request=ModelRequest(parts=[], state='incomplete')),
+        ModelRequestEndEvent(request=request),
         ModelResponseStartEvent(response=ModelResponse(parts=[])),
         ModelResponseEndEvent(response=response),
     ):

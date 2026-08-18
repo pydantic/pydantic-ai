@@ -29,7 +29,8 @@ from pydantic_ai import (
     ImageUrl,
     ModelMessage,
     ModelRequest,
-    ModelRequestEvent,
+    ModelRequestEndEvent,
+    ModelRequestStartEvent,
     ModelResponse,
     ModelResponseEndEvent,
     ModelResponseStartEvent,
@@ -1328,7 +1329,13 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert event_parts == snapshot(
@@ -2607,7 +2614,13 @@ async def test_bedrock_model_thinking_part_redacted_stream(
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert agent_run.result is not None
@@ -3095,7 +3108,13 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert event_parts == snapshot(
@@ -3663,7 +3682,16 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
     assert not any(part.content == '' for part in result.response.parts if isinstance(part, TextPart))
     assert events == snapshot(
         [
-            ModelRequestEvent(
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='Hi', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
+            ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='Hi', timestamp=IsDatetime())],
                     timestamp=IsDatetime(),
@@ -5423,7 +5451,13 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
-                        if not isinstance(event, ModelRequestEvent | ModelResponseStartEvent | ModelResponseEndEvent):
+                        if not isinstance(
+                            event,
+                            ModelRequestStartEvent
+                            | ModelRequestEndEvent
+                            | ModelResponseStartEvent
+                            | ModelResponseEndEvent,
+                        ):
                             event_parts.append(event)
 
     assert agent_run.result is not None
