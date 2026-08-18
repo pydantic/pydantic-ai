@@ -196,11 +196,25 @@ To ensure that Temporal knows what code to run when an activity fails or is inte
 
 When [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] dynamically creates activities for the agent's model requests and toolsets (specifically those that implement their own tool listing and calling, i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPToolset`][pydantic_ai.mcp.MCPToolset]), their names are derived from the agent's [`name`][pydantic_ai.agent.AbstractAgent.name] and the toolsets' [`id`s][pydantic_ai.toolsets.AbstractToolset.id]. These fields are normally optional, but are required to be set when using Temporal. They should not be changed once the durable agent has been deployed to production as this would break active workflows.
 
+Upgrading to this version changes the activity sequence for tools that have an `args_validator`, so workflows already in flight that call such a tool need [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) or a [patch](https://python.temporal.io/temporalio.workflow.html#patched). Workflows that don't call a tool with an `args_validator` are unaffected.
+
 [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] and toolsets contributed by [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] are supported. Their factory is re-resolved inside activities when tools are listed and called, so it must be deterministic given the run dependencies. Like other wrapped toolsets, every `DynamicToolset` requires an explicit `id`: pass `id=` when constructing one directly, set the `id` parameter of the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator, or set a stable capability `id` on `DynamicCapability`. Note that with Temporal, `per_run_step=False` is not respected, as the toolset always needs to be created on-the-fly in the activity.
 
 [Capabilities](../capabilities/overview.md) that contribute a toolset — a [`Capability`][pydantic_ai.capabilities.Capability] with `tools=`, or an [`MCP`][pydantic_ai.capabilities.MCP] server running locally — derive the toolset's `id` from the capability's own [`id`][pydantic_ai.capabilities.AbstractCapability.id], so set `Capability(id='...', tools=[...])` or `MCP(id='...', url='...')`. (`MCP` falls back to an id derived from the server URL's host and path when no `id` is given.) A toolset passed to a capability via `toolsets=` keeps its own `id`, which must be set on the toolset itself.
 
 Other than that, any agent and toolset will just work!
+
+### Tool Argument Validation
+
+A tool's [`args_validator`](../tools-advanced.md#args-validator) is a Python callable, so like the tool function itself it can't run inside the workflow. Each toolset therefore gets a `validate_args` activity alongside its `call_tool` one, and a tool that has an `args_validator` is validated there — so the validator may perform I/O, and a `DynamicToolset`'s validators are no longer lost when its tools cross into the workflow. A tool without an `args_validator` schedules no extra activity.
+
+Validation runs before the [approval and deferral](../deferred-tools.md) gate, which is why it gets an activity of its own rather than sharing the tool-call one: a tool with `requires_approval=True` whose arguments its validator rejects is turned into a retry prompt without ever asking a human to approve them.
+
+A validator that [defers the call itself](../tools-advanced.md#args-validator) works from inside the activity too: `ApprovalRequired` and `CallDeferred` cross the activity boundary like the validator's other outcomes, and the run collects the call into its `DeferredToolRequests` output without the tool-call activity ever being scheduled. Resuming the run with an approval schedules the validation activity again, this time with `tool_call_approved` set on the activity's run context.
+
+Because the validated arguments aren't sent back into the workflow, each activity derives them itself, so the tool's schema is validated more than once per call: twice for a `DynamicToolset` tool (in the validation activity and again in the tool-call activity), and three times for a `FunctionToolset` tool, whose real schema is also available to `ToolManager` in workflow code. That's cheap and deterministic, but it does mean a Pydantic validator that isn't idempotent — one that transforms a value rather than checking it — is applied two or three times instead of once.
+
+If your validation relies on a Pydantic [validation context](https://docs.pydantic.dev/latest/concepts/validators/#validation-context), note that `RunContext.validation_context` holds an arbitrary object that isn't serialized into activities. It's rebuilt inside the activity from the `validation_context` you passed to [`Agent`][pydantic_ai.agent.Agent]: a static value is used as-is, and a function is called again with the activity's own run context, so a builder that reads the run's `deps` (or performs I/O) works there.
 
 ### Agent Run Context and Dependencies
 

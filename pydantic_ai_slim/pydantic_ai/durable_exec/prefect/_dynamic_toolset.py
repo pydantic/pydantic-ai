@@ -8,14 +8,17 @@ from prefect.context import FlowRunContext
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai.durable_exec._toolset import (
+    CallToolResult,
     DurableDynamicToolset,
     DynamicToolsResult,
     call_dynamic_tool,
     get_dynamic_tools,
     unwrap_recorded_tool_call_result,
+    unwrap_tool_call_result,
+    validate_dynamic_tool_args,
     wrap_tool_call_result,
 )
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
 from ._toolset import guard_task_enqueue, resolve_tool_task_config, with_non_retryable_errors
@@ -36,9 +39,22 @@ def prefectify_dynamic_toolset(
         return await get_dynamic_tools(wrapped, ctx)
 
     @task
-    async def call_tool_task(tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> Any:
+    async def call_tool_task(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool_def: ToolDefinition
+    ) -> Any:
         task_ctx = guard_task_enqueue(ctx)
-        return await wrap_tool_call_result(call_dynamic_tool(wrapped, tool_name, tool_args, task_ctx))
+        return await wrap_tool_call_result(
+            call_dynamic_tool(wrapped, tool_name, tool_args, task_ctx, tool_def=tool_def)
+        )
+
+    @task
+    async def validate_args_task(
+        tool_name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool_def: ToolDefinition
+    ) -> CallToolResult:
+        task_ctx = guard_task_enqueue(ctx)
+        return await wrap_tool_call_result(
+            validate_dynamic_tool_args(wrapped, tool_name, tool_args, task_ctx, tool_def=tool_def)
+        )
 
     async def call_tool_operation(
         name: str,
@@ -48,10 +64,25 @@ def prefectify_dynamic_toolset(
         config: Mapping[str, Any],
     ) -> Any:
         merged_config = with_non_retryable_errors(cast('TaskConfig', base_config | dict(config)))
-        result = await call_tool_task.with_options(name=f'Call Tool: {name}', **merged_config)(name, tool_args, ctx)
+        result = await call_tool_task.with_options(name=f'Call Tool: {name}', **merged_config)(
+            name, tool_args, ctx, tool.tool_def
+        )
         # A persisted cache entry written before this task wrapped control-flow exceptions (still
         # reachable under a custom `cache_policy` that omits `TASK_SOURCE`) holds the raw result.
         return unwrap_recorded_tool_call_result(result)
+
+    async def validate_args_operation(
+        name: str,
+        tool_args: dict[str, Any],
+        ctx: RunContext[AgentDepsT],
+        tool: ToolsetTool[AgentDepsT],
+        config: Mapping[str, Any],
+    ) -> None:
+        merged_config = with_non_retryable_errors(cast('TaskConfig', base_config | dict(config)))
+        result = await validate_args_task.with_options(name=f'Validate Tool Args: {name}', **merged_config)(
+            name, tool_args, ctx, tool.tool_def
+        )
+        unwrap_tool_call_result(result)
 
     return DurableDynamicToolset(
         wrapped,
@@ -61,6 +92,7 @@ def prefectify_dynamic_toolset(
         in_durable_context=lambda: FlowRunContext.get() is not None,
         get_tools_operation=get_tools_operation,
         call_tool_operation=call_tool_operation,
+        validate_args_operation=validate_args_operation,
         resolve_tool_config=lambda tool, name: resolve_tool_task_config(tool, name, tool_task_config),
         lifecycle='enter-never',
         durable_config=base_config,
