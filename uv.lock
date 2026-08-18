@@ -27,13 +27,12 @@ logfire = false
 pydantic-settings = false
 pydantic-handlebars = false
 genai-prices = false
-openai = false
+openai = "2026-08-12T01:55:49Z"
 pydantic-extra-types = false
 pydantic-core = false
 pydantic = false
-google-genai = false
+google-genai = "2026-08-13T00:12:52Z"
 logfire-api = false
-mistralai = "2026-08-11T07:51:18Z"
 
 [manifest]
 members = [
