@@ -36,7 +36,7 @@ You can then use `GoogleModel` by name:
 ```python
 from pydantic_ai import Agent
 
-agent = Agent('google:gemini-3-pro-preview')
+agent = Agent('google:gemini-3.7-flash')
 ...
 ```
 
@@ -48,7 +48,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
 provider = GoogleProvider(api_key='your-api-key')
-model = GoogleModel('gemini-3-pro-preview', provider=provider)
+model = GoogleModel('gemini-3.7-flash', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -75,7 +75,7 @@ If you have the [`gcloud` CLI](https://cloud.google.com/sdk/gcloud) installed an
 ```python {test="ci_only"}
 from pydantic_ai import Agent
 
-agent = Agent('google-cloud:gemini-3-pro-preview')
+agent = Agent('google-cloud:gemini-3.7-flash')
 ...
 ```
 
@@ -87,7 +87,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 provider = GoogleCloudProvider()
-model = GoogleModel('gemini-3-pro-preview', provider=provider)
+model = GoogleModel('gemini-3.7-flash', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -105,7 +105,7 @@ from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 credentials = service_account.Credentials.from_service_account_file('path/to/service-account.json')
 provider = GoogleCloudProvider(credentials=credentials, project='your-project-id')
-model = GoogleModel('gemini-3-flash-preview', provider=provider)
+model = GoogleModel('gemini-3.7-flash', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -127,7 +127,7 @@ You can then use `GoogleModel` via [`GoogleCloudProvider`][pydantic_ai.providers
 ```python {test="ci_only"}
 from pydantic_ai import Agent
 
-agent = Agent('google-cloud:gemini-3-pro-preview')
+agent = Agent('google-cloud:gemini-3.7-flash')
 ...
 ```
 
@@ -139,7 +139,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 provider = GoogleCloudProvider(api_key='your-api-key')
-model = GoogleModel('gemini-3-pro-preview', provider=provider)
+model = GoogleModel('gemini-3.7-flash', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -161,8 +161,8 @@ from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
-provider = GoogleCloudProvider(location='asia-east1', project='your-google-cloud-project-id')
-model = GoogleModel('gemini-3-pro-preview', provider=provider)
+provider = GoogleCloudProvider(location='global', project='your-google-cloud-project-id')
+model = GoogleModel('gemini-3.7-flash', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -182,7 +182,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 provider = GoogleCloudProvider(location='us', project='your-google-cloud-project-id')
-model = GoogleModel('gemini-3-pro-preview', provider=provider)
+model = GoogleModel('gemini-3.7-flash', provider=provider)
 agent = Agent(model)
 ...
 ```
@@ -229,7 +229,7 @@ from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 provider = GoogleCloudProvider(location='global')
-model = GoogleModel('gemini-3-flash-preview', provider=provider)
+model = GoogleModel('gemini-3.7-flash', provider=provider)
 agent = Agent(model)
 
 result = agent.run_sync(
@@ -278,7 +278,7 @@ from pydantic_ai.providers.google import GoogleProvider
 
 custom_http_client = AsyncClient(timeout=30)
 model = GoogleModel(
-    'gemini-3-pro-preview',
+    'gemini-3.7-flash',
     provider=GoogleProvider(api_key='your-api-key', http_client=custom_http_client),
 )
 agent = Agent(model)
@@ -306,7 +306,7 @@ retry_options = HttpRetryOptions(
     http_status_codes=[408, 429, 500, 502, 503, 504],
 )
 model = GoogleModel(
-    'gemini-3-pro-preview',
+    'gemini-3.7-flash',
     provider=GoogleProvider(api_key='your-api-key', retry_options=retry_options),
 )
 agent = Agent(model)
@@ -325,7 +325,7 @@ YouTube video URLs can be passed directly to Google models:
 from pydantic_ai import Agent, VideoUrl
 from pydantic_ai.models.google import GoogleModel
 
-agent = Agent(GoogleModel('gemini-3-flash-preview'))
+agent = Agent(GoogleModel('gemini-3.7-flash'))
 result = agent.run_sync(
     [
         'What is this video about?',
@@ -346,7 +346,7 @@ provider = GoogleProvider()
 file = provider.client.files.upload(file='pydantic-ai-logo.png')
 assert file.uri is not None
 
-agent = Agent(GoogleModel('gemini-3-flash-preview', provider=provider))
+agent = Agent(GoogleModel('gemini-3.7-flash', provider=provider))
 result = agent.run_sync(
     [
         'What company is this logo from?',
@@ -379,7 +379,7 @@ settings = GoogleModelSettings(
         }
     ]
 )
-model = GoogleModel('gemini-3-pro-preview')
+model = GoogleModel('gemini-3.7-flash')
 agent = Agent(model, model_settings=settings)
 ...
 ```
@@ -392,7 +392,7 @@ Use the provider-agnostic [`Thinking`][pydantic_ai.capabilities.Thinking] capabi
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Thinking
 
-agent = Agent('google:gemini-3.5-flash', capabilities=[Thinking(effort='medium')])
+agent = Agent('google:gemini-3.7-flash', capabilities=[Thinking(effort='medium')])
 ...
 ```
 
@@ -402,7 +402,7 @@ For advanced usage, you can pass Google's native thinking config through [`Googl
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
-model = GoogleModel('gemini-3.5-flash')
+model = GoogleModel('gemini-3.7-flash')
 model_settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True, 'thinking_level': 'MEDIUM'})
 agent = Agent(model, model_settings=model_settings)
 ...
@@ -428,7 +428,7 @@ model_settings = GoogleModelSettings(
         }
     ]
 )
-model = GoogleModel('gemini-3-flash-preview')
+model = GoogleModel('gemini-3.7-flash')
 agent = Agent(model, model_settings=model_settings)
 ...
 ```
@@ -452,7 +452,7 @@ model_settings = GoogleModelSettings(
 )
 
 model = GoogleModel(
-    model_name='gemini-2.5-flash',
+    model_name='gemini-3.7-flash',
     provider=GoogleCloudProvider(location='europe-west1'),
 )
 agent = Agent(model, model_settings=model_settings)
@@ -484,7 +484,7 @@ model_settings = GoogleModelSettings(
 )
 
 model = GoogleModel(
-    model_name='gemini-2.5-flash',
+    model_name='gemini-3.7-flash',
     provider=GoogleCloudProvider(location='europe-west4'),
 )
 agent = Agent(model, model_settings=model_settings)
@@ -509,7 +509,7 @@ model_settings = GoogleModelSettings(
     google_cached_content='projects/p/locations/global/cachedContents/your-cache-id',
 )
 
-agent = Agent(GoogleModel('gemini-2.5-pro'), model_settings=model_settings)
+agent = Agent(GoogleModel('gemini-3.7-flash'), model_settings=model_settings)
 ...
 ```
 
@@ -527,7 +527,7 @@ agent = Agent(GoogleModel('gemini-2.5-pro'), model_settings=model_settings)
     provider = GoogleProvider(api_key='your-api-key')
 
     cache = provider.client.caches.create(
-        model='gemini-2.5-flash',
+        model='gemini-3.7-flash',
         config=CreateCachedContentConfig(
             system_instruction='You are a geography expert. Be concise.',
             contents=[Content(role='user', parts=[Part(text='...long context to cache...')])],
@@ -538,7 +538,7 @@ agent = Agent(GoogleModel('gemini-2.5-pro'), model_settings=model_settings)
     #> cachedContents/abc123...
     ```
 
-    Caches have a minimum size (≈1024 tokens for `gemini-2.5-flash`, ≈4096 for `gemini-2.5-pro`) and a TTL — see the [Gemini caching docs](https://ai.google.dev/gemini-api/docs/caching) for the current thresholds, pricing, and `list` / `update` / `delete` operations.
+    Caches have a minimum size (≈2048 tokens for Gemini 2.5 series models, ≈4096 for Gemini 3 series models) and a TTL — see the [Gemini caching docs](https://ai.google.dev/gemini-api/docs/caching) for the current thresholds, pricing, and `list` / `update` / `delete` operations.
 
 ## Streaming cancellation
 
