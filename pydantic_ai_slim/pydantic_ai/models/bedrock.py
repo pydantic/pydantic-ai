@@ -892,6 +892,8 @@ class BedrockConverseModel(Model[BaseClient]):
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         raw_finish_reason = response['stopReason']
         provider_details = {'finish_reason': raw_finish_reason}
+        if trace := response.get('trace'):
+            provider_details['trace'] = trace
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
         return ModelResponse(
@@ -1734,6 +1736,10 @@ class BedrockStreamedResponse(StreamedResponse):
                             self._usage += _map_usage(
                                 metadata['usage'], self._provider_name, self._provider_url, self._model_name
                             )
+                        if trace := metadata.get('trace'):
+                            # `messageStop` usually precedes `metadata`, but AWS documents no strict event
+                            # ordering, so merge rather than overwrite the finish reason.
+                            self.provider_details = {**(self.provider_details or {}), 'trace': trace}
                     case {'contentBlockStart': content_block_start}:
                         index = content_block_start['contentBlockIndex']
                         start = content_block_start['start']
