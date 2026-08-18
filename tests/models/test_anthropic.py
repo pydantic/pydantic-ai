@@ -635,6 +635,20 @@ def test_cache_control_unsupported_param_type():
         m._add_cache_control_to_last_param(params)  # type: ignore[arg-type]  # Testing internal method
 
 
+def test_cache_control_rejects_response_model_param():
+    """Response-model blocks must produce UserError instead of a subscripting TypeError."""
+    from types import SimpleNamespace
+
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.models.anthropic import _add_cache_control_param
+
+    with pytest.raises(UserError, match='Cache control not supported for param type: mcp_tool_result'):
+        _add_cache_control_param(  # type: ignore[arg-type]  # Testing an SDK response block shape
+            [SimpleNamespace(type='mcp_tool_result')],
+            {'type': 'ephemeral'},
+        )
+
+
 def test_cache_control_last_cacheable_param_allows_empty_params():
     """Empty-params guard for the cache-control walk — a defensive branch no real API response reaches, so it's a unit test, not VCR."""
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(api_key='test-key'))
