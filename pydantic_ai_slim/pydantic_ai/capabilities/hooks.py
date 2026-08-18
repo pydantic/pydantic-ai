@@ -20,7 +20,6 @@ agent = Agent('openai:gpt-5', capabilities=[hooks])
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from functools import cached_property
@@ -243,7 +242,7 @@ async def _call_entry(entry: _HookEntry[Any], hook_name: str, *args: Any, **kwar
     if entry.timeout is not None:
         try:
             with anyio.fail_after(entry.timeout):
-                return await _call_func(func, *args, **kwargs)
+                return await _call_func(func, *args, abandon_on_cancel=True, **kwargs)
         except TimeoutError:
             raise HookTimeoutError(
                 hook_name=hook_name,
@@ -253,12 +252,16 @@ async def _call_entry(entry: _HookEntry[Any], hook_name: str, *args: Any, **kwar
     return await _call_func(func, *args, **kwargs)
 
 
-async def _call_func(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+async def _call_func(func: Callable[..., Any], *args: Any, abandon_on_cancel: bool = False, **kwargs: Any) -> Any:
     """Call a function, auto-wrapping sync functions."""
-    result = func(*args, **kwargs)
-    if inspect.isawaitable(result):
-        return await result
-    return result
+    if _utils.is_async_callable(func):
+        return await func(*args, **kwargs)
+
+    if abandon_on_cancel:
+        result = await _utils.run_in_executor_abandon_on_cancel(func, *args, **kwargs)
+    else:
+        result = await _utils.run_in_executor(func, *args, **kwargs)
+    return await _utils.await_maybe(result)
 
 
 def _filter_tool_entries(entries: list[_HookEntry[Any]], *, call: ToolCallPart) -> list[_HookEntry[Any]]:

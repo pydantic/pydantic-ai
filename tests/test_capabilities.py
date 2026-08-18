@@ -5,6 +5,7 @@ import contextvars
 import inspect
 import re
 import threading
+import time
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -18,6 +19,7 @@ from uuid import UUID
 
 import anyio
 import pytest
+from anyio.to_thread import run_sync
 from opentelemetry.trace import NoOpTracer
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -12302,15 +12304,57 @@ class TestHooksCapability:
     async def test_sync_function_auto_wrapping(self):
         hooks = Hooks()
         call_log: list[str] = []
+        hook_thread_id: int | None = None
 
         @hooks.on.before_model_request
         def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            nonlocal hook_thread_id
             call_log.append('sync_hook')
+            hook_thread_id = threading.get_ident()
             return request_context
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
         await agent.run('hello')
         assert call_log == ['sync_hook']
+        assert hook_thread_id != threading.get_ident()
+
+    async def test_sync_function_returning_awaitable(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        @hooks.on.before_model_request
+        def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> Awaitable[ModelRequestContext]:
+            call_log.append('sync_hook')
+
+            async def return_request_context() -> ModelRequestContext:
+                call_log.append('awaitable')
+                return request_context
+
+            return return_request_context()
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['sync_hook', 'awaitable']
+
+    async def test_sync_function_uses_configured_thread_executor(self):
+        hooks = Hooks()
+        hook_thread_name: str | None = None
+
+        @hooks.on.before_model_request
+        def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            nonlocal hook_thread_name
+            hook_thread_name = threading.current_thread().name
+            return request_context
+
+        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='hooks-pool')
+        try:
+            agent = Agent(FunctionModel(simple_model_function), capabilities=[UseThreadExecutor(executor), hooks])
+            await agent.run('hello')
+        finally:
+            executor.shutdown(wait=True)
+
+        assert hook_thread_name is not None
+        assert hook_thread_name.startswith('hooks-pool')
 
     async def test_timeout(self):
         hooks = Hooks()
@@ -12328,6 +12372,39 @@ class TestHooksCapability:
         assert exc_info.value.timeout == 0.01
         assert isinstance(exc_info.value, AgentRunError)
         assert isinstance(exc_info.value, TimeoutError)
+
+    async def test_sync_timeout(self):
+        hooks = Hooks()
+        loop = asyncio.get_running_loop()
+        callback_done = asyncio.Event()
+        callback_delay = 0.0
+        hook_finished = threading.Event()
+
+        @hooks.on.before_model_request(timeout=0.01)
+        def slow_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            hook_started = time.perf_counter()
+
+            def callback() -> None:
+                nonlocal callback_delay
+                callback_delay = time.perf_counter() - hook_started
+                callback_done.set()
+
+            try:
+                loop.call_soon_threadsafe(callback)
+                time.sleep(0.15)
+                return request_context
+            finally:
+                hook_finished.set()
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        with pytest.raises(HookTimeoutError) as exc_info:
+            await agent.run('hello')
+        assert exc_info.value.hook_name == 'before_model_request'
+        assert exc_info.value.func_name == 'slow_hook'
+        assert exc_info.value.timeout == 0.01
+        await callback_done.wait()
+        assert callback_delay < 0.1
+        assert await run_sync(hook_finished.wait, 1)
 
     async def test_has_wrap_node_run(self):
         hooks = Hooks()

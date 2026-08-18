@@ -137,18 +137,25 @@ def using_thread_executor(executor: Executor) -> Generator[None]:
 
 
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
-    if _disable_threads.get():
-        return func(*args, **kwargs)
+    return await _run_in_executor(partial(func, *args, **kwargs))
 
-    wrapped_func = partial(func, *args, **kwargs)
+
+async def run_in_executor_abandon_on_cancel(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
+    """Run a sync function in an executor without shielding cancellation while it runs."""
+    return await _run_in_executor(partial(func, *args, **kwargs), abandon_on_cancel=True)
+
+
+async def _run_in_executor(func: Callable[[], _R], *, abandon_on_cancel: bool = False) -> _R:
+    if _disable_threads.get():
+        return func()
 
     executor = _thread_executor.get()
     if executor is not None:
         loop = asyncio.get_running_loop()
         ctx = copy_context()
-        return await loop.run_in_executor(executor, ctx.run, wrapped_func)
+        return await loop.run_in_executor(executor, ctx.run, func)
 
-    return await run_sync(wrapped_func)
+    return await run_sync(func, abandon_on_cancel=abandon_on_cancel)
 
 
 def is_async_generator_already_running(exc: RuntimeError) -> bool:
