@@ -9,22 +9,22 @@ import httpx
 
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
-from pydantic_ai.providers import Provider
 
 try:
     from openai import AsyncOpenAI
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `openai` package to use the Snowflake provider, '
         'you can use the `snowflake` optional group — `pip install "pydantic-ai-slim[snowflake]"`'
     ) from _import_error
+else:
+    from ._openai_compatible import OpenAICompatibleProvider as _OpenAICompatibleProvider
 
 
 class SnowflakeModelProfile(OpenAIModelProfile, total=False):
@@ -44,7 +44,7 @@ class SnowflakeModelProfile(OpenAIModelProfile, total=False):
     """
 
 
-class SnowflakeProvider(Provider[AsyncOpenAI]):
+class SnowflakeProvider(_OpenAICompatibleProvider):
     """Provider for [Snowflake Cortex](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-rest-api).
 
     Routes requests through Snowflake's OpenAI-compatible Chat Completions API at
@@ -199,13 +199,4 @@ class SnowflakeProvider(Provider[AsyncOpenAI]):
                 ' to use the Snowflake provider.'
             )
 
-        if http_client is not None:
-            self._client = AsyncOpenAI(base_url=base_url, api_key=token, http_client=http_client)
-        else:
-            http_client = create_async_http_client()
-            self._own_http_client = http_client
-            self._http_client_factory = create_async_http_client
-            self._client = AsyncOpenAI(base_url=base_url, api_key=token, http_client=http_client)
-
-    def _set_http_client(self, http_client: httpx.AsyncClient) -> None:
-        self._client._client = http_client  # pyright: ignore[reportPrivateUsage]
+        self._client = self._create_openai_client(base_url=base_url, api_key=token, http_client=http_client)

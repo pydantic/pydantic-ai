@@ -69,6 +69,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._run_context import AnchoredEvidence
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
@@ -115,6 +116,13 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
+from pydantic_ai.realtime import (
+    RealtimeModel,
+    RealtimeModelProfile,
+    RealtimeModelSettings,
+    RealtimeSession,
+)
+from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -267,6 +275,18 @@ pytestmark = [
         'ignore:`TemporalAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
     ),
 ]
+
+
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    """Disable detection for Temporal's synchronous worker and integration setup.
+
+    It performs module/config introspection above Pydantic AI plugin frames; BlockBuster changes
+    its error handling and makes these tests unusably slow. Rebenchmark after
+    https://github.com/cbornet/blockbuster/pull/61 is released, but retain this opt-out until the
+    synchronous-introspection false positives are isolated too.
+    """
+    return False
 
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
@@ -2836,6 +2856,72 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
             )
 
 
+async def test_temporal_agent_realtime_session_in_workflow():
+    # A realtime session opens a long-lived, non-deterministic connection, so it can't run inside a
+    # workflow; the guard trips before the model is ever connected.
+    with patch.object(workflow, 'in_workflow', return_value=True):
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            async with simple_temporal_agent.realtime(cast('Any', object())).session():
+                pass  # pragma: no cover
+
+
+async def test_temporal_agent_realtime_signaling_in_workflow():
+    # Browser-call signaling issues a live provider request, so it is guarded like a session: the two
+    # helpers reach the agent through `_resolve_realtime_session`, which the wrapper guards too.
+    with patch.object(workflow, 'in_workflow', return_value=True):
+        realtime = simple_temporal_agent.realtime(cast('Any', object()))
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            await realtime.answer_webrtc_offer('v=0')
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            await realtime.create_client_secret()
+
+
+class _FakeRealtimeConnection(RealtimeConnection):
+    async def send(self, content: Any) -> None: ...  # pragma: no cover
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        return
+        yield  # pragma: no cover
+
+
+class _FakeRealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'
+
+    @property
+    def system(self) -> str:
+        return 'fake'
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(
+            supports_image_input=True,
+            supports_manual_turn_control=True,
+            supports_interruption=True,
+            supports_output_truncation=True,
+            supports_session_seeding=True,
+            supported_native_tools=frozenset(),
+        )
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[_FakeRealtimeConnection]:
+        yield _FakeRealtimeConnection()
+
+
+async def test_temporal_agent_realtime_session_outside_workflow():
+    # Outside a workflow, the session is delegated to the wrapped agent.
+    async with simple_temporal_agent.realtime(_FakeRealtimeModel()).session() as session:
+        assert isinstance(session, RealtimeSession)
+        assert [event async for event in session] == []
+
+
 async def simple_event_stream_handler(
     ctx: RunContext,
     stream: AsyncIterable[AgentStreamEvent],
@@ -4374,6 +4460,44 @@ def test_temporal_run_context_serializes_usage_limits():
     assert reconstructed.usage_limits == ctx.usage_limits
 
 
+async def test_temporal_run_context_preserves_anchored_evidence():
+    """Provider-exact evidence is computed workflow-side and survives the untyped activity payload."""
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        _anchored_evidence=AnchoredEvidence(
+            discovered_tool_names=frozenset({'deferred_tool'}),
+            loaded_capability_ids=frozenset({'deferred_capability'}),
+        ),
+    )
+
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    reconstructed = TemporalRunContext.deserialize_run_context(wire, deps=None)
+
+    assert reconstructed._anchored_evidence == AnchoredEvidence(  # pyright: ignore[reportPrivateUsage]
+        discovered_tool_names=frozenset({'deferred_tool'}),
+        loaded_capability_ids=frozenset({'deferred_capability'}),
+    )
+
+
+async def test_temporal_run_context_without_anchored_evidence_still_answers_availability():
+    """A payload that predates the field keeps answering, with the history-derived window.
+
+    `serialize_run_context` is a documented override point, so a subclass written against an
+    earlier version returns a dict without it. Guarding it like the other omitted fields would
+    turn that into a `UserError` from a tool that only asked whether it may run.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    older_payload = {name: value for name, value in wire.items() if name != '_anchored_evidence'}
+
+    reconstructed = TemporalRunContext.deserialize_run_context(older_payload, deps=None)
+
+    assert reconstructed._anchored_evidence == AnchoredEvidence()  # pyright: ignore[reportPrivateUsage]
+    assert reconstructed.is_tool_available(ToolDefinition(name='hidden', defer_loading=True)) is False
+
+
 def test_temporal_run_context_serialization_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Temporal serialization.
 
@@ -4399,6 +4523,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'model_settings',  # only set for model requests, which receive it as their own typed activity param
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
         '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
+        'realtime_session',  # live RealtimeSession, not serializable; realtime sessions don't run inside Temporal activities
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
@@ -4507,6 +4632,66 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
         getattr(reconstructed, 'not_a_field')
 
 
+async def test_is_tool_available_answers_for_a_capability_owned_tool_inside_an_activity():
+    """The definition form must answer, not raise, for a tool a capability contributed.
+
+    `is_tool_available` consults `available_capability_ids` for any tool carrying a
+    `capability_id`, and the `capabilities` registry deliberately doesn't cross the boundary. The
+    docs send toolset authors to the definition form precisely because it works inside `get_tools`,
+    which under Temporal runs in an activity — so the ids travel as a snapshot.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+        capabilities={'guarded': Capability[Any](id='guarded', description='Guarded.', defer_loading=True)},
+        loaded_capability_ids={'guarded'},
+        discovered_tool_names={'secret_op'},
+    )
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+
+    assert reconstructed.available_capability_ids == {'guarded'}
+    loaded = ToolDefinition(name='secret_op', defer_loading=True, capability_id='guarded')
+    assert reconstructed.is_tool_available(loaded) is True
+
+    unloaded = ToolDefinition(name='other_op', defer_loading=True, capability_id='not_loaded')
+    assert reconstructed.is_tool_available(unloaded) is False
+
+
+async def test_loaded_capability_tool_without_a_reveal_marker_answers_inside_an_activity():
+    """The on-demand set travels too, so a stripped reveal marker doesn't flip the answer.
+
+    A deferred capability's load is itself the reveal for its own tools, and telling that apart
+    from a capability since reconfigured always-on needs the *configured* set, which lives in the
+    `capabilities` registry and cannot cross the boundary. Without the snapshot this degrades to
+    the discovery check and answers `False` inside an activity while the workflow says `True` --
+    for a tool no search can ever surface, so nothing could restore the marker.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+        capabilities={'guarded': Capability[Any](id='guarded', description='Guarded.', defer_loading=True)},
+        loaded_capability_ids={'guarded'},
+        # No `discovered_tool_names`: the reveal marker is gone, as a history processor can leave it.
+    )
+    tool_def = ToolDefinition(name='secret_op', defer_loading=True, capability_id='guarded')
+    assert ctx.is_tool_available(tool_def) is True
+
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+    assert reconstructed.is_tool_available(tool_def) is True
+
+    # The registry itself still doesn't cross — only the ids it resolves to.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed.capabilities
+
+
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
     """A user subclass with its own field set."""
 
@@ -4551,6 +4736,16 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     assert reconstructed.usage == ctx.usage
     assert reconstructed.discovered_tool_names == {'searched_tool'}
     assert reconstructed.available_tool_names == {'searched_tool'}
+    # No capability snapshot in this subclass's field set, so the property falls back to the base
+    # one, which reads the registry — and that is guarded, so it raises rather than quietly
+    # reporting no capabilities are active.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed.available_capability_ids
+    # Same for the on-demand set that `is_tool_available` consults: an older subclass doesn't carry
+    # it either, so the base property reads the guarded registry and raises rather than reporting an
+    # empty set, which would silently answer "no capability is deferred" for every tool.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed._deferred_capability_ids  # pyright: ignore[reportPrivateUsage]
     assert reconstructed.__dict__['custom'] == 'from-subclass'
     for name in ('prompt', 'conversation_id', 'instrumentation_version'):
         with pytest.raises(UserError, match=f'{name!r} is not available on {LegacyFieldsRunContext.__name__!r}'):
@@ -5198,7 +5393,11 @@ class _CodeExecutionOnlyModel(_BuiltinToolModel):
 
 
 def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractNativeTool:
-    if WebSearchTool in ctx.model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
+    # `RunContext.model` is an `AbstractModel`; narrow to a request-response model to read its profile.
+    ctx_model = ctx.model
+    assert isinstance(ctx_model, Model)
+    model = cast('Model[Any]', ctx_model)
+    if WebSearchTool in model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
         return WebSearchTool()
     return CodeExecutionTool()
 
@@ -7112,6 +7311,40 @@ def test_temporal_agent_retry_policy_non_retryable_errors():
     assert retry_policy.non_retryable_error_types == [
         'UserError',
         'PydanticUserError',
+        'PayloadSizeError',
+    ]
+
+
+def test_temporal_agent_custom_retry_policy_keeps_non_retryable_errors():
+    """A caller-supplied `retry_policy` in a merged config must not drop the non-retryable errors.
+
+    `TemporalAgent`'s `model_activity_config` (and per-toolset configs) merge over the normalized
+    base config, and a `retry_policy` in the override replaces the base policy wholesale — without
+    re-normalization an oversized payload would retry the whole (paid) model request forever.
+    """
+    toolset = FunctionToolset[None](id='merge_probe_toolset')
+
+    async def my_tool() -> str:
+        return 'ok'  # pragma: no cover
+
+    toolset.add_function(my_tool)
+
+    temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='retry_policy_merge_probe_agent', deps_type=type(None), toolsets=[toolset]),
+        model_activity_config=ActivityConfig(retry_policy=RetryPolicy(non_retryable_error_types=['ModelError'])),
+        toolset_activity_config={
+            'merge_probe_toolset': ActivityConfig(retry_policy=RetryPolicy(non_retryable_error_types=['ToolError'])),
+        },
+    )
+
+    model_retry = temporal_agent._temporal_model.activity_config.get('retry_policy')  # pyright: ignore[reportPrivateUsage]
+    assert model_retry is not None
+    assert model_retry.non_retryable_error_types == [
+        'ModelError',
+        'UserError',
+        'PydanticUserError',
+        'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
         'PayloadSizeError',
     ]
 

@@ -17,7 +17,7 @@ timeout = 30
 exclude_all_private = true
 exclude_loopback = true
 
-# Relative doc links are resolved by mkdocs, not as filesystem paths; skip the
+# Relative doc links are resolved by the documentation renderer, not as filesystem paths; skip the
 # `file://` links lychee derives from them.
 scheme = ["https", "http"]
 

@@ -34,6 +34,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -57,6 +58,7 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -537,7 +539,7 @@ class GroqModel(Model[AsyncGroq]):
                 )
         return tools, search_settings
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
@@ -566,6 +568,9 @@ class GroqModel(Model[AsyncGroq]):
                     elif isinstance(item, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
                         pass
+                    elif isinstance(item, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
                 message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')

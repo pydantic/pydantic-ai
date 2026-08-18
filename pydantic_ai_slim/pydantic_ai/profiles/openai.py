@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import UserError
@@ -17,6 +17,9 @@ from ..native_tools import (
 from ..native_tools._tool_search import ToolSearchTool
 from ..settings import ThinkingLevel
 from . import ModelProfile
+
+if TYPE_CHECKING:
+    from ..realtime.profiles import RealtimeModelProfile
 
 _OPENAI_BASE_BUILTINS = frozenset(
     {WebSearchTool, CodeExecutionTool, FileSearchTool, MCPServerTool, ImageGenerationTool}
@@ -392,6 +395,31 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_supports_minimal_reasoning_effort=not model_name.startswith('gpt-5.6'),
         supported_native_tools=supported_native_tools,
     )
+
+
+def openai_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
+    """Get the realtime model profile for an OpenAI realtime model."""
+    return {
+        'supports_image_input': True,
+        'supports_manual_turn_control': True,
+        'supports_interruption': True,
+        'supports_output_truncation': True,
+        'supports_session_seeding': True,
+        'supports_webrtc': True,
+        'supports_seeding_images': True,
+        'supports_seeding_audio': True,
+        # The realtime models keep talking while a tool call is outstanding — they're tuned to
+        # emit filler ("let me check that") rather than going silent — so there's no per-tool
+        # wire flag to set, unlike Gemini. The session already runs tools in the background and
+        # defers `response.create` while a response is active, so this is true end to end.
+        'supports_async_tool_calls': True,
+        'emits_input_speech_events': True,
+        'audio_input_sample_rate': 24000,
+        'audio_output_sample_rate': 24000,
+        # Reasoning effort is only accepted by the `gpt-realtime-2*` reasoning models; the GA
+        # `gpt-realtime` rejects it ("Unsupported option for this model").
+        'supports_thinking': model_name.startswith('gpt-realtime-2'),
+    }
 
 
 _STRICT_INCOMPATIBLE_KEYS = [
