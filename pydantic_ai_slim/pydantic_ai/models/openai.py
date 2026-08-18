@@ -11,6 +11,7 @@ from collections.abc import (
     Callable,
     Generator,
     Iterable,
+    Mapping,
     Sequence,
 )
 from contextlib import asynccontextmanager, contextmanager
@@ -50,6 +51,7 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
+    InstructionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -599,6 +601,33 @@ def _add_openai_prompt_cache_breakpoint(
     content[-1]['prompt_cache_breakpoint'] = cache_breakpoint
 
 
+def _leading_system_message_count(messages: Sequence[Mapping[str, Any]], system_prompt_role: str) -> int:
+    """Number of leading messages holding system prompts, which is where instructions belong."""
+    return next((i for i, message in enumerate(messages) if message.get('role') != system_prompt_role), len(messages))
+
+
+def _instruction_cache_index(instruction_parts: Sequence[InstructionPart], system_prompt_count: int) -> int | None:
+    """Index of the leading message that should carry the instruction cache breakpoint.
+
+    The breakpoint goes after the last static instruction, so dynamic instructions that change every
+    run stay outside the cached prefix. Instruction parts are sorted static-first.
+    """
+    index = system_prompt_count + sum(1 for part in instruction_parts if not part.dynamic) - 1
+    return index if index >= 0 else None
+
+
+def _add_instruction_cache_breakpoint(
+    message: chat.ChatCompletionMessageParam | responses.ResponseInputItemParam,
+    text_type: Literal['text', 'input_text'],
+) -> None:
+    """Move a leading message's text into a content block carrying an explicit cache breakpoint."""
+    message_dict = cast('dict[str, Any]', message)
+    # Cast because the content part shape differs per API and only differs in the `type` literal.
+    content = cast('list[ChatCompletionContentPartParam]', [{'type': text_type, 'text': message_dict['content']}])
+    _add_openai_prompt_cache_breakpoint(content)
+    message_dict['content'] = content
+
+
 class OpenAIChatModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
@@ -687,6 +716,18 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     OpenAI applies the request-wide `ttl` to every breakpoint and ignores `CachePoint.ttl`.
     The `ttl` here is independent of the `openai_prompt_cache_retention` setting, which OpenAI deprecates
     for GPT-5.6 and later models.
+
+    See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
+    for more information.
+    """
+
+    openai_cache_instructions: bool
+    """Whether to add an explicit prompt cache breakpoint after the last static instruction.
+
+    Only supported by GPT-5.6 and later models, and ignored by earlier ones. On the Responses API the
+    instructions are sent as leading input messages rather than in the top-level `instructions` field,
+    which cannot carry a breakpoint. OpenAI applies the request-wide `ttl` from
+    `openai_prompt_cache_options`.
 
     See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
     for more information.
@@ -1634,9 +1675,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 assert_never(message)
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
-            system_prompt_count = next(
-                (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
-            )
+            system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
             if system_prompt_role == 'developer':
                 instruction_messages: list[chat.ChatCompletionMessageParam] = [
                     chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
@@ -1652,6 +1691,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     for part in instruction_parts
                 ]
             openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
+            if (
+                model_settings
+                and model_settings.get('openai_cache_instructions')
+                and profile.get('openai_supports_prompt_cache_breakpoints', False)
+                and (index := _instruction_cache_index(instruction_parts, system_prompt_count)) is not None
+            ):
+                _add_instruction_cache_breakpoint(openai_messages[index], 'text')
         if not self.profile.get('openai_chat_supports_multiple_system_messages', True):
             openai_messages = _merge_leading_system_messages(openai_messages, system_prompt_role)
         return openai_messages
@@ -2601,6 +2647,27 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instructions, openai_messages = await self._map_messages(messages, model_settings, wire_request_parameters)
         reasoning = self._translate_thinking(model_settings, model_request_parameters)
 
+        system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
+        if (
+            model_settings.get('openai_cache_instructions')
+            and profile.get('openai_supports_prompt_cache_breakpoints', False)
+            # Input messages are persisted into server-side state, so instructions moved there would
+            # be duplicated on every subsequent request. The top-level field is never carried over.
+            and not previous_response_id
+            and not conversation_id
+            and (instruction_parts := self._get_instruction_parts(messages, wire_request_parameters))
+        ):
+            # The top-level `instructions` field cannot carry a cache breakpoint, so the instructions
+            # are sent as leading input messages instead.
+            system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
+            openai_messages[system_prompt_count:system_prompt_count] = [
+                responses.EasyInputMessageParam(role=system_prompt_role, content=part.content)
+                for part in instruction_parts
+            ]
+            if (index := _instruction_cache_index(instruction_parts, system_prompt_count)) is not None:
+                _add_instruction_cache_breakpoint(openai_messages[index], 'input_text')
+            instructions = OMIT
+
         text: responses.ResponseTextConfigParam | Omit = OMIT
         if model_request_parameters.output_mode == 'native':
             output_object = model_request_parameters.output_object
@@ -2614,15 +2681,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # Without this trick, we'd hit this error:
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
-            assert isinstance(instructions, str)
-            system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
-            system_prompt_count = next(
-                (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role), len(openai_messages)
-            )
-            openai_messages.insert(
-                system_prompt_count, responses.EasyInputMessageParam(role=system_prompt_role, content=instructions)
-            )
-            instructions = OMIT
+            # `openai_cache_instructions` may already have moved them into the input messages.
+            if isinstance(instructions, str):
+                system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
+                openai_messages.insert(
+                    system_prompt_count, responses.EasyInputMessageParam(role=system_prompt_role, content=instructions)
+                )
+                instructions = OMIT
 
         if verbosity := model_settings.get('openai_text_verbosity'):
             text_with_verbosity: responses.ResponseTextConfigParam = text if isinstance(text, dict) else {}
