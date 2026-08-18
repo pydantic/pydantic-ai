@@ -15740,7 +15740,7 @@ async def _replay_input(
     model = OpenAIResponsesModel(
         'custom-model',
         provider=OpenAIProvider(api_key='not-used'),
-        profile=OpenAIModelProfile(openai_responses_requires_function_call_grouping=group_function_calls),
+        profile=OpenAIModelProfile(openai_responses_supports_interleaved_function_calls=not group_function_calls),
     )
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
         history, OpenAIResponsesModelSettings(), model_request_parameters or ModelRequestParameters()

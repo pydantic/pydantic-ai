@@ -3324,7 +3324,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 file_search_item: responses.ResponseFileSearchToolCallParam | None = None
                 code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
                 response_parts: Sequence[ModelResponsePart] = message.parts
-                if profile.get('openai_responses_requires_function_call_grouping', False):
+                if not profile.get('openai_responses_supports_interleaved_function_calls', True):
                     response_parts = _group_settled_portable_function_calls(
                         messages, message_index, message, client_tool_search_active=client_tool_search_active
                     )

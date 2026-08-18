@@ -54,13 +54,13 @@ def test_deep_seek_model_profile():
 def test_deep_seek_responses_function_call_grouping_profile_matrix() -> None:
     for model_name in ('deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro'):
         model = OpenAIResponsesModel(model_name, provider=DeepSeekProvider(api_key='api-key'))
-        assert model.profile.get('openai_responses_requires_function_call_grouping', False) is True
+        assert model.profile.get('openai_responses_supports_interleaved_function_calls', True) is False
     openai_model = OpenAIResponsesModel('gpt-5.6', provider=OpenAIProvider(api_key='api-key'))
-    assert openai_model.profile.get('openai_responses_requires_function_call_grouping', False) is False
+    assert openai_model.profile.get('openai_responses_supports_interleaved_function_calls', True) is True
     default_model = OpenAIResponsesModel(
         'custom-model', provider=OpenAIProvider(api_key='api-key'), profile=OpenAIModelProfile()
     )
-    assert default_model.profile.get('openai_responses_requires_function_call_grouping', False) is False
+    assert default_model.profile.get('openai_responses_supports_interleaved_function_calls', True) is True
 
 
 @pytest.mark.parametrize('model_name', ['deepseek-v4-flash', 'deepseek-v4-pro'])
