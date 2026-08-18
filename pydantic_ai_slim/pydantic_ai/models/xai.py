@@ -33,6 +33,7 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -49,11 +50,19 @@ from ..models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
-from ..native_tools import CodeExecutionTool, FileSearchTool, MCPServerTool, WebSearchTool, XSearchTool
+from ..native_tools import (
+    AbstractNativeTool,
+    CodeExecutionTool,
+    FileSearchTool,
+    MCPServerTool,
+    WebSearchTool,
+    XSearchTool,
+)
 from ..output import OutputObjectDefinition
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec
 from ..profiles.grok import GrokModelProfile, GrokReasoningEffort
@@ -142,22 +151,22 @@ def _map_reasoning_effort(thinking: ThinkingLevel, profile: GrokModelProfile) ->
         assert_never(thinking)
 
 
-_FINISH_REASON_MAP: dict[str, FinishReason] = {
-    'stop': 'stop',
-    'length': 'length',
-    'content_filter': 'content_filter',
-    'max_output_tokens': 'length',
-    'cancelled': 'error',
-    'failed': 'error',
-}
-
-# `GetChatCompletionResponse.outputs[*].finish_reason` uses the proto enum (ints), not the string values returned by
-# `Response.finish_reason`.
+# Keyed on the proto enum ints from `outputs[*].finish_reason`, not the enum names (e.g. 'REASON_STOP')
+# that the `Response.finish_reason` string property returns. `REASON_INVALID`, the proto default meaning
+# "not finished yet", is deliberately unmapped so intermediate streaming chunks map to `None`.
 _FINISH_REASON_PROTO_MAP: dict[int, FinishReason] = {
     sample_pb2.FinishReason.REASON_STOP: 'stop',
     sample_pb2.FinishReason.REASON_MAX_LEN: 'length',
+    sample_pb2.FinishReason.REASON_MAX_CONTEXT: 'length',
     sample_pb2.FinishReason.REASON_TOOL_CALLS: 'tool_call',
+    sample_pb2.FinishReason.REASON_TIME_LIMIT: 'error',
 }
+
+
+def _map_finish_reason(response: chat_types.Response) -> FinishReason | None:
+    """Map the final output's finish reason, `None` if unfinished (`REASON_INVALID`) or unknown."""
+    outputs = response.proto.outputs
+    return _FINISH_REASON_PROTO_MAP.get(outputs[-1].finish_reason) if outputs else None
 
 
 class XaiModelSettings(ModelSettings, total=False):
@@ -242,6 +251,14 @@ class XaiModelSettings(ModelSettings, total=False):
     `xai_max_turns` does not necessarily equal the total number of tool calls made.
     """
 
+    xai_agent_count: int
+    """Number of agents for xAI multi-agent models (e.g. `grok-4.20-multi-agent`).
+
+    Forwarded to `chat.create(agent_count=...)`. Documented values are `4` and `16`; more
+    agents increase token usage and latency. Only affects multi-agent models; other models
+    ignore it. The multi-agent API is in beta, so the accepted values may change.
+    """
+
 
 # Mapping of XaiModelSettings keys to xAI SDK parameter names.
 # Most keys are the same, but some differ (e.g., 'stop_sequences' -> 'stop').
@@ -261,6 +278,7 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'xai_previous_response_id': 'previous_response_id',
     'xai_reasoning_effort': 'reasoning_effort',
     'xai_max_turns': 'max_turns',
+    'xai_agent_count': 'agent_count',
 }
 
 
@@ -313,7 +331,7 @@ class XaiModel(Model[AsyncClient]):
         return cast(GrokModelProfile, super().profile)
 
     @classmethod
-    def supported_native_tools(cls) -> frozenset[type]:
+    def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
         """Return the set of builtin tool types this model can handle."""
         return frozenset({WebSearchTool, CodeExecutionTool, MCPServerTool, XSearchTool, FileSearchTool})
 
@@ -379,6 +397,9 @@ class XaiModel(Model[AsyncClient]):
                     tool_results.append(part)
             elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
                 raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
 
@@ -443,6 +464,9 @@ class XaiModel(Model[AsyncClient]):
             elif isinstance(item, CompactionPart):  # pragma: no cover
                 # Compaction parts are not sent back to models that don't support compaction.
                 pass
+            elif isinstance(item, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(item)
 
@@ -653,7 +677,7 @@ class XaiModel(Model[AsyncClient]):
             A tuple of (filtered_tool_defs, tool_choice).
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         profile = self.profile
 
@@ -870,18 +894,6 @@ class XaiModel(Model[AsyncClient]):
         # Convert usage with detailed token information
         usage = _extract_usage(response, self._model_name, self._provider.name, self._provider.base_url)
 
-        # Map finish reason.
-        #
-        # The xAI SDK exposes `response.finish_reason` as a *string* for the overall response, but in
-        # multi-output responses (e.g. server-side tools) it can reflect an intermediate TOOL_CALLS
-        # output rather than the final STOP output. We derive the finish reason from the final output
-        # when available.
-        if outputs:
-            last_reason = outputs[-1].finish_reason
-            finish_reason = _FINISH_REASON_PROTO_MAP.get(last_reason, 'stop')
-        else:  # pragma: no cover
-            finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
-
         return ModelResponse(
             parts=parts,
             usage=usage,
@@ -890,7 +902,7 @@ class XaiModel(Model[AsyncClient]):
             provider_name=self.system,
             provider_url=self._provider.base_url,
             provider_response_id=response.id,
-            finish_reason=finish_reason,
+            finish_reason=_map_finish_reason(response),
         )
 
     async def _process_streamed_response(
@@ -935,18 +947,7 @@ class XaiStreamedResponse(StreamedResponse):
         return (grpc.RpcError,)
 
     async def close_stream(self) -> None:
-        # In xai-sdk 1.5.0, `chat.stream()` returns a Python async generator that
-        # wraps the underlying gRPC `GetCompletionChunk(...)` call.
-        #
-        # Calling `aclose()` shuts down that local async-generator wrapper and
-        # stops consumption on our side, but the SDK does not expose the inner
-        # `grpc.aio.UnaryStreamCall`, so this is not a documented transport-level
-        # RPC cancellation hook.
-        try:
-            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-        except RuntimeError as exc:
-            if not _utils.is_async_generator_already_running(exc):
-                raise
+        await self._response.aclose()
 
     @property
     def system(self) -> str:
@@ -967,8 +968,11 @@ class XaiStreamedResponse(StreamedResponse):
         if response.id and self.provider_response_id is None:
             self.provider_response_id = response.id
 
-        # Handle finish reason (SDK Response always provides a finish_reason)
-        self.finish_reason = _FINISH_REASON_MAP.get(response.finish_reason, 'stop')
+        # Only assign when a real reason is present. Intermediate chunks carry REASON_INVALID (-> None),
+        # and a trailing chunk can regress the accumulated proto back to REASON_INVALID after the real
+        # reason arrived, so the guard also preserves the last real value.
+        if (finish_reason := _map_finish_reason(response)) is not None:
+            self.finish_reason = finish_reason
 
     def _collect_reasoning_events(
         self,
@@ -1257,7 +1261,14 @@ def _get_native_tools(model_request_parameters: ModelRequestParameters) -> list[
                 )
             )
         elif isinstance(builtin_tool, FileSearchTool):
-            tools.append(collections_search(collection_ids=list(builtin_tool.file_store_ids)))
+            tools.append(
+                collections_search(
+                    collection_ids=list(builtin_tool.file_store_ids),
+                    limit=builtin_tool.max_num_results,
+                    instructions=builtin_tool.instructions,
+                    retrieval_mode=builtin_tool.retrieval_mode,
+                )
+            )
         else:  # pragma: no cover
             supported = ', '.join(t.__name__ for t in XaiModel.supported_native_tools())
             raise UserError(

@@ -34,9 +34,8 @@ from pydantic_ai import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.result import RunUsage
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
@@ -66,7 +65,7 @@ with try_import() as imports_successful:
     )
     from huggingface_hub.errors import HfHubHTTPError
 
-    from pydantic_ai.models.huggingface import HuggingFaceModel, HuggingFaceStreamedResponse
+    from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
     MockChatCompletion = ChatCompletionOutput | Exception
@@ -77,6 +76,25 @@ pytestmark = [
     pytest.mark.anyio,
     pytest.mark.filterwarnings('ignore::ResourceWarning'),
 ]
+
+
+def test_huggingface_hidden_tools_stay_off_the_wire():
+    """Guard Hugging Face's single-line switch from `tool_defs` to `declared_tool_defs`."""
+    model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(provider_name='nebius', api_key='x'))
+    hidden = ToolDefinition(
+        name='process_refund',
+        description='Process a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    visible = ToolDefinition(name='visible')
+
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+    assert prepared.tool_visibility == {'process_refund': 'withheld', 'visible': 'visible'}
+
+    tools, _ = model._get_tool_choice({}, prepared)  # pyright: ignore[reportPrivateUsage]
+    assert [tool['function']['name'] for tool in tools] == ['visible']
 
 
 @dataclass
@@ -1225,70 +1243,3 @@ async def test_map_user_prompt_with_text_content():
 
     assert msg.content[0].text == snapshot('hello')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]
     assert msg.content[1].text == snapshot('there')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]
-
-
-async def test_stream_cancel(allow_model_requests: None):
-    stream = [text_chunk('hello '), text_chunk('world'), chunk([])]
-    mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(m)
-
-    async with agent.run_stream('') as result:
-        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
-            break
-        await result.cancel()
-        await result.cancel()  # double cancel is a no-op
-        assert result.cancelled
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='', timestamp=IsDatetime())],
-                timestamp=IsDatetime(),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content='hello ')],
-                usage=RequestUsage(input_tokens=2, output_tokens=1),
-                model_name='hf-model',
-                timestamp=IsDatetime(),
-                provider_name='huggingface',
-                provider_url='https://api-inference.huggingface.co',
-                provider_details={'timestamp': IsDatetime()},
-                provider_response_id='x',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-                state='interrupted',
-            ),
-        ]
-    )
-
-
-@pytest.mark.parametrize(
-    ('error_message', 'raises'),
-    [
-        ('asynchronous generator is already running', False),
-        ('boom', True),
-    ],
-)
-async def test_huggingface_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
-    class FailingStream:
-        async def aclose(self) -> None:
-            raise RuntimeError(error_message)
-
-    stream = FailingStream()
-    response = HuggingFaceStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='hf-model',
-        _model_profile=cast(Any, object()),
-        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
-        _provider_name='huggingface',
-        _provider_url='https://api-inference.huggingface.co',
-    )
-
-    if raises:
-        with pytest.raises(RuntimeError, match='boom'):
-            await response.close_stream()
-    else:
-        await response.close_stream()

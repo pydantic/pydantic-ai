@@ -49,6 +49,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -92,6 +93,25 @@ def test_init():
     assert m.model_name == 'llama-3.3-70b-versatile'
     assert m.system == 'groq'
     assert m.base_url == 'https://api.groq.com'
+
+
+def test_groq_hidden_tools_stay_off_the_wire():
+    """Guard Groq's single-line switch from `tool_defs` to `declared_tool_defs`."""
+    model = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='foobar'))
+    hidden = ToolDefinition(
+        name='process_refund',
+        description='Process a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    visible = ToolDefinition(name='visible')
+
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+    assert prepared.tool_visibility == {'process_refund': 'withheld', 'visible': 'visible'}
+
+    tools, _ = model._get_tool_choice({}, prepared)  # pyright: ignore[reportPrivateUsage]
+    assert [tool['function']['name'] for tool in tools] == ['visible']
 
 
 @dataclass

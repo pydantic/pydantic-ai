@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1690'
+      - '1680'
       content-type:
       - application/json
       host:
@@ -18,7 +18,7 @@ interactions:
       messages:
       - content: Find the exchange-rate tool.
         role: user
-      - content: 'The following tools have become available to you: `lookup_exchange_rate`.'
+      - content: 'The following tool(s) are now available: `lookup_exchange_rate`'
         role: system
       - content: Acknowledge the available exchange-rate tool without calling it.
         role: user
@@ -79,11 +79,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '787'
+      - '713'
       content-type:
       - application/json
       openai-processing-ms:
-      - '3214'
+      - '2513'
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -96,28 +96,27 @@ interactions:
         index: 0
         message:
           annotations: []
-          content: Acknowledged. The exchange-rate tool "lookup_exchange_rate" is available. It takes a currency code (e.g.,
-            "EUR") and returns the exchange rate. I won't call it unless you ask.
+          content: Acknowledged. The exchange-rate tool (lookup_exchange_rate) is available. I won't call it unless you ask.
           refusal: null
           role: assistant
-      created: 1785464758
-      id: chatcmpl-E7XEcSasqArfOA7BA8CQtaHj0soSo
+      created: 1785963574
+      id: chatcmpl-E9d021WuJsrRG6kucej7r1YgHUske
       model: gpt-5-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 243
+        completion_tokens: 161
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 192
+          reasoning_tokens: 128
           rejected_prediction_tokens: 0
         prompt_tokens: 304
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 547
+        total_tokens: 465
     status:
       code: 200
       message: OK

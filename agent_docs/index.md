@@ -64,7 +64,11 @@
 <!-- rule:32 -->
 - Use `!r` format specifier for identifiers in error messages (e.g., `f'Tool {name!r}'` not `f'Tool `{name}`'`) — Provides consistent, unambiguous quoting that clearly delimits values and handles edge cases like empty strings or special characters.
 <!-- rule:353 -->
-- Fail fast on explicit user config conflicts; gracefully fallback on internal/auto setting conflicts — Catching user mistakes early with clear errors prevents debugging confusion, while internal fallbacks enable cross-provider compatibility and system resilience when constraints are automatically inferred or propagated
+- Fail fast on explicit user config conflicts without API-defined precedence — Clear errors prevent arbitrary overrides
+- Fall back gracefully on internal or automatic setting conflicts — Internal fallbacks enable cross-provider compatibility when constraints are inferred or propagated
+- Warn when API-defined precedence overrides an explicit user value — Documentation does not replace runtime feedback; warnings identify affected call sites, persist in logs and test suites, and make suppression explicit in source
+- Make override warnings actionable by naming the overridden value and what took precedence — Users must be able to change the input that triggered the warning
+- Emit an override warning only when code proves the user supplied the overridden value — False positives make warnings untrustworthy and train users to suppress real problems
 <!-- rule:337 -->
 - Inherit new exception types from existing base exceptions like `UnexpectedModelBehavior` when semantically appropriate — Maintains backward compatibility so user code catching parent exceptions continues to work when new exception types are introduced
 <!-- rule:320 -->

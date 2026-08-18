@@ -42,18 +42,23 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 |---|---|---|---|
 | Anthropic (Opus 4.6+) | `anthropic_thinking={'type': 'adaptive'}` | `{type: 'adaptive'}` + `effort='high'` | Claude Opus 4.7, 4.8, 5, and Sonnet 5 also support `effort='xhigh'` |
 | Anthropic (older) | `anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000}` | `budget_tokens=16384` | Budget-based; `'low'` → 2048 tokens |
-| OpenAI | `reasoning_effort='medium'` | `reasoning_effort='high'` | |
-| Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | |
+| OpenAI | `reasoning_effort='medium'` | `reasoning_effort='high'` | GPT-5.6 maps unified `'minimal'` to `'low'` |
+| Google (Gemini 3+) | `include_thoughts=True` | `thinking_level='HIGH'` | Some models map unified `'minimal'` to `thinking_level='LOW'` |
 | Google (Gemini 2.5) | `include_thoughts=True` | `thinking_budget=24576` | |
 | Groq | `reasoning_format='parsed'` (gpt-oss also `reasoning_effort='medium'`) | `reasoning_format='parsed'` (gpt-oss also `reasoning_effort='high'`) | gpt-oss: unified effort → `reasoning_effort` (`low`/`medium`/`high`, via `extra_body`; always-on, so `thinking=False` is silently ignored); qwen3: `thinking=False` → `reasoning_effort='none'` (true disable, via `extra_body`); other reasoning models → `'hidden'` (suppresses output only) |
 | Mistral | `reasoning_effort='high'` | `reasoning_effort='high'` | Only on adjustable-reasoning models (e.g. `mistral-small-latest`, `mistral-medium-3-5`); `magistral` reasons always-on and gets no `reasoning_effort`. Mistral exposes only `'high'`/`'none'`, so every enabled level (incl. `'minimal'`) → `'high'` and only `thinking=False` → `'none'` |
 | OpenRouter | `reasoning={'effort': 'medium', 'enabled': True}` | `reasoning={'effort': 'high', 'enabled': True}` | `thinking=False` → `effort='none'`; always-on routes silently ignore; via `extra_body` |
 | Cerebras | `reasoning_effort` omitted (reasons by default) | `reasoning_effort` omitted | `thinking=False` → `reasoning_effort='none'`; gpt-oss reasons always-on, so `thinking=False` is silently ignored |
+| Snowflake Cortex | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | Claude models only (via `extra_body`); sets `temperature=1` automatically; other families ignore `thinking` |
+| Crusoe | `reasoning_effort='medium'` | `reasoning_effort='high'` | Inherited from `OpenAIChatModel`; follows the vendor-prefixed model profile (`zai/`, `deepseek-ai/`, …). `thinking=False` → `'none'` only where that profile accepts it |
+| Ollama | `reasoning_effort='medium'` | `reasoning_effort='high'` | Inherited from `OpenAIChatModel`, so it follows the resolved model profile: `deepseek-r1` reasons, `gpt-oss` on Ollama sends nothing. `thinking=False` → `'none'` only on profiles that accept it |
+| Z.AI | `thinking={'type': 'enabled'}` | `thinking={'type': 'enabled'}`, plus `reasoning_effort='high'` on GLM-5.2 | Via `extra_body`; `thinking=False` → `type='disabled'`. Only GLM-5.2 takes a per-request effort, so on other models every enabled level behaves the same |
 | xAI | `reasoning_effort` omitted on Grok 4.3 (uses its default) | `reasoning_effort='high'` | Grok 4.3 supports `'none'`, `'low'`, `'medium'`, and `'high'`, and `thinking=True` omits the parameter so the model applies its own default; Grok 3 Mini only supports `'low'` and `'high'` (so `thinking=True` → `'high'`) and silently ignores `thinking=False`; Grok 4.5 supports `'low'`, `'medium'`, and `'high'` but not `'none'`, so it reasons always-on (`thinking=True` → `'medium'`) and silently ignores `thinking=False` |
 | Bedrock (Claude 4.6+) | `thinking.type='adaptive'` | `{type: 'adaptive'}` + `output_config.effort='high'` | Effort lives in the sibling `output_config` field per AWS docs; `xhigh` maps to `max` |
 | Bedrock (Claude older) | `thinking.type='enabled'` | `budget_tokens=16384` | Budget-based |
 | Bedrock (OpenAI) | `reasoning_effort='medium'` | `reasoning_effort='high'` | Converse rejects `'none'`; `thinking=False` silently ignored |
 | Bedrock (Qwen) | `reasoning_config='high'` | `reasoning_config='high'` | Only `'low'` and `'high'`; `thinking=False` silently ignored |
+| Bedrock Mantle | `reasoning={'effort': 'medium'}` | `reasoning={'effort': 'high'}` | Served on the Responses API, so effort rides the `reasoning` object; `thinking=False` → `effort='none'` |
 
 ## OpenAI
 
@@ -308,6 +313,24 @@ settings = ZaiModelSettings(thinking=True, zai_clear_thinking=False)
 agent = Agent(model, model_settings=settings)
 ...
 ```
+
+## Snowflake Cortex
+
+To enable thinking on Claude models, use the unified [`thinking`][pydantic_ai.settings.ModelSettings.thinking] [model setting](../agent.md#model-run-settings), or set [`SnowflakeModelSettings.snowflake_reasoning`][pydantic_ai.models.snowflake.SnowflakeModelSettings.snowflake_reasoning] directly to control the reasoning token budget:
+
+```python {title="snowflake_thinking_part.py"}
+from pydantic_ai import Agent
+from pydantic_ai.models.snowflake import SnowflakeModel, SnowflakeModelSettings
+
+model = SnowflakeModel('claude-sonnet-4-6')
+settings = SnowflakeModelSettings(snowflake_reasoning={'max_tokens': 4096})
+agent = Agent(model, model_settings=settings)
+...
+```
+
+On OpenAI models, use the unified `thinking` setting or [`openai_reasoning_effort`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_reasoning_effort].
+
+Claude requires `temperature` to be exactly 1 when thinking is enabled, but Cortex applies a different default when the request doesn't specify one, so `SnowflakeModel` sets `temperature` to 1 automatically when reasoning is enabled and you haven't set it explicitly.
 
 ## Mistral
 

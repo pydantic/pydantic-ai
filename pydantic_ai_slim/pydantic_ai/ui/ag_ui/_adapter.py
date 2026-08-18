@@ -35,6 +35,7 @@ from ...messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -56,7 +57,7 @@ from ...tools import (
     DeferredToolResults,
 )
 from ...toolsets import AbstractToolset
-from .._adapter import tool_availability_delta_from_payload
+from .._adapter import compaction_part_from_payload, compaction_payload, tool_availability_delta_from_payload
 
 try:
     from ag_ui.core import (
@@ -87,6 +88,7 @@ try:
     )
     from ._utils import (
         BUILTIN_TOOL_CALL_ID_PREFIX,
+        COMPACTION_ACTIVITY_TYPE,
         DEFAULT_AG_UI_VERSION,
         ENCRYPTED_VALUE_VERSION,
         FILE_ACTIVITY_TYPE,
@@ -573,6 +575,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 case ActivityMessage() as activity_msg:
                     if activity_msg.activity_type == TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE:
                         builder.add(tool_availability_delta_from_payload(activity_msg.content))
+                    elif activity_msg.activity_type == COMPACTION_ACTIVITY_TYPE:
+                        if (compaction_part := compaction_part_from_payload(activity_msg.content)) is not None:
+                            builder.add(compaction_part)
                     elif activity_msg.activity_type == FILE_ACTIVITY_TYPE and preserve_file_data:
                         activity_content = activity_msg.content
                         url = activity_content.get('url', '')
@@ -727,7 +732,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         id=_new_message_id(),
                         activity_type=TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
                         content={
-                            'added': part.added,
+                            'added': part.tools_added,
                             'tool_call_id': part.tool_call_id,
                         },
                     )
@@ -745,6 +750,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     )
                 else:
                     user_content.append(TextInputContent(type='text', text=part.model_response()))
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                pass  # Realtime audio parts are not rendered in AG-UI
             else:
                 assert_never(part)
 
@@ -873,8 +880,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                             content=file_content,
                         )
                     )
-            elif isinstance(part, CompactionPart):  # pragma: no cover
-                pass  # Compaction parts are not rendered in AG-UI
+            elif isinstance(part, CompactionPart):
+                flush()
+                result.append(
+                    ActivityMessage(
+                        id=_new_message_id(),
+                        activity_type=COMPACTION_ACTIVITY_TYPE,
+                        content=compaction_payload(part),
+                    )
+                )
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                pass  # Realtime audio parts are not rendered in AG-UI
             else:
                 assert_never(part)
 
@@ -895,6 +911,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         - `TextPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
+        - `ToolCallPart.args` and `NativeToolCallPart.args` that don't parse as a JSON object are
+          rewritten to `'{"INVALID_JSON":"<raw args>"}'` (see
+          [`args_as_json_str`][pydantic_ai.messages.BaseToolCallPart.args_as_json_str]), so the raw
+          string is no longer recoverable as args on reload. Unlike the live event stream, which emits
+          them verbatim so streamed fragments stay concatenable, history has to hold a sendable value.
         - `NativeToolCallPart.id`, `.provider_details` are lost (only `.provider_name` survives
           via the prefixed tool call ID).
         - `NativeToolReturnPart.provider_details` is lost.
@@ -907,6 +928,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           via `ToolMessage.error`, `'denied'` reloads as `'failed'`, and `'interrupted'` reloads as
           `'success'`.
         - `RetryPromptPart` becomes `ToolReturnPart` (or `UserPromptPart`) on reload.
+        - A `NativeToolReturnPart` is always emitted directly after its `NativeToolCallPart`, so any
+          part that originally sat between them — e.g. a `CompactionPart` — reloads after the pair
+          instead. Provider adapters emit compaction parts outside call/return pairs, so this only
+          affects hand-constructed histories.
         - `CachePoint` and `UploadedFile` content items are dropped (unless `preserve_file_data=True`).
         - `FileUrl.force_download` is dropped when `ag_ui_version < '0.1.15'` (before typed
           multimodal content gained a metadata carrier).

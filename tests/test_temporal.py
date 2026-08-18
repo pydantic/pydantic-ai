@@ -30,9 +30,11 @@ from pydantic_ai import (
     AgentStreamEvent,
     BinaryContent,
     BinaryImage,
+    CancellationToken,
     CodeExecutionTool,
     DocumentUrl,
     ExternalToolset,
+    FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -60,6 +62,7 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     Tool,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturn,
@@ -70,6 +73,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
+from pydantic_ai._run_context import AnchoredEvidence
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
@@ -91,6 +95,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    RunCancelled,
     SkipModelRequest,
     ToolFailed,
     UnexpectedModelBehavior,
@@ -108,12 +113,20 @@ from pydantic_ai.models import (
     infer_model,
     infer_model_profile,
 )
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
+from pydantic_ai.realtime import (
+    RealtimeModel,
+    RealtimeModelProfile,
+    RealtimeModelSettings,
+    RealtimeSession,
+)
+from pydantic_ai.realtime.codec import RealtimeConnection
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
@@ -133,7 +146,13 @@ try:
     from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
-    from temporalio.converter import DataConverter, DefaultPayloadConverter, PayloadCodec
+    from temporalio.converter import (
+        DataConverter,
+        DefaultPayloadConverter,
+        ExternalStorage,
+        PayloadCodec,
+        StorageDriver,
+    )
     from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError
     from temporalio.testing import ActivityEnvironment, WorkflowEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
@@ -260,6 +279,18 @@ pytestmark = [
         'ignore:`TemporalAgent` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning'
     ),
 ]
+
+
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    """Disable detection for Temporal's synchronous worker and integration setup.
+
+    It performs module/config introspection above Pydantic AI plugin frames; BlockBuster changes
+    its error handling and makes these tests unusably slow. Rebenchmark after
+    https://github.com/cbornet/blockbuster/pull/61 is released, but retain this opt-out until the
+    synchronous-introspection false positives are isolated too.
+    """
+    return False
 
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
@@ -699,6 +730,15 @@ _capability_migration_agent = Agent(
         )
     ],
 )
+
+
+async def test_temporal_agent_rejects_cancellation_token() -> None:
+    """The wrapper agent rejects `cancellation_token` up front: a token is same-process state
+    that cannot cross the durable execution boundary."""
+    with pytest.raises(UserError, match='cannot cross the durable execution boundary'):
+        await _legacy_migration_agent.run('hello', cancellation_token=CancellationToken())
+
+
 _migration_agent: AbstractAgent[None, str] = _legacy_migration_agent
 
 
@@ -2986,6 +3026,15 @@ async def test_temporal_agent_run_stream_events(allow_model_requests: None):
         events = [event async for event in event_stream]
     assert events == snapshot(
         [
+            ModelRequestStartEvent(
+                request=ModelRequest(
+                    parts=[UserPromptPart(content='What is the capital of Mexico?', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                    state='incomplete',
+                )
+            ),
             ModelRequestEndEvent(
                 request=ModelRequest(
                     parts=[UserPromptPart(content='What is the capital of Mexico?', timestamp=IsDatetime())],
@@ -3267,6 +3316,72 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
                 id=SimpleAgentWorkflowWithIter.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+async def test_temporal_agent_realtime_session_in_workflow():
+    # A realtime session opens a long-lived, non-deterministic connection, so it can't run inside a
+    # workflow; the guard trips before the model is ever connected.
+    with patch.object(workflow, 'in_workflow', return_value=True):
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            async with simple_temporal_agent.realtime(cast('Any', object())).session():
+                pass  # pragma: no cover
+
+
+async def test_temporal_agent_realtime_signaling_in_workflow():
+    # Browser-call signaling issues a live provider request, so it is guarded like a session: the two
+    # helpers reach the agent through `_resolve_realtime_session`, which the wrapper guards too.
+    with patch.object(workflow, 'in_workflow', return_value=True):
+        realtime = simple_temporal_agent.realtime(cast('Any', object()))
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            await realtime.answer_webrtc_offer('v=0')
+        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+            await realtime.create_client_secret()
+
+
+class _FakeRealtimeConnection(RealtimeConnection):
+    async def send(self, content: Any) -> None: ...  # pragma: no cover
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        return
+        yield  # pragma: no cover
+
+
+class _FakeRealtimeModel(RealtimeModel):
+    @property
+    def model_name(self) -> str:
+        return 'fake-realtime'
+
+    @property
+    def system(self) -> str:
+        return 'fake'
+
+    @property
+    def profile(self) -> RealtimeModelProfile:
+        return RealtimeModelProfile(
+            supports_image_input=True,
+            supports_manual_turn_control=True,
+            supports_interruption=True,
+            supports_output_truncation=True,
+            supports_session_seeding=True,
+            supported_native_tools=frozenset(),
+        )
+
+    @asynccontextmanager
+    async def connect(
+        self,
+        *,
+        messages: Sequence[ModelMessage],
+        model_settings: RealtimeModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncGenerator[_FakeRealtimeConnection]:
+        yield _FakeRealtimeConnection()
+
+
+async def test_temporal_agent_realtime_session_outside_workflow():
+    # Outside a workflow, the session is delegated to the wrapped agent.
+    async with simple_temporal_agent.realtime(_FakeRealtimeModel()).session() as session:
+        assert isinstance(session, RealtimeSession)
+        assert [event async for event in session] == []
 
 
 async def simple_event_stream_handler(
@@ -4394,13 +4509,132 @@ async def test_image_agent(allow_model_requests: None, client: Client):
     ):
         with workflow_raises(
             UserError,
-            snapshot('Image output is not supported with Temporal because of the 2MB payload size limit.'),
+            snapshot(
+                'Image output is not supported with Temporal because the image would ride the activity payload, '
+                'which is capped by the server blob-size limit (2MB by default, leaving about 1.5MB of raw image '
+                'bytes once base64-encoded).'
+            ),
         ):
             await client.execute_workflow(
                 ImageAgentWorkflow.run,
                 args=['Generate an image of an axolotl.'],
                 id=ImageAgentWorkflow.__name__,
                 task_queue=TASK_QUEUE,
+            )
+
+
+async def _call_oversized_image_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('get_oversized_image', {})])
+    return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
+
+
+oversized_tool_return_agent = Agent(
+    FunctionModel(_call_oversized_image_tool, model_name='oversized-image-model'),
+    name='oversized_tool_return_agent',
+    deps_type=type(None),
+    # Deliberately no `retry_policy`: Temporal's default is unlimited attempts, and half of what this
+    # test pins is that an over-limit payload is non-retryable, so the run fails instead of hanging.
+    capabilities=[TemporalDurability(activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)))],
+)
+
+
+@oversized_tool_return_agent.tool_plain
+def get_oversized_image() -> BinaryImage:
+    # Under Temporal's 2MB blob limit as raw bytes, over it once base64-encoded into the activity
+    # payload — which is exactly why the usable budget is ~1.5MB rather than the nominal 2MB.
+    return BinaryImage(data=b'\x00' * 1_600_000, media_type='image/png')
+
+
+@workflow.defn
+class OversizedToolReturnWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await oversized_tool_return_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_oversized_tool_return_payload(client: Client):
+    """A tool returning binary content over Temporal's payload limit points at the cause (#7110).
+
+    Without the guard the run gets Temporal's own `[TMPRL1103] ... Size: N bytes, Limit: M bytes`,
+    which names neither the tool, the image, nor Pydantic AI — and because Temporal treats an
+    over-limit payload as retryable, the default policy resends it forever and the workflow never
+    fails at all. The `execution_timeout` is what turns a regression of that second half into a test
+    failure instead of a hang.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[OversizedToolReturnWorkflow],
+        plugins=[AgentPlugin(oversized_tool_return_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                "Tool 'get_oversized_image' returned a result too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2133494 bytes, Limit: 2097152 bytes. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference instead of the value itself, like a URL or a key your application resolves later. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://ai.pydantic.dev/durable_execution/temporal/#large-payloads"
+            ),
+        ):
+            await client.execute_workflow(
+                OversizedToolReturnWorkflow.run,
+                args=['Get the image.'],
+                id=OversizedToolReturnWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+
+
+async def _respond_with_oversized_image(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # A native image-generation tool puts the image on the response like this, so it rides the
+    # model-request activity payload rather than a tool-call one.
+    return ModelResponse(
+        parts=[
+            TextPart('here is your image'),
+            FilePart(content=BinaryImage(data=b'\x00' * 1_600_000, media_type='image/png')),
+        ]
+    )
+
+
+oversized_model_response_agent = Agent(
+    FunctionModel(_respond_with_oversized_image, model_name='oversized-response-model'),
+    name='oversized_model_response_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)))],
+)
+
+
+@workflow.defn
+class OversizedModelResponseWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await oversized_model_response_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_oversized_model_response_payload(client: Client):
+    """A model response carrying binary content over Temporal's payload limit points at the cause (#7110).
+
+    The `allow_image_output` guard doesn't cover this: it fires on the agent's `output_type`, while a
+    native image-generation tool returns the image as a `FilePart` on the model response instead.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[OversizedModelResponseWorkflow],
+        plugins=[AgentPlugin(oversized_model_response_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            snapshot(
+                "The response from model 'function:oversized-response-model' is too large for Temporal. [TMPRL1103] Attempted to upload payloads with size that exceeded the error limit. Size: 2134150 bytes, Limit: 2097152 bytes. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. A generated image is the usual cause, so ask the model for a smaller one through the model settings; a streamed segment can also overflow on its buffered events alone. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://ai.pydantic.dev/durable_execution/temporal/#large-payloads"
+            ),
+        ):
+            await client.execute_workflow(
+                OversizedModelResponseWorkflow.run,
+                args=['Draw me something.'],
+                id=OversizedModelResponseWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
             )
 
 
@@ -4688,6 +4922,44 @@ def test_temporal_run_context_serializes_usage_limits():
     assert reconstructed.usage_limits == ctx.usage_limits
 
 
+async def test_temporal_run_context_preserves_anchored_evidence():
+    """Provider-exact evidence is computed workflow-side and survives the untyped activity payload."""
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        _anchored_evidence=AnchoredEvidence(
+            discovered_tool_names=frozenset({'deferred_tool'}),
+            loaded_capability_ids=frozenset({'deferred_capability'}),
+        ),
+    )
+
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    reconstructed = TemporalRunContext.deserialize_run_context(wire, deps=None)
+
+    assert reconstructed._anchored_evidence == AnchoredEvidence(  # pyright: ignore[reportPrivateUsage]
+        discovered_tool_names=frozenset({'deferred_tool'}),
+        loaded_capability_ids=frozenset({'deferred_capability'}),
+    )
+
+
+async def test_temporal_run_context_without_anchored_evidence_still_answers_availability():
+    """A payload that predates the field keeps answering, with the history-derived window.
+
+    `serialize_run_context` is a documented override point, so a subclass written against an
+    earlier version returns a dict without it. Guarding it like the other omitted fields would
+    turn that into a `UserError` from a tool that only asked whether it may run.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    older_payload = {name: value for name, value in wire.items() if name != '_anchored_evidence'}
+
+    reconstructed = TemporalRunContext.deserialize_run_context(older_payload, deps=None)
+
+    assert reconstructed._anchored_evidence == AnchoredEvidence()  # pyright: ignore[reportPrivateUsage]
+    assert reconstructed.is_tool_available(ToolDefinition(name='hidden', defer_loading=True)) is False
+
+
 def test_temporal_run_context_serialization_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Temporal serialization.
 
@@ -4713,6 +4985,8 @@ def test_temporal_run_context_serialization_is_exhaustive():
         'model_settings',  # only set for model requests, which receive it as their own typed activity param
         '_mcp_tool_defs_cache',  # run-local cache read/written in workflow code; never needed inside an activity
         '_event_stream_buffer',  # run-local event buffer drained in workflow code; a public emit surface for activities is a follow-up
+        'realtime_session',  # live RealtimeSession, not serializable; realtime sessions don't run inside Temporal activities
+        '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
     }
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     serialized = set(TemporalRunContext.serialize_run_context(ctx))
@@ -4820,6 +5094,66 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
         getattr(reconstructed, 'not_a_field')
 
 
+async def test_is_tool_available_answers_for_a_capability_owned_tool_inside_an_activity():
+    """The definition form must answer, not raise, for a tool a capability contributed.
+
+    `is_tool_available` consults `available_capability_ids` for any tool carrying a
+    `capability_id`, and the `capabilities` registry deliberately doesn't cross the boundary. The
+    docs send toolset authors to the definition form precisely because it works inside `get_tools`,
+    which under Temporal runs in an activity — so the ids travel as a snapshot.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+        capabilities={'guarded': Capability[Any](id='guarded', description='Guarded.', defer_loading=True)},
+        loaded_capability_ids={'guarded'},
+        discovered_tool_names={'secret_op'},
+    )
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+
+    assert reconstructed.available_capability_ids == {'guarded'}
+    loaded = ToolDefinition(name='secret_op', defer_loading=True, capability_id='guarded')
+    assert reconstructed.is_tool_available(loaded) is True
+
+    unloaded = ToolDefinition(name='other_op', defer_loading=True, capability_id='not_loaded')
+    assert reconstructed.is_tool_available(unloaded) is False
+
+
+async def test_loaded_capability_tool_without_a_reveal_marker_answers_inside_an_activity():
+    """The on-demand set travels too, so a stripped reveal marker doesn't flip the answer.
+
+    A deferred capability's load is itself the reveal for its own tools, and telling that apart
+    from a capability since reconfigured always-on needs the *configured* set, which lives in the
+    `capabilities` registry and cannot cross the boundary. Without the snapshot this degrades to
+    the discovery check and answers `False` inside an activity while the workflow says `True` --
+    for a tool no search can ever surface, so nothing could restore the marker.
+    """
+    ctx = RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=RunUsage(),
+        run_id='run-123',
+        capabilities={'guarded': Capability[Any](id='guarded', description='Guarded.', defer_loading=True)},
+        loaded_capability_ids={'guarded'},
+        # No `discovered_tool_names`: the reveal marker is gone, as a history processor can leave it.
+    )
+    tool_def = ToolDefinition(name='secret_op', defer_loading=True, capability_id='guarded')
+    assert ctx.is_tool_available(tool_def) is True
+
+    reconstructed = deserialize_run_context(
+        TemporalRunContext, await _serialized_run_context_across_the_wire(ctx), deps=None, agent=None
+    )
+    assert reconstructed.is_tool_available(tool_def) is True
+
+    # The registry itself still doesn't cross — only the ids it resolves to.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed.capabilities
+
+
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
     """A user subclass with its own field set."""
 
@@ -4864,6 +5198,16 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     assert reconstructed.usage == ctx.usage
     assert reconstructed.discovered_tool_names == {'searched_tool'}
     assert reconstructed.available_tool_names == {'searched_tool'}
+    # No capability snapshot in this subclass's field set, so the property falls back to the base
+    # one, which reads the registry — and that is guarded, so it raises rather than quietly
+    # reporting no capabilities are active.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed.available_capability_ids
+    # Same for the on-demand set that `is_tool_available` consults: an older subclass doesn't carry
+    # it either, so the base property reads the guarded registry and raises rather than reporting an
+    # empty set, which would silently answer "no capability is deferred" for every tool.
+    with pytest.raises(UserError, match="'capabilities' is not available"):
+        _ = reconstructed._deferred_capability_ids  # pyright: ignore[reportPrivateUsage]
     assert reconstructed.__dict__['custom'] == 'from-subclass'
     for name in ('prompt', 'conversation_id', 'instrumentation_version'):
         with pytest.raises(UserError, match=f'{name!r} is not available on {LegacyFieldsRunContext.__name__!r}'):
@@ -4948,7 +5292,7 @@ async def test_run_context_fields_in_temporal_activity(client: Client):
             'prompt': "'prompt' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`.",
             'conversation_id': IsStr(),
             'discovered_tool_names_type': 'set',
-            'available_tool_names': [],
+            'available_tool_names': ['report_run_context'],
             'instrumentation_version': 5,
             'messages': "'messages' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`.",
         }
@@ -5511,7 +5855,11 @@ class _CodeExecutionOnlyModel(_BuiltinToolModel):
 
 
 def _select_builtin_tool(ctx: RunContext[Any]) -> AbstractNativeTool:
-    if WebSearchTool in ctx.model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
+    # `RunContext.model` is an `AbstractModel`; narrow to a request-response model to read its profile.
+    ctx_model = ctx.model
+    assert isinstance(ctx_model, Model)
+    model = cast('Model[Any]', ctx_model)
+    if WebSearchTool in model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS):
         return WebSearchTool()
     return CodeExecutionTool()
 
@@ -5888,6 +6236,68 @@ def test_temporal_model_profile_for_raw_strings():
         assert temporal_model_with_registry.profile == alt_model.profile
 
 
+class DefaultHostModel(TestModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://default.example.com:1111/v1'
+
+
+class AltHostModel(TestModel):
+    @property
+    def base_url(self) -> str:
+        return 'https://alt.example.com:2222/v1'
+
+
+def test_temporal_model_base_url_follows_active_model():
+    """`base_url` resolves through `using_model()` like the other identity properties.
+
+    Without this it would report the wrapped default's URL, so a request span would name the active
+    model in `gen_ai.request.model` while pointing `server.address` at a different model's host.
+    """
+    temporal_model = TemporalModel(
+        DefaultHostModel(model_name='default-model'),
+        activity_name_prefix='test__base_url',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': AltHostModel(model_name='alt-model')},
+    )
+
+    assert temporal_model.base_url == snapshot('https://default.example.com:1111/v1')
+
+    with temporal_model.using_model('alt'):
+        assert temporal_model.base_url == snapshot('https://alt.example.com:2222/v1')
+
+    with temporal_model.using_model('openai:gpt-5'):
+        assert temporal_model.base_url is None
+
+
+def test_temporal_model_model_id_follows_active_model():
+    """`model_id` resolves through `using_model()` rather than reporting the wrapped default's.
+
+    `WrapperModel` forwards `model_id` so a wrapped `FallbackModel` keeps its own composed ID, which
+    would otherwise pin this to the default model. The ID names the activity a request runs under, so
+    a swapped-in model has to be the one it reports.
+    """
+    temporal_model = TemporalModel(
+        TestModel(model_name='default-model'),
+        activity_name_prefix='test__model_id',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': FallbackModel(TestModel(model_name='alt-model'), TestModel(model_name='spare-model'))},
+    )
+
+    assert temporal_model.model_id == snapshot('test:default-model')
+
+    with temporal_model.using_model('alt'):
+        assert temporal_model.model_id == snapshot('fallback:test:alt-model,test:spare-model')
+
+    with temporal_model.using_model('openai:gpt-5'):
+        assert temporal_model.model_id == snapshot('openai:gpt-5')
+
+    with temporal_model.using_model('gpt-5'):
+        assert temporal_model.model_id == snapshot('test:gpt-5')
+
+
 async def test_temporal_model_request_outside_workflow():
     """Test that TemporalModel.request() falls back to wrapped model outside a workflow.
 
@@ -6253,6 +6663,34 @@ def test_pydantic_ai_plugin_preserves_custom_payload_codec() -> None:
     assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
     assert result['data_converter'].payload_codec is codec
     assert result['data_converter'].failure_converter_class is converter.failure_converter_class
+
+
+def test_pydantic_ai_plugin_preserves_external_storage() -> None:
+    """A user's Temporal external storage config survives the payload converter swap.
+
+    The Temporal docs point large-payload users at `external_storage`, so this has to keep working.
+    """
+
+    class MockStorageDriver(StorageDriver):
+        def name(self) -> str:
+            return 'mock'
+
+        async def store(self, context: Any, payloads: Any) -> Any:
+            raise NotImplementedError
+
+        async def retrieve(self, context: Any, claims: Any) -> Any:
+            raise NotImplementedError
+
+    external_storage = ExternalStorage(drivers=[MockStorageDriver()])
+    plugin = PydanticAIPlugin()
+    converter = DataConverter(
+        payload_converter_class=DefaultPayloadConverter,
+        external_storage=external_storage,
+    )
+    config: dict[str, Any] = {'data_converter': converter}
+    result = plugin.configure_client(config)  # type: ignore[arg-type]
+    assert result['data_converter'].payload_converter_class is PydanticAIPayloadConverter
+    assert result['data_converter'].external_storage is external_storage
 
 
 def test_pydantic_ai_plugin_with_non_pydantic_converter_warns() -> None:
@@ -7175,14 +7613,19 @@ def test_durability_rejects_construction_inside_workflow(monkeypatch: pytest.Mon
 
 
 def test_durability_image_output_rejected():
-    """TemporalDurability rejects image output because of the 2MB payload limit."""
+    """TemporalDurability rejects image output rather than letting it fail on payload size."""
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    with pytest.raises(UserError, match='Image output is not supported'):
+    with pytest.raises(UserError) as exc_info:
         bound._validate_model_request_parameters(  # pyright: ignore[reportPrivateUsage]
             ModelRequestParameters(allow_image_output=True),
         )
+    assert str(exc_info.value) == snapshot(
+        'Image output is not supported with Temporal because the image would ride the activity payload, '
+        'which is capped by the server blob-size limit (2MB by default, leaving about 1.5MB of raw image '
+        'bytes once base64-encoded).'
+    )
 
 
 # --- Model registry ---
@@ -7310,6 +7753,61 @@ def test_durability_activity_config_not_mutated():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
+    ]
+
+
+def test_temporal_agent_retry_policy_non_retryable_errors():
+    """The deprecated wrapper builds its own list, so its entries need their own assertion.
+
+    `TemporalAgent` doesn't go through `with_non_retryable_errors`, and every line of its
+    inline list runs on any construction — so without this, dropping `PayloadSizeError`
+    would leave coverage at 100% while restoring the infinite retry of #7110.
+    """
+    temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='retry_policy_probe_agent'),
+    )
+
+    retry_policy = temporal_agent.activity_config.get('retry_policy')
+    assert retry_policy is not None
+    assert retry_policy.non_retryable_error_types == [
+        'UserError',
+        'PydanticUserError',
+        'PayloadSizeError',
+    ]
+
+
+def test_temporal_agent_custom_retry_policy_keeps_non_retryable_errors():
+    """A caller-supplied `retry_policy` in a merged config must not drop the non-retryable errors.
+
+    `TemporalAgent`'s `model_activity_config` (and per-toolset configs) merge over the normalized
+    base config, and a `retry_policy` in the override replaces the base policy wholesale — without
+    re-normalization an oversized payload would retry the whole (paid) model request forever.
+    """
+    toolset = FunctionToolset[None](id='merge_probe_toolset')
+
+    async def my_tool() -> str:
+        return 'ok'  # pragma: no cover
+
+    toolset.add_function(my_tool)
+
+    temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(TestModel(), name='retry_policy_merge_probe_agent', deps_type=type(None), toolsets=[toolset]),
+        model_activity_config=ActivityConfig(retry_policy=RetryPolicy(non_retryable_error_types=['ModelError'])),
+        toolset_activity_config={
+            'merge_probe_toolset': ActivityConfig(retry_policy=RetryPolicy(non_retryable_error_types=['ToolError'])),
+        },
+    )
+
+    model_retry = temporal_agent._temporal_model.activity_config.get('retry_policy')  # pyright: ignore[reportPrivateUsage]
+    assert model_retry is not None
+    assert model_retry.non_retryable_error_types == [
+        'ModelError',
+        'UserError',
+        'PydanticUserError',
+        'UnexpectedModelBehavior',
+        'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
 
@@ -7351,6 +7849,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
     toolset_wrapper = bound._toolsets_by_id['my_toolset']  # pyright: ignore[reportPrivateUsage]
@@ -7364,6 +7863,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
 
@@ -7385,6 +7885,7 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
 
@@ -8020,6 +8521,10 @@ async def _durability_handler_tool() -> str:
     return 'handled'
 
 
+async def _durability_reveal_tool() -> ToolReturn[str]:
+    return ToolReturn(return_value='handled', tools=['hidden_tool'])
+
+
 _handler_durability = TemporalDurability(
     activity_config=BASE_ACTIVITY_CONFIG,
     event_stream_handler=_durability_handler,
@@ -8215,7 +8720,7 @@ async def test_durability_run_stream_in_workflow(client: Client) -> None:
 _run_stream_events_durable_agent = Agent(
     TestModel(custom_output_text='Streamed events output'),
     name='durability_run_stream_events_agent',
-    tools=[_durability_handler_tool],
+    tools=[_durability_reveal_tool],
     capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )
 
@@ -8259,6 +8764,7 @@ async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
             'ModelRequestStartEvent',
             'FunctionToolCallEvent',
             'FunctionToolResultEvent',
+            'ToolAvailabilityDeltaEvent',
             'ModelRequestEndEvent',
             'ModelResponseStartEvent',
             'PartStartEvent',
@@ -8415,6 +8921,7 @@ def test_resolve_tool_activity_config_reads_metadata():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
     inherited_retry_policy = RetryPolicy(maximum_attempts=7)
@@ -8476,6 +8983,7 @@ def test_resolve_tool_activity_config_restores_round_tripped_types():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'PayloadSizeError',
     ]
 
 
@@ -8771,7 +9279,21 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"request": {"parts": [{"content": "Tell me: the capital of the country; the weather there; the product name", "timestamp": null, "part_kind": "user-prompt"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request"}'
+                                            content='{"request": {"parts": [{"content": "Tell me: the capital of the country; the weather there; the product name", "timestamp": null, "part_kind": "user-prompt"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_request_start"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content='{"request": {"parts": [{"content": "Tell me: the capital of the country; the weather there; the product name", "timestamp": null, "part_kind": "user-prompt"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request_end"}'
                                         ),
                                     ],
                                 )
@@ -8834,6 +9356,20 @@ async def test_durability_complex_agent_logfire_span_tree(
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
                                             content='{"response": {"parts": [{"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}], "usage": {"input_tokens": 364, "cache_write_tokens": 0, "cache_read_tokens": 0, "output_tokens": 40, "input_audio_tokens": 0, "cache_audio_read_tokens": 0, "output_audio_tokens": 0, "details": {"accepted_prediction_tokens": 0, "audio_tokens": 0, "reasoning_tokens": 0, "rejected_prediction_tokens": 0}, "cost": "0.00131"}, "model_name": "gpt-4o-2024-08-06", "timestamp": null, "kind": "response", "provider_name": "openai", "provider_url": "https://api.openai.com/v1/", "provider_details": {"timestamp": null, "finish_reason": "tool_calls"}, "provider_response_id": null, "finish_reason": "tool_call", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_response_end"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content='{"request": {"parts": [], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_request_start"}'
                                         ),
                                     ],
                                 )
@@ -8930,7 +9466,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"request": {"parts": [{"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request"}'
+                                            content='{"request": {"parts": [{"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}, {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request_end"}'
                                         ),
                                     ],
                                 )
@@ -9012,6 +9548,20 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
+                                            content='{"request": {"parts": [], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_request_start"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=2'),
+                                        BasicSpan(
                                             content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                         ),
                                     ],
@@ -9053,7 +9603,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"request": {"parts": [{"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request"}'
+                                            content='{"request": {"parts": [{"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request_end"}'
                                         ),
                                     ],
                                 )
@@ -9240,6 +9790,20 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
+                                            content='{"request": {"parts": [], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "incomplete"}, "event_kind": "model_request_start"}'
+                                        ),
+                                    ],
+                                )
+                            ],
+                        ),
+                        BasicSpan(
+                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=3'),
+                                        BasicSpan(
                                             content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
                                         ),
                                     ],
@@ -9268,7 +9832,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"request": {"parts": [{"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request"}'
+                                            content='{"request": {"parts": [{"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "part_kind": "tool-return"}], "timestamp": null, "instructions": null, "kind": "request", "run_id": null, "conversation_id": null, "metadata": null, "state": "complete"}, "event_kind": "model_request_end"}'
                                         ),
                                     ],
                                 )
@@ -10044,6 +10608,234 @@ async def test_durability_tool_return_metadata_survives(allow_model_requests: No
     )
 
 
+# --- Deferred tool reveal round-trip ---
+
+
+def _durability_reveal_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    tool_names = {tool.name for tool in info.function_tools}
+    responses = sum(isinstance(message, ModelResponse) for message in messages)
+    if responses == 0:
+        assert 'durability_refund' not in tool_names
+        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'billing'}, tool_call_id='load')])
+    if responses == 1:
+        assert 'durability_refund' in tool_names
+        return ModelResponse(parts=[ToolCallPart('durability_refund', {}, tool_call_id='refund')])
+    if responses == 2:
+        assert 'durability_hidden' not in tool_names
+        return ModelResponse(parts=[ToolCallPart('durability_opener', {}, tool_call_id='open')])
+    if responses == 3:
+        assert 'durability_hidden' in tool_names
+        return ModelResponse(parts=[ToolCallPart('durability_hidden', {}, tool_call_id='hidden')])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+_durability_billing = Capability[None](id='billing', defer_loading=True)
+
+
+@_durability_billing.tool
+def durability_refund(ctx: RunContext[None]) -> str:
+    # The always-visible check exercises the availability snapshot carried across the activity
+    # boundary: `durability_opener` is never revealed, so the `discovered_tool_names` fallback
+    # alone would answer False for it inside the activity.
+    return (
+        f'refund available: {ctx.is_tool_available("durability_refund")}, '
+        f'opener available: {ctx.is_tool_available("durability_opener")}'
+    )
+
+
+_durability_reveal_agent = Agent(
+    FunctionModel(_durability_reveal_model),
+    name='durability_reveal_agent',
+    deps_type=type(None),
+    capabilities=[_durability_billing, TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@_durability_reveal_agent.tool
+def durability_opener(ctx: RunContext[None]) -> ToolReturn[str]:
+    return ToolReturn(
+        return_value='opened',
+        tools=['durability_hidden'],
+    )
+
+
+@_durability_reveal_agent.tool_plain(defer_loading=True)
+def durability_hidden() -> str:
+    return 'secret'
+
+
+@workflow.defn
+class DurabilityRevealWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[ModelMessage]:
+        result = await _durability_reveal_agent.run(prompt)
+        return result.all_messages()
+
+
+async def test_durability_tool_reveals_survive_workflow_and_activity(allow_model_requests: None, client: Client):
+    """Capability and activity-authored reveals both become durable history facts."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityRevealWorkflow],
+        plugins=[AgentPlugin(_durability_reveal_agent)],
+    ):
+        messages = await client.execute_workflow(
+            DurabilityRevealWorkflow.run,
+            args=['refund and open'],
+            id=DurabilityRevealWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+
+    deltas = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolAvailabilityDeltaPart)
+    ]
+    assert [(part.tools_added, part.tool_call_id) for part in deltas] == [
+        (['durability_refund'], 'load'),
+        (['durability_hidden'], 'open'),
+    ]
+    returns = {
+        part.tool_name: part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    }
+    assert returns['durability_refund'] == 'refund available: True, opener available: True'
+    assert returns['durability_opener'] == 'opened'
+
+
+# A fallback model cannot exercise Temporal's re-preparation seam: `FallbackModel.request()`
+# prepares the history separately for every inner model, so the required mutation would still pass.
+# Use raw model IDs across workflow executions instead, so only the worker-side concrete model can
+# project the serialized reveal history.
+def _cross_model_reveal_secondary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    parts = [part for message in messages for part in message.parts]
+    assert not any(isinstance(part, ToolAvailabilityDeltaPart) for part in parts)
+    assert any(
+        isinstance(part, UserPromptPart)
+        and part.content == '<system>The following tool(s) are now available: `cross_model_refund`</system>'
+        for part in parts
+    )
+    assert 'cross_model_refund' in {tool.name for tool in info.function_tools}
+    if not any(isinstance(part, ToolReturnPart) and part.tool_name == 'cross_model_refund' for part in parts):
+        return ModelResponse(parts=[ToolCallPart('cross_model_refund', {}, tool_call_id='refund')])
+    return ModelResponse(parts=[TextPart('refund complete')])
+
+
+def _cross_model_reveal_primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    deltas = [part for message in messages for part in message.parts if isinstance(part, ToolAvailabilityDeltaPart)]
+    if not deltas:
+        return ModelResponse(
+            parts=[ToolCallPart('load_capability', {'id': 'cross-model-billing'}, tool_call_id='load')]
+        )
+    assert [(part.tools_added, part.tool_call_id) for part in deltas] == [(['cross_model_refund'], 'load')]
+    return ModelResponse(parts=[TextPart('capability loaded')], usage=RequestUsage(input_tokens=1, output_tokens=1))
+
+
+def _infer_cross_model(model_id: Any, **kwargs: Any) -> Model:
+    if model := _cross_model_reveal_models.get(str(model_id)):
+        return model
+    return infer_model(model_id, **kwargs)
+
+
+_cross_model_reveal_models = {
+    'openai:cross-model-secondary': FunctionModel(
+        _cross_model_reveal_secondary,
+        model_name='cross-model-secondary',
+        profile=ModelProfile(),
+    ),
+    'anthropic:cross-model-primary': FunctionModel(
+        _cross_model_reveal_primary,
+        model_name='cross-model-primary',
+        profile=ModelProfile(tool_addition_mode='by_reference', tool_deferral_mode='standalone'),
+    ),
+}
+
+
+_cross_model_billing = Capability[None](id='cross-model-billing', defer_loading=True)
+
+
+@_cross_model_billing.tool
+def cross_model_refund(ctx: RunContext[None]) -> str:
+    return f'refund available in activity: {ctx.is_tool_available("cross_model_refund")}'
+
+
+_cross_model_reveal_base_agent = Agent(
+    _cross_model_reveal_models['openai:cross-model-secondary'],
+    name='cross_model_reveal_agent',
+    deps_type=type(None),
+    capabilities=[
+        _cross_model_billing,
+    ],
+)
+_cross_model_reveal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    _cross_model_reveal_base_agent,
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@dataclass
+class CrossModelRevealResult:
+    output: str
+    messages: list[ModelMessage]
+
+
+@workflow.defn
+class CrossModelRevealWorkflow:
+    @workflow.run
+    async def run(
+        self, prompt: str, model_id: str, message_history: list[ModelMessage] | None
+    ) -> CrossModelRevealResult:
+        result = await _cross_model_reveal_agent.run(prompt, model=model_id, message_history=message_history)
+        return CrossModelRevealResult(output=result.output, messages=result.all_messages())
+
+
+async def test_durability_reprepares_reveal_history_for_different_model(client: Client):
+    """A serialized reveal is projected onto a different model's channel in a later workflow.
+
+    Raw model IDs keep message preparation out of the workflow. The channel-bearing primary
+    authors the reveal; the channel-less secondary receives an announcement, then calls the
+    newly available tool inside an activity.
+    """
+    with patch(
+        'pydantic_ai.durable_exec.temporal._model.models.infer_model',
+        side_effect=_infer_cross_model,
+    ):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[CrossModelRevealWorkflow],
+            plugins=[AgentPlugin(_cross_model_reveal_agent)],
+        ):
+            first = await client.execute_workflow(
+                CrossModelRevealWorkflow.run,
+                args=['load refund capability', 'anthropic:cross-model-primary', None],
+                id=f'{CrossModelRevealWorkflow.__name__}-primary',
+                task_queue=TASK_QUEUE,
+            )
+            second = await client.execute_workflow(
+                CrossModelRevealWorkflow.run,
+                args=['issue refund', 'openai:cross-model-secondary', first.messages],
+                id=f'{CrossModelRevealWorkflow.__name__}-secondary',
+                task_queue=TASK_QUEUE,
+            )
+
+    assert first.output == 'capability loaded'
+    assert second.output == 'refund complete'
+    tool_return = next(
+        part.content
+        for message in second.messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'cross_model_refund'
+    )
+    assert tool_return == 'refund available in activity: True'
+
+
 # --- Passing image (BinaryImage) input through to a workflow ---
 
 _durability_multimodal_agent = Agent(
@@ -10430,6 +11222,97 @@ def _workflow_failure_cause(exc: WorkflowFailureError) -> ApplicationError:
 
 def _scheduled_activity_count(history: WorkflowHistory) -> int:
     return len([e for e in history.events if e.HasField('activity_task_scheduled_event_attributes')])
+
+
+_workflow_cancel_agent = Agent(
+    TestModel(custom_output_text='finished'),
+    name='workflow_cancel_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class WorkflowCancelAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        try:
+            async with _workflow_cancel_agent.iter(prompt) as agent_run:
+                async for node in agent_run:
+                    if Agent.is_call_tools_node(node):
+                        agent_run.cancel()
+        except RunCancelled as exc:
+            return f'cancelled:{bool(exc.all_messages())}'
+        return 'completed'  # pragma: no cover
+
+
+async def test_workflow_agent_run_cancel_is_application_outcome_and_replays(client: Client) -> None:
+    """Workflow-side first-party cancellation completes normally and remains replay-deterministic."""
+    workflow_id = f'{WorkflowCancelAgentWorkflow.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkflowCancelAgentWorkflow],
+        plugins=[AgentPlugin(_workflow_cancel_agent)],
+    ):
+        output = await client.execute_workflow(
+            WorkflowCancelAgentWorkflow.run,
+            args=['cancel after the first model response'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+        history = await client.get_workflow_handle(workflow_id).fetch_history()
+
+    assert output == 'cancelled:True'
+    await Replayer(
+        workflows=[WorkflowCancelAgentWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
+
+
+def _cancel_from_activity(ctx: RunContext[None]) -> str:
+    ctx.cancel()
+    return 'cancelled'  # pragma: no cover
+
+
+_activity_cancel_agent = Agent(
+    TestModel(call_tools=['_cancel_from_activity']),
+    name='activity_cancel_agent',
+    deps_type=type(None),
+    tools=[_cancel_from_activity],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class ActivityCancelAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _activity_cancel_agent.run(prompt)).output
+
+
+async def test_run_context_cancel_in_activity_surfaces_user_error(client: Client) -> None:
+    """An activity cannot cancel its workflow-side run and fails clearly instead of hanging."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ActivityCancelAgentWorkflow],
+        plugins=[AgentPlugin(_activity_cancel_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ActivityCancelAgentWorkflow.run,
+                args=['call the cancellation tool'],
+                id=f'{ActivityCancelAgentWorkflow.__name__}-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert cause.type == UserError.__name__
+    assert cause.message == snapshot(
+        '`cancel` is only available during an agent run (from tools, event stream handlers, or capability hooks) '
+        'in the same process as the run itself. This `RunContext` has no run to cancel.'
+    )
 
 
 _continuation_model = ScriptedContinuationModel()

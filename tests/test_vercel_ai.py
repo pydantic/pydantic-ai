@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     BinaryImage,
+    CompactionPart,
     DocumentUrl,
     FilePart,
     FunctionToolCallEvent,
@@ -54,6 +55,7 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturn,
     ToolReturnContent,
     ToolReturnPart,
@@ -1555,6 +1557,138 @@ async def test_run_stream_thinking_with_signature():
     )
 
 
+async def test_tool_call_start_args_are_emitted_raw():
+    """A `str` args fragment is emitted verbatim; complete `dict` args go through `args_as_json_str()`.
+
+    Mid-stream, a tool call's args are a partial JSON fragment that only becomes valid once the
+    following deltas are concatenated. `args_as_json_str()` degrades invalid JSON to the
+    `INVALID_JSON` wrapper (see https://github.com/pydantic/pydantic-ai/issues/7042), which would
+    corrupt the input the client reassembles. Twin of
+    `tests/test_ag_ui.py::test_tool_call_start_args_are_emitted_raw`.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(
+            index=0, part=ToolCallPart(tool_name='fragmented', args='{"query": ', tool_call_id='call_1')
+        )
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta='"hello"}', tool_call_id='call_1'))
+        yield PartEndEvent(
+            index=0,
+            part=ToolCallPart(tool_name='fragmented', args='{"query": "hello"}', tool_call_id='call_1'),
+            next_part_kind='tool-call',
+        )
+        # Providers that deliver the whole tool call in one chunk start with `dict` args instead.
+        yield PartStartEvent(
+            index=1,
+            part=ToolCallPart(
+                tool_name='whole',
+                args={'query': 'hello', 'when': datetime(2025, 1, 1, tzinfo=timezone.utc)},
+                tool_call_id='call_2',
+            ),
+            previous_part_kind='tool-call',
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Say hello')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    chunks = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        if '[DONE]' not in event
+    ]
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'call_1', 'toolName': 'fragmented'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_1', 'inputTextDelta': '{"query": '},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_1', 'inputTextDelta': '"hello"}'},
+            {'type': 'tool-input-start', 'toolCallId': 'call_2', 'toolName': 'whole'},
+            {
+                'type': 'tool-input-delta',
+                'toolCallId': 'call_2',
+                'inputTextDelta': '{"query":"hello","when":"2025-01-01T00:00:00Z"}',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    )
+
+
+async def test_event_stream_without_run_input():
+    """The Vercel AI stream is a pure encoder: it never reads the run input, so it doesn't need one.
+
+    A durable execution workflow, a queue, or a websocket fan-out encodes events where no HTTP
+    request exists, and fabricating a `SubmitMessage` to satisfy the constructor was the only way
+    to get there. See #6970.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hello'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello'))
+
+    event_stream = VercelAIEventStream()
+    assert event_stream.run_input is None
+
+    chunks = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        if '[DONE]' not in event
+    ]
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (text_id := IsSameStr())},
+            {'type': 'text-delta', 'id': text_id, 'delta': 'Hello'},
+            {'type': 'text-end', 'id': text_id},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    )
+
+
+async def test_tool_call_delta_dict_args_are_serialized_compactly():
+    """Exercise the UI serialization boundary directly.
+
+    Current provider streams do not reliably produce non-JSON-native dictionary deltas such as
+    `datetime`, so a VCR test would not prove this failure mode.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=ToolCallPart(tool_name='search', args='', tool_call_id='call_1'))
+        yield PartDeltaEvent(
+            index=0,
+            delta=ToolCallPartDelta(
+                args_delta={
+                    'type': 'search',
+                    'query': 'weather',
+                    'when': datetime(2025, 1, 1, tzinfo=timezone.utc),
+                },
+                tool_call_id='call_1',
+            ),
+        )
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Search the weather')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    chunks = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        if '[DONE]' not in event
+    ]
+
+    assert [chunk['inputTextDelta'] for chunk in chunks if chunk['type'] == 'tool-input-delta'] == [
+        '{"type":"search","query":"weather","when":"2025-01-01T00:00:00Z"}'
+    ]
+
+
 async def test_event_stream_thinking_end_with_full_metadata():
     """Test handle_thinking_end with all metadata fields (signature, provider_name, provider_details, id)."""
 
@@ -3032,6 +3166,46 @@ async def test_run_stream_on_complete_error():
             '[DONE]',
         ]
     )
+
+
+async def test_run_stream_cancelled():
+    agent = Agent(model=TestModel())
+
+    @agent.tool
+    async def tool(ctx: RunContext, query: str) -> str:
+        ctx.cancel()
+        # `cancel()` returns; the cancellation lands at the next await point, so this
+        # tool completes normally first and its (discarded) result is recorded.
+        return 'completed before the cancellation took effect'
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': IsStr(), 'toolName': 'tool'},
+            {'type': 'tool-input-delta', 'inputTextDelta': '{"query":"a"}', 'toolCallId': IsStr()},
+            {'type': 'tool-input-available', 'input': {'query': 'a'}, 'toolCallId': IsStr(), 'toolName': 'tool'},
+            {
+                'type': 'tool-output-available',
+                'output': 'The tool call was interrupted before a result was produced.',
+                'toolCallId': IsStr(),
+            },
+            {'type': 'abort', 'reason': 'The agent run was cancelled.'},
+            {'type': 'finish-step'},
+            '[DONE]',
+        ]
+    )
+    assert not any(isinstance(event, dict) and event['type'] in {'error', 'finish'} for event in events)
 
 
 async def test_adapter_uses_request_id_as_conversation_id():
@@ -10384,9 +10558,204 @@ async def test_adapter_load_binary_content_rejects_invalid_vendor_metadata():
 
 def test_tool_availability_delta_ui_round_trip():
     """The reserved data-part discriminator preserves control history through Vercel AI."""
-    messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id='load-1')])]
+    messages = [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='load-1')])]
 
     assert VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(messages)) == messages
+
+
+def test_compaction_ui_round_trip_and_sanitization():
+    """Compaction data stays faithful on the wire while client provenance is sanitized on ingest."""
+    compaction = CompactionPart(
+        content='Summary of the conversation.',
+        id='cmp-1',
+        provider_name='openai',
+        provider_details={
+            'encrypted_content': 'blob',
+            'pydantic_ai_standing_prompt_planted': True,
+        },
+    )
+    messages = [ModelResponse(parts=[compaction], timestamp=datetime(2026, 8, 7, tzinfo=timezone.utc))]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    assert [message.model_dump(exclude_none=True) for message in ui_messages] == snapshot(
+        [
+            {
+                'id': IsStr(),
+                'role': 'assistant',
+                'metadata': {'pydantic_ai': {'timestamp': '2026-08-07T00:00:00Z'}},
+                'parts': [
+                    {
+                        'type': 'data-compaction',
+                        'data': {
+                            'content': 'Summary of the conversation.',
+                            'id': 'cmp-1',
+                            'provider_name': 'openai',
+                            'provider_details': {
+                                'encrypted_content': 'blob',
+                                'pydantic_ai_standing_prompt_planted': True,
+                            },
+                        },
+                    }
+                ],
+            }
+        ]
+    )
+    assert VercelAIAdapter.load_messages(ui_messages) == messages
+
+    adapter = VercelAIAdapter(
+        Agent(TestModel()),
+        SubmitMessage(id='chat-1', messages=ui_messages),
+    )
+    sanitized = adapter.sanitize_messages(adapter.messages)
+    assert message_part(sanitized, CompactionPart) == CompactionPart(
+        content='Summary of the conversation.',
+        id='cmp-1',
+        provider_name='openai',
+        provider_details={'encrypted_content': 'blob'},
+    )
+
+
+@pytest.mark.parametrize(
+    'data',
+    [
+        {'content': 42},
+        {'provider_details': 'not-a-dict'},
+        {'content': 'Summary.', 'provider_name': ['openai']},
+    ],
+)
+def test_compaction_malformed_payload_is_skipped(data: dict[str, Any]):
+    """A client can put anything in the data part, and `load_messages` still has to return messages.
+
+    Malformed compaction payloads are skipped entirely rather than failing the request. Skipping —
+    not degrading to an empty part — matters because even an empty `CompactionPart` acts as a
+    `post_compaction_window` visibility boundary, resetting derived state like tool discovery.
+    """
+    ui_messages = [
+        UIMessage(
+            id='malformed',
+            role='assistant',
+            parts=[TextUIPart(text='kept'), DataUIPart(id='d1', type='data-compaction', data=data)],
+        )
+    ]
+
+    loaded = VercelAIAdapter.load_messages(ui_messages)
+    assert message_part(loaded, TextPart).content == 'kept'
+    assert not any(isinstance(part, CompactionPart) for message in loaded for part in message.parts)
+
+
+async def test_mixed_custody_drops_client_compaction() -> None:
+    """Server-side `message_history` means the server owns the history's compaction boundaries.
+
+    A client-supplied compaction part is the latest boundary, so honoring it would let the client
+    trim the trusted server prefix off the wire and replace its context with the client's own
+    summary. Mixed-custody runs drop client compaction parts; pure client custody (no server
+    history) keeps them honored.
+    """
+    received: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+        received.append(messages)
+        yield 'ok'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    request = SubmitMessage(
+        id='chat-1',
+        messages=[
+            UIMessage(
+                id='a1',
+                role='assistant',
+                parts=[
+                    DataUIPart(type='data-compaction', data={'content': 'client summary', 'provider_name': 'function'}),
+                    TextUIPart(text='client text'),
+                ],
+            ),
+            UIMessage(id='u1', role='user', parts=[TextUIPart(text='hi')]),
+        ],
+    )
+    server_history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('server context'),
+        ModelResponse(parts=[TextPart('server reply')]),
+    ]
+
+    adapter = VercelAIAdapter(agent, request)
+    async for _ in adapter.run_stream_native(message_history=server_history):
+        pass
+    mixed_parts = [part for message in received[0] for part in message.parts]
+    assert not any(isinstance(part, CompactionPart) for part in mixed_parts)
+    assert any(isinstance(part, UserPromptPart) and part.content == 'server context' for part in mixed_parts)
+    assert any(isinstance(part, TextPart) and part.content == 'client text' for part in mixed_parts)
+
+    received.clear()
+    adapter = VercelAIAdapter(agent, request)
+    async for _ in adapter.run_stream_native():
+        pass
+    assert any(isinstance(part, CompactionPart) for message in received[0] for part in message.parts)
+
+
+async def test_compaction_stream_matches_dumped_data_part() -> None:
+    """A streamed compaction uses the same discriminator and faithful payload as dumped history."""
+    compaction = CompactionPart(
+        content='Summary of the conversation.',
+        id='cmp-1',
+        provider_name='openai',
+        provider_details={'encrypted_content': 'blob'},
+    )
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=compaction)
+        yield PartEndEvent(index=0, part=compaction)
+
+    request = SubmitMessage(
+        id='chat-1',
+        messages=[UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Continue')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        if '[DONE]' not in event
+    ]
+    chunk = next(event for event in events if event['type'] == 'data-compaction')
+
+    [dumped] = VercelAIAdapter.dump_messages([ModelResponse(parts=[compaction])])
+    [data_part] = [part for part in dumped.parts if isinstance(part, DataUIPart)]
+    assert chunk == {'type': data_part.type, 'data': data_part.data}
+
+
+async def test_tool_availability_delta_stream_matches_dumped_data_part() -> None:
+    """A live reveal persists with the same discriminator and payload as dumped history."""
+
+    async def stream_function(
+        messages: list[ModelMessage], _agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if not list(iter_message_parts(messages, ModelRequest, ToolReturnPart)):
+            yield {0: DeltaToolCall(name='reveal', json_args='{}', tool_call_id='reveal-1')}
+        else:
+            yield 'done'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.tool_plain
+    def reveal() -> ToolReturn[str]:
+        return ToolReturn(return_value='ready', tools=['new_tool'])
+
+    request = SubmitMessage(
+        id='chat-1',
+        messages=[UIMessage(id='user-1', role='user', parts=[TextUIPart(text='Reveal the tool')])],
+    )
+    adapter = VercelAIAdapter(agent, request)
+    events = [
+        json.loads(encoded.removeprefix('data: '))
+        async for encoded in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in encoded
+    ]
+    chunk = next(event for event in events if event['type'] == 'data-tool-availability-delta')
+
+    dumped = VercelAIAdapter.dump_messages(
+        [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id='reveal-1')])]
+    )
+    data_part = next(part for message in dumped for part in message.parts if isinstance(part, DataUIPart))
+    assert chunk == {'type': data_part.type, 'data': data_part.data}
 
 
 @pytest.mark.parametrize('tool_call_id', ['', '   ', '\t\n'])
@@ -10406,7 +10775,7 @@ def test_tool_availability_delta_treats_blank_tool_call_id_as_absent(tool_call_i
     ]
 
     assert VercelAIAdapter.load_messages(ui_messages) == [
-        ModelRequest(parts=[ToolAvailabilityDeltaPart(added=['new_tool'], tool_call_id=None)])
+        ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['new_tool'], tool_call_id=None)])
     ]
 
 
@@ -10444,7 +10813,8 @@ def test_tool_availability_delta_filters_malformed_added_values(added: Any, expe
         messages,
         ModelRequestParameters(
             function_tools=[
-                ToolDefinition(name=name, parameters_json_schema={'type': 'object'}) for name in expected_added
+                ToolDefinition(name=name, parameters_json_schema={'type': 'object'}, defer_loading=True)
+                for name in expected_added
             ]
         ),
     )
@@ -10452,4 +10822,4 @@ def test_tool_availability_delta_filters_malformed_added_values(added: Any, expe
         assert prepared
     else:
         assert prepared == []
-    assert messages == [ModelRequest(parts=[ToolAvailabilityDeltaPart(added=expected_added)])]
+    assert messages == [ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=expected_added)])]

@@ -16,9 +16,10 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime as _datetime, timezone
 from types import TracebackType
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
+import anyio
 import pytest
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
@@ -56,8 +57,11 @@ from pydantic_ai import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
+    ToolAvailabilityDeltaEvent,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturn,
     ToolReturnPart,
     UnexpectedModelBehavior,
     UserError,
@@ -1432,6 +1436,108 @@ async def test_run_stream_early_break_during_debounce_closes_cleanly():
     async with agent.run_stream('hello') as result:
         stream = result.stream_text(delta=True)
         assert await anext(stream)
+
+
+async def test_run_stream_cancel_during_debounce_from_another_task():
+    """`cancel()` interrupts a debounced background pull without cancelling its caller.
+
+    A synthetic `PeekableAsyncStream` makes the second chunk wait deterministically; a recorded provider response cannot
+    guarantee that the debounced prefetch is still active when cancellation starts.
+    """
+    pull_started = anyio.Event()
+    finalization_started = anyio.Event()
+
+    async def source() -> AsyncIterator[str]:
+        try:
+            yield 'chunk '
+            pull_started.set()
+            await anyio.sleep_forever()
+        finally:
+            finalization_started.set()
+
+    @dataclass
+    class CancellableStreamedResponse(models.StreamedResponse):
+        stream: _utils.PeekableAsyncStream[str, AsyncIterator[str]]
+
+        async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+            async for text in self.stream:
+                for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content=text):
+                    yield event
+
+        async def close_stream(self) -> None:
+            await self.stream.aclose()
+
+        @property
+        def model_name(self) -> str:
+            return 'cancellable'
+
+        @property
+        def provider_name(self) -> str:
+            return 'test'
+
+        @property
+        def provider_url(self) -> str:
+            return 'https://test.example.com'
+
+        @property
+        def timestamp(self) -> _datetime:
+            return _datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    class CancellableModel(models.Model):
+        @property
+        def system(self) -> str:
+            return 'test'
+
+        @property
+        def model_name(self) -> str:
+            return 'cancellable'
+
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+        ) -> ModelResponse:
+            raise AssertionError('Only streaming requests are expected')  # pragma: no cover
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: models.ModelSettings | None,
+            model_request_parameters: models.ModelRequestParameters,
+            run_context: RunContext[object] | None = None,
+        ) -> AsyncGenerator[models.StreamedResponse]:
+            yield CancellableStreamedResponse(
+                model_request_parameters=model_request_parameters,
+                stream=_utils.PeekableAsyncStream(source()),
+            )
+
+    model = CancellableModel()
+    assert model.model_id == 'test:cancellable'
+    agent = Agent(model)
+
+    async with agent.run_stream('hello') as result:
+        stream = result.stream_text(delta=True)
+        with anyio.fail_after(1):
+            assert await anext(stream) == 'chunk '
+            await pull_started.wait()
+
+        cancel_finished = anyio.Event()
+
+        async def cancel() -> None:
+            await result.cancel()
+            cancel_finished.set()
+
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(cancel)
+            with anyio.fail_after(1):
+                await cancel_finished.wait()
+
+        assert result.cancelled
+        assert finalization_started.is_set()
+
+    assert result.response.state == 'interrupted'
 
 
 def test_run_stream_sync_rejects_already_entered_result():
@@ -5757,6 +5863,37 @@ async def test_run_event_stream_handler():
             ),
         ]
     )
+
+
+@pytest.mark.parametrize('run_stream', [False, True])
+@pytest.mark.parametrize('end_strategy', ['graceful', 'exhaustive'])
+async def test_tool_availability_delta_event_stream_handler(
+    run_stream: bool, end_strategy: Literal['graceful', 'exhaustive']
+) -> None:
+    """A recorded tool reveal emits the same delta part through both streaming run APIs."""
+    agent = Agent(TestModel(), end_strategy=end_strategy)
+
+    @agent.tool_plain
+    def ret_a(x: str) -> ToolReturn[str]:
+        return ToolReturn(return_value=f'{x}-apple', tools=['hidden_tool'])
+
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(ctx: RunContext, stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            events.append(event)
+
+    if run_stream:
+        async with agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
+            await result.get_output()
+    else:
+        await agent.run('Hello', event_stream_handler=event_stream_handler)
+
+    assert [event for event in events if isinstance(event, ToolAvailabilityDeltaEvent)] == [
+        ToolAvailabilityDeltaEvent(
+            part=ToolAvailabilityDeltaPart(tools_added=['hidden_tool'], tool_call_id='pyd_ai_tool_call_id__ret_a')
+        )
+    ]
 
 
 async def test_event_stream_handler_propagates_tool_error():

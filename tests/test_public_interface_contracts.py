@@ -235,20 +235,54 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     ('AbstractAgent', 'run_stream_messages'): frozenset({'infer_name'}),
     ('AbstractAgent', 'run_stream_sync'): frozenset({'infer_name'}),
     ('AbstractAgent', 'run_sync'): frozenset({'infer_name'}),
+    # Stored rather than delegated: `realtime()` builds an `AgentRealtime` that holds the whole
+    # configuration until `session()` opens the connection, so every keyword lands on a private
+    # dataclass field (`_deps=deps`) rather than on a same-named parameter. The rename is what the
+    # walk sees; nothing is dropped, and `AgentRealtime` passing them on is covered by the realtime
+    # session tests.
+    ('AbstractAgent', 'realtime'): frozenset(
+        {
+            'deps',
+            'model_settings',
+            'instructions',
+            'toolsets',
+            'capabilities',
+            'usage',
+            'usage_limits',
+            'metadata',
+            'conversation_id',
+            'run_id',
+            'message_history',
+        }
+    ),
     # Same for `infer_name`, plus `event_stream_handler`, which these two consume rather than
     # delegate: they default it to `self.event_stream_handler` and then drive the event stream
     # themselves against each node's stream, so there is no inner run to hand it to.
     ('AbstractAgent', 'run'): frozenset({'infer_name', 'event_stream_handler'}),
     ('AbstractAgent', 'run_stream'): frozenset({'infer_name', 'event_stream_handler'}),
     # Transformed before forwarding: `model` is resolved to the engine's own model wrapper (or to
-    # `None` inside a workflow) and that result is what `super().iter()` receives.
-    ('TemporalAgent', 'iter'): frozenset({'model'}),
+    # `None` inside a workflow) and that result is what `super().iter()` receives. `cancellation_token`
+    # is consumed locally: it is a same-process handle that cannot cross the durable boundary, so
+    # every durable-wrapper entry point rejects it up front with a `UserError` instead of forwarding.
+    ('TemporalAgent', 'iter'): frozenset({'model', 'cancellation_token'}),
     # Defaulted before forwarding: `event_stream_handler or self.event_stream_handler`.
-    ('TemporalAgent', 'run'): frozenset({'event_stream_handler'}),
+    # `cancellation_token` rejected locally (see the `TemporalAgent.iter` note).
+    ('TemporalAgent', 'run'): frozenset({'event_stream_handler', 'cancellation_token'}),
+    ('TemporalAgent', 'run_sync'): frozenset({'cancellation_token'}),
+    ('TemporalAgent', 'run_stream'): frozenset({'cancellation_token'}),
+    ('TemporalAgent', 'run_stream_events'): frozenset({'cancellation_token'}),
+    ('DBOSAgent', 'run'): frozenset({'cancellation_token'}),
+    ('DBOSAgent', 'run_sync'): frozenset({'cancellation_token'}),
+    ('DBOSAgent', 'run_stream'): frozenset({'cancellation_token'}),
+    ('PrefectAgent', 'run'): frozenset({'cancellation_token'}),
+    ('PrefectAgent', 'run_sync'): frozenset({'cancellation_token'}),
+    ('PrefectAgent', 'run_stream'): frozenset({'cancellation_token'}),
+    ('PrefectAgent', 'run_stream_events'): frozenset({'cancellation_token'}),
     # `toolsets` is applied through the engine's override context instead of the run argument, which
     # is explicitly passed as `toolsets=None` so the runtime toolsets are not added twice.
-    ('DBOSAgent', 'iter'): frozenset({'toolsets'}),
-    ('PrefectAgent', 'iter'): frozenset({'toolsets'}),
+    # `cancellation_token` rejected locally (see the `TemporalAgent.iter` note).
+    ('DBOSAgent', 'iter'): frozenset({'toolsets', 'cancellation_token'}),
+    ('PrefectAgent', 'iter'): frozenset({'toolsets', 'cancellation_token'}),
     # Forwarded only when set, through a `**` splat this walk deliberately does not read. The
     # conditional is residue of the removed `output_retries` deprecation shim (`24c8cdca7`) rather
     # than a compatibility mechanism; the other nine keywords forward unconditionally.
