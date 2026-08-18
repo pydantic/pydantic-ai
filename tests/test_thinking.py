@@ -520,6 +520,18 @@ class TestGoogleThinkingTranslation:
             ),
         )
 
+    @pytest.fixture
+    def gemini_3_no_minimal_model(self):
+        """A Gemini 3+ model without `minimal` thinking-level support (e.g. `gemini-3.7-flash`)."""
+        return FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+                google_supports_thinking_level=True,
+                google_supports_minimal_thinking_level=False,
+            ),
+        )
+
     def test_thinking_true_gemini_3(self, gemini_3_model: FunctionModel):
         params = ModelRequestParameters(thinking=True)
         settings: ModelSettings = {}
@@ -537,6 +549,19 @@ class TestGoogleThinkingTranslation:
         settings: ModelSettings = {}
         result = GoogleModel._translate_thinking(gemini_3_model, settings, params)
         assert result == snapshot({'include_thoughts': True, 'thinking_level': 'LOW'})
+
+    def test_thinking_minimal_gemini_3(self, gemini_3_model: FunctionModel):
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(gemini_3_model, settings, params)
+        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'MINIMAL'})
+
+    def test_thinking_minimal_maps_to_low_when_unsupported(self, gemini_3_no_minimal_model: FunctionModel):
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(gemini_3_no_minimal_model, settings, params)
+        assert result is not None
+        assert result.get('thinking_level') == 'LOW'
 
     def test_thinking_true_gemini_25(self, gemini_25_model: FunctionModel):
         params = ModelRequestParameters(thinking=True)
@@ -561,6 +586,12 @@ class TestGoogleThinkingTranslation:
         settings: ModelSettings = {}
         result = GoogleModel._translate_thinking(gemini_3_model, settings, params)
         assert result == snapshot({'thinking_level': 'MINIMAL'})
+
+    def test_thinking_false_maps_to_low_when_minimal_unsupported(self, gemini_3_no_minimal_model: FunctionModel):
+        params = ModelRequestParameters(thinking=False)
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(gemini_3_no_minimal_model, settings, params)
+        assert result == snapshot({'thinking_level': 'LOW'})
 
     def test_thinking_false_gemini_25(self, gemini_25_model: FunctionModel):
         """thinking=False on Gemini 2.5 uses thinking_budget=0."""

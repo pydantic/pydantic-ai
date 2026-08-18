@@ -501,9 +501,14 @@ class ToolManager(Generic[AgentDepsT]):
         name = call.tool_name
         tool = self.tools.get(name)
         if tool is None:
-            if self.tools:
-                available = sorted(self.tools.keys())
+            # Name only what the model can call this turn, the same `is_tool_available` gate the unavailable-tool
+            # check applies, so a name that tool search or `load_capability` has yet to reveal stays out of
+            # this message.
+            available = sorted(n for n, t in self.tools.items() if self.ctx.is_tool_available(t.tool_def))
+            if available:
                 msg = f'Available tools: {", ".join(f"{n!r}" for n in available)}'
+            elif self.tools:
+                msg = 'No tools are available yet: search for the tools you need.'
             else:
                 msg = 'No tools available.'
             raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')

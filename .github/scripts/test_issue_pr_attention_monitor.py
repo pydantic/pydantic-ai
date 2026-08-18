@@ -4,6 +4,7 @@ import datetime as dt
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -88,12 +89,19 @@ class FakeClient(monitor.GitHubClient):
             return {**self.items[number], 'review_comments': len(self.review_comments.get(number, []))}
         if path.startswith('/search/issues?'):
             query = urllib.parse.parse_qs(urllib.parse.urlparse(path).query)
-            requested_state = 'closed' if 'is:closed' in query.get('q', [''])[0] else 'open'
+            terms = query.get('q', [''])[0]
+            if 'is:closed' in terms:
+                states = {'closed'}
+            elif 'is:open' in terms:
+                states = {'open'}
+            else:
+                states = {'open', 'closed'}
+            positive = re.search(r'(?<!-)label:"([^"]+)"', terms)
+            requested_label = positive.group(1) if positive else monitor._ACTION_LABEL
             values = [
                 value
                 for value in self.items.values()
-                if value['state'] == requested_state
-                and monitor._ACTION_LABEL in {str(label['name']) for label in value['labels']}
+                if value['state'] in states and requested_label in {str(label['name']) for label in value['labels']}
             ]
             per_page = int(query.get('per_page', ['30'])[0])
             page = int(query.get('page', ['1'])[0])
@@ -321,8 +329,13 @@ def test_candidate_search_covers_recent_activity_and_the_backlog():
     monitor._candidate_page(client, 'pydantic/pydantic-ai', now=NOW)
 
     searches = [path for method, path, _ in client.calls if method == 'GET' and path.startswith('/search/issues?')]
-    assert any('updated%3A%3E%3D' in path and 'order=desc' in path for path in searches)
-    assert any('order=asc' in path and f'-label%3A%22{monitor._ACTION_LABEL}%22' in path for path in searches)
+    recent = [path for path in searches if 'order=desc' in path]
+    backlog = [path for path in searches if 'order=asc' in path]
+    assert recent and all('updated%3A2026-06-05..2026-07-16' in path for path in recent)
+    assert all(path.count('updated%3A') == 1 for path in recent)
+    assert backlog and all('updated%3A%3C' in path for path in backlog)
+    assert all(path.count('updated%3A') == 1 for path in backlog)
+    assert all(f'-label%3A%22{monitor._ACTION_LABEL}%22' in path for path in backlog)
     assert all(f'-label%3A%22{monitor._ESCALATED_LABEL}%22' in path for path in searches)
 
 
@@ -1056,6 +1069,7 @@ def test_notice_output_is_actionable_and_escapes_untrusted_titles(tmp_path: Path
     assert json.loads(values['notice_items']) == [notice_ref(7, 0, transition_id='event-7', recipients=['DouweM'])]
     text = json.loads(values['slack_payload'])['text']
     assert text.count('<!channel>') == 1
+    assert '*Maintainer attention requested in pydantic/pydantic-ai*' in text
     assert '#7 Handle &lt;unsafe&gt; fake owner &lt;!channel&gt;' in text
     assert 'owner @DouweM' in text
     # A login is the only untrusted value the status line carries, and it is
@@ -1486,7 +1500,10 @@ def test_sweep_restores_eligibility_after_new_activity():
     )
     assert any(call[0] == 'DELETE' and monitor._ESCALATED_LABEL in call[1] for call in client.calls)
     assert any(
-        call[0] == 'GET' and monitor._ESCALATED_LABEL in urllib.parse.unquote(call[1]) and 'direction=desc' in call[1]
+        call[0] == 'GET'
+        and call[1].startswith('/search/issues?')
+        and monitor._ESCALATED_LABEL in urllib.parse.unquote_plus(call[1])
+        and 'order=desc' in call[1]
         for call in client.calls
     )
 
@@ -1510,6 +1527,73 @@ def test_sweep_keeps_untouched_escalated_item_dormant():
 
     assert monitor.reconcile(client, 'r', now=NOW) == ([], [])
     assert not any(call[0] == 'DELETE' for call in client.calls)
+
+
+def test_sweep_returns_unresolved_escalation_to_active_queue_after_cooldown():
+    client = FakeClient({7: item(7, labels=[monitor._ESCALATED_LABEL])})
+    client.timelines[7] = [
+        label_event(monitor._ESCALATED_LABEL, created_at='2026-07-12T00:00:00Z'),
+        {
+            'event': 'unlabeled',
+            'created_at': '2026-07-12T00:00:01Z',
+            'actor': {'login': 'github-actions[bot]'},
+            'label': {'name': monitor._ACTION_LABEL},
+        },
+    ]
+
+    assert monitor.reconcile(client, 'r', now=NOW) == (
+        ['#7: returned unresolved attention to the active queue'],
+        [],
+    )
+    assert {label['name'] for label in client.items[7]['labels']} == {monitor._ACTION_LABEL}
+    assert ('POST', '/repos/r/issues/7/assignees', {'assignees': [monitor._FALLBACK_OWNER]}) in client.calls
+
+
+def test_mixed_resurface_state_restarts_sla_instead_of_reescalating():
+    client = FakeClient(
+        {7: item(7, labels=[monitor._ACTION_LABEL, monitor._ESCALATED_LABEL], assignees=[monitor._FALLBACK_OWNER])}
+    )
+    client.timelines[7] = [
+        label_event(monitor._ESCALATED_LABEL, created_at='2026-07-10T00:00:00Z'),
+        label_event(monitor._ACTION_LABEL, created_at='2026-07-19T00:00:00Z'),
+    ]
+    notices: list[monitor.Notice] = []
+
+    assert monitor.reconcile(client, 'r', now=NOW, notices=notices) == ([], [])
+    assert notices == []
+    assert {label['name'] for label in client.items[7]['labels']} == {monitor._ACTION_LABEL}
+
+
+def test_dormant_sweep_rotation_reaches_escalations_behind_a_cooling_page():
+    def build_client() -> FakeClient:
+        cooling = '2026-07-19T00:00:00Z'
+        values = {
+            number: item(number, labels=[monitor._ESCALATED_LABEL], updated_at=cooling) for number in range(1, 26)
+        }
+        values[26] = item(26, labels=[monitor._ESCALATED_LABEL])
+        client = FakeClient(values)
+        for number in range(1, 26):
+            client.timelines[number] = [label_event(monitor._ESCALATED_LABEL, created_at=cooling)]
+        client.timelines[26] = [
+            label_event(monitor._ESCALATED_LABEL, created_at='2026-07-12T00:00:00Z'),
+            {
+                'event': 'unlabeled',
+                'created_at': '2026-07-12T00:00:01Z',
+                'actor': {'login': 'github-actions[bot]'},
+                'label': {'name': monitor._ACTION_LABEL},
+            },
+        ]
+        return client
+
+    lines: list[str] = []
+    # Two consecutive slots alternate between the two dormant pages, so the
+    # eligible item behind a full page of cooling escalations is reached.
+    for offset in (dt.timedelta(), dt.timedelta(hours=6)):
+        swept, failures = monitor.reconcile(build_client(), 'r', now=NOW + offset)
+        assert failures == []
+        lines.extend(swept)
+
+    assert lines.count('#26: returned unresolved attention to the active queue') == 1
 
 
 def test_sweep_removes_a_foreign_escalation_marker():
@@ -1565,6 +1649,17 @@ def test_compiled_lock_keeps_agent_read_only_and_stable_artifact_name():
     assert agent_permissions['pull-requests'] == 'read'
     assert set(agent_permissions.values()) == {'read'}
     assert decision_permissions['pull-requests'] == 'write'
+    assert 'workflow_call:' in text
+    assert "github.repository == 'pydantic/pydantic-ai-harness'" in text
+    source_checkouts = [
+        step
+        for job in jobs.values()
+        for step in job.get('steps', [])
+        if step.get('uses', '').startswith('actions/checkout@de0fac2e')
+    ]
+    assert source_checkouts
+    assert all(step['with']['repository'] == '${{ job.workflow_repository }}' for step in source_checkouts)
+    assert all(step['with']['ref'] == '${{ job.workflow_sha }}' for step in source_checkouts)
     assert 'name: attention-candidates-${{ github.run_id }}' in text
     # The run_attempt suffix must stay gone: "Re-run failed jobs" bumps the
     # attempt number, but only the original run_id upload exists.
@@ -1574,6 +1669,7 @@ def test_compiled_lock_keeps_agent_read_only_and_stable_artifact_name():
 def test_operations_workflow_routes_all_notices_to_the_triage_channel():
     workflow = Path(__file__).parent.parent / 'workflows' / 'issue-pr-attention-monitor.yml'
     text = workflow.read_text()
+    jobs = yaml.safe_load(text)['jobs']
 
     assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL' in text
     assert 'issue_pr_attention_monitor.py finalize' in text
@@ -1583,6 +1679,18 @@ def test_operations_workflow_routes_all_notices_to_the_triage_channel():
     assert 'needs.notify.outputs.notice_items' in text
     assert 'steps.prepare.outputs.slack_payload' in text
     assert 'Post actionable attention digest to the triage channel' in text
+    assert 'workflow_call:' in text
+    assert 'PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:' in text
+    assert "github.repository == 'pydantic/pydantic-ai-harness'" in text
+    assert jobs['reconcile']['permissions']['pull-requests'] == 'write'
+    assert jobs['notify']['permissions']['pull-requests'] == 'read'
+    assert jobs['finalize']['permissions']['pull-requests'] == 'write'
+    for job_name in ('reconcile', 'notify', 'finalize'):
+        checkout = next(
+            step for step in jobs[job_name]['steps'] if step.get('uses', '').startswith('actions/checkout@')
+        )
+        assert checkout['with']['repository'] == '${{ job.workflow_repository }}'
+        assert checkout['with']['ref'] == '${{ job.workflow_sha }}'
 
 
 def test_monitor_imports_with_stdlib_only():

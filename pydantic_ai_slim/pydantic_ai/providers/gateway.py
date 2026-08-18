@@ -176,6 +176,7 @@ def gateway_provider(
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
         _gateway_providers.add(provider)
+        provider._model_id_namespace = f'gateway/{provider.name}'  # pyright: ignore[reportPrivateUsage]
         return provider
 
     if canonical in ('openai', 'openai-chat', 'openai-responses'):
@@ -264,6 +265,7 @@ def _build_gateway_provider(
         provider._own_http_client = http_client  # pyright: ignore[reportPrivateUsage]
         provider._http_client_factory = create_hooked_http_client  # pyright: ignore[reportPrivateUsage]
     _gateway_providers.add(provider)
+    provider._model_id_namespace = f'gateway/{provider.name}'  # pyright: ignore[reportPrivateUsage]
     return provider
 
 

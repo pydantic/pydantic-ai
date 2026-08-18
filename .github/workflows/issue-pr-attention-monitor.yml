@@ -4,6 +4,10 @@ on:
   schedule:
     - cron: '17 */6 * * *'
   workflow_dispatch: {}
+  workflow_call:
+    secrets:
+      PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL:
+        required: true
 
 permissions: {}
 
@@ -13,20 +17,22 @@ concurrency:
 
 jobs:
   reconcile:
-    if: github.repository == 'pydantic/pydantic-ai'
+    if: github.repository == 'pydantic/pydantic-ai' || github.repository == 'pydantic/pydantic-ai-harness'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
       issues: write
+      pull-requests: write
     outputs:
       notice_items: ${{ steps.reconcile.outputs.notice_items }}
       has_notices: ${{ steps.reconcile.outputs.has_notices }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
-          ref: ${{ github.event.repository.default_branch }}
       - name: Reconcile active attention items
         id: reconcile
         env:
@@ -44,13 +50,15 @@ jobs:
     permissions:
       contents: read
       issues: read
+      pull-requests: read
     outputs:
       notice_items: ${{ steps.prepare.outputs.notice_items }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
-          ref: ${{ github.event.repository.default_branch }}
       - name: Revalidate attention notices immediately before delivery
         id: prepare
         env:
@@ -74,11 +82,13 @@ jobs:
     permissions:
       contents: read
       issues: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           persist-credentials: false
-          ref: ${{ github.event.repository.default_branch }}
       - name: Finalize delivered attention notices
         env:
           ATTENTION_NOTICES: '{"items":${{ needs.notify.outputs.notice_items }}}'
