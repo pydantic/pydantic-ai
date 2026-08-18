@@ -102,7 +102,7 @@ class ImageGenerationSubagentTool:
             instructions=self.instructions,
         )
         try:
-            result = await agent.run(prompt)
+            result = await agent.run(prompt, usage=ctx.usage)
         except UnexpectedModelBehavior as e:
             raise ModelRetry(str(e)) from e
         return result.output

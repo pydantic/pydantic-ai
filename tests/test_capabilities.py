@@ -73,6 +73,7 @@ from pydantic_ai.exceptions import (
     SkipToolValidation,
     ToolFailed,
     UnexpectedModelBehavior,
+    UsageLimitExceeded,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -139,7 +140,7 @@ from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_ALREADY_AVAILABLE_MESSAGE_TEMPLATE,
     LOAD_CAPABILITY_TOOL_NAME,
 )
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
@@ -8042,6 +8043,105 @@ class TestXSearchCapability:
         subagent = XSearchSubagentTool(model='xai:grok-4-1-fast-non-reasoning', native_tool=XSearchTool())
         with pytest.raises(AttributeError, match='no_such_field'):
             subagent.no_such_field  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+
+    async def test_x_search_subagent_usage_accrues_into_run_usage(self):
+        """The subagent's spend reaches `RunUsage`, not just the outer requests.
+
+        See https://github.com/pydantic/pydantic-ai/issues/7147 - the nested run's
+        tokens used to be dropped entirely, so `AgentRunResult.usage` under-reported.
+        """
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[TextPart(content='search results')],
+                usage=RequestUsage(input_tokens=1000, output_tokens=500),
+            )
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name='x_search', args='{"query": "test"}')],
+                    usage=RequestUsage(input_tokens=5, output_tokens=1),
+                )
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=5, output_tokens=1),
+            )
+
+        tool = x_search_tool(FunctionModel(inner_model_fn), XSearchTool())
+        agent = Agent(FunctionModel(outer_model_fn), tools=[tool])
+        result = await agent.run('search X')
+
+        usage = result.usage
+        # 2 outer requests at 5/1, plus the subagent's single 1000/500 request
+        assert usage.input_tokens == 1010
+        assert usage.output_tokens == 502
+        assert usage.requests == 3
+
+    async def test_x_search_subagent_usage_counts_against_usage_limits(self):
+        """The subagent's spend is charged against `UsageLimits`.
+
+        Accruing into `RunUsage` without this would still let a run quietly blow
+        through its budget inside the tool. See issue #7147.
+        """
+        from pydantic_ai.common_tools.x_search import x_search_tool
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[TextPart(content='search results')],
+                usage=RequestUsage(input_tokens=1000, output_tokens=500),
+            )
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name='x_search', args='{"query": "test"}')],
+                    usage=RequestUsage(input_tokens=5, output_tokens=1),
+                )
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=5, output_tokens=1),
+            )
+
+        tool = x_search_tool(FunctionModel(inner_model_fn), XSearchTool())
+        agent = Agent(FunctionModel(outer_model_fn), tools=[tool])
+
+        with pytest.raises(UsageLimitExceeded):
+            await agent.run('search X', usage_limits=UsageLimits(total_tokens_limit=100))
+
+    async def test_image_generation_subagent_usage_accrues_into_run_usage(self):
+        """Same accrual for the image-generation subagent tool. See issue #7147."""
+        from pydantic_ai.common_tools.image_generation import image_generation_tool
+
+        image = BinaryImage(data=b'fake-image-bytes', media_type='image/png')
+
+        def inner_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[FilePart(content=image)],
+                usage=RequestUsage(input_tokens=1000, output_tokens=500),
+            )
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name='generate_image', args='{"prompt": "a cat"}')],
+                    usage=RequestUsage(input_tokens=5, output_tokens=1),
+                )
+            return ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=5, output_tokens=1),
+            )
+
+        inner_model = FunctionModel(inner_model_fn, profile=ModelProfile(supports_image_output=True))
+        tool = image_generation_tool(inner_model, ImageGenerationTool())
+        agent = Agent(FunctionModel(outer_model_fn), tools=[tool])
+        result = await agent.run('draw a cat')
+
+        usage = result.usage
+        assert usage.input_tokens == 1010
+        assert usage.output_tokens == 502
+        assert usage.requests == 3
 
 
 class TestWebFetchCapability:
