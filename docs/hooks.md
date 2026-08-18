@@ -70,7 +70,7 @@ print(result.output)
 #> success (no tool calls)
 ```
 
-Both sync and async hook functions are accepted. Sync functions are called with [`run_in_executor`][asyncio.loop.run_in_executor] in a thread pool, so they don't block the event loop. Because a sync hook runs on a worker thread with a copy of the current context, a value it sets on a [`contextvars.ContextVar`][contextvars.ContextVar] is not visible to the rest of the run, loop-bound APIs like `asyncio.get_running_loop()` are unavailable, and sync hooks from concurrent runs may execute in parallel. Use an async hook if you need any of those.
+Both sync and async hook functions are accepted. Sync functions are run in a thread pool, so a slow one won't hold up the rest of the run. Use an async hook if it needs to set a [`contextvars.ContextVar`][contextvars.ContextVar] for the rest of the run to see, or to use asyncio APIs like `asyncio.get_running_loop()`.
 
 ### On-demand hooks
 
