@@ -12378,7 +12378,10 @@ async def test_agent_allows_none_output_blank_text_response():
 
 
 async def test_agent_allows_none_output_blank_text_with_thinking():
-    """Test that Agent(output_type=str | None) succeeds on empty text combined with thinking."""
+    """Test that Agent(output_type=str | None) succeeds on empty text combined with thinking.
+
+    Uses `FunctionModel` for the same reason as the blank-text-only test above.
+    """
 
     async def blank_text_thinking_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(''), ThinkingPart(content='Nothing more to add.')])
@@ -12394,7 +12397,8 @@ async def test_agent_blank_text_response_retries_without_none_output():
     """Test that a response with only empty text still triggers an output retry for plain `str`.
 
     Empty text is treated as no text output; when `None` is not an allowed output type, the
-    agent asks the model to try again rather than accepting an empty answer.
+    agent asks the model to try again rather than accepting an empty answer. The retry prompt
+    content is pinned so a retry issued for the wrong reason fails the test.
     """
 
     async def blank_text_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -12403,7 +12407,61 @@ async def test_agent_blank_text_response_retries_without_none_output():
     model = FunctionModel(function=blank_text_model)
     agent = Agent(model, output_type=str)
 
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+            await agent.run('hello')
+
+    retry_request = messages[2]
+    assert isinstance(retry_request, ModelRequest)
+    assert retry_request.parts == snapshot(
+        [
+            RetryPromptPart(
+                content='Please return text.',
+                tool_call_id=IsStr(),
+                timestamp=IsNow(tz=timezone.utc),
+            )
+        ]
+    )
+
+
+async def test_agent_blank_text_response_content_filter():
+    """Test that empty text with `finish_reason='content_filter'` raises instead of returning `None`.
+
+    A filtered-out response is not the model choosing silence, so it must not complete as `None`
+    even when the output type allows it. Matches the behavior of a partless filtered response.
+    """
+
+    async def filtered_blank_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('')],
+            finish_reason='content_filter',
+            provider_details={'finish_reason': 'content_filter'},
+        )
+
+    model = FunctionModel(function=filtered_blank_model)
+    agent = Agent(model, output_type=str | None)
+
+    with pytest.raises(
+        ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'content_filter'")
+    ):
+        await agent.run('hello')
+
+
+@pytest.mark.parametrize('output_type', [str, str | None])
+async def test_agent_blank_text_response_token_limit(output_type: Any):
+    """Test that empty text with `finish_reason='length'` raises the token limit error.
+
+    A blank-text response cut off by the token limit is not a `None` result and retrying can't
+    help, so it raises immediately, matching the partless and thinking-only cases.
+    """
+
+    async def truncated_blank_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('')], finish_reason='length')
+
+    model = FunctionModel(function=truncated_blank_model)
+    agent = Agent(model, output_type=output_type)
+
+    with pytest.raises(UnexpectedModelBehavior, match='token limit'):
         await agent.run('hello')
 
 
