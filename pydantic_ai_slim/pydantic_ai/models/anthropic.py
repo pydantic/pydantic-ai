@@ -2181,6 +2181,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             assert isinstance(content, list)
             kept: list[BetaContentBlockParam] = []
             for block in content:
+                # Preserve the union type before `is_str_dict` narrows `block` to `dict[str, Any]`.
                 block_param = block
                 if isinstance(block, BetaMCPToolResultBlock) or not is_str_dict(block):
                     kept.append(block_param)
@@ -2204,6 +2205,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         ] + [kept]:
                             assert isinstance(preceding_content, list)
                             for param in preceding_content:
+                                # Preserve the union type before `is_str_dict` narrows `param`.
                                 param_value = param
                                 if is_str_dict(param) and param['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
                                     carriers.append(param_value)
