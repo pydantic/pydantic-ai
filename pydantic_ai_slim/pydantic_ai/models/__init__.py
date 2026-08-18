@@ -26,7 +26,7 @@ from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
 from .._cost import preload_pricing_data
-from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx as legacy_httpx
+from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
