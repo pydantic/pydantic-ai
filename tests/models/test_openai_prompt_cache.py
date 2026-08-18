@@ -259,11 +259,12 @@ async def test_openai_chat_cache_point_first_content_raises(allow_model_requests
 
 
 async def test_openai_chat_cache_point_filtered_without_support(allow_model_requests: None):
-    """Models without OpenAI explicit-breakpoint support continue to filter out `CachePoint`."""
+    """Models without OpenAI explicit-breakpoint support filter out `CachePoint`, with a warning."""
     mock_client = MockOpenAI.create_mock(chat_completion())
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
-    result = await Agent(model).run(['text before', CachePoint(), 'text after'])
+    with pytest.warns(UserWarning, match="`CachePoint` is not supported by model 'gpt-4o'"):
+        result = await Agent(model).run(['text before', CachePoint(), 'text after'])
 
     assert result.output == 'response'
     assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
@@ -289,7 +290,8 @@ async def test_openai_chat_prompt_cache_options_sent_for_any_model(allow_model_r
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
-    result = await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
+    with pytest.warns(UserWarning, match="`CachePoint` is not supported by model 'gpt-4o'"):
+        result = await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
 
     assert result.output == 'response'
     request = get_mock_chat_completion_kwargs(mock_client)[0]
@@ -308,7 +310,8 @@ async def test_openrouter_chat_cache_point_dropped_for_openai_models(allow_model
     mock_client.chat.completions.create = create
     model = OpenRouterModel('openai/gpt-5.6-sol', provider=OpenRouterProvider(openai_client=mock_client))
 
-    await Agent(model).run(['Stable context.', CachePoint(), 'Use it.'])
+    with pytest.warns(UserWarning, match='`CachePoint` is not supported by the downstream provider on OpenRouter'):
+        await Agent(model).run(['Stable context.', CachePoint(), 'Use it.'])
 
     request = create.call_args.kwargs
     assert request['messages'] == [
@@ -483,11 +486,12 @@ async def test_openai_responses_cache_point_first_content_raises(allow_model_req
 
 
 async def test_openai_responses_cache_point_filtered_without_support(allow_model_requests: None):
-    """Models without Responses breakpoint support continue to filter out `CachePoint`."""
+    """Models without Responses breakpoint support filter out `CachePoint`, with a warning."""
     mock_client = MockOpenAIResponses.create_mock(responses_completion('response'))
     model = OpenAIResponsesModel('gpt-4.1-nano', provider=OpenAIProvider(openai_client=mock_client))
 
-    result = await Agent(model).run(['text before', CachePoint(), 'text after'])
+    with pytest.warns(UserWarning, match="`CachePoint` is not supported by model 'gpt-4.1-nano'"):
+        result = await Agent(model).run(['text before', CachePoint(), 'text after'])
 
     assert result.output == 'response'
     assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
@@ -513,7 +517,8 @@ async def test_openai_responses_prompt_cache_options_sent_for_any_model(allow_mo
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     settings = OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
 
-    result = await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
+    with pytest.warns(UserWarning, match="`CachePoint` is not supported by model 'gpt-4o'"):
+        result = await Agent(model, model_settings=settings).run(['Stable context.', CachePoint(), 'Use it.'])
 
     assert result.output == 'done'
     request = get_mock_responses_kwargs(mock_client)[0]

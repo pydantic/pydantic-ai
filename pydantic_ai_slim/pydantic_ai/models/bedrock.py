@@ -72,6 +72,7 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
+from pydantic_ai.models._prompt_cache import excess_cache_points, warn_cache_point_ignored
 from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
 from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
@@ -80,7 +81,6 @@ from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
 from pydantic_ai.settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
-from pydantic_ai.models._prompt_cache import excess_cache_points
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -1608,7 +1608,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         content.append(_make_document_block(f'Document {next(document_count)}', format, source))
                 elif isinstance(item, CachePoint):
                     if not supports_prompt_caching:
-                        # Silently skip CachePoint for models that don't support prompt caching
+                        warn_cache_point_ignored(f'model {self.model_name!r} on Bedrock')
                         continue
                     if not content:
                         # A CachePoint means "cache everything before this point". This part has no

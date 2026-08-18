@@ -78,7 +78,6 @@ from ..profiles.anthropic import (
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
-from ._prompt_cache import excess_cache_points
 from ..tools import AgentDepsT, ToolDefinition
 from ..toolsets._tool_search import discovered_tool_names_in_order
 from . import (
@@ -93,6 +92,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._prompt_cache import excess_cache_points
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {

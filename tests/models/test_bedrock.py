@@ -4636,19 +4636,20 @@ async def test_bedrock_cache_point_multiple_markers(allow_model_requests: None, 
 async def test_bedrock_cache_skipped_for_unsupported_models(
     allow_model_requests: None, bedrock_provider: BedrockProvider
 ):
-    """All cache settings should be silently skipped for models that don't support prompt caching."""
+    """All cache settings should be skipped for models that don't support prompt caching, warning for `CachePoint`."""
     # Meta models don't support prompt caching
     model = BedrockConverseModel('meta.llama3-70b-instruct-v1:0', provider=bedrock_provider)
 
-    # Test CachePoint markers are skipped
+    # Test CachePoint markers are skipped, with a warning
     messages_with_cache_points: list[ModelMessage] = [
         ModelRequest(
             parts=[UserPromptPart(content=['First chunk', CachePoint(), 'Second chunk', CachePoint(), 'Question'])]
         )
     ]
-    _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        messages_with_cache_points, ModelRequestParameters(), BedrockModelSettings()
-    )
+    with pytest.warns(UserWarning, match='`CachePoint` is not supported by model'):
+        _, bedrock_messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+            messages_with_cache_points, ModelRequestParameters(), BedrockModelSettings()
+        )
     assert bedrock_messages[0]['content'] == snapshot(
         [{'text': 'First chunk'}, {'text': 'Second chunk'}, {'text': 'Question'}]
     )

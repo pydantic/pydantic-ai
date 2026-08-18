@@ -1226,9 +1226,9 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
 
 
 async def test_cache_point_filtering():
-    """Test that CachePoint is filtered out in HuggingFace message mapping."""
-    # Test the static method directly
-    msg = await HuggingFaceModel._map_user_prompt(UserPromptPart(content=['text', CachePoint()]))  # pyright: ignore[reportPrivateUsage]
+    """Test that CachePoint is filtered out, with a warning, in HuggingFace message mapping."""
+    with pytest.warns(UserWarning, match='`CachePoint` is not supported by Hugging Face'):
+        msg = await HuggingFaceModel._map_user_prompt(UserPromptPart(content=['text', CachePoint()]))  # pyright: ignore[reportPrivateUsage]
 
     # CachePoint should be filtered out
     assert msg['role'] == 'user'

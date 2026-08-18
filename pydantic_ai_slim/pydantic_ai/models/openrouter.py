@@ -25,9 +25,9 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
-from ._prompt_cache import excess_cache_points
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
+from ._prompt_cache import excess_cache_points, warn_cache_point_ignored
 from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
 from ._tool_choice import ResolvedToolChoice
 
@@ -186,17 +186,17 @@ Currently only supports 'middle-out', but is expected to grow in the future.
 """
 
 OpenRouterCacheTTL = bool | Literal['5m', '1h']
+"""Cache breakpoint time-to-live for OpenRouter prompt caching.
+
+`True` selects the default TTL ('5m'); '5m' or '1h' may be given explicitly. The TTL is only
+forwarded to downstream providers that support it (Anthropic); it is omitted for Gemini.
+"""
 
 _CACHE_SETTINGS_KEYS = (
     'openrouter_cache_instructions',
     'openrouter_cache_messages',
     'openrouter_cache_tool_definitions',
 )
-"""Cache breakpoint time-to-live for OpenRouter prompt caching.
-
-`True` selects the default TTL ('5m'); '5m' or '1h' may be given explicitly. The TTL is only
-forwarded to downstream providers that support it (Anthropic); it is omitted for Gemini.
-"""
 
 
 class OpenRouterProviderConfig(TypedDict, total=False):
@@ -650,9 +650,7 @@ def _openrouter_settings_to_openai_settings(
     # no automatic caching mode, so the library places breakpoints at the stable prompt boundaries
     # (end of tool definitions, end of static instructions); the downstream-provider profile gates
     # still apply when these settings are consumed.
-    if model_request_parameters.cache is not None and not any(
-        key in model_settings for key in _CACHE_SETTINGS_KEYS
-    ):
+    if model_request_parameters.cache is not None and not any(key in model_settings for key in _CACHE_SETTINGS_KEYS):
         cache = model_request_parameters.cache
         ttl: Literal['5m', '1h'] = cache if cache in ('5m', '1h') else '5m'
         model_settings['openrouter_cache_instructions'] = ttl
@@ -786,6 +784,7 @@ class OpenRouterModel(OpenAIChatModel):
                 Ignored for providers that don't support it.
         """
         if not self._resolved_profile.get('openrouter_supports_cache_control', False):
+            warn_cache_point_ignored('the downstream provider on OpenRouter')
             return
 
         if not params:

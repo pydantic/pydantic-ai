@@ -463,6 +463,23 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         merged = merge_model_settings(self.settings, model_settings)
         return self._max_prompt_cache_retention(self._resolved_cache_setting(merged))
 
+    def _resolve_cache(
+        self, model_settings: ModelSettings | None, params: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        """Resolve the unified `cache` setting into `params.cache` and strip it from `model_settings`.
+
+        The value is only kept when the model's profile supports caching, with the requested
+        retention snapped to a supported tier.
+        """
+        if model_settings and 'cache' in model_settings:
+            cache_value = model_settings['cache']
+            if cache_value and self.profile.get('supports_cache', False):
+                supported = self.profile.get('supported_cache_retentions', ('5m',))
+                params = replace(params, cache=snap_cache_retention(cache_value, supported))
+            stripped = {k: v for k, v in model_settings.items() if k != 'cache'}
+            model_settings = cast(ModelSettings, stripped) if stripped else None
+        return model_settings, params
+
     def _resolved_cache_setting(self, merged_settings: ModelSettings | None) -> CacheSetting | None:
         """The unified `cache` value snapped to this model's supported retentions, if caching is supported."""
         if merged_settings and (cache := merged_settings.get('cache')) and self.profile.get('supports_cache', False):
@@ -640,14 +657,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
-        # Resolve unified cache setting and strip from model_settings
-        if model_settings and 'cache' in model_settings:
-            cache_value = model_settings['cache']
-            if cache_value and self.profile.get('supports_cache', False):
-                supported = self.profile.get('supported_cache_retentions', ('5m',))
-                params = replace(params, cache=snap_cache_retention(cache_value, supported))
-            stripped = {k: v for k, v in model_settings.items() if k != 'cache'}
-            model_settings = cast(ModelSettings, stripped) if stripped else None
+        model_settings, params = self._resolve_cache(model_settings, params)
 
         if native_tools := params.native_tools:
             # Deduplicate native tools

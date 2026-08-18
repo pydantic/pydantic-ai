@@ -119,6 +119,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._prompt_cache import warn_cache_point_ignored
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
@@ -1883,8 +1884,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         before the default mapping (e.g. `OpenRouterModel` translates `CachePoint` into a
         `cache_control` breakpoint on the preceding part).
         """
-        if isinstance(item, CachePoint) and self.profile.get('openai_supports_prompt_cache_breakpoints', False):
-            _add_openai_prompt_cache_breakpoint(content)
+        if isinstance(item, CachePoint):
+            if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
+                _add_openai_prompt_cache_breakpoint(content)
+            else:
+                warn_cache_point_ignored(f'model {self.model_name!r}')
         else:
             mapped_item = await self._map_content_item(item)
             if mapped_item is not None:
@@ -3693,6 +3697,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 elif isinstance(item, CachePoint):
                     if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
                         _add_openai_prompt_cache_breakpoint(content)
+                    else:
+                        warn_cache_point_ignored(f'model {self.model_name!r}')
                 elif is_multi_modal_content(item):
                     content.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'user prompts'))  # pyright: ignore[reportArgumentType]
                 else:
