@@ -891,7 +891,7 @@ class BedrockConverseModel(Model[BaseClient]):
         u = _map_usage(response['usage'], self._provider.name, self.base_url, self.model_name)
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         raw_finish_reason = response['stopReason']
-        provider_details = {'finish_reason': raw_finish_reason}
+        provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
         if trace := response.get('trace'):
             provider_details['trace'] = trace
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)

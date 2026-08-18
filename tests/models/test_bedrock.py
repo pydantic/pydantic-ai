@@ -1314,7 +1314,7 @@ async def test_bedrock_trace(allow_model_requests: None, bedrock_provider: Bedro
 
     result = await agent.run('hello')
 
-    message = result.all_messages()[-1]
+    message = cast(ModelResponse, result.all_messages()[-1])
     assert message.provider_details == {'finish_reason': 'guardrail_intervened', 'trace': trace}
     assert message.finish_reason == 'content_filter'
 
@@ -1357,7 +1357,7 @@ async def test_bedrock_trace_streamed(
     async with agent.run_stream('hello') as result:
         assert await result.get_output() == 'hello'
 
-    message = result.all_messages()[-1]
+    message = cast(ModelResponse, result.all_messages()[-1])
     assert message.provider_details == {'finish_reason': 'guardrail_intervened', 'trace': trace}
     assert message.finish_reason == 'content_filter'
 
