@@ -73,6 +73,10 @@ _R = TypeVar('_R')
 
 _disable_threads: ContextVar[bool] = ContextVar('_disable_threads', default=sys.platform == 'emscripten')
 _thread_executor: ContextVar[Executor | None] = ContextVar('_thread_executor', default=None)
+# Any cancellation delivered while awaiting a worker thread abandons that thread, not just the one a
+# deadline schedules: `anyio` cannot tell them apart. That is acceptable only because this dial is set
+# tightly around calls that are already armed with a deadline, whose owner asked for a timeout.
+_abandon_on_cancel: ContextVar[bool] = ContextVar('_abandon_on_cancel', default=False)
 
 
 def run_until_complete(coro: Awaitable[_R]) -> _R:
@@ -136,6 +140,28 @@ def using_thread_executor(executor: Executor) -> Generator[None]:
         _thread_executor.reset(token)
 
 
+@contextmanager
+def abandon_threads_on_cancel() -> Generator[None]:
+    """Context manager to abandon worker threads running sync functions when they're cancelled.
+
+    Inside this context, a cancellation delivered while awaiting a worker thread abandons that thread
+    -- it runs to completion in the background and its result is discarded -- instead of waiting for it
+    to finish. Outside it, [`anyio.to_thread.run_sync`][anyio.to_thread.run_sync] shields the await, so
+    the cancellation is only delivered once the thread returns.
+
+    This is used around calls that carry a deadline, so that [`anyio.fail_after`][anyio.fail_after] can
+    actually raise `TimeoutError` when a sync function overruns it, rather than only after it returns.
+
+    Yields:
+        None
+    """
+    token = _abandon_on_cancel.set(True)
+    try:
+        yield
+    finally:
+        _abandon_on_cancel.reset(token)
+
+
 async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.kwargs) -> _R:
     if _disable_threads.get():
         return func(*args, **kwargs)
@@ -148,7 +174,7 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
         ctx = copy_context()
         return await loop.run_in_executor(executor, ctx.run, wrapped_func)
 
-    return await run_sync(wrapped_func)
+    return await run_sync(wrapped_func, abandon_on_cancel=_abandon_on_cancel.get())
 
 
 def is_async_generator_already_running(exc: RuntimeError) -> bool:

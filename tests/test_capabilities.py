@@ -5,6 +5,7 @@ import contextvars
 import inspect
 import re
 import threading
+import time
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -12302,15 +12303,35 @@ class TestHooksCapability:
     async def test_sync_function_auto_wrapping(self):
         hooks = Hooks()
         call_log: list[str] = []
+        hook_thread_ids: list[int] = []
 
         @hooks.on.before_model_request
         def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
             call_log.append('sync_hook')
+            hook_thread_ids.append(threading.get_ident())
             return request_context
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
         await agent.run('hello')
         assert call_log == ['sync_hook']
+        # The sync hook runs in a thread, so it can't block the event loop.
+        assert hook_thread_ids[0] != threading.get_ident()
+
+    async def test_sync_function_returning_awaitable(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('log_request')
+            return request_context
+
+        @hooks.on.before_model_request
+        def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> Awaitable[ModelRequestContext]:
+            return log_request(ctx, request_context)
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['log_request']
 
     async def test_timeout(self):
         hooks = Hooks()
@@ -12328,6 +12349,22 @@ class TestHooksCapability:
         assert exc_info.value.timeout == 0.01
         assert isinstance(exc_info.value, AgentRunError)
         assert isinstance(exc_info.value, TimeoutError)
+
+    async def test_timeout_sync_hook(self):
+        """A sync hook runs in a worker thread, which is abandoned when its deadline expires."""
+        hooks = Hooks()
+
+        @hooks.on.before_model_request(timeout=0.01)
+        def slow_sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            time.sleep(0.1)
+            # The abandoned thread runs to completion, so this line is covered; only its result is discarded.
+            return request_context
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        with pytest.raises(HookTimeoutError) as exc_info:
+            await agent.run('hello')
+        assert exc_info.value.hook_name == 'before_model_request'
+        assert exc_info.value.func_name == 'slow_sync_hook'
 
     async def test_has_wrap_node_run(self):
         hooks = Hooks()
@@ -13086,6 +13123,33 @@ class TestContextVarPropagation:
 
         for hook_name, value in reader.seen:
             assert value == 'from-before-run', f'{hook_name} did not see contextvar'
+
+    async def test_sync_before_run_hook_contextvar_does_not_propagate(self):
+        """Context vars set in a sync `before_run` hook do not propagate."""
+        hooks = Hooks()
+
+        @hooks.on.before_run
+        def set_contextvar(ctx: RunContext[Any]) -> None:
+            _test_cv.set('from-sync-hook')
+
+        @dataclass
+        class Reader(AbstractCapability):
+            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.seen.append(('before_node_run', _test_cv.get(None)))
+                return node
+
+        reader = Reader()
+        agent = Agent(TestModel(), capabilities=[hooks, reader])
+        await agent.run('hello')
+
+        # Documented consequence of sync hooks running in a thread pool: the write lands in
+        # the worker thread's copied context, so neither the run nor the caller ever sees it.
+        assert reader.seen
+        for hook_name, value in reader.seen:
+            assert value is None, f'{hook_name} unexpectedly saw contextvar'
+        assert _test_cv.get(None) is None
 
     async def test_contextvar_visible_in_on_run_error(self):
         """Context vars set in wrap_run are visible in on_run_error."""

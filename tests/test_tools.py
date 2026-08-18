@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Literal
@@ -3105,6 +3106,38 @@ async def test_tool_timeout_triggers_retry():
     assert len(retry_parts) == 1
     assert 'Timed out after 0.1 seconds' in retry_parts[0].content
     assert retry_parts[0].tool_name == 'slow_tool'
+
+
+@pytest.mark.anyio
+async def test_sync_tool_timeout_triggers_retry():
+    """A blocking `def` tool times out too: its worker thread is abandoned when the deadline expires."""
+    call_count = 0
+
+    async def model_logic(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='slow_sync_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart(content='Tool timed out, giving up')])
+
+    agent = Agent(FunctionModel(model_logic))
+
+    @agent.tool_plain(timeout=0.01)
+    def slow_sync_tool() -> str:
+        time.sleep(0.1)
+        # The abandoned thread runs to completion, so this line is covered; only its result is discarded.
+        return 'done'
+
+    result = await agent.run('call slow_sync_tool')
+
+    retry_parts = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)
+        if 'Timed out' in str(part.content)
+    ]
+    assert len(retry_parts) == 1
+    assert 'Timed out after 0.01 seconds' in retry_parts[0].content
+    assert retry_parts[0].tool_name == 'slow_sync_tool'
 
 
 @pytest.mark.anyio
