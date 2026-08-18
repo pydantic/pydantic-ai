@@ -66,6 +66,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
+    _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
@@ -2364,12 +2365,9 @@ def _announce_tool_availability_delta_messages(
             # results. Position in the output decides: a dropped empty-delta request ahead of this
             # one passes the leading role along.
             start = _standing_system_prompt_count(request) if leading_request_pending else 0
-            tail = replacement_parts[start:]
-            tail.sort(
-                # Anthropic requires tool results to lead the message that answers a tool call
-                key=lambda p: 0 if isinstance(p, ToolReturnPart | RetryPromptPart) else 1
-            )
-            transformed.append(replace(request, parts=[*replacement_parts[:start], *tail]))
+            tail = sorted(replacement_parts[start:], key=_tool_results_first_sort_key)
+            replacement_parts[start:] = tail
+            transformed.append(request)
             leading_request_pending = False
 
     return transformed if changed else messages
