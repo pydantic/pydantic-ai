@@ -269,6 +269,9 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_send_back_thinking_parts=True,
             bedrock_supports_prompt_caching=True,
             bedrock_supports_tool_caching=True,
+            supports_cache=True,
+            supported_cache_retentions=('5m', '1h'),
+            max_cache_points=4,
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
             # Anthropic on Bedrock rejects a `toolResult` co-located with a document or video block, but
             # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.
@@ -308,6 +311,9 @@ def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
             BedrockModelProfile(
                 bedrock_supports_tool_choice=True,
                 bedrock_supports_prompt_caching=True,
+                supports_cache=True,
+                supported_cache_retentions=('5m', '1h'),
+                max_cache_points=4,
                 bedrock_top_k_variant='nova',
             ),
         )

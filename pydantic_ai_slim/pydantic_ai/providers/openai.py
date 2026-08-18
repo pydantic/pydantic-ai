@@ -55,6 +55,10 @@ class OpenAIProvider(_OpenAICompatibleProvider):
         return merge_profile(
             openai_model_profile(model_name),
             OpenAIModelProfile(tool_addition_mode='with_definitions', tool_deferral_mode='with_tool_search'),
+            # OpenAI caches prompts implicitly, so the unified `cache` setting is satisfied without
+            # adding anything to the request. Set here rather than in `openai_model_profile`, which
+            # is shared with OpenAI-compatible endpoints that don't necessarily cache implicitly.
+            OpenAIModelProfile(supports_cache=True, supports_auto_cache=True),
         )
 
     @staticmethod

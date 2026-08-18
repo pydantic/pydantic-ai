@@ -25,6 +25,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
+from ._prompt_cache import excess_cache_points
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
 from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
@@ -185,6 +186,12 @@ Currently only supports 'middle-out', but is expected to grow in the future.
 """
 
 OpenRouterCacheTTL = bool | Literal['5m', '1h']
+
+_CACHE_SETTINGS_KEYS = (
+    'openrouter_cache_instructions',
+    'openrouter_cache_messages',
+    'openrouter_cache_tool_definitions',
+)
 """Cache breakpoint time-to-live for OpenRouter prompt caching.
 
 `True` selects the default TTL ('5m'); '5m' or '1h' may be given explicitly. The TTL is only
@@ -639,6 +646,18 @@ def _openrouter_settings_to_openai_settings(
             openrouter_reasoning['enabled'] = True
         model_settings['openrouter_reasoning'] = openrouter_reasoning
 
+    # Fall back to unified cache when no explicit openrouter_cache_* setting is set. OpenRouter has
+    # no automatic caching mode, so the library places breakpoints at the stable prompt boundaries
+    # (end of tool definitions, end of static instructions); the downstream-provider profile gates
+    # still apply when these settings are consumed.
+    if model_request_parameters.cache is not None and not any(
+        key in model_settings for key in _CACHE_SETTINGS_KEYS
+    ):
+        cache = model_request_parameters.cache
+        ttl: Literal['5m', '1h'] = cache if cache in ('5m', '1h') else '5m'
+        model_settings['openrouter_cache_instructions'] = ttl
+        model_settings['openrouter_cache_tool_definitions'] = ttl
+
     if reasoning := model_settings.get('openrouter_reasoning'):
         extra_body['reasoning'] = reasoning
     if usage := model_settings.pop('openrouter_usage', None):
@@ -695,6 +714,7 @@ class OpenRouterModel(OpenAIChatModel):
             settings.get('openrouter_cache_tool_definitions')
             if self._resolved_profile.get('openrouter_supports_tool_cache', False)
             else None,
+            self._resolved_cache_setting(settings),
         )
 
     def _build_cache_control(self, ttl: OpenRouterCacheTTL = '5m') -> dict[str, str]:
@@ -718,15 +738,9 @@ class OpenRouterModel(OpenAIChatModel):
     ) -> None:
         """Limit the number of cache breakpoints to the downstream provider's maximum.
 
-        Anthropic enforces a maximum of 4 cache breakpoints per request. When the limit
-        is exceeded, excess breakpoints are removed from messages (oldest first), preserving
-        tool and system/developer cache points which are typically more valuable.
-
-        Follows the same strategy as the Anthropic and Bedrock models' `_limit_cache_points`:
-        1. Reserve slots for tool cache points (known from `has_tool_cache_point`)
-        2. Count cache points in system/developer messages (always preserved)
-        3. Calculate remaining budget for user/assistant message cache points
-        4. Traverse remaining messages newest-first, removing excess cache points
+        Tool and system/developer cache points always take priority; excess breakpoints on the
+        remaining messages are removed oldest-first. Downstreams without a declared maximum
+        (`openrouter_max_cache_points`) are not limited.
 
         Args:
             openai_messages: The mapped OpenAI messages to limit.
@@ -736,35 +750,27 @@ class OpenRouterModel(OpenAIChatModel):
         if max_points is None:
             return
 
-        used = int(has_tool_cache_point)
-
+        reserved = int(has_tool_cache_point)
         for msg in openai_messages:
             if msg.get('role') in ('system', 'developer'):
                 content = msg.get('content')
                 if isinstance(content, list):
-                    used += sum(1 for part in content if 'cache_control' in cast(dict[str, Any], part))
+                    reserved += sum(1 for part in content if 'cache_control' in cast(dict[str, Any], part))
 
-        remaining = max_points - used
-        if remaining < 0:
-            raise UserError(
-                f'Too many cache points for downstream provider. '
-                f'Tool and system cache points already use {used}, '
-                f'which exceeds the maximum of {max_points}.'
-            )
-
-        for msg in reversed(openai_messages):
-            if msg.get('role') in ('system', 'developer'):
-                continue
-            content = msg.get('content')
-            if not isinstance(content, list):
-                continue
-            for part in reversed(content):
-                part_dict = cast(dict[str, Any], part)
-                if 'cache_control' in part_dict:
-                    if remaining > 0:
-                        remaining -= 1
-                    else:
-                        del part_dict['cache_control']
+        message_parts = (
+            cast('dict[str, Any]', part)
+            for msg in reversed(openai_messages)
+            if msg.get('role') not in ('system', 'developer') and isinstance(content := msg.get('content'), list)
+            for part in reversed(content)
+        )
+        for part_dict in excess_cache_points(
+            message_parts,
+            max_points=max_points,
+            reserved=reserved,
+            is_cache_point=lambda part: 'cache_control' in part,
+            description='downstream provider',
+        ):
+            del part_dict['cache_control']
 
     def _add_cache_control(self, params: list[ChatCompletionContentPartParam], ttl: OpenRouterCacheTTL = '5m') -> None:
         """Add `cache_control` to the last content part.

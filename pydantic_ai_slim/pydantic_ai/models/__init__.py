@@ -81,7 +81,8 @@ from ..profiles import (
     merge_profile,
 )
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
-from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
+from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
+from ._prompt_cache import snap_cache_retention
 
 if TYPE_CHECKING:
     from ..agent.abstract import AbstractAgent
@@ -235,6 +236,14 @@ class ModelRequestParameters:
     `None` means the model should use its default behavior. Set by the base
     `Model.prepare_request()` from the unified `thinking` field in `ModelSettings`,
     after checking that the model's profile supports thinking.
+    """
+
+    cache: CacheSetting | None = None
+    """Resolved prompt-cache configuration for this request.
+
+    `None` means no library-managed caching. Set by the base `Model.prepare_request()`
+    from the unified `cache` field in `ModelSettings`, after checking that the model's
+    profile supports caching and snapping the retention to a supported tier.
     """
 
     def visibility_of(self, tool_name: str) -> ToolVisibility:
@@ -444,22 +453,30 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         return self._settings
 
     def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve prompt cache retention requested by provider-specific model settings.
+        """Resolve prompt cache retention requested by model settings.
 
-        The model's default settings are merged with the per-request `model_settings`. Only provider-specific settings
-        are currently considered; a future unified cache setting is not yet an input. If multiple active settings
-        request different retention periods, the longest period wins because any longer-lived cache breakpoint can
-        keep the corresponding prompt prefix available. Models without a provider-specific retention setting return
-        `None`.
+        The model's default settings are merged with the per-request `model_settings`. Both the unified `cache`
+        setting and provider-specific settings are considered. If multiple active settings request different
+        retention periods, the longest period wins because any longer-lived cache breakpoint can keep the
+        corresponding prompt prefix available. Models without an active retention setting return `None`.
         """
+        merged = merge_model_settings(self.settings, model_settings)
+        return self._max_prompt_cache_retention(self._resolved_cache_setting(merged))
+
+    def _resolved_cache_setting(self, merged_settings: ModelSettings | None) -> CacheSetting | None:
+        """The unified `cache` value snapped to this model's supported retentions, if caching is supported."""
+        if merged_settings and (cache := merged_settings.get('cache')) and self.profile.get('supports_cache', False):
+            return snap_cache_retention(cache, self.profile.get('supported_cache_retentions', ('5m',)))
         return None
 
     @staticmethod
     def _max_prompt_cache_retention(
-        *cache_settings: bool | Literal['5m', '1h'] | None,
+        *cache_settings: CacheSetting | None,
     ) -> timedelta | None:
         if '1h' in cache_settings:
             return timedelta(hours=1)
+        if '30m' in cache_settings:
+            return timedelta(minutes=30)
         if any(cache_settings):
             return timedelta(minutes=5)
         return None
@@ -621,6 +638,15 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 if not (thinking_value is False and thinking_always_enabled):
                     params = replace(params, thinking=thinking_value)
             stripped = {k: v for k, v in model_settings.items() if k != 'thinking'}
+            model_settings = cast(ModelSettings, stripped) if stripped else None
+
+        # Resolve unified cache setting and strip from model_settings
+        if model_settings and 'cache' in model_settings:
+            cache_value = model_settings['cache']
+            if cache_value and self.profile.get('supports_cache', False):
+                supported = self.profile.get('supported_cache_retentions', ('5m',))
+                params = replace(params, cache=snap_cache_retention(cache_value, supported))
+            stripped = {k: v for k, v in model_settings.items() if k != 'cache'}
             model_settings = cast(ModelSettings, stripped) if stripped else None
 
         if native_tools := params.native_tools:

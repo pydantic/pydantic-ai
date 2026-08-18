@@ -545,7 +545,15 @@ class GoogleModel(Model[Client]):
                     'This model does not support output tools and built-in tools at the same time. '
                     'Use `output_type=PromptedOutput(...)` instead.'
                 )
-        return super().prepare_request(model_settings, model_request_parameters)
+        merged_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if model_request_parameters.cache is not None and not (merged_settings or {}).get('google_cached_content'):
+            warnings.warn(
+                'The unified `cache` setting adds nothing to a Google request: Gemini caches prompts '
+                'implicitly, and explicit caching requires a pre-created cache resource passed via '
+                'the `google_cached_content` setting.',
+                UserWarning,
+            )
+        return merged_settings, model_request_parameters
 
     async def request(
         self,

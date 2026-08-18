@@ -901,10 +901,7 @@ def _resolve_openai_service_tier(
     return OMIT
 
 
-def _resolve_prompt_cache_retention(
-    default_settings: ModelSettings | None, model_settings: ModelSettings | None
-) -> timedelta | None:
-    settings = merge_model_settings(default_settings, model_settings) or {}
+def _resolve_prompt_cache_retention(settings: ModelSettings) -> timedelta | None:
     if settings.get('openai_prompt_cache_retention') == '24h':
         return timedelta(hours=24)
     return None
@@ -972,8 +969,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return self._model_name
 
     def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_prompt_cache_retention(self.settings, model_settings)
+        """Resolve the longest retention requested by OpenAI settings or the unified `cache` setting."""
+        merged = merge_model_settings(self.settings, model_settings) or {}
+        unified = self._max_prompt_cache_retention(self._resolved_cache_setting(merged))
+        retentions = [r for r in (_resolve_prompt_cache_retention(merged), unified) if r is not None]
+        return max(retentions, default=None)
 
     @property
     def system(self) -> str:
@@ -1994,8 +1994,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return self._model_name
 
     def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_prompt_cache_retention(self.settings, model_settings)
+        """Resolve the longest retention requested by OpenAI settings or the unified `cache` setting."""
+        merged = merge_model_settings(self.settings, model_settings) or {}
+        unified = self._max_prompt_cache_retention(self._resolved_cache_setting(merged))
+        retentions = [r for r in (_resolve_prompt_cache_retention(merged), unified) if r is not None]
+        return max(retentions, default=None)
 
     @property
     def system(self) -> str:
