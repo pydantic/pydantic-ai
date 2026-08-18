@@ -6064,14 +6064,36 @@ async def test_xai_unknown_tool_type_uses_function_name(allow_model_requests: No
 
     result = await Agent(model).run('Use the custom server tool')
 
-    response_message = result.all_messages()[1]
-    assert isinstance(response_message, ModelResponse)
-    assert response_message.parts[0] == NativeToolCallPart(
-        tool_name='custom_server_tool',
-        args={'query': 'test'},
-        tool_call_id='unknown_001',
-        provider_name='xai',
-        provider_details={'function_name': 'custom_server_tool'},
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='Use the custom server tool', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='custom_server_tool',
+                        args={'query': 'test'},
+                        tool_call_id='unknown_001',
+                        provider_name='xai',
+                        provider_details={'function_name': 'custom_server_tool'},
+                    ),
+                    TextPart(content='Completed the custom tool call.'),
+                ],
+                usage=RequestUsage(cost=Decimal('0.00')),
+                model_name=XAI_NON_REASONING_MODEL,
+                timestamp=IsDatetime(),
+                provider_name='xai',
+                provider_url='https://api.x.ai/v1',
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
     )
 
 

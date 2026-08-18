@@ -11,10 +11,12 @@ from pydantic_ai import (
     Agent,
     BinaryContent,
     FinalResultEvent,
+    ModelRequest,
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartStartEvent,
+    UserPromptPart,
 )
 
 from ..._inline_snapshot import snapshot
@@ -123,6 +125,48 @@ async def test_xai_attachment_search_history_payload(allow_model_requests: None)
                     'status': 'TOOL_CALL_STATUS_COMPLETED',
                     'function': {
                         'name': 'pdf_browse',
+                        'arguments': '{"document_id":"s2pXx","pages":"1"}',
+                    },
+                }
+            ],
+        }
+    )
+
+
+async def test_xai_attachment_search_history_without_provider_details(allow_model_requests: None):
+    """History `attachment_search` calls without `provider_details` default the outgoing function name."""
+    mock_client = MockXai.create_mock([create_response(content='Page 1.')])
+    agent = Agent(XaiModel(XAI_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    await agent.run(
+        'Which page?',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='Search my attachment')]),
+            ModelResponse(
+                parts=[
+                    NativeToolCallPart(
+                        tool_name='attachment_search',
+                        args={'document_id': 's2pXx', 'pages': '1'},
+                        tool_call_id='attachment_002',
+                        provider_name='xai',
+                    )
+                ],
+                model_name=XAI_MODEL,
+            ),
+        ],
+    )
+
+    assert get_mock_chat_create_kwargs(mock_client)[0]['messages'][1] == snapshot(
+        {
+            'content': [{'text': ''}],
+            'role': 'ROLE_ASSISTANT',
+            'tool_calls': [
+                {
+                    'id': 'attachment_002',
+                    'type': 'TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL',
+                    'status': 'TOOL_CALL_STATUS_COMPLETED',
+                    'function': {
+                        'name': 'attachment_search',
                         'arguments': '{"document_id":"s2pXx","pages":"1"}',
                     },
                 }
