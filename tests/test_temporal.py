@@ -4498,6 +4498,32 @@ async def test_temporal_run_context_without_anchored_evidence_still_answers_avai
     assert reconstructed.is_tool_available(ToolDefinition(name='hidden', defer_loading=True)) is False
 
 
+@pytest.mark.parametrize('carried', [True, False, None])
+async def test_temporal_run_context_accepts_the_legacy_capability_loaded_key(carried: bool | None):
+    """A payload written under the old field name still lands on `capability_available`.
+
+    An activity can be dispatched by one worker version and replayed by another, and
+    `serialize_run_context` is a documented override point, so both a mid-deployment payload and a
+    subclass written against the old name reach here. Without the mapping the value would sit in
+    `__dict__` under a name nothing reads, and the guard would report `capability_available` as a
+    field that never crossed the boundary.
+
+    `None` is the case that matters most and is easiest to miss: it is what every activity dispatched
+    *outside* capability dispatch carries, so a mapping keyed on the value rather than on the key's
+    presence breaks the common path while passing for `True`.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), capability_available=carried)
+    wire = await _serialized_run_context_across_the_wire(ctx)
+    legacy_payload = {
+        ('capability_loaded' if name == 'capability_available' else name): value for name, value in wire.items()
+    }
+    assert 'capability_loaded' in legacy_payload
+
+    reconstructed = TemporalRunContext.deserialize_run_context(legacy_payload, deps=None)
+
+    assert reconstructed.capability_available is carried
+
+
 def test_temporal_run_context_serialization_is_exhaustive():
     """Every `RunContext` field must be consciously categorized for Temporal serialization.
 

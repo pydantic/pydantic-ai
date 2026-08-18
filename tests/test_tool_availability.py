@@ -8,6 +8,7 @@ its own module rather than an arbitrary slice.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import replace
 from typing import Any
 
@@ -20,6 +21,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.exceptions import (
     ModelRetry,
+    PydanticAIDeprecationWarning,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -37,11 +39,16 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._deferred_capability_loader import (
     LOAD_CAPABILITY_TOOL_NAME,
 )
+from pydantic_ai.usage import RunUsage
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -560,3 +567,180 @@ async def test_stripped_reveal_marker_survives_a_boundary_the_wire_skipped() -> 
     assert result.output == 'EXECUTED'
     refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
     assert refusals == []
+
+
+async def test_loaded_capability_ids_drops_ids_the_run_no_longer_registers() -> None:
+    """History outlives configuration, so a load record can name a capability that is gone.
+
+    The public sets should not promise something the run has no way to act on: nothing can look
+    such an id up in `capabilities`, and `available_capability_ids` would report a capability that
+    contributes nothing. Inert for the framework's own consumers, which all start from a real
+    capability or a real `ToolDefinition` — which is why it needs asserting directly.
+    """
+    seen: list[tuple[set[str], set[str]]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return make_text_response('DONE')
+
+    def record(ctx: RunContext[Any]) -> str:
+        seen.append((set(ctx.loaded_capability_ids), set(ctx.available_capability_ids)))
+        return ''
+
+    still_here = Capability[Any](id='still-here', description='Still configured.', defer_loading=True)
+    agent = Agent(FunctionModel(model_fn), capabilities=[still_here], instructions=record)
+
+    await agent.run(
+        'go',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='load both')]),
+            ModelResponse(
+                parts=[
+                    LoadCapabilityCallPart(args={'id': 'still-here'}, tool_call_id='l1'),
+                    LoadCapabilityCallPart(args={'id': 'retired'}, tool_call_id='l2'),
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    LoadCapabilityReturnPart(content={}, tool_call_id='l1'),
+                    LoadCapabilityReturnPart(content={}, tool_call_id='l2'),
+                ]
+            ),
+        ],
+    )
+
+    loaded, available = seen[0]
+    assert loaded == {'still-here'}
+    assert 'retired' not in available
+
+
+async def test_revealed_tool_names_drops_names_the_run_no_longer_defines() -> None:
+    """A reveal for a tool this run has no definition for cannot travel as reveal state.
+
+    There is no schema to show for such a name, and every consumer already guards on membership in
+    the definitions — so this asserts the field's own contract, that it is a subset of
+    `function_tools`' names, rather than an observable behaviour change.
+    """
+    seen: list[set[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return make_text_response('DONE')
+
+    class RecordReveals(Capability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            seen.append(set(request_context.model_request_parameters.revealed_tool_names))
+            return request_context
+
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(secret_op, defer_loading=True)
+    agent = Agent(FunctionModel(model_fn), toolsets=[toolset], capabilities=[RecordReveals()])
+
+    await agent.run(
+        'go',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='search')]),
+            ModelRequest(parts=[ToolAvailabilityDeltaPart(tools_added=['secret_op', 'tool_from_a_past_life'])]),
+        ],
+    )
+
+    assert seen[0] == snapshot({'secret_op'})
+
+
+def test_capability_loaded_is_a_deprecated_alias_for_capability_available() -> None:
+    """The old name never meant "loaded" — it is `True` for an always-on capability nothing loaded.
+
+    Both directions are shimmed: reading it, and passing it to the constructor, which stays accepted
+    because it shipped as a real dataclass field.
+    """
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), capability_available=True)
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_available` instead'):
+        assert ctx.capability_loaded is True  # pyright: ignore[reportDeprecated]
+
+    with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_available` instead'):
+        constructed = RunContext[None](
+            deps=None,
+            model=TestModel(),
+            usage=RunUsage(),
+            capability_loaded=True,  # pyright: ignore[reportCallIssue]
+        )
+    assert constructed.capability_available is True
+
+    # Assignment worked while this was a plain dataclass field, so a read-only property would turn
+    # it into an `AttributeError` rather than a deprecation.
+    with pytest.warns(PydanticAIDeprecationWarning, match='use `capability_available` instead'):
+        ctx.capability_loaded = False  # pyright: ignore[reportDeprecated]
+    assert ctx.capability_available is False
+
+    # `replace()` is on the run's hot path and must not warn: the shim is a non-field keyword, so
+    # `replace()` never round-trips it the way an `InitVar` would.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', PydanticAIDeprecationWarning)
+        assert replace(ctx, capability_available=True).capability_available is True
+
+
+async def test_unknown_tool_retry_lists_only_callable_tools_and_points_at_the_rest() -> None:
+    """A hallucinated name gets the tools the model can actually call, plus how to reach the others.
+
+    Offering a not-yet-revealed tool as the alternative sends the model straight back into the
+    availability refusal, so the list is narrowed to what would survive that gate. The hidden ones
+    are still disclosed as a count-free hint, because "here is all you have" would otherwise tell a
+    model whose tools are all deferred to give up rather than search.
+    """
+
+    def visible_op() -> str:
+        return 'visible'  # pragma: no cover
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, RetryPromptPart) for msg in messages for part in msg.parts):
+            return make_text_response('done')
+        return ModelResponse(parts=[ToolCallPart(tool_name='nope', args={}, tool_call_id='n1')])
+
+    toolset = FunctionToolset[Any]([visible_op])
+    toolset.add_function(secret_op, defer_loading=True)
+    result = await Agent(FunctionModel(model_fn), toolsets=[toolset]).run('go')
+
+    refusals = [str(part.content) for part in iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart)]
+    assert refusals == snapshot(
+        [
+            "Unknown tool name: 'nope'. Available tools: 'search_tools', 'visible_op'. Other tools exist but have "
+            'not been shown to you yet; reveal them with tool search or `load_capability`.'
+        ]
+    )
+
+
+async def test_unknown_tool_hint_when_nothing_is_callable_yet_still_points_at_the_reveal() -> None:
+    """With every tool hidden, the answer has to be "search", not "you have no tools".
+
+    Asserted against the resolved manager rather than through a run: locally, anything that defers
+    a tool also puts `search_tools` or `load_capability` in the callable set, so this state is only
+    reachable with a provider-native tool search, where the local `search_tools` function is never
+    emitted. `prepare_tools` cannot produce it either — it shapes what the model is *sent*, not what
+    the manager will run (#7305).
+    """
+    managers: list[ToolManager[Any]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return make_text_response('done')
+
+    class GrabManager(Capability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            assert ctx.tool_manager is not None
+            managers.append(ctx.tool_manager)
+            return request_context
+
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(secret_op, defer_loading=True)
+    await Agent(FunctionModel(model_fn), toolsets=[toolset], capabilities=[GrabManager()]).run('go')
+
+    manager = managers[0]
+    assert manager.tools is not None
+    hidden_only = replace(manager, tools={'secret_op': manager.tools['secret_op']})
+
+    assert hidden_only._callable_tools_hint() == snapshot(  # pyright: ignore[reportPrivateUsage]
+        'No tools are available yet. Other tools exist but have not been shown to you yet; reveal them with '
+        'tool search or `load_capability`.'
+    )

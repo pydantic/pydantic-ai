@@ -874,19 +874,24 @@ def bind_capabilities_tier(
 
 
 def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
-    return replace(ctx, capability_loaded=_capability_loaded(capability, ctx))
+    return replace(ctx, capability_available=_capability_available(capability, ctx))
 
 
 def _ctx_for_available_cap(
     capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> RunContext[AgentDepsT] | None:
-    capability_loaded = _capability_loaded(capability, ctx)
-    if capability.defer_loading is True and not capability_loaded:
+    capability_available = _capability_available(capability, ctx)
+    if capability.defer_loading is True and not capability_available:
         return None
-    return replace(ctx, capability_loaded=capability_loaded)
+    return replace(ctx, capability_available=capability_available)
 
 
-def _capability_loaded(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
+def _capability_available(capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> bool:
+    """Whether this capability may act on the current step.
+
+    Availability, not loading: an always-on capability is available for the whole run without ever
+    being loaded, which is why the deferred branch below is the only one that consults history.
+    """
     if capability.defer_loading is not True:
         return True
 

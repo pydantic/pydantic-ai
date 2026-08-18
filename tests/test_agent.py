@@ -4332,7 +4332,7 @@ def test_unknown_tool():
                 parts=[
                     RetryPromptPart(
                         tool_name='foobar',
-                        content="Unknown tool name: 'foobar'. No tools available.",
+                        content="Unknown tool name: 'foobar'. No tools are defined.",
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
@@ -4343,7 +4343,7 @@ def test_unknown_tool():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=65, output_tokens=4),
+                usage=RequestUsage(input_tokens=66, output_tokens=4),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -4384,7 +4384,7 @@ def test_unknown_tool_fix():
                 parts=[
                     RetryPromptPart(
                         tool_name='foobar',
-                        content="Unknown tool name: 'foobar'. No tools available.",
+                        content="Unknown tool name: 'foobar'. No tools are defined.",
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
@@ -4395,7 +4395,7 @@ def test_unknown_tool_fix():
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
-                usage=RequestUsage(input_tokens=65, output_tokens=3),
+                usage=RequestUsage(input_tokens=66, output_tokens=3),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -4436,7 +4436,7 @@ def test_unknown_tool_multiple_retries():
                 parts=[
                     RetryPromptPart(
                         tool_name='foobar',
-                        content="Unknown tool name: 'foobar'. No tools available.",
+                        content="Unknown tool name: 'foobar'. No tools are defined.",
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
@@ -4447,7 +4447,7 @@ def test_unknown_tool_multiple_retries():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=65, output_tokens=4),
+                usage=RequestUsage(input_tokens=66, output_tokens=4),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
@@ -4457,7 +4457,7 @@ def test_unknown_tool_multiple_retries():
                 parts=[
                     RetryPromptPart(
                         tool_name='foobar',
-                        content="Unknown tool name: 'foobar'. No tools available.",
+                        content="Unknown tool name: 'foobar'. No tools are defined.",
                         tool_call_id=IsStr(),
                         timestamp=IsNow(tz=timezone.utc),
                     )
@@ -4468,7 +4468,7 @@ def test_unknown_tool_multiple_retries():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
-                usage=RequestUsage(input_tokens=79, output_tokens=6),
+                usage=RequestUsage(input_tokens=81, output_tokens=6),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
