@@ -70,7 +70,10 @@ print(result.output)
 #> success (no tool calls)
 ```
 
-Both sync and async hook functions are accepted. Sync functions are run in a thread pool, so a slow one won't hold up the rest of the run. Use an async hook if it needs to set a [`contextvars.ContextVar`][contextvars.ContextVar] for the rest of the run to see, or to use asyncio APIs like `asyncio.get_running_loop()`.
+Both sync and async hook functions are accepted. Sync functions are run in a thread pool, so a slow one won't hold up the rest of the run.
+
+!!! note "Sync hooks run on a separate thread"
+    A sync hook executes on a different thread than the run itself. It can read [`contextvars.ContextVar`][contextvars.ContextVar] values, but values it sets are not visible outside the hook — including context set through libraries that use context variables internally, such as tracing and logging integrations — and asyncio APIs like `asyncio.get_running_loop()` are unavailable. Use an async hook for any of those.
 
 ### On-demand hooks
 
