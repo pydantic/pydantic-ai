@@ -2657,16 +2657,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and not conversation_id
             and (instruction_parts := self._get_instruction_parts(messages, wire_request_parameters))
         ):
-            # The top-level `instructions` field cannot carry a cache breakpoint, so the instructions
-            # are sent as leading input messages instead.
             system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
-            openai_messages[system_prompt_count:system_prompt_count] = [
-                responses.EasyInputMessageParam(role=system_prompt_role, content=part.content)
-                for part in instruction_parts
-            ]
             if (index := _instruction_cache_index(instruction_parts, system_prompt_count)) is not None:
+                # The top-level `instructions` field cannot carry a cache breakpoint, so the
+                # instructions are sent as leading input messages instead.
+                openai_messages[system_prompt_count:system_prompt_count] = [
+                    responses.EasyInputMessageParam(role=system_prompt_role, content=part.content)
+                    for part in instruction_parts
+                ]
                 _add_instruction_cache_breakpoint(openai_messages[index], 'input_text')
-            instructions = OMIT
+                instructions = OMIT
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
         if model_request_parameters.output_mode == 'native':
