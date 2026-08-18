@@ -594,7 +594,8 @@ def _add_openai_prompt_cache_breakpoint(
     if not content:
         raise UserError(
             'CachePoint cannot be the first content in a user message - '
-            'there must be previous content to attach the cache breakpoint to.'
+            'there must be previous content to attach the cache breakpoint to. '
+            'To cache system instructions, use the `openai_cache_instructions` setting instead.'
         )
 
     cache_breakpoint: _OpenAIPromptCacheBreakpoint = {'mode': 'explicit'}
@@ -614,6 +615,22 @@ def _instruction_cache_index(instruction_parts: Sequence[InstructionPart], syste
     """
     index = system_prompt_count + sum(1 for part in instruction_parts if not part.dynamic) - 1
     return index if index >= 0 else None
+
+
+def _can_move_instructions_into_input(
+    model_settings: OpenAIResponsesModelSettings, openai_messages: Sequence[Mapping[str, Any]]
+) -> bool:
+    """Whether the instructions can be sent as input messages instead of the top-level field.
+
+    Input messages are replayed out of state the provider persists (a chained response, a
+    conversation, a compaction item), while the top-level field is never carried over, so moving
+    them would send the instructions twice from the second request on.
+    """
+    return (
+        not model_settings.get('openai_previous_response_id')
+        and not model_settings.get('openai_conversation_id')
+        and not any(message.get('type') == 'compaction' for message in openai_messages)
+    )
 
 
 def _add_instruction_cache_breakpoint(
@@ -724,10 +741,14 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     openai_cache_instructions: bool
     """Whether to add an explicit prompt cache breakpoint after the last static instruction.
 
-    Only supported by GPT-5.6 and later models, and ignored by earlier ones. On the Responses API the
-    instructions are sent as leading input messages rather than in the top-level `instructions` field,
-    which cannot carry a breakpoint. OpenAI applies the request-wide `ttl` from
+    Supported by GPT-5.6 models and ignored by others. OpenAI applies the request-wide `ttl` from
     `openai_prompt_cache_options`.
+
+    On the Chat Completions API the instructions are already sent as leading messages and only gain
+    the breakpoint. On the Responses API they are moved into leading input messages, because the
+    top-level `instructions` field cannot carry one; that move and the breakpoint are both skipped
+    when `openai_previous_response_id` or `openai_conversation_id` is set or the history has been
+    compacted, because OpenAI replays input messages out of the state it persists.
 
     See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
     for more information.
@@ -1674,8 +1695,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             else:
                 assert_never(message)
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
-        if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
-            system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
+        system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
+        if instruction_parts:
             if system_prompt_role == 'developer':
                 instruction_messages: list[chat.ChatCompletionMessageParam] = [
                     chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
@@ -1691,13 +1713,17 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     for part in instruction_parts
                 ]
             openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
-            if (
-                model_settings
-                and model_settings.get('openai_cache_instructions')
-                and profile.get('openai_supports_prompt_cache_breakpoints', False)
-                and (index := _instruction_cache_index(instruction_parts, system_prompt_count)) is not None
-            ):
-                _add_instruction_cache_breakpoint(openai_messages[index], 'text')
+        if (
+            model_settings
+            and model_settings.get('openai_cache_instructions')
+            and profile.get('openai_supports_prompt_cache_breakpoints', False)
+            # A `'user'` system prompt role can't be told apart from a real user turn, and merging
+            # the leading messages collapses the boundary into one block, so neither can carry it.
+            and system_prompt_role != 'user'
+            and profile.get('openai_chat_supports_multiple_system_messages', True)
+            and (index := _instruction_cache_index(instruction_parts, system_prompt_count)) is not None
+        ):
+            _add_instruction_cache_breakpoint(openai_messages[index], 'text')
         if not self.profile.get('openai_chat_supports_multiple_system_messages', True):
             openai_messages = _merge_leading_system_messages(openai_messages, system_prompt_role)
         return openai_messages
@@ -2651,22 +2677,22 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if (
             model_settings.get('openai_cache_instructions')
             and profile.get('openai_supports_prompt_cache_breakpoints', False)
-            # Input messages are persisted into server-side state, so instructions moved there would
-            # be duplicated on every subsequent request. The top-level field is never carried over.
-            and not previous_response_id
-            and not conversation_id
-            and (instruction_parts := self._get_instruction_parts(messages, wire_request_parameters))
+            # A `'user'` system prompt role can't be told apart from a real user turn.
+            and system_prompt_role != 'user'
+            and _can_move_instructions_into_input(model_settings, openai_messages)
         ):
+            instruction_parts = self._get_instruction_parts(messages, wire_request_parameters) or []
             system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
             if (index := _instruction_cache_index(instruction_parts, system_prompt_count)) is not None:
-                # The top-level `instructions` field cannot carry a cache breakpoint, so the
-                # instructions are sent as leading input messages instead.
-                openai_messages[system_prompt_count:system_prompt_count] = [
-                    responses.EasyInputMessageParam(role=system_prompt_role, content=part.content)
-                    for part in instruction_parts
-                ]
+                if instruction_parts:
+                    # The top-level `instructions` field cannot carry a cache breakpoint, so the
+                    # instructions are sent as leading input messages instead.
+                    openai_messages[system_prompt_count:system_prompt_count] = [
+                        responses.EasyInputMessageParam(role=system_prompt_role, content=part.content)
+                        for part in instruction_parts
+                    ]
+                    instructions = OMIT
                 _add_instruction_cache_breakpoint(openai_messages[index], 'input_text')
-                instructions = OMIT
 
         text: responses.ResponseTextConfigParam | Omit = OMIT
         if model_request_parameters.output_mode == 'native':
