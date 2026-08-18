@@ -1910,8 +1910,15 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             is_thinking_only = not is_empty and all(
                 isinstance(p, _messages.ThinkingPart) for p in self.model_response.parts
             )
+            # A blank `TextPart` carries no text either — e.g. OpenAI Responses gateways returning
+            # `text: null`, which the adapter maps to a blank part so its ID survives round-tripping.
+            # Only treat it as no-output when `None` is an allowed output, so required text still retries.
+            is_blank_text_only = not is_empty and all(
+                isinstance(p, _messages.ThinkingPart) or (isinstance(p, _messages.TextPart) and not p.content)
+                for p in self.model_response.parts
+            )
 
-            if is_empty or is_thinking_only:
+            if is_empty or is_thinking_only or (output_schema.allows_none and is_blank_text_only):
                 # No actionable output was returned by the model.
 
                 # Don't retry if the token limit was exceeded, possibly during thinking.

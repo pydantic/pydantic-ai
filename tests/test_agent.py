@@ -12340,6 +12340,68 @@ async def test_agent_allows_none_output_empty_response():
     )
 
 
+async def test_agent_allows_none_output_blank_text():
+    """Test that Agent(output_type=str | None) succeeds on a response with only blank text."""
+
+    async def blank_text_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('')])
+
+    model = FunctionModel(function=blank_text_model)
+    agent = Agent(model, output_type=str | None)
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='')],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:blank_text_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_agent_allows_none_output_thinking_and_blank_text():
+    """Test that thinking mixed with blank text is also a valid `None` signal."""
+
+    async def thinking_blank_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ThinkingPart(content='thinking...'), TextPart('')])
+
+    model = FunctionModel(function=thinking_blank_model)
+    agent = Agent(model, output_type=str | None)
+
+    result = await agent.run('hello')
+    assert result.output is None
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='thinking...'), TextPart(content='')],
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
+                model_name='function:thinking_blank_model:',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+        ]
+    )
+
+
 async def test_agent_allows_none_output_after_tool():
     """Test that Agent(output_type=str | None) succeeds after tool call with no final text."""
     call_count = 0
