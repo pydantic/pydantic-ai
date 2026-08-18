@@ -260,9 +260,10 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     ('AbstractAgent', 'run'): frozenset({'infer_name', 'event_stream_handler'}),
     ('AbstractAgent', 'run_stream'): frozenset({'infer_name', 'event_stream_handler'}),
     # Transformed before forwarding: `model` is resolved to the engine's own model wrapper (or to
-    # `None` inside a workflow) and that result is what `super().iter()` receives. `cancellation_token`
-    # is consumed locally: it is a same-process handle that cannot cross the durable boundary, so
-    # every durable-wrapper entry point rejects it up front with a `UserError` instead of forwarding.
+    # `None` inside a workflow) and that result is what `super().iter()` receives.
+    # `cancellation_token` is consumed locally: it is a same-process handle that cannot cross the
+    # durable boundary, so every durable-wrapper entry point rejects it up front with a `UserError`
+    # instead of forwarding.
     ('TemporalAgent', 'iter'): frozenset({'model', 'cancellation_token'}),
     # Defaulted before forwarding: `event_stream_handler or self.event_stream_handler`.
     # `cancellation_token` rejected locally (see the `TemporalAgent.iter` note).

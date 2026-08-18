@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import copy
 from abc import abstractmethod
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager, nullcontext
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from typing_extensions import Self
 
-from pydantic_ai._run_context import set_current_run_context
+from pydantic_ai._run_context import RunPreparationContext, set_current_run_context
 from pydantic_ai._utils import aclose_if_supported, get_union_args
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -18,6 +18,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext, infer_model
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.sandboxes import SandboxBackend, SandboxRef, UnavailableSandbox
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
@@ -28,6 +29,7 @@ from ._runtime_toolsets import (
     cancellation_token_unsupported_error,
     reject_unsupported_runtime_toolsets,
 )
+from ._sandbox import run_owned_sandbox_unsupported_error, run_sandbox_supplier, sandbox_suppliers
 from ._toolset import guard_run_context
 from ._utils import unwrap_model
 
@@ -63,6 +65,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     _durable_unit_noun: ClassVar[str]
     _durable_container_noun: ClassVar[str]
     _tool_config_key: ClassVar[str | None] = None
+    _live_sandbox_error: ClassVar[str | None] = None
+    _supports_run_owned_sandbox: ClassVar[bool] = False
+    """Whether this engine can run a sandbox-supplying capability's lifecycle inside its durable units.
+
+    When `False`, a capability that overrides `create_sandbox` is rejected inside the durable
+    container rather than having its lifecycle hooks run as workflow/flow code.
+    """
 
     name: str
     """Unique name used to identify the agent's durable units (activities/steps/tasks). Defaults to the agent's `name`."""
@@ -78,6 +87,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         self._agent: AbstractAgent[Any, Any] | None = None
         self._extra_models: dict[str, Model] = dict(models) if models else {}
         self._models_by_id: dict[str, Model] = {}
+        self._sandbox_supplier: AbstractCapability[Any] | None = None
         self._event_stream_handler = event_stream_handler
         self._process_event_stream = ProcessEventStream(event_stream_handler) if event_stream_handler else None
         self._toolsets_by_id: dict[str, WrapperToolset[AgentDepsT]] = {}
@@ -95,6 +105,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         bound.name = self.name or agent.name or ''
         bound._agent = agent
         bound._bind_models(agent)
+        # Resolved once here so the workflow side and the durable units it dispatches to agree on
+        # *which* capability owns the run's sandbox, without re-walking the tree per run.
+        bound._sandbox_supplier = run_sandbox_supplier(agent.root_capability)
         bound._toolsets_by_id = {}
         bound._bind_to_agent(agent)
         return bound
@@ -278,6 +291,82 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return ts
 
         return toolset.visit_and_replace(swap)
+
+    async def create_sandbox(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
+        # Conditional supplier: outside the durable context, fall through to the real supplier.
+        # Inside it, this capability is last in the chain so it is consulted first, routes the
+        # whole supplier walk into a durable unit, and its answer is final (see
+        # `_create_sandbox_answer_is_final`): supplier hooks must never run in workflow/flow code.
+        if not self.in_durable_context:
+            return None
+        if self._sandbox_supplier is None:
+            return None
+        if not self._supports_run_owned_sandbox:
+            raise UserError(
+                run_owned_sandbox_unsupported_error(engine=self.engine_name, container=self._durable_container_noun)
+            )
+        return await self._create_sandbox_durably(ctx)
+
+    def _create_sandbox_answer_is_final(self, ctx: RunContext[AgentDepsT]) -> bool:
+        # In workflow/flow code this capability answers for the whole supplier chain; letting
+        # the walk continue past its `None` would run supplier hooks as replayed container code.
+        return self.in_durable_context
+
+    async def get_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> SandboxBackend | None:
+        # In workflow/flow code connecting would be I/O, so fail with directions; inside a
+        # durable unit `in_durable_context` is False and the real capability connects.
+        if self.in_durable_context:
+            raise UserError(
+                f'Sandbox operations are not available in {self.engine_name} '
+                f'{self._durable_container_noun} code: connecting to the sandbox is I/O, which must '
+                f'happen inside a {self._durable_unit_noun}. Use `ctx.sandbox` from a tool, a '
+                '`process_tool_call` hook, or an `event_stream_handler` instead.'
+            )
+        return None
+
+    async def destroy_sandbox(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
+        # Reached only when this capability's `create_sandbox` supplied the run's ref.
+        if self.in_durable_context:  # pragma: no branch
+            await self._destroy_sandbox_durably(ctx, ref)
+
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        """Reject per-run sandbox suppliers instead of silently ignoring them.
+
+        `_sandbox_supplier` is bound to the agent's tree at `for_agent` time, so a supplier
+        added per-run cannot be routed into a durable unit.
+        """
+        if not self.in_durable_context:
+            return
+        if any(sandbox_suppliers(capability) for capability in capabilities):
+            raise UserError(
+                run_owned_sandbox_unsupported_error(engine=self.engine_name, container=self._durable_container_noun)
+            )
+
+    async def _create_sandbox_durably(self, ctx: RunContext[AgentDepsT]) -> SandboxRef | None:
+        """Run the supplier chain's `create_sandbox` walk inside this engine's durable unit.
+
+        Only reached on engines that set `_supports_run_owned_sandbox`; the base class has no
+        durable unit to run it in, so it never gets here.
+        """
+        raise NotImplementedError  # pragma: no cover
+
+    async def _destroy_sandbox_durably(self, ctx: RunContext[AgentDepsT], ref: SandboxRef) -> None:
+        """Run the supplier's `destroy_sandbox` inside this engine's durable unit."""
+        raise NotImplementedError  # pragma: no cover
+
+    def wrap_entire_run(self, ctx: RunPreparationContext[AgentDepsT]) -> AbstractAsyncContextManager[None]:
+        """Reject non-policy live sandbox run arguments before entering a durable container."""
+        sandbox_identity = ctx.sandbox.durable_identity() if ctx.sandbox is not None else None
+        if (
+            self._live_sandbox_error is not None
+            and self.in_durable_context
+            and sandbox_identity is not None
+            and not isinstance(sandbox_identity, (SandboxRef, UnavailableSandbox))
+        ):
+            raise UserError(self._live_sandbox_error)
+        return nullcontext()
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost: durable dispatch must be the last wrapper around the model handler so every
@@ -474,7 +563,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         root_capability = run_context.root_capability
         # The boundary carries both.
         if agent is not None and root_capability is not None:  # pragma: no branch
-            resolution_ctx = ModelResolutionContext(agent=agent, deps=run_context.deps)
+            resolution_ctx = ModelResolutionContext(
+                agent=agent,
+                deps=run_context.deps,
+                run_id=run_context.run_id,
+                conversation_id=run_context.conversation_id,
+            )
             # Exceptions raised by user resolvers in the chain propagate unchanged;
             # only the `infer_model` backstop below gets the translated error.
             resolved = await root_capability.resolve_model_id(resolution_ctx, model_id=model_id)
