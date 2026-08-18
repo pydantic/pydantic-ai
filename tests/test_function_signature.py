@@ -34,6 +34,12 @@ class _Color(str, Enum):
     GREEN = 'green'
 
 
+class _ChartType(str, Enum):
+    TABLE = 'TABLE'
+    LINE = 'LINE'
+    PIE = 'PIE'
+
+
 class _ConfigWithEnum(BaseModel):
     name: str
     color: _Color
@@ -1417,18 +1423,85 @@ def test_schema_optional_with_oneof_null():
 
 
 def test_function_with_enum_field_in_model():
-    """Model with an enum field skips non-object $defs (enums) via schema path."""
+    """Model with an enum field renders enum values inline and skips the enum def itself."""
 
     def configure(cfg: _ConfigWithEnum, dry_run: bool = False) -> str:
         return cfg.name  # pragma: no cover
 
     td = Tool(configure).tool_def
-    assert 'cfg: _ConfigWithEnum' in td.render_signature('...')
-    # _ConfigWithEnum should be a TypedDict, but _Color (enum) should not
+    assert td.render_signature('...') == snapshot("""\
+def configure(*, cfg: _ConfigWithEnum, dry_run: bool = False) -> str:
+    ...\
+""")
+    # _ConfigWithEnum should be a TypedDict, but _Color (enum) should not be referenced;
+    # its values collapse to a Literal inside the definition instead
     assert td.function_signature is not None
     type_names = {rt.name for rt in td.function_signature.referenced_types}
     assert '_ConfigWithEnum' in type_names
     assert '_Color' not in type_names
+    definitions = FunctionSignature.render_type_definitions([td.function_signature], frozenset())
+    assert len(definitions) == 1
+    assert definitions[0] == snapshot("""\
+class _ConfigWithEnum(TypedDict):
+    name: str
+    color: Literal['red', 'green']\
+""")
+
+
+def test_schema_ref_enum_def_renders_literal():
+    """`$ref` to an enum def renders inline `Literal` values instead of an undefined bare name."""
+    sig = FunctionSignature.from_schema(
+        name='create_chart',
+        parameters_schema={
+            'type': 'object',
+            'properties': {
+                'chart_type': {'$ref': '#/$defs/ChartType'},
+                'title': {'type': 'string'},
+            },
+            'required': ['chart_type'],
+            '$defs': {'ChartType': {'enum': ['TABLE', 'LINE', 'PIE'], 'type': 'string', 'title': 'ChartType'}},
+        },
+    )
+    assert sig.render('...', name='create_chart') == snapshot("""\
+def create_chart(*, chart_type: Literal['TABLE', 'LINE', 'PIE'], title: str | None = None) -> Any:
+    ...\
+""")
+    assert sig.referenced_types == []
+
+
+def test_schema_ref_const_def_renders_literal():
+    """`$ref` to a const def collapses to a single-value `Literal` inline."""
+
+    sig = FunctionSignature.from_schema(
+        name='set_mode',
+        parameters_schema={
+            'type': 'object',
+            'properties': {'mode': {'$ref': '#/$defs/Mode'}},
+            'required': ['mode'],
+            '$defs': {'Mode': {'const': 'advanced', 'title': 'Mode'}},
+        },
+    )
+    assert sig.render('...', name='set_mode') == snapshot("""\
+def set_mode(*, mode: Literal['advanced']) -> Any:
+    ...\
+""")
+    assert sig.referenced_types == []
+
+
+def test_tool_with_enum_parameter_renders_allowed_values():
+    """Enum-annotated tool parameter exposes its values, not an undefined enum name (#7577)."""
+
+    def render_chart(chart_type: _ChartType, title: str = '') -> str:
+        return f'{chart_type}: {title}'  # pragma: no cover
+
+    td = Tool(render_chart).tool_def
+    assert td.render_signature('...') == snapshot("""\
+def render_chart(*, chart_type: Literal['TABLE', 'LINE', 'PIE'], title: str = '') -> str:
+    ...\
+""")
+    assert td.function_signature is not None
+    assert td.function_signature.referenced_types == []
+    assert FunctionSignature.render_type_definitions([td.function_signature], frozenset()) == []
 
 
 def test_schema_with_described_optional_fields():
