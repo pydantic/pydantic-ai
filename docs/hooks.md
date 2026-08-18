@@ -70,7 +70,7 @@ print(result.output)
 #> success (no tool calls)
 ```
 
-Both sync and async hook functions are accepted. Sync functions are automatically wrapped for async execution.
+Both sync and async hook functions are accepted. Sync functions are called with [`run_in_executor`][asyncio.loop.run_in_executor] in a thread pool, so they don't block the event loop.
 
 ### On-demand hooks
 

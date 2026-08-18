@@ -12302,15 +12302,35 @@ class TestHooksCapability:
     async def test_sync_function_auto_wrapping(self):
         hooks = Hooks()
         call_log: list[str] = []
+        hook_thread_ids: list[int] = []
 
         @hooks.on.before_model_request
         def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
             call_log.append('sync_hook')
+            hook_thread_ids.append(threading.get_ident())
             return request_context
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
         await agent.run('hello')
         assert call_log == ['sync_hook']
+        # The sync hook runs in a thread, so it can't block the event loop.
+        assert hook_thread_ids[0] != threading.get_ident()
+
+    async def test_sync_function_returning_awaitable(self):
+        hooks = Hooks()
+        call_log: list[str] = []
+
+        async def log_request(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+            call_log.append('log_request')
+            return request_context
+
+        @hooks.on.before_model_request
+        def sync_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> Awaitable[ModelRequestContext]:
+            return log_request(ctx, request_context)
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])
+        await agent.run('hello')
+        assert call_log == ['log_request']
 
     async def test_timeout(self):
         hooks = Hooks()
