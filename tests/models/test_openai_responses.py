@@ -4,6 +4,7 @@ import re
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -15736,6 +15737,7 @@ async def _replay_input(
     *,
     group_function_calls: bool,
     model_request_parameters: ModelRequestParameters | None = None,
+    model_settings: OpenAIResponsesModelSettings | None = None,
 ) -> list[dict[str, Any]]:
     model = OpenAIResponsesModel(
         'custom-model',
@@ -15743,7 +15745,9 @@ async def _replay_input(
         profile=OpenAIModelProfile(openai_responses_supports_interleaved_function_calls=not group_function_calls),
     )
     _, items = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        history, OpenAIResponsesModelSettings(), model_request_parameters or ModelRequestParameters()
+        history,
+        model_settings or OpenAIResponsesModelSettings(),
+        model_request_parameters or ModelRequestParameters(),
     )
     return [dict(item) for item in items]
 
@@ -15938,7 +15942,7 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
 
 
 @pytest.mark.parametrize(
-    'history',
+    'history,model_settings',
     [
         pytest.param(
             [
@@ -15951,7 +15955,36 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
                 ),
                 ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
             ],
-            id='item-id',
+            OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+            id='sent-function-call-id',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a|fc-a', provider_name='openai'),
+                        ThinkingPart(content='provider-owned item follows'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a|fc-a')]),
+            ],
+            OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+            id='sent-legacy-combined-function-call-id',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        TextPart(content='provider-owned message follows', id='msg-a', provider_name='openai'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+            id='sent-message-id',
         ),
         pytest.param(
             [
@@ -15964,7 +15997,27 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
                 ),
                 ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
             ],
-            id='assistant-item-id',
+            OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+            id='sent-reasoning-id',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        ThinkingPart(
+                            content='provider-owned item follows',
+                            id='reasoning-a',
+                            provider_name='openai',
+                            provider_details={'raw_content': ['deliberate']},
+                        ),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            None,
+            id='raw-content-reasoning-id',
         ),
         pytest.param(
             [
@@ -15978,6 +16031,7 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
                 ),
                 ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
             ],
+            None,
             id='native',
         ),
         pytest.param(
@@ -15991,6 +16045,7 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
                 ),
                 ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
             ],
+            None,
             id='compaction',
         ),
         pytest.param(
@@ -16003,6 +16058,7 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
                 ),
                 ModelRequest.user_text_prompt('continue'),
             ],
+            None,
             id='unsettled-frontier',
         ),
         pytest.param(
@@ -16016,6 +16072,7 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
                 ),
                 ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='duplicate-call-id')]),
             ],
+            None,
             id='duplicate-id-unsettled-frontier',
         ),
         pytest.param(
@@ -16029,17 +16086,138 @@ async def test_openai_responses_function_call_grouping_includes_local_tool_searc
                 ModelResponse(parts=[TextPart(content='boundary')]),
                 ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
             ],
+            None,
             id='following-response-boundary',
         ),
     ],
 )
 async def test_openai_responses_function_call_grouping_preserves_protected_boundaries(
-    history: list[ModelMessage],
+    history: list[ModelMessage], model_settings: OpenAIResponsesModelSettings | None
 ) -> None:
-    """Protected provider-owned and unsettled histories serialize identically with the profile on or off."""
-    assert await _replay_input(history, group_function_calls=True) == await _replay_input(
-        history, group_function_calls=False
-    )
+    """Protected provider-owned and unsettled histories serialize identically with the profile on or off.
+
+    Each provider-owned case pins an item ID that the renderer actually puts on the wire, which is
+    what makes the provider own the item's position. IDs the renderer drops are covered by
+    `test_openai_responses_function_call_grouping_ignores_unsent_item_ids`.
+    """
+    assert await _replay_input(
+        history, group_function_calls=True, model_settings=model_settings
+    ) == await _replay_input(history, group_function_calls=False, model_settings=model_settings)
+
+
+@pytest.mark.parametrize(
+    'history,model_settings,expected',
+    [
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ThinkingPart(content='inspect inputs', id='rs-a', provider_name='openai'),
+                        ToolCallPart('read', {}, tool_call_id='call-a', id='fc-a', provider_name='openai'),
+                        TextPart(content='and now the view', id='msg-a', provider_name='openai'),
+                        ToolCallPart('view', {}, tool_call_id='call-b', id='fc-b', provider_name='openai'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart('read', 'contents', tool_call_id='call-a'),
+                        ToolReturnPart('view', 'rendered', tool_call_id='call-b'),
+                    ]
+                ),
+            ],
+            None,
+            snapshot(
+                [
+                    {'role': 'assistant', 'content': '<think>\ninspect inputs\n</think>'},
+                    {'role': 'assistant', 'content': 'and now the view'},
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'name': 'view', 'arguments': '{}', 'call_id': 'call-b', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                    {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'rendered'},
+                ]
+            ),
+            id='same-provider-ids-not-sent',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ThinkingPart(
+                            content='inspect inputs',
+                            id='rs-a',
+                            provider_name='google',
+                            provider_details={'raw_content': ['deliberate']},
+                        ),
+                        ToolCallPart('read', {}, tool_call_id='call-a', id='fc-a', provider_name='google'),
+                        ThinkingPart(content='inspect views', id='rs-b', provider_name='google'),
+                        ToolCallPart('view', {}, tool_call_id='call-b', id='fc-b', provider_name='google'),
+                    ],
+                    provider_name='google',
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart('read', 'contents', tool_call_id='call-a'),
+                        ToolReturnPart('view', 'rendered', tool_call_id='call-b'),
+                    ]
+                ),
+            ],
+            OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+            snapshot(
+                [
+                    {'role': 'assistant', 'content': '<think>\ninspect inputs\n</think>'},
+                    {'role': 'assistant', 'content': '<think>\ninspect views\n</think>'},
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'name': 'view', 'arguments': '{}', 'call_id': 'call-b', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                    {'type': 'function_call_output', 'call_id': 'call-b', 'output': 'rendered'},
+                ]
+            ),
+            id='cross-provider-ids',
+        ),
+        pytest.param(
+            [
+                ModelResponse(
+                    parts=[
+                        ToolCallPart('read', {}, tool_call_id='call-a'),
+                        FilePart(
+                            content=BinaryContent(b'\x89PNG', media_type='image/png'),
+                            id='file-a',
+                            provider_name='openai',
+                        ),
+                        ThinkingPart(content='inspect the file'),
+                    ],
+                    provider_name='openai',
+                ),
+                ModelRequest(parts=[ToolReturnPart('read', 'contents', tool_call_id='call-a')]),
+            ],
+            OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+            snapshot(
+                [
+                    {'role': 'assistant', 'content': '<think>\ninspect the file\n</think>'},
+                    {'name': 'read', 'arguments': '{}', 'call_id': 'call-a', 'type': 'function_call'},
+                    {'type': 'function_call_output', 'call_id': 'call-a', 'output': 'contents'},
+                ]
+            ),
+            id='file-id-never-sent',
+        ),
+    ],
+)
+async def test_openai_responses_function_call_grouping_ignores_unsent_item_ids(
+    history: list[ModelMessage],
+    model_settings: OpenAIResponsesModelSettings | None,
+    expected: list[dict[str, Any]],
+) -> None:
+    """An item ID the renderer drops is invisible to the provider, so it cannot pin an item's position.
+
+    Whether an ID reaches the wire is decided by `openai_send_reasoning_ids` combined with
+    same-provider origin (plus the same-provider reasoning `raw_content` path), so a stored ID alone
+    is not evidence that the provider owns the item.
+    """
+    original_history = deepcopy(history)
+
+    assert await _replay_input(history, group_function_calls=True, model_settings=model_settings) == expected
+    assert history == original_history
 
 
 async def test_openai_responses_malformed_tool_args_degraded_on_the_wire(allow_model_requests: None):
