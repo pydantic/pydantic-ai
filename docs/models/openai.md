@@ -162,6 +162,8 @@ agent = Agent(
 result = agent.run_sync('Where is order 1234?')
 ```
 
+Leave [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options] at its default `mode='implicit'` in an agentic tool loop. Implicit mode uses your explicit breakpoints *and* adds one of its own on the latest message, so the instructions are cached deterministically while OpenAI keeps caching the growing conversation tail. `mode='explicit'` disables that second breakpoint, leaving everything after the instructions uncached.
+
 The breakpoint is placed after the last static instruction, so dynamic [instructions](../agent.md#instructions) (from `@agent.instructions` functions or [toolsets](../toolsets.md)) stay outside the cached prefix. Because the entry ends before any user content, every run sharing the same instructions can read it. The cached prefix is everything rendered before the breakpoint, tool definitions included, so a toolset that changes between runs still invalidates it.
 
 On the Chat Completions API the instructions are already leading messages and only gain the breakpoint. On the Responses API they are moved out of the top-level `instructions` field, which OpenAI does not allow to carry a breakpoint, and sent as leading input messages instead. That relocation and the breakpoint are both skipped when [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] or [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id] is set, or the history has been [compacted](../capabilities/compaction.md), because input messages are replayed out of the state OpenAI persists while the top-level field never is.
