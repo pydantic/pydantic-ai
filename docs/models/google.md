@@ -161,7 +161,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
-provider = GoogleCloudProvider(location='asia-east1', project='your-google-cloud-project-id')
+provider = GoogleCloudProvider(location='global', project='your-google-cloud-project-id')
 model = GoogleModel('gemini-3.7-flash', provider=provider)
 agent = Agent(model)
 ...
