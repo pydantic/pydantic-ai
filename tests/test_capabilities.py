@@ -1483,6 +1483,10 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Thinking',
                         },
+                        'cache': {
+                            'anyOf': [{'type': 'boolean'}, {'enum': ['5m', '30m', '1h'], 'type': 'string'}],
+                            'title': 'Cache',
+                        },
                         'service_tier': {
                             'enum': ['auto', 'default', 'flex', 'priority'],
                             'title': 'Service Tier',

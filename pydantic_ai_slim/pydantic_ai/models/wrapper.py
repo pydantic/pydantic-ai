@@ -4,6 +4,7 @@ import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from types import TracebackType
 from typing import Any
 
@@ -113,6 +114,9 @@ class WrapperModel(Model):
         model_request_parameters: ModelRequestParameters | None = None,
     ) -> list[ModelMessage]:
         return self.wrapped.prepare_messages(messages, model_request_parameters)
+
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        return self.wrapped.resolve_prompt_cache_retention(model_settings)
 
     @property
     def provider(self) -> Provider[Any] | None:

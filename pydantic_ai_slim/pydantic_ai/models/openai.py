@@ -119,6 +119,7 @@ from . import (
     download_item,
     get_user_agent,
 )
+from ._prompt_cache import warn_cache_point_ignored
 from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
 
 _OPENAI_BACKGROUND_POLL_INTERVAL = 2.0
@@ -901,10 +902,7 @@ def _resolve_openai_service_tier(
     return OMIT
 
 
-def _resolve_prompt_cache_retention(
-    default_settings: ModelSettings | None, model_settings: ModelSettings | None
-) -> timedelta | None:
-    settings = merge_model_settings(default_settings, model_settings) or {}
+def _resolve_prompt_cache_retention(settings: ModelSettings) -> timedelta | None:
     if settings.get('openai_prompt_cache_retention') == '24h':
         return timedelta(hours=24)
     return None
@@ -972,8 +970,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return self._model_name
 
     def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_prompt_cache_retention(self.settings, model_settings)
+        """Resolve the longest retention requested by OpenAI settings or the unified `cache` setting."""
+        merged = merge_model_settings(self.settings, model_settings) or {}
+        unified = self._max_prompt_cache_retention(self._resolved_cache_setting(merged))
+        retentions = [r for r in (_resolve_prompt_cache_retention(merged), unified) if r is not None]
+        return max(retentions, default=None)
 
     @property
     def system(self) -> str:
@@ -1869,7 +1870,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 type='file',
             )
         elif isinstance(item, CachePoint):
-            # Cache points are handled by `_map_user_prompt_content_item()` when supported.
+            # Reached only when the profile doesn't support explicit breakpoints:
+            # `_map_user_prompt_content_item()` intercepts the supported case.
+            warn_cache_point_ignored(f'model {self.model_name!r}')
             return None
         else:
             assert_never(item)
@@ -1994,8 +1997,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return self._model_name
 
     def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_prompt_cache_retention(self.settings, model_settings)
+        """Resolve the longest retention requested by OpenAI settings or the unified `cache` setting."""
+        merged = merge_model_settings(self.settings, model_settings) or {}
+        unified = self._max_prompt_cache_retention(self._resolved_cache_setting(merged))
+        retentions = [r for r in (_resolve_prompt_cache_retention(merged), unified) if r is not None]
+        return max(retentions, default=None)
 
     @property
     def system(self) -> str:
@@ -3690,6 +3696,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 elif isinstance(item, CachePoint):
                     if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
                         _add_openai_prompt_cache_breakpoint(content)
+                    else:
+                        warn_cache_point_ignored(f'model {self.model_name!r}')
                 elif is_multi_modal_content(item):
                     content.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'user prompts'))  # pyright: ignore[reportArgumentType]
                 else:

@@ -70,6 +70,7 @@ from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._prompt_cache import warn_cache_point_ignored
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -656,8 +657,7 @@ class XaiModel(Model[AsyncClient]):
                 self._validate_uploaded_file_provider(item)
                 content_items.append(file(item.file_id))
             elif isinstance(item, CachePoint):
-                # xAI doesn't support prompt caching via CachePoint, so we filter it out
-                pass
+                warn_cache_point_ignored('xAI')
             else:
                 assert_never(item)
 

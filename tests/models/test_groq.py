@@ -20,6 +20,7 @@ from pydantic_ai import (
     Agent,
     BinaryContent,
     BinaryImage,
+    CachePoint,
     FinalResultEvent,
     ImageUrl,
     ModelAPIError,
@@ -108,6 +109,12 @@ def test_groq_hidden_tools_stay_off_the_wire():
 
     tools, _ = model._get_tool_choice({}, prepared)  # pyright: ignore[reportPrivateUsage]
     assert [tool['function']['name'] for tool in tools] == ['visible']
+
+
+async def test_cache_point_ignored_with_warning(allow_model_requests: None):
+    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key='foobar'))
+    with pytest.warns(UserWarning, match='`CachePoint` is not supported by Groq'):
+        await m._map_user_prompt(UserPromptPart(content=['text', CachePoint()]))  # pyright: ignore[reportPrivateUsage]
 
 
 @dataclass

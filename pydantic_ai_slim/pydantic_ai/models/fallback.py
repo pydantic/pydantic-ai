@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from copy import copy
 from dataclasses import dataclass, field, replace
+from datetime import timedelta
 from decimal import Decimal
 from functools import cached_property
 from types import TracebackType
@@ -441,6 +442,10 @@ class FallbackModel(Model):
     @cached_property
     def profile(self) -> ModelProfile:
         raise NotImplementedError('FallbackModel does not have its own model profile.')
+
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """A fallback model can't know which model will serve the request, so no retention is claimed."""
+        return None
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
         return model_request_parameters  # pragma: no cover

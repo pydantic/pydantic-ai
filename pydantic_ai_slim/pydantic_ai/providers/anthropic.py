@@ -110,6 +110,15 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(
                 supports_inline_system_prompts=model_name.startswith(_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES),
             ),
+            # Prompt caching is likewise a fact about the Messages API rather than the model family.
+            # `AnthropicModel` narrows `supports_auto_cache` per client: the Bedrock and Vertex SDK
+            # clients don't support the top-level automatic caching parameter.
+            AnthropicModelProfile(
+                supports_cache=True,
+                supported_cache_retentions=('5m', '1h'),
+                supports_auto_cache=True,
+                max_cache_points=4,
+            ),
             AnthropicModelProfile(tool_addition_mode='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
             else AnthropicModelProfile(),

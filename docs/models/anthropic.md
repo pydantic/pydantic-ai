@@ -220,6 +220,22 @@ The `remaining` field on `task_budget` is for *client-side* compaction patterns 
 
 Anthropic supports [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) to reduce costs by caching parts of your prompts. Pydantic AI supports automatic caching, per-block message caching, and explicit cache breakpoints:
 
+### Unified `cache` setting
+
+The provider-agnostic way to enable prompt caching is the unified [`ModelSettings.cache`][pydantic_ai.settings.ModelSettings.cache] setting, which works the same across every supporting provider:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    instructions='You are a helpful assistant.',
+    model_settings={'cache': True},
+)
+```
+
+On Anthropic, `cache=True` (or a retention like `cache='1h'`) uses automatic caching, exactly like `anthropic_cache` below; on Bedrock and Vertex clients, which don't support automatic caching, it places cache breakpoints at the end of the tool definitions and static instructions instead. The provider-specific `anthropic_cache*` settings below take precedence when set, and offer finer control.
+
 ### Automatic Caching
 
 The simplest way to enable prompt caching is with [`AnthropicModelSettings.anthropic_cache`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_cache]. This uses Anthropic's [automatic caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#automatic-caching), passing a top-level `cache_control` parameter so the server automatically applies a cache breakpoint to the last cacheable block in each request:
