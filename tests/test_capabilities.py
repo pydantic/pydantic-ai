@@ -13107,6 +13107,33 @@ class TestContextVarPropagation:
         for hook_name, value in reader.seen:
             assert value == 'from-before-run', f'{hook_name} did not see contextvar'
 
+    async def test_sync_before_run_hook_contextvar_does_not_propagate(self):
+        """Context vars set in a sync `before_run` hook do not propagate."""
+        hooks = Hooks()
+
+        @hooks.on.before_run
+        def set_contextvar(ctx: RunContext[Any]) -> None:
+            _test_cv.set('from-sync-hook')
+
+        @dataclass
+        class Reader(AbstractCapability):
+            seen: list[tuple[str, str | None]] = field(default_factory=lambda: [])
+
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                self.seen.append(('before_node_run', _test_cv.get(None)))
+                return node
+
+        reader = Reader()
+        agent = Agent(TestModel(), capabilities=[hooks, reader])
+        await agent.run('hello')
+
+        # Documented consequence of sync hooks running in a thread pool: the write lands in
+        # the worker thread's copied context, so neither the run nor the caller ever sees it.
+        assert reader.seen
+        for hook_name, value in reader.seen:
+            assert value is None, f'{hook_name} unexpectedly saw contextvar'
+        assert _test_cv.get(None) is None
+
     async def test_contextvar_visible_in_on_run_error(self):
         """Context vars set in wrap_run are visible in on_run_error."""
 
