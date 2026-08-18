@@ -739,16 +739,15 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     """
 
     openai_cache_instructions: bool
-    """Whether to add an explicit prompt cache breakpoint after the last static instruction.
+    """Whether to add a prompt cache breakpoint after the last static instruction.
 
     Supported by GPT-5.6 models and ignored by others. OpenAI applies the request-wide `ttl` from
     `openai_prompt_cache_options`.
 
-    On the Chat Completions API the instructions are already sent as leading messages and only gain
-    the breakpoint. On the Responses API they are moved into leading input messages, because the
-    top-level `instructions` field cannot carry one; that move and the breakpoint are both skipped
-    when `openai_previous_response_id` or `openai_conversation_id` is set or the history has been
-    compacted, because OpenAI replays input messages out of the state it persists.
+    On the Responses API the instructions are sent as leading input messages instead of in the
+    top-level `instructions` field, which cannot carry a breakpoint. This is skipped, along with the
+    breakpoint, when `openai_previous_response_id` or `openai_conversation_id` is set or the history
+    has been compacted, because OpenAI replays input messages out of the state it persists.
 
     See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
     for more information.

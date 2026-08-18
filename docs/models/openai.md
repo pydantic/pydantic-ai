@@ -143,7 +143,7 @@ result = agent.run_sync([
 ])
 ```
 
-To cache the instructions, which are usually the longest stable prefix in an agentic tool loop, set [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions]:
+To cache the instructions, set [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions]:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -162,11 +162,9 @@ agent = Agent(
 result = agent.run_sync('Where is order 1234?')
 ```
 
-Leave [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options] at its default `mode='implicit'` in an agentic tool loop. Implicit mode uses your explicit breakpoints *and* adds one of its own on the latest message, so the instructions are cached deterministically while OpenAI keeps caching the growing conversation tail. `mode='explicit'` disables that second breakpoint, leaving everything after the instructions uncached.
+The cache point is placed after the last static instruction, so dynamic [instructions](../agent.md#instructions) (from `@agent.instructions` functions or [toolsets](../toolsets.md)) remain outside the cache boundary and don't cause cache invalidation. Keep `openai_prompt_cache_options` at its default `mode='implicit'` so OpenAI keeps caching the conversation tail alongside it.
 
-The breakpoint is placed after the last static instruction, so dynamic [instructions](../agent.md#instructions) (from `@agent.instructions` functions or [toolsets](../toolsets.md)) stay outside the cached prefix. Because the entry ends before any user content, every run sharing the same instructions can read it. The cached prefix is everything rendered before the breakpoint, tool definitions included, so a toolset that changes between runs still invalidates it.
-
-On the Chat Completions API the instructions are already leading messages and only gain the breakpoint. On the Responses API they are moved out of the top-level `instructions` field, which OpenAI does not allow to carry a breakpoint, and sent as leading input messages instead. That relocation and the breakpoint are both skipped when [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] or [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id] is set, or the history has been [compacted](../capabilities/compaction.md), because input messages are replayed out of the state OpenAI persists while the top-level field never is.
+On the Responses API the instructions are sent as leading input messages instead of in the top-level `instructions` field, which cannot carry a breakpoint. This is skipped, along with the breakpoint, when [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] or [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id] is set, or the history has been [compacted](../capabilities/compaction.md).
 
 Caching requires a prefix of at least 1024 tokens; shorter prefixes are not cached even when explicitly marked. With `mode='implicit'` (the default), OpenAI may write one implicit and up to three explicit breakpoints. With `mode='explicit'`, it may write up to four explicit breakpoints and no implicit breakpoint. If a request sets more breakpoints than that, OpenAI writes only the last four, and the instruction breakpoint is the earliest one in a request, so it is the first to be dropped. The TTL is request-wide: OpenAI currently accepts only `'30m'`, configured through [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options], and ignores the generic per-marker [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] value. For GPT-5.6 and later models, set a stable [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_key] to use OpenAI's more reliable matching for both implicit and explicit caching. Requests without a key may still receive automatic cache hits, but do not use the improved matching. Use different keys to partition unrelated workloads.
 
