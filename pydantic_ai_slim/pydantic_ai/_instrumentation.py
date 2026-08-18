@@ -86,6 +86,35 @@ This is a context variable rather than a field on `ModelRequestContext` because 
 public and holds only the *inputs* to `Model.request[_stream]`.
 """
 
+_model_request_span_captures: ContextVar[tuple[Callable[[ModelRequestContext], ModelRequestContext], ...]] = ContextVar(
+    'model_request_span_captures', default=()
+)
+_model_response_span_captures: ContextVar[tuple[Callable[[ModelResponse], None], ...]] = ContextVar(
+    'model_response_span_captures', default=()
+)
+
+
+def capture_model_request_span_context(request_context: ModelRequestContext) -> None:
+    """Capture the finalized request at the model-call boundary when instrumentation is active."""
+    for capture in _model_request_span_captures.get():
+        capture(replace(request_context, messages=request_context.messages.copy()))
+
+
+def capture_model_response_span_context(response: ModelResponse) -> None:
+    """Capture a response before an after hook can reject it when instrumentation is active."""
+    for capture in _model_response_span_captures.get():
+        capture(response)
+
+
+@contextmanager
+def model_response_span_capture(capture: Callable[[ModelResponse], None]) -> Generator[None]:
+    """Scope response capture to the active instrumentation wrapper."""
+    token = _model_response_span_captures.set((*_model_response_span_captures.get(), capture))
+    try:
+        yield
+    finally:
+        _model_response_span_captures.reset(token)
+
 
 @dataclass(slots=True)
 class CachedMessageJson:
@@ -438,7 +467,30 @@ class _FinishModelRequestSpan(Protocol):
     callers omit it.
     """
 
-    def __call__(self, response: ModelResponse, time_to_first_chunk: float | None = None) -> None: ...
+    def __call__(
+        self,
+        response: ModelResponse,
+        time_to_first_chunk: float | None = None,
+    ) -> ModelRequestContext: ...
+
+
+def _prepare_model_request_span_context(
+    settings: InstrumentationSettings, request_context: ModelRequestContext
+) -> tuple[ModelRequestContext, dict[str, AttributeValue]]:
+    prepared_settings, prepared_parameters = request_context.model.prepare_request(
+        request_context.model_settings, request_context.model_request_parameters
+    )
+    prepared = replace(request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters)
+    attributes: dict[str, AttributeValue] = model_attributes(prepared.model)
+    json_schema_properties: dict[str, dict[str, str]] = {}
+    if settings.include_model_request_parameters:
+        attributes.update(model_request_parameters_attributes(prepared_parameters))
+        json_schema_properties['model_request_parameters'] = {'type': 'object'}
+    attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
+    if tool_definitions := build_tool_definitions(prepared_parameters):
+        attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
+    attributes.update(model_settings_attributes(prepared_settings))
+    return prepared, attributes
 
 
 @contextmanager
@@ -447,6 +499,7 @@ def open_model_request_span(
     request_context: ModelRequestContext,
     *,
     message_json_cache: MessageJsonCache | None = None,
+    defer_request_attributes: bool = False,
 ) -> Generator[tuple[_FinishModelRequestSpan, ModelRequestContext]]:
     """Open a `chat <model>` CLIENT span; yield `(finish, prepared_request_context)`.
 
@@ -460,46 +513,51 @@ def open_model_request_span(
 
     `message_json_cache` is a per-run cache reused across requests so the growing input history
     isn't re-serialized in full each time; the agent flow passes one, one-off requests pass `None`.
+    With `defer_request_attributes=True`, the span opens immediately and the agent graph populates
+    request attributes at the model-call boundary after request hooks have finished.
     """
     # TODO Missing attributes:
     #  - error.type: unclear if we should do something here or just always rely on span exceptions
     #  - gen_ai.request.stop_sequences/top_k: model_settings doesn't include these
-    model = request_context.model
-    prepared_settings, prepared_parameters = model.prepare_request(
-        request_context.model_settings, request_context.model_request_parameters
-    )
-    prepared_request_context = replace(
-        request_context, model_settings=prepared_settings, model_request_parameters=prepared_parameters
-    )
     operation = 'chat'
-    span_name = f'{operation} {model.model_name}'
+    span_name = f'{operation} {request_context.model.model_name}'
     attributes: dict[str, AttributeValue] = {
         'gen_ai.operation.name': operation,
-        **model_attributes(model),
         **get_agent_run_baggage_attributes(),
     }
-    json_schema_properties: dict[str, dict[str, str]] = {}
-    if settings.include_model_request_parameters:
-        attributes.update(model_request_parameters_attributes(prepared_parameters))
-        json_schema_properties['model_request_parameters'] = {'type': 'object'}
-    attributes['logfire.json_schema'] = to_json({'type': 'object', 'properties': json_schema_properties}).decode()
-
-    tool_definitions = build_tool_definitions(prepared_parameters)
-    if tool_definitions:
-        attributes['gen_ai.tool.definitions'] = safe_to_json(tool_definitions).decode()
-
-    attributes.update(model_settings_attributes(prepared_settings))
+    prepared_request_context: ModelRequestContext | None = None
 
     record_metrics: Callable[[], None] | None = None
     try:
         with settings.tracer.start_as_current_span(span_name, attributes=attributes, kind=SpanKind.CLIENT) as span:
+
+            def set_request_attributes(context: ModelRequestContext) -> ModelRequestContext:
+                nonlocal prepared_request_context
+                prepared, request_attributes = _prepare_model_request_span_context(settings, context)
+
+                # Preserve attributes set while the request ran, notably the concrete model selected
+                # by `FallbackModel`, while filling all request fields from the final context.
+                request_attributes.update(getattr(span, 'attributes', {}))
+                attributes.update(request_attributes)
+                span.set_attributes(request_attributes)
+                span.update_name(f'{operation} {attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]}')
+                prepared_request_context = prepared
+                return prepared
+
             # `finish` is a closure rather than inline so we can (a) set result attributes
             # inside the `with span:` block — they attach to the span — and (b) call the
             # captured `record_metrics` in the outer `finally` AFTER the span closes,
             # so observability backends that aggregate metrics from span attributes
             # don't double-count.
-            def finish(response: ModelResponse, time_to_first_chunk: float | None = None) -> None:
-                nonlocal record_metrics
+            def finish(
+                response: ModelResponse,
+                time_to_first_chunk: float | None = None,
+            ) -> ModelRequestContext:
+                nonlocal prepared_request_context, record_metrics
+
+                if prepared_request_context is None:
+                    return request_context
+                prepared_parameters = prepared_request_context.model_request_parameters
 
                 annotate_tool_call_otel_metadata(response, prepared_parameters)
 
@@ -522,7 +580,7 @@ def open_model_request_span(
                 price_calculation = response_price_calculation(response)
 
                 if not span.is_recording():
-                    return
+                    return prepared_request_context
 
                 settings.handle_messages(
                     prepared_request_context.messages,
@@ -537,8 +595,21 @@ def open_model_request_span(
                     attributes_to_set['gen_ai.client.operation.time_to_first_chunk'] = time_to_first_chunk
                 span.set_attributes(attributes_to_set)
                 span.update_name(f'{operation} {request_model}')
+                return prepared_request_context
 
-            yield finish, prepared_request_context
+            # Populating attributes inside the try keeps the capture token scoped even when
+            # `Model.prepare_request` raises (e.g. unsupported native output).
+            if defer_request_attributes:
+                capture_token = _model_request_span_captures.set(
+                    (*_model_request_span_captures.get(), set_request_attributes)
+                )
+                try:
+                    yield finish, request_context
+                finally:
+                    _model_request_span_captures.reset(capture_token)
+            else:
+                prepared_request_context = set_request_attributes(request_context)
+                yield finish, prepared_request_context
     finally:
         if record_metrics:
             record_metrics()

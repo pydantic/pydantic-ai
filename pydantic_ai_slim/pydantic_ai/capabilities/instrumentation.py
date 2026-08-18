@@ -19,6 +19,7 @@ from pydantic_ai._instrumentation import (
     get_agent_run_baggage_attributes,
     get_instructions,
     has_stale_message_json,
+    model_response_span_capture,
     open_model_request_span,
     redact_binary_content,
     safe_to_json,
@@ -31,6 +32,7 @@ from pydantic_ai.exceptions import (
     CallDeferred,
     MessageHistoryMutatedWarning,
     ModelRetry,
+    SkipToolExecution,
     ToolFailedError,
     ToolRetryError,
 )
@@ -287,36 +289,50 @@ class Instrumentation(AbstractCapability[Any]):
         request_context: ModelRequestContext,
         handler: WrapModelRequestHandler,
     ) -> ModelResponse:
-        # Track the latest messages so _run_span_end_attributes has them on error paths
-        # (ctx.messages may be stale because UserPromptNode replaces the list reference).
-        self._last_messages = request_context.messages
-
-        with open_model_request_span(self.settings, request_context, message_json_cache=self._message_json_cache) as (
-            finish,
-            prepared_request_context,
-        ):
-            # Stash for `_run_span_end_attributes`: feeding the parameters into
-            # `get_instructions` lets it use the canonical `instruction_parts` source
-            # (which includes prompted-output template instructions and is properly sorted)
-            # instead of falling back to reading `ModelRequest.instructions` from history.
-            self._last_model_request_parameters = prepared_request_context.model_request_parameters
-
-            # Track whether the fully formatted instructions (including prompted-output schemas) vary across requests.
-            # This does an apples-to-apples comparison of the final payload sent to the model.
-            current_instructions = get_instructions(
-                request_context.messages, prepared_request_context.model_request_parameters
-            )
+        def track_request(context: ModelRequestContext) -> None:
+            self._last_messages = context.messages
+            self._last_model_request_parameters = context.model_request_parameters
+            current_instructions = get_instructions(context.messages, context.model_request_parameters)
             if not isinstance(self._last_formatted_instructions, Unset):
                 if current_instructions != self._last_formatted_instructions:
                     self._variable_instructions = True
             self._last_formatted_instructions = current_instructions
 
-            response = await handler(request_context)
-            # For streaming requests, the agent graph's handler reports TTFT through
-            # `time_to_first_chunk_ctx` (set in the same task, so the value is visible here);
-            # for non-streaming requests this reads the `None` default.
-            finish(response, time_to_first_chunk=time_to_first_chunk_ctx.get())
-            return response
+        with open_model_request_span(
+            self.settings,
+            request_context,
+            message_json_cache=self._message_json_cache,
+            defer_request_attributes=True,
+        ) as (finish, _):
+            captured_response: ModelResponse | None = None
+
+            def capture_response(response: ModelResponse) -> None:
+                nonlocal captured_response
+                captured_response = response
+
+            with model_response_span_capture(capture_response):
+                try:
+                    response = await handler(request_context)
+                except BaseException:
+                    if captured_response is None:
+                        # Preserve the entry state for the enclosing run span. The chat span records
+                        # request content only after the request reaches the model-call boundary.
+                        track_request(request_context)
+                    else:
+                        prepared_request_context = finish(
+                            captured_response,
+                            time_to_first_chunk=time_to_first_chunk_ctx.get(),
+                        )
+                        track_request(prepared_request_context)
+                    raise
+
+                prepared_request_context = finish(
+                    response,
+                    time_to_first_chunk=time_to_first_chunk_ctx.get(),
+                )
+                # Use the prepared parameters so prompted-output instructions match the model payload.
+                track_request(prepared_request_context)
+                return response
 
     # ------------------------------------------------------------------
     # wrap_tool_execute — tool execution span
@@ -429,9 +445,10 @@ class Instrumentation(AbstractCapability[Any]):
         Records the serialized result on success (when `include_content` is enabled and
         the span is recording), records the exception and sets status `ERROR` on failure.
 
-        When `handle_tool_control_flow` is True, the helper additionally special-cases
-        `CallDeferred`/`ApprovalRequired` (deferrals are control flow, not errors) and
-        records `ToolRetryError`'s retry prompt as the tool result before re-raising.
+        A `SkipToolExecution` replacement is recorded as the result without marking the span as an
+        error. When `handle_tool_control_flow` is True, the helper additionally special-cases
+        `CallDeferred`/`ApprovalRequired` (deferrals are control flow, not errors) and records
+        `ToolRetryError`'s retry prompt as the tool result before re-raising.
         Output-function spans leave that flag off — `ToolRetryError` is treated as a
         plain error there because the retry prompt is recorded on the surrounding
         request/agent spans, and `CallDeferred`/`ApprovalRequired` never reach output
@@ -468,6 +485,13 @@ class Instrumentation(AbstractCapability[Any]):
                 if settings.version < 5:
                     span.record_exception(exc, escaped=True)
                     span.set_status(StatusCode.ERROR)
+                raise
+            except SkipToolExecution as e:
+                if include_content and span.is_recording():
+                    span.set_attribute(
+                        names.tool_result_attr,
+                        e.result if isinstance(e.result, str) else serialize_result(e.result),
+                    )
                 raise
             except ToolRetryError as e:
                 if handle_tool_control_flow and include_content and span.is_recording():

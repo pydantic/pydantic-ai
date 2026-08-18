@@ -60,6 +60,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRun, AgentRunResult
 from pydantic_ai.tools import RunContext
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsNow, IsStr
@@ -1558,6 +1559,57 @@ async def test_nested_run_in_for_run_hook_does_not_steal_binding():
     assert exc_info.value.all_messages()
 
 
+async def test_capability_for_run_cancel_ends_run_before_model_request():
+    """`RunContext.cancel()` from a capability `for_run()` hook records the request — the run's
+    controller exists before any setup hook runs — and the run ends with `RunCancelled` before
+    the first model request. Recording is not interruption: the hook itself and the remaining
+    setup hooks (here the toolset's `for_run()`) still run to completion."""
+    hooks_ran: list[str] = []
+
+    class CancelsInForRun(AbstractCapability):
+        async def for_run(self, ctx: RunContext) -> CancelsInForRun:
+            ctx.cancel()
+            hooks_ran.append('capability')
+            return self
+
+    class RecordsForRun(WrapperToolset[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractToolset[Any]:
+            hooks_ran.append('toolset')
+            return await super().for_run(ctx)
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        raise AssertionError('the model must not be called after a setup-phase cancellation')
+
+    agent = Agent(
+        FunctionModel(model_function),
+        capabilities=[CancelsInForRun()],
+        toolsets=[RecordsForRun(FunctionToolset())],
+    )
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('hello')
+
+    assert exc_info.value.all_messages() == []  # cancelled before any model request
+    assert hooks_ran == ['capability', 'toolset']
+
+
+async def test_toolset_for_run_cancel_ends_run_before_model_request():
+    """`RunContext.cancel()` from a toolset `for_run()` hook is likewise recorded, not a `UserError`."""
+
+    class CancelsInForRun(WrapperToolset[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractToolset[Any]:
+            ctx.cancel()
+            return await super().for_run(ctx)
+
+    async def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        raise AssertionError('the model must not be called after a setup-phase cancellation')
+
+    agent = Agent(FunctionModel(model_function), toolsets=[CancelsInForRun(FunctionToolset())])
+    with pytest.raises(RunCancelled) as exc_info:
+        await agent.run('hello')
+
+    assert exc_info.value.all_messages() == []
+
+
 async def test_cancel_during_blocked_before_run_is_delivered():
     """`events.cancel()` while a `before_run` hook is blocked must interrupt it promptly —
     the controller is bound before `wrap_run`/`before_run` start, and the translation funnel
@@ -1603,7 +1655,7 @@ async def test_first_party_cancel_swallowed_by_after_run_is_typed():
 # Blocking *external*-cancel recovery relies on the backstop, which is a no-op on Python 3.10.
 @pytest.mark.parametrize('first_party', [True, pytest.param(False, marks=requires_task_cancelling)])
 async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
-    """`wrap_run` and `on_run_error` may observe cancellation but cannot recover it."""
+    """`on_run_error` may hide cancellation from `wrap_run`, but cannot recover it."""
     started = asyncio.Event()
     observed: list[str] = []
 
@@ -1611,9 +1663,9 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
         async def wrap_run(self, ctx: RunContext, *, handler: Any) -> AgentRunResult:
             try:
                 return await handler()
-            except asyncio.CancelledError:
-                observed.append('wrap_run')
-                return AgentRunResult(output='recovered')
+            except asyncio.CancelledError:  # pragma: no cover
+                observed.append('wrap_run')  # pragma: no cover
+                return AgentRunResult(output='recovered')  # pragma: no cover
 
         async def on_run_error(self, ctx: RunContext, *, error: BaseException) -> AgentRunResult:
             assert isinstance(error, asyncio.CancelledError)
@@ -1635,7 +1687,7 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
             runs.append(agent_run)
             async for _node in agent_run:
                 pass
-        assert agent_run.result is not None  # pragma: no cover
+        assert agent_run.result is not None
         return agent_run.result  # pragma: no cover
 
     task = asyncio.create_task(drive())
@@ -1650,7 +1702,7 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
     with pytest.raises(expected_exception):
         await asyncio.wait_for(asyncio.shield(task), timeout=READINESS_WAIT_TIMEOUT)
 
-    assert observed == ['wrap_run', 'on_run_error']
+    assert observed == ['on_run_error']
 
 
 async def test_cancel_after_completion_is_a_noop():

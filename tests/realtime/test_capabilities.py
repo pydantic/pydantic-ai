@@ -458,8 +458,8 @@ async def test_run_lifecycle_hooks_fire_for_a_session() -> None:
         'wrap_run:before',
         'before_run',
         'session:body',
-        'wrap_run:finally',
         'after_run:final answer',
+        'wrap_run:finally',
     ]
     assert session.result is not None
     assert session.result.output == 'final answer'
@@ -610,31 +610,28 @@ async def test_wrap_run_short_circuits_before_session_connects() -> None:
     assert model.instructions is None
 
 
-async def test_short_circuit_then_recovered_caller_error_exits_cleanly() -> None:
-    """A caller-body error after a `wrap_run` short-circuit, recovered by `on_run_error`, exits cleanly.
+async def test_caller_error_after_short_circuit_propagates() -> None:
+    """A short-circuit skips the inner lifecycle, including `on_run_error`."""
 
-    The short-circuit path yields a closed session without connecting; if the caller then raises and
-    `on_run_error` recovers, the lifecycle hooks suppress the error. Without the `yielded` guard on the
-    short-circuit yields, `_resolve_realtime_session`/`_open_realtime_session` would resume past their
-    exit stacks and yield a second time, which `asynccontextmanager` reports as
-    `RuntimeError: generator didn't stop after athrow()`.
-    """
+    on_error_called = False
 
     class ShortCircuitThenRecoverCapability(AbstractCapability[None]):
         async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
             return AgentRunResult(output='short-circuited')
 
         async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
-            assert str(error) == 'caller failed'
-            return AgentRunResult(output='recovered after short-circuit')
+            nonlocal on_error_called
+            on_error_called = True  # pragma: no cover
+            return AgentRunResult(output='recovered after short-circuit')  # pragma: no cover
 
     agent = Agent(capabilities=[ShortCircuitThenRecoverCapability()], deps_type=type(None))
 
-    async with agent.realtime(_RecordingModel()).session() as session:
-        assert session.closed
-        raise RuntimeError('caller failed')
+    with pytest.raises(RuntimeError, match='caller failed'):
+        async with agent.realtime(_RecordingModel()).session() as session:
+            assert session.closed
+            raise RuntimeError('caller failed')
 
-    assert session.result is not None
+    assert not on_error_called
 
 
 async def test_wrap_run_context_is_ambient_throughout_session() -> None:

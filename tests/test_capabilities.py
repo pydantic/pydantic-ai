@@ -55,6 +55,7 @@ from pydantic_ai.capabilities import (
     UseThreadExecutor,
     WebFetch,
     WebSearch,
+    WrapModelRequestHandler,
     WrapperCapability,
     XSearch,
 )
@@ -5738,24 +5739,6 @@ async def test_capability_can_inject_forcing_tool_choice_per_step(forced_choice:
 # --- Hooks test helpers ---
 
 
-@dataclass
-class _ReplacingCapability(AbstractCapability[Any]):
-    """Capability that replaces ModelRequestNode with a fresh copy in before_node_run.
-
-    Used to test that streaming + node replacement doesn't cause double model execution.
-    """
-
-    replaced: bool = field(default=False, init=False)
-
-    async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-        from pydantic_ai import ModelRequestNode
-
-        if isinstance(node, ModelRequestNode) and not self.replaced:
-            self.replaced = True
-            return ModelRequestNode(request=node.request)  # pyright: ignore[reportUnknownVariableType]
-        return node  # pyright: ignore[reportUnknownVariableType]
-
-
 # Defined at module scope so pydantic-ai can resolve the annotation under `from __future__ import annotations`.
 class SingleBaseModelArg(BaseModel):
     label: str = 'default'
@@ -5923,36 +5906,57 @@ class TestRunHooks:
         assert 'wrap_run:before' in cap.log
         assert 'wrap_run:after' in cap.log
 
-    async def test_run_hook_order(self):
+    async def test_wrap_run_encloses_before_and_after_run(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
         await agent.run('hello')
-        # wrap_run wraps the run (which includes before_run inside iter),
-        # then after_run fires at the end (outside wrap_run)
-        assert cap.log.index('wrap_run:before') < cap.log.index('before_run')
-        assert cap.log.index('before_run') < cap.log.index('wrap_run:after')
-        assert cap.log.index('wrap_run:after') <= cap.log.index('after_run')
+        assert [
+            entry for entry in cap.log if entry in {'wrap_run:before', 'before_run', 'after_run', 'wrap_run:after'}
+        ] == [
+            'wrap_run:before',
+            'before_run',
+            'after_run',
+            'wrap_run:after',
+        ]
 
     async def test_after_run_can_modify_result(self):
+        wrap_saw: list[str] = []
+
         @dataclass
         class ModifyResultCap(AbstractCapability[Any]):
             async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
                 return AgentRunResult(output='modified output')
 
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                result = await handler()
+                wrap_saw.append(result.output)
+                return result
+
         agent = Agent(FunctionModel(simple_model_function), capabilities=[ModifyResultCap()])
         result = await agent.run('hello')
         assert result.output == 'modified output'
+        assert wrap_saw == ['modified output']
 
-    async def test_wrap_run_can_short_circuit(self):
+    async def test_wrap_run_short_circuit_skips_before_and_after_run(self):
+        call_order: list[str] = []
+
         @dataclass
         class ShortCircuitRunCap(AbstractCapability[Any]):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                call_order.append('before')  # pragma: no cover
+
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                call_order.append('after')  # pragma: no cover
+                return result  # pragma: no cover
+
             async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
-                # Don't call handler - short-circuit the run
+                call_order.append('wrap')
                 return AgentRunResult(output='short-circuited')
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[ShortCircuitRunCap()])
         result = await agent.run('hello')
         assert result.output == 'short-circuited'
+        assert call_order == ['wrap']
 
     async def test_wrap_run_can_recover_from_error(self):
         """wrap_run can catch errors from handler() and return a recovery result."""
@@ -6090,15 +6094,33 @@ class TestModelRequestHooks:
         assert 'wrap_model_request:before' in cap.log
         assert 'wrap_model_request:after' in cap.log
 
-    async def test_model_request_hook_order(self):
+    @pytest.mark.parametrize('streaming', [False, True])
+    async def test_wrap_model_request_encloses_before_and_after(self, streaming: bool):
         cap = LoggingCapability()
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
-        await agent.run('hello')
-        assert cap.log.index('before_model_request') < cap.log.index('wrap_model_request:before')
-        assert cap.log.index('wrap_model_request:before') < cap.log.index('wrap_model_request:after')
-        assert cap.log.index('wrap_model_request:after') < cap.log.index('after_model_request')
+        agent = Agent(FunctionModel(simple_model_function, stream_function=simple_stream_function), capabilities=[cap])
+        if streaming:
+            async with agent.run_stream('hello') as stream:
+                await stream.get_output()
+        else:
+            await agent.run('hello')
+        assert [
+            entry
+            for entry in cap.log
+            if entry
+            in {
+                'wrap_model_request:before',
+                'before_model_request',
+                'after_model_request',
+                'wrap_model_request:after',
+            }
+        ] == [
+            'wrap_model_request:before',
+            'before_model_request',
+            'after_model_request',
+            'wrap_model_request:after',
+        ]
 
-    async def test_after_model_request_can_modify_response(self):
+    async def test_wrap_model_request_post_processes_after_model_request_output(self):
         @dataclass
         class ModifyResponseCap(AbstractCapability[Any]):
             async def after_model_request(
@@ -6108,24 +6130,55 @@ class TestModelRequestHooks:
                 request_context: ModelRequestContext,
                 response: ModelResponse,
             ) -> ModelResponse:
-                return ModelResponse(parts=[TextPart(content='modified by after hook')])
+                part = response.parts[0]
+                assert isinstance(part, TextPart)
+                return ModelResponse(parts=[TextPart(content='after: ' + part.content)])
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[ModifyResponseCap()])
-        result = await agent.run('hello')
-        assert result.output == 'modified by after hook'
-
-    async def test_wrap_model_request_can_modify_response(self):
-        @dataclass
-        class WrapModifyCap(AbstractCapability[Any]):
             async def wrap_model_request(
                 self, ctx: RunContext[Any], *, request_context: Any, handler: Any
             ) -> ModelResponse:
                 response = await handler(request_context)
-                return ModelResponse(parts=[TextPart(content='wrapped: ' + response.parts[0].content)])
+                part = response.parts[0]
+                assert isinstance(part, TextPart)
+                return ModelResponse(parts=[TextPart(content='wrap: ' + part.content)])
 
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[WrapModifyCap()])
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[ModifyResponseCap()])
         result = await agent.run('hello')
-        assert result.output == 'wrapped: response from model'
+        assert result.output == 'wrap: after: response from model'
+
+    async def test_wrap_model_request_observes_replacement_before_context_in_place(self):
+        swap_target = TestModel(custom_output_text='swapped')
+        observed: list[tuple[Model, str | None, str]] = []
+
+        @dataclass
+        class ReplaceRequestContext(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                replaced = replace(request_context, model=swap_target, messages=request_context.messages[:])
+                replaced.model_id = 'replacement-id'
+                return replaced
+
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: Any,
+            ) -> ModelResponse:
+                response = await handler(request_context)
+                request = request_context.messages[-1]
+                assert isinstance(request, ModelRequest)
+                prompt = request.parts[-1]
+                assert isinstance(prompt, UserPromptPart)
+                assert isinstance(prompt.content, str)
+                observed.append((request_context.model, request_context.model_id, prompt.content))
+                return response
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[ReplaceRequestContext()])
+        result = await agent.run('hello')
+        assert result.output == 'swapped'
+        assert observed == [(swap_target, 'replacement-id', 'hello')]
 
     async def test_skip_model_request(self):
         @dataclass
@@ -6288,7 +6341,7 @@ class TestModelRequestHooks:
 
 
 class TestToolValidateHooks:
-    async def test_tool_validate_hooks_fire(self):
+    async def test_wrap_tool_validate_encloses_before_and_after(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(tool_calling_model), capabilities=[cap])
 
@@ -6297,10 +6350,103 @@ class TestToolValidateHooks:
             return 'tool result'
 
         await agent.run('call the tool')
-        assert 'before_tool_validate:my_tool' in cap.log
-        assert 'after_tool_validate:my_tool' in cap.log
-        assert 'wrap_tool_validate:my_tool:before' in cap.log
-        assert 'wrap_tool_validate:my_tool:after' in cap.log
+        assert [entry for entry in cap.log if 'tool_validate' in entry] == [
+            'wrap_tool_validate:my_tool:before',
+            'before_tool_validate:my_tool',
+            'after_tool_validate:my_tool',
+            'wrap_tool_validate:my_tool:after',
+        ]
+
+    async def test_wrap_tool_validate_short_circuit_skips_before_and_after(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class ShortCircuitValidateCap(AbstractCapability[Any]):
+            async def before_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+            ) -> Any:
+                call_order.append('before')  # pragma: no cover
+                return args  # pragma: no cover
+
+            async def after_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+            ) -> Any:
+                call_order.append('after')  # pragma: no cover
+                return args  # pragma: no cover
+
+            async def wrap_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+            ) -> dict[str, Any]:
+                call_order.append('wrap')
+                return {'name': 'short-circuited'}
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[ShortCircuitValidateCap()])
+        received_name: str | None = None
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            nonlocal received_name
+            received_name = name
+            return name
+
+        await agent.run('greet someone')
+        assert received_name == 'short-circuited'
+        assert call_order == ['wrap']
+
+    async def test_wrap_tool_validate_calling_handler_twice_resets_deferral_state(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class CallHandlerTwiceCap(AbstractCapability[Any]):
+            async def before_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+            ) -> Any:
+                call_order.append(f'before:{args["x"]}')
+                return args
+
+            async def after_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+            ) -> Any:
+                call_order.append(f'after:{args["x"]}')
+                return args
+
+            async def wrap_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+            ) -> dict[str, Any]:
+                call_order.append('wrap:before')
+                try:
+                    await handler({'x': 0})
+                except Exception:
+                    call_order.append('wrap:caught-deferral')
+                result = await handler({'x': 1})
+                call_order.append('wrap:after')
+                return result
+
+        def defer_zero(ctx: RunContext[Any], x: int) -> None:
+            call_order.append(f'validator:{x}')
+            if x == 0:
+                raise ApprovalRequired()
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[CallHandlerTwiceCap()])
+
+        @agent.tool_plain(args_validator=defer_zero)
+        def my_tool(x: int) -> int:
+            call_order.append(f'execute:{x}')
+            return x
+
+        await agent.run('call the tool')
+        assert call_order == [
+            'wrap:before',
+            'before:0',
+            'validator:0',
+            'after:0',
+            'wrap:caught-deferral',
+            'before:1',
+            'validator:1',
+            'after:1',
+            'wrap:after',
+            'execute:1',
+        ]
 
     async def test_before_tool_validate_can_modify_args(self):
         @dataclass
@@ -6374,7 +6520,7 @@ class TestToolValidateHooks:
 
 
 class TestToolExecuteHooks:
-    async def test_tool_execute_hooks_fire(self):
+    async def test_wrap_tool_execute_encloses_before_and_after(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(tool_calling_model), capabilities=[cap])
 
@@ -6383,10 +6529,54 @@ class TestToolExecuteHooks:
             return 'tool result'
 
         await agent.run('call the tool')
-        assert 'before_tool_execute:my_tool' in cap.log
-        assert 'after_tool_execute:my_tool' in cap.log
-        assert 'wrap_tool_execute:my_tool:before' in cap.log
-        assert 'wrap_tool_execute:my_tool:after' in cap.log
+        assert [entry for entry in cap.log if 'tool_execute' in entry] == [
+            'wrap_tool_execute:my_tool:before',
+            'before_tool_execute:my_tool',
+            'after_tool_execute:my_tool',
+            'wrap_tool_execute:my_tool:after',
+        ]
+
+    async def test_wrap_tool_execute_short_circuit_skips_before_and_after(self):
+        call_order: list[str] = []
+        tool_called = False
+
+        @dataclass
+        class ShortCircuitExecuteCap(AbstractCapability[Any]):
+            async def before_tool_execute(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+            ) -> Any:
+                call_order.append('before')  # pragma: no cover
+                return args  # pragma: no cover
+
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: Any,
+                result: Any,
+            ) -> Any:
+                call_order.append('after')  # pragma: no cover
+                return result  # pragma: no cover
+
+            async def wrap_tool_execute(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+            ) -> str:
+                call_order.append('wrap')
+                return 'short-circuited'
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[ShortCircuitExecuteCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            nonlocal tool_called
+            tool_called = True  # pragma: no cover
+            return 'tool result'  # pragma: no cover
+
+        await agent.run('call the tool')
+        assert not tool_called
+        assert call_order == ['wrap']
 
     async def test_after_tool_execute_can_modify_result(self):
         @dataclass
@@ -6651,6 +6841,14 @@ class TestCompositionOrder:
         assert log.index('cap2:wrap:after') < log.index('cap1:wrap:after')
         # after hooks: reverse order (cap2 then cap1)
         assert log.index('cap2:after') < log.index('cap1:after')
+        # Cross-family ordering: the entire wrap entry chain precedes every before hook,
+        # and every after hook completes before the wrap chain unwinds.
+        assert max(log.index('cap1:wrap:before'), log.index('cap2:wrap:before')) < min(
+            log.index('cap1:before'), log.index('cap2:before')
+        )
+        assert max(log.index('cap1:after'), log.index('cap2:after')) < min(
+            log.index('cap1:wrap:after'), log.index('cap2:wrap:after')
+        )
 
     async def test_multiple_capabilities_run_hooks_order(self):
         log: list[str] = []
@@ -6688,13 +6886,16 @@ class TestCompositionOrder:
         agent = Agent(FunctionModel(simple_model_function), capabilities=[Cap1(), Cap2()])
         await agent.run('hello')
 
-        # before_run: forward order
-        assert log.index('cap1:before_run') < log.index('cap2:before_run')
-        # wrap_run: cap1 outermost
-        assert log.index('cap1:wrap_run:before') < log.index('cap2:wrap_run:before')
-        assert log.index('cap2:wrap_run:after') < log.index('cap1:wrap_run:after')
-        # after_run: reverse order
-        assert log.index('cap2:after_run') < log.index('cap1:after_run')
+        assert log == [
+            'cap1:wrap_run:before',
+            'cap2:wrap_run:before',
+            'cap1:before_run',
+            'cap2:before_run',
+            'cap2:after_run',
+            'cap1:after_run',
+            'cap2:wrap_run:after',
+            'cap1:wrap_run:after',
+        ]
 
 
 class TestCombinedBeforeWrapAfter:
@@ -6765,10 +6966,17 @@ class TestRunHooksRunStream:
         assert 'after_run' in cap.log
 
     async def test_after_run_can_modify_result_via_iter(self):
+        wrap_saw: list[str] = []
+
         @dataclass
         class ModifyResultCap(AbstractCapability[Any]):
             async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
                 return AgentRunResult(output='modified by after_run')
+
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                result = await handler()
+                wrap_saw.append(result.output)
+                return result
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[ModifyResultCap()])
         async with agent.iter('hello') as agent_run:
@@ -6776,6 +6984,7 @@ class TestRunHooksRunStream:
                 pass
         assert agent_run.result is not None
         assert agent_run.result.output == 'modified by after_run'
+        assert wrap_saw == ['modified by after_run']
 
     async def test_run_hook_order_via_run_stream(self):
         cap = LoggingCapability()
@@ -6785,9 +6994,14 @@ class TestRunHooksRunStream:
         )
         async with agent.run_stream('hello') as stream:
             await stream.get_output()
-        assert cap.log.index('wrap_run:before') < cap.log.index('before_run')
-        assert cap.log.index('before_run') < cap.log.index('wrap_run:after')
-        assert cap.log.index('wrap_run:after') <= cap.log.index('after_run')
+        assert [
+            entry for entry in cap.log if entry in {'wrap_run:before', 'before_run', 'after_run', 'wrap_run:after'}
+        ] == [
+            'wrap_run:before',
+            'before_run',
+            'after_run',
+            'wrap_run:after',
+        ]
 
 
 class TestStreamingHooks:
@@ -7089,9 +7303,19 @@ class TestWrapRunShortCircuit:
     """Test short-circuiting wrap_run via iter() and run_stream()."""
 
     async def test_wrap_run_short_circuit_via_iter(self):
+        call_order: list[str] = []
+
         @dataclass
         class ShortCircuitRunCap(AbstractCapability[Any]):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                call_order.append('before')  # pragma: no cover
+
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                call_order.append('after')  # pragma: no cover
+                return result  # pragma: no cover
+
             async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                call_order.append('wrap')
                 return AgentRunResult(output='short-circuited')
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[ShortCircuitRunCap()])
@@ -7103,11 +7327,22 @@ class TestWrapRunShortCircuit:
         assert nodes == []
         assert agent_run.result is not None
         assert agent_run.result.output == 'short-circuited'
+        assert call_order == ['wrap']
 
     async def test_wrap_run_short_circuit_via_run_stream(self):
+        call_order: list[str] = []
+
         @dataclass
         class ShortCircuitRunCap(AbstractCapability[Any]):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                call_order.append('before')  # pragma: no cover
+
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                call_order.append('after')  # pragma: no cover
+                return result  # pragma: no cover
+
             async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                call_order.append('wrap')
                 return AgentRunResult(output='short-circuited')
 
         agent = Agent(
@@ -7117,12 +7352,13 @@ class TestWrapRunShortCircuit:
         async with agent.run_stream('hello') as stream:
             output = await stream.get_output()
         assert output == 'short-circuited'
+        assert call_order == ['wrap']
 
 
 class TestSkipModelRequestInteraction:
-    """Test SkipModelRequest interaction with after_model_request."""
+    """Test `SkipModelRequest` interaction with the model-request lifecycle."""
 
-    async def test_skip_model_request_still_calls_after_model_request(self):
+    async def test_skip_model_request_from_before_skips_after_model_request(self):
         log: list[str] = []
 
         @dataclass
@@ -7142,14 +7378,82 @@ class TestSkipModelRequestInteraction:
                 request_context: ModelRequestContext,
                 response: ModelResponse,
             ) -> ModelResponse:
-                log.append('after_model_request')
-                return response
+                log.append('after_model_request')  # pragma: no cover
+                return response  # pragma: no cover
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[SkipAndLogCap()])
         result = await agent.run('hello')
         assert result.output == 'skipped'
-        # after_model_request should still fire via _finish_handling
-        assert 'after_model_request' in log
+        assert log == ['before_model_request']
+
+    @pytest.mark.parametrize('streaming', [False, True])
+    async def test_wrap_model_request_short_circuit_skips_before_and_after(self, streaming: bool):
+        call_order: list[str] = []
+
+        @dataclass
+        class ShortCircuitModelCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                call_order.append('before')  # pragma: no cover
+                return request_context  # pragma: no cover
+
+            async def after_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                response: ModelResponse,
+            ) -> ModelResponse:
+                call_order.append('after')  # pragma: no cover
+                return response  # pragma: no cover
+
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: Any, handler: Any
+            ) -> ModelResponse:
+                call_order.append('wrap')
+                return ModelResponse(parts=[TextPart(content='model short-circuited')])
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[ShortCircuitModelCap()],
+        )
+        if streaming:
+            async with agent.run_stream('hello') as stream:
+                output = await stream.get_output()
+                usage = stream.usage
+        else:
+            result = await agent.run('hello')
+            output = result.output
+            usage = result.usage
+        assert output == 'model short-circuited'
+        assert usage.requests == 0
+        assert call_order == ['wrap']
+
+    @pytest.mark.parametrize('streaming', [False, True])
+    async def test_wrap_model_request_rejects_multiple_handler_calls(self, streaming: bool):
+        class CallTwice(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self,
+                ctx: RunContext[Any],
+                *,
+                request_context: ModelRequestContext,
+                handler: WrapModelRequestHandler,
+            ) -> ModelResponse:
+                await handler(request_context)
+                return await handler(request_context)
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[CallTwice()],
+        )
+
+        with pytest.raises(UserError, match='may call its handler only once'):
+            if streaming:
+                async with agent.run_stream('hello') as stream:
+                    await stream.get_output()
+            else:
+                await agent.run('hello')
 
     async def test_wrap_model_request_short_circuit_streaming(self):
         """wrap_model_request can return without calling handler in streaming path."""
@@ -7495,7 +7799,11 @@ class TestWrapNodeRunHook:
         assert cap.nodes == snapshot(['UserPromptNode', 'ModelRequestNode', 'CallToolsNode'])
 
     async def test_bare_async_for_mixed_with_next_after_wrap_node_run_short_circuit(self):
-        """A wrapper short-circuit advances the graph so bare iteration does not run the node again."""
+        """A wrapper short-circuit advances the graph so bare iteration does not run the node again.
+
+        The short-circuited `ModelRequestNode` doesn't appear in the observed nodes: a wrapper
+        returning without calling its handler skips `before_node_run` along with the rest of
+        the node lifecycle."""
 
         @dataclass
         class ShortCircuitCap(AbstractCapability[Any]):
@@ -7518,37 +7826,7 @@ class TestWrapNodeRunHook:
                 if not isinstance(node, End):
                     await agent_run.next(node)
 
-        assert cap.nodes == snapshot(['UserPromptNode', 'ModelRequestNode'])
-        assert agent_run.result is not None
-        assert agent_run.result.output == 'short-circuited'
-
-    async def test_bare_async_for_mixed_with_next_after_replacing_node_and_short_circuiting(self):
-        """A wrapper short-circuit advances the graph after `before_node_run` replaces the node."""
-
-        @dataclass
-        class ReplaceAndShortCircuitCap(AbstractCapability[Any]):
-            nodes: list[str] = field(default_factory=lambda: [])
-
-            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-                self.nodes.append(type(node).__name__)
-                if Agent.is_model_request_node(node):
-                    return replace(node)
-                return node
-
-            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                if Agent.is_model_request_node(node):
-                    return End(FinalResult(output='short-circuited'))
-                return await handler(node)
-
-        cap = ReplaceAndShortCircuitCap()
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
-
-        async with agent.iter('hello') as agent_run:
-            async for node in agent_run:
-                if not isinstance(node, End):
-                    await agent_run.next(node)
-
-        assert cap.nodes == snapshot(['UserPromptNode', 'ModelRequestNode'])
+        assert cap.nodes == snapshot(['UserPromptNode'])
         assert agent_run.result is not None
         assert agent_run.result.output == 'short-circuited'
 
@@ -11330,15 +11608,105 @@ class TestNodeRunHooks:
         assert 'after_node_run:ModelRequestNode' in cap.log
         assert 'after_node_run:CallToolsNode' in cap.log
 
-    async def test_node_hook_order(self):
-        cap = LoggingCapability()
-        agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
-        await agent.run('hello')
-        # For each node, before fires before after
-        for node_name in ('UserPromptNode', 'ModelRequestNode', 'CallToolsNode'):
-            before_idx = cap.log.index(f'before_node_run:{node_name}')
-            after_idx = cap.log.index(f'after_node_run:{node_name}')
-            assert before_idx < after_idx
+    async def test_wrap_node_run_encloses_before_and_after(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class OrderCap(AbstractCapability[Any]):
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                call_order.append(f'before:{type(node).__name__}')
+                return node
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                call_order.append(f'after:{type(node).__name__}')
+                return result
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                call_order.append(f'wrap:before:{type(node).__name__}')
+                result = await handler(node)
+                call_order.append(f'wrap:after:{type(node).__name__}')
+                return result
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[OrderCap()])
+        async with agent.iter('hello') as agent_run:
+            node = agent_run.next_node
+            while not isinstance(node, End):
+                node = await agent_run.next(node)
+
+        assert call_order == [
+            'wrap:before:UserPromptNode',
+            'before:UserPromptNode',
+            'after:UserPromptNode',
+            'wrap:after:UserPromptNode',
+            'wrap:before:ModelRequestNode',
+            'before:ModelRequestNode',
+            'after:ModelRequestNode',
+            'wrap:after:ModelRequestNode',
+            'wrap:before:CallToolsNode',
+            'before:CallToolsNode',
+            'after:CallToolsNode',
+            'wrap:after:CallToolsNode',
+        ]
+
+    async def test_wrap_node_run_multiple_calls_reconciles_recovered_result(self):
+        """Returning an earlier attempt restores graph state left by a later failed attempt."""
+
+        @dataclass
+        class RetryCap(AbstractCapability[Any]):
+            after_calls: int = 0
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                first_result = await handler(node)
+                try:
+                    await handler(node)
+                except RuntimeError:
+                    return first_result
+                raise AssertionError('second lifecycle unexpectedly succeeded')  # pragma: no cover
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                self.after_calls += 1
+                if self.after_calls == 2:
+                    raise RuntimeError('reject second attempt')
+                return result
+
+        agent = Agent(TestModel(), capabilities=[RetryCap()])
+        async with agent.iter('hello') as agent_run:
+            start = agent_run.next_node
+            assert not isinstance(start, End)
+            result = await agent_run.next(start)
+
+            assert agent_run.next_node is result
+
+    async def test_wrap_node_run_short_circuit_skips_before_and_after(self):
+        from pydantic_ai.result import FinalResult
+
+        call_order: list[str] = []
+
+        @dataclass
+        class ShortCircuitNodeCap(AbstractCapability[Any]):
+            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+                call_order.append('before')  # pragma: no cover
+                return node  # pragma: no cover
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                call_order.append('after')  # pragma: no cover
+                return result  # pragma: no cover
+
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                call_order.append('wrap')
+                return End(FinalResult(output='short-circuited'))
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[ShortCircuitNodeCap()])
+        async with agent.iter('hello') as agent_run:
+            first_node = agent_run.next_node
+            assert not isinstance(first_node, End)
+            result = await agent_run.next(first_node)
+
+        assert isinstance(result, End)
+        assert result.data.output == 'short-circuited'
+        assert agent_run.result is not None
+        assert agent_run.result.output == 'short-circuited'
+        assert call_order == ['wrap']
 
 
 # --- Run error hook tests ---
@@ -11388,7 +11756,34 @@ class TestRunErrorHooks:
         result = await agent.run('hello')
         assert result.output == 'recovered'
 
-    async def test_on_run_error_not_called_when_wrap_run_recovers(self):
+    async def test_on_run_error_recovery_is_invisible_to_wrap_run(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class RecoverInsideWrapCap(AbstractCapability[Any]):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                call_order.append('wrap:before')
+                result = await handler()
+                call_order.append('wrap:after')
+                return result
+
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                call_order.append('on_error')
+                return AgentRunResult(output='recovered')
+
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                call_order.append('after_run')
+                return result
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[RecoverInsideWrapCap()])
+        result = await agent.run('hello')
+        assert result.output == 'recovered'
+        assert call_order == ['wrap:before', 'on_error', 'after_run', 'wrap:after']
+
+    async def test_on_run_error_fires_before_wrap_run_observes_failure(self):
         @dataclass
         class WrapRecoveryCap(AbstractCapability[Any]):
             log: list[str] = field(default_factory=lambda: [])
@@ -11400,10 +11795,7 @@ class TestRunErrorHooks:
                     self.log.append('wrap_run:caught')
                     return AgentRunResult(output='wrap_recovered')
 
-            # The uncovered body is the assertion: this hook must not be called.
-            async def on_run_error(  # pragma: no cover
-                self, ctx: RunContext[Any], *, error: BaseException
-            ) -> AgentRunResult[Any]:
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
                 self.log.append('on_run_error')
                 raise error
 
@@ -11414,8 +11806,7 @@ class TestRunErrorHooks:
         agent = Agent(FunctionModel(failing_model), capabilities=[cap])
         result = await agent.run('hello')
         assert result.output == 'wrap_recovered'
-        assert 'wrap_run:caught' in cap.log
-        assert 'on_run_error' not in cap.log
+        assert cap.log == ['on_run_error', 'wrap_run:caught']
 
     async def test_on_run_error_fires_via_iter(self):
         from pydantic_graph import End
@@ -11478,6 +11869,43 @@ class TestNodeRunErrorHooks:
         assert isinstance(node, End)
         assert node.data.output == 'recovered'
 
+    async def test_on_node_run_error_recovery_is_invisible_to_wrap(self):
+        from pydantic_ai.result import FinalResult
+
+        call_order: list[str] = []
+
+        @dataclass
+        class RecoverInsideWrapCap(AbstractCapability[Any]):
+            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+                call_order.append('wrap:before')
+                result = await handler(node)
+                call_order.append('wrap:after')
+                return result
+
+            async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
+                call_order.append('on_error')
+                return End(FinalResult(output='recovered'))
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                call_order.append('after')
+                return result
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[RecoverInsideWrapCap()])
+        async with agent.iter('hello') as agent_run:
+            first_node = agent_run.next_node
+            assert not isinstance(first_node, End)
+            node = await agent_run.next(first_node)
+            call_order.clear()
+            assert not isinstance(node, End)
+            node = await agent_run.next(node)
+
+        assert isinstance(node, End)
+        assert node.data.output == 'recovered'
+        assert call_order == ['wrap:before', 'on_error', 'after', 'wrap:after']
+
     async def test_on_node_run_error_not_called_on_success(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
@@ -11489,6 +11917,28 @@ class TestNodeRunErrorHooks:
 
 
 class TestModelRequestErrorHooks:
+    async def test_model_request_model_retry_round_trips_retry_prompt(self):
+        requests: list[list[ModelMessage]] = []
+
+        def retrying_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            requests.append(messages.copy())
+            if len(requests) == 1:
+                raise ModelRetry('try again')
+            return ModelResponse(parts=[TextPart(content='success')])
+
+        agent = Agent(FunctionModel(retrying_model))
+        result = await agent.run('hello')
+
+        assert result.output == 'success'
+        assert len(requests) == 2
+        assert [
+            part.content
+            for message in requests[1]
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, RetryPromptPart)
+        ] == ['try again']
+
     async def test_on_model_request_error_fires(self):
         cap = LoggingCapability()
 
@@ -11515,11 +11965,71 @@ class TestModelRequestErrorHooks:
         result = await agent.run('hello')
         assert result.output == 'recovered response'
 
+    async def test_on_model_request_error_recovery_is_invisible_to_wrap(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class RecoverModelCap(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            ) -> ModelResponse:
+                call_order.append('wrap:before')
+                response = await handler(request_context)
+                call_order.append('wrap:success')
+                return response
+
+            async def on_model_request_error(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+            ) -> ModelResponse:
+                call_order.append('on_error')
+                return ModelResponse(parts=[TextPart(content='recovered response')])
+
+            async def after_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+            ) -> ModelResponse:
+                call_order.append('after')
+                return response
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[RecoverModelCap()])
+        result = await agent.run('hello')
+        assert result.output == 'recovered response'
+        assert call_order == ['wrap:before', 'on_error', 'after', 'wrap:success']
+
     async def test_on_model_request_error_not_called_on_success(self):
         cap = LoggingCapability()
         agent = Agent(FunctionModel(simple_model_function), capabilities=[cap])
         await agent.run('hello')
         assert 'on_model_request_error' not in cap.log
+
+    async def test_model_retry_raised_by_model_request_retries_without_on_error(self):
+        """`ModelRetry` raised by the model's own `request()` is control flow: the request is
+        retried and `on_model_request_error` is not consulted."""
+        call_count = 0
+        error_hook_calls: list[Exception] = []
+
+        @dataclass
+        class TrackErrorHookCap(AbstractCapability[Any]):
+            async def on_model_request_error(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+            ) -> ModelResponse:  # pragma: no cover
+                error_hook_calls.append(error)
+                raise error
+
+        def retry_once_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ModelRetry('try again')
+            return make_text_response('second attempt')
+
+        agent = Agent(FunctionModel(retry_once_model), capabilities=[TrackErrorHookCap()])
+        result = await agent.run('hello')
+        assert result.output == 'second attempt'
+        assert call_count == 2
+        assert error_hook_calls == []
 
     async def test_default_on_model_request_error_reraises(self):
         """Default on_model_request_error re-raises, exercised with a minimal capability."""
@@ -11640,6 +12150,41 @@ class TestToolValidateErrorHooks:
         assert received_name == 'recovered-name'
         assert 'hello recovered-name' in result.output
 
+    async def test_on_tool_validate_error_recovery_is_invisible_to_wrap(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class RecoverInsideWrapCap(AbstractCapability[Any]):
+            async def wrap_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+            ) -> dict[str, Any]:
+                call_order.append('wrap:before')
+                result = await handler(args)
+                call_order.append('wrap:after')
+                return result
+
+            async def on_tool_validate_error(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Any
+            ) -> dict[str, Any]:
+                call_order.append('on_error')
+                return {'name': 'recovered'}
+
+        def bad_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            for msg in messages:
+                for part in msg.parts:
+                    if isinstance(part, ToolReturnPart):
+                        return make_text_response('done')
+            return ModelResponse(parts=[ToolCallPart('greet', {'wrong': 1}, tool_call_id='call-1')])
+
+        agent = Agent(FunctionModel(bad_args_model), capabilities=[RecoverInsideWrapCap()])
+
+        @agent.tool_plain
+        def greet(name: str) -> str:
+            return name
+
+        await agent.run('greet someone')
+        assert call_order == ['wrap:before', 'on_error', 'wrap:after']
+
     async def test_default_on_tool_validate_error_reraises(self):
         """The default on_tool_validate_error re-raises, exercised with a minimal capability."""
 
@@ -11698,7 +12243,7 @@ class TestToolValidateErrorHooks:
         result = await agent.run('call the tool')
         assert isinstance(result.output, DeferredToolRequests)
         assert [entry for entry in cap.log if 'tool_validate' in entry or 'tool_execute' in entry] == snapshot(
-            ['before_tool_validate:my_tool', 'wrap_tool_validate:my_tool:before', 'after_tool_validate:my_tool']
+            ['wrap_tool_validate:my_tool:before', 'before_tool_validate:my_tool', 'after_tool_validate:my_tool']
         )
 
 
@@ -11939,6 +12484,42 @@ class TestToolHookDeferrals:
         assert [e.args_valid for e in events if isinstance(e, FunctionToolCallEvent)] == [True]
         assert executed == []
 
+    async def test_post_handler_wrap_deferral_does_not_rerun_the_after_tool_validate_gate(self):
+        """A `wrap_tool_validate` deferral after `handler()` returns happens after the
+        `after_tool_validate` gate already ran inside the handler: the deferral is honored
+        without consulting the gate a second time."""
+        gate_calls: list[dict[str, Any]] = []
+
+        @dataclass
+        class DeferAfterGateCap(AbstractCapability[Any]):
+            async def after_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
+            ) -> Any:
+                gate_calls.append(args)
+                return args
+
+            async def wrap_tool_validate(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+            ) -> dict[str, Any]:
+                await handler(args)
+                raise ApprovalRequired()
+
+        agent = Agent(
+            TestModel(),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[DeferAfterGateCap()],
+        )
+
+        @agent.tool
+        def my_tool(ctx: RunContext[Any], x: int) -> int:  # pragma: no cover
+            return x
+
+        result = await agent.run('call the tool')
+        requests = result.output
+        assert isinstance(requests, DeferredToolRequests)
+        assert [call.tool_name for call in requests.approvals] == ['my_tool']
+        assert len(gate_calls) == 1
+
     @pytest.mark.parametrize('exc_type', [ApprovalRequired, CallDeferred])
     @pytest.mark.parametrize('where', ['before_tool_validate', 'wrap_tool_validate_before'])
     async def test_validate_hook_cannot_defer_before_args_are_valid(
@@ -12168,6 +12749,52 @@ class TestToolExecuteErrorHooks:
 
         result = await agent.run('call tool')
         assert 'fallback result' in result.output
+
+    async def test_on_tool_execute_error_recovery_is_invisible_to_wrap(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class RecoverInsideWrapCap(AbstractCapability[Any]):
+            async def wrap_tool_execute(
+                self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+            ) -> Any:
+                call_order.append('wrap:before')
+                result = await handler(args)
+                call_order.append('wrap:after')
+                return result
+
+            async def on_tool_execute_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                error: Exception,
+            ) -> Any:
+                call_order.append('on_error')
+                return 'recovered'
+
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                result: Any,
+            ) -> Any:
+                call_order.append('after')
+                return result
+
+        agent = Agent(FunctionModel(tool_calling_model), capabilities=[RecoverInsideWrapCap()])
+
+        @agent.tool_plain
+        def my_tool() -> str:
+            raise RuntimeError('failed')
+
+        await agent.run('call the tool')
+        assert call_order == ['wrap:before', 'on_error', 'after', 'wrap:after']
 
 
 # --- Hooks capability tests ---
@@ -13115,6 +13742,42 @@ class TestContextVarPropagation:
         assert result.output == 'recovered'
         assert cap.seen_in_error == 'error-path'
 
+    async def test_contextvar_written_during_run_visible_in_on_run_error(self):
+        """Context vars written by run-body hooks propagate back to the run wrapper task."""
+
+        @dataclass
+        class StashAndRecover(AbstractCapability):
+            seen_in_error: str | None = None
+
+            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
+                _test_cv.set('from-run-body')
+                return result
+
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                self.seen_in_error = _test_cv.get(None)
+                return AgentRunResult(output='recovered')
+
+        calls = 0
+
+        def failing_second_request(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return ModelResponse(parts=[ToolCallPart('tool', {}, tool_call_id='1')])
+            raise RuntimeError('model exploded')
+
+        cap = StashAndRecover()
+        agent = Agent(FunctionModel(failing_second_request), capabilities=[cap])
+
+        @agent.tool_plain
+        def tool() -> str:
+            return 'ok'
+
+        result = await agent.run('hello')
+
+        assert result.output == 'recovered'
+        assert cap.seen_in_error == 'from-run-body'
+
 
 # --- WrapperCapability and PrefixTools tests ---
 
@@ -13875,173 +14538,6 @@ async def test_wrapper_capability_delegates_on_tool_execute_error():
 
 
 # --- Tests for double-execution bug fix (streaming + before_node_run replacement) ---
-
-
-class TestNodeStreamingWithHooks:
-    """Tests that node streaming with event_stream_handler doesn't cause double model execution
-    when before_node_run replaces a node."""
-
-    async def test_before_node_run_replacement_no_double_execution(self):
-        """When before_node_run replaces a ModelRequestNode and event_stream_handler is set,
-        the model should be called exactly once (not twice)."""
-        model_call_count = 0
-
-        async def counting_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            nonlocal model_call_count
-            model_call_count += 1
-            yield 'streamed response'
-
-        cap = _ReplacingCapability()
-        agent = Agent(FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap])
-
-        events_received: list[AgentStreamEvent] = []
-
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for event in stream:
-                events_received.append(event)
-
-        result = await agent.run('hello', event_stream_handler=handler)
-        assert result.output == 'streamed response'
-        assert model_call_count == 1, f'Model was called {model_call_count} times, expected 1'
-        assert len(events_received) > 0
-
-    async def test_hook_ordering_with_event_stream_handler(self):
-        """before_node_run fires BEFORE streaming events, wrap_node_run wraps the streaming,
-        and after_node_run fires after graph advancement."""
-        log: list[str] = []
-
-        @dataclass
-        class OrderTrackingCapability(AbstractCapability[Any]):
-            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-                log.append(f'before:{type(node).__name__}')
-                return node
-
-            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                log.append(f'wrap:enter:{type(node).__name__}')
-                result = await handler(node)
-                log.append(f'wrap:exit:{type(node).__name__}')
-                return result
-
-            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
-                log.append(f'after:{type(node).__name__}')
-                return result
-
-        agent = Agent(
-            FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[OrderTrackingCapability()],
-        )
-
-        async def handler(_ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
-            async for _ in stream:
-                pass
-            log.append('stream:consumed')
-
-        await agent.run('hello', event_stream_handler=handler)
-
-        # For ModelRequestNode: before → wrap:enter → stream:consumed → wrap:exit → after
-        mr_before = log.index('before:ModelRequestNode')
-        mr_wrap_enter = log.index('wrap:enter:ModelRequestNode')
-        stream_consumed_idx = log.index('stream:consumed')
-        mr_wrap_exit = log.index('wrap:exit:ModelRequestNode')
-        mr_after = log.index('after:ModelRequestNode')
-        assert mr_before < mr_wrap_enter < stream_consumed_idx < mr_wrap_exit < mr_after
-
-    async def test_run_stream_before_node_run_replacement_no_double_execution(self):
-        """Same as the run() test but for run_stream(): before_node_run replacement
-        should not cause double model execution."""
-        model_call_count = 0
-
-        async def counting_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-            nonlocal model_call_count
-            model_call_count += 1
-            yield 'streamed response'
-
-        cap = _ReplacingCapability()
-        agent = Agent(FunctionModel(simple_model_function, stream_function=counting_stream), capabilities=[cap])
-
-        async with agent.run_stream('hello') as streamed:
-            output = await streamed.get_output()
-
-        assert output == 'streamed response'
-        assert model_call_count == 1, f'Model was called {model_call_count} times, expected 1'
-
-    async def test_run_stream_skips_wrap_and_after_for_the_final_model_request(self):
-        """`run_stream()` hands back the result mid-stream, so the final `ModelRequestNode` only gets `before_node_run`.
-
-        Pinning the documented exception to "node hooks fire however the run is driven": that node's
-        `wrap_node_run`/`after_node_run` are deliberately skipped, while the `SetFinalResult` node
-        that ends the run gets the full lifecycle.
-        """
-        log: list[str] = []
-
-        @dataclass
-        class NodeHookCap(AbstractCapability[Any]):
-            async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
-                log.append(f'before:{type(node).__name__}')
-                return node
-
-            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                log.append(f'wrap:{type(node).__name__}')
-                return await handler(node)
-
-            async def after_node_run(self, ctx: RunContext[Any], *, node: Any, result: Any) -> Any:
-                log.append(f'after:{type(node).__name__}')
-                return result
-
-        agent = Agent(
-            FunctionModel(simple_model_function, stream_function=simple_stream_function),
-            capabilities=[NodeHookCap()],
-        )
-
-        async with agent.run_stream('hello') as streamed:
-            await streamed.get_output()
-
-        assert log == snapshot(
-            [
-                'before:UserPromptNode',
-                'wrap:UserPromptNode',
-                'after:UserPromptNode',
-                'before:ModelRequestNode',
-                'before:SetFinalResult',
-                'wrap:SetFinalResult',
-                'after:SetFinalResult',
-            ]
-        )
-
-    async def test_on_node_run_error_fires_in_run_stream(self):
-        """on_node_run_error in run_stream() fires when wrap_node_run raises during graph advancement."""
-        error_log: list[str] = []
-
-        @dataclass
-        class WrapErrorCap(AbstractCapability[Any]):
-            async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
-                # Raise on CallToolsNode — after UserPromptNode and ModelRequestNode pass through.
-                # ModelRequestNode with tool calls doesn't produce a FinalResultEvent in run_stream(),
-                # so it falls through to wrap_node_run; CallToolsNode is next and triggers the error.
-                from pydantic_ai._agent_graph import CallToolsNode
-
-                if isinstance(node, CallToolsNode):
-                    raise RuntimeError('wrap error')
-                return await handler(node)
-
-            async def on_node_run_error(self, ctx: RunContext[Any], *, node: Any, error: Exception) -> Any:
-                error_log.append(type(node).__name__)
-                raise error
-
-        agent = Agent(
-            FunctionModel(tool_calling_model, stream_function=tool_calling_stream_function),
-            capabilities=[WrapErrorCap()],
-        )
-
-        @agent.tool_plain
-        def my_tool() -> str:
-            return 'tool result'
-
-        with pytest.raises(RuntimeError, match='wrap error'):
-            async with agent.run_stream('hello') as _streamed:
-                pass
-
-        assert error_log == ['CallToolsNode']
 
 
 # --- ToolFailed and ModelRetry from hooks tests ---
@@ -19923,427 +20419,6 @@ class TestHooksClassOutputDecorators:
         assert log == ['sync_before']
 
 
-class TestOutputHookFullLifecycle:
-    """Test the full output hook lifecycle fires in the correct order."""
-
-    async def test_full_validate_and_execute_order(self):
-        """All output hooks fire in the expected order for structured text output."""
-        log: list[str] = []
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='{"value": 1}')])
-
-        @dataclass
-        class FullLifecycleCap(AbstractCapability[Any]):
-            async def before_output_validate(
-                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
-            ) -> str | dict[str, Any]:
-                log.append('before_validate')
-                return output
-
-            async def wrap_output_validate(
-                self,
-                ctx: RunContext[Any],
-                *,
-                output_context: OutputContext,
-                output: str | dict[str, Any],
-                handler: Any,
-            ) -> Any:
-                log.append('wrap_validate:before')
-                result = await handler(output)
-                log.append('wrap_validate:after')
-                return result
-
-            async def after_output_validate(
-                self,
-                ctx: RunContext[Any],
-                *,
-                output_context: OutputContext,
-                output: Any,
-            ) -> Any:
-                log.append('after_validate')
-                return output
-
-            async def before_output_process(
-                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
-            ) -> str | dict[str, Any]:
-                log.append('before_execute')
-                return output
-
-            async def wrap_output_process(
-                self,
-                ctx: RunContext[Any],
-                *,
-                output_context: OutputContext,
-                output: str | dict[str, Any],
-                handler: Any,
-            ) -> Any:
-                log.append('wrap_execute:before')
-                result = await handler(output)
-                log.append('wrap_execute:after')
-                return result
-
-            async def after_output_process(
-                self,
-                ctx: RunContext[Any],
-                *,
-                output_context: OutputContext,
-                output: Any,
-            ) -> Any:
-                log.append('after_execute')
-                return output
-
-        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[FullLifecycleCap()])
-        result = await agent.run('hello')
-        assert result.output == MyOutput(value=1)
-        assert log == [
-            'before_validate',
-            'wrap_validate:before',
-            'wrap_validate:after',
-            'after_validate',
-            'before_execute',
-            'wrap_execute:before',
-            'wrap_execute:after',
-            'after_execute',
-        ]
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='{"value": 1}')],
-                    usage=RequestUsage(input_tokens=51, output_tokens=3),
-                    model_name='function:model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-    async def test_full_lifecycle_with_tool_output(self):
-        """All output hooks fire in order for tool-based output."""
-        log: list[str] = []
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if info.output_tools:
-                tool = info.output_tools[0]
-                return ModelResponse(
-                    parts=[ToolCallPart(tool_name=tool.name, args='{"value": 100}', tool_call_id='call-1')]
-                )
-            return make_text_response('no output tools')  # pragma: no cover
-
-        @dataclass
-        class FullLifecycleCap(AbstractCapability[Any]):
-            async def before_output_validate(
-                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
-            ) -> str | dict[str, Any]:
-                log.append('before_validate')
-                assert output_context.mode == 'tool'
-                assert output_context.tool_call is not None
-                assert output_context.tool_def is not None
-                return output
-
-            async def after_output_validate(
-                self,
-                ctx: RunContext[Any],
-                *,
-                output_context: OutputContext,
-                output: Any,
-            ) -> Any:
-                log.append('after_validate')
-                return output
-
-            async def before_output_process(
-                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
-            ) -> str | dict[str, Any]:
-                log.append('before_execute')
-                return output
-
-            async def after_output_process(
-                self,
-                ctx: RunContext[Any],
-                *,
-                output_context: OutputContext,
-                output: Any,
-            ) -> Any:
-                log.append('after_execute')
-                return output
-
-        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[FullLifecycleCap()])
-        result = await agent.run('hello')
-        assert result.output == MyOutput(value=100)
-        assert log == [
-            'before_validate',
-            'after_validate',
-            'before_execute',
-            'after_execute',
-        ]
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[ToolCallPart(tool_name='final_result', args='{"value": 100}', tool_call_id='call-1')],
-                    usage=RequestUsage(input_tokens=51, output_tokens=4),
-                    model_name='function:model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name='final_result',
-                            content='Final result processed.',
-                            tool_call_id='call-1',
-                            timestamp=IsDatetime(),
-                        )
-                    ],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-
-class TestOutputContext:
-    """OutputContext is populated correctly for different output modes."""
-
-    async def test_output_context_for_prompted_output(self):
-        """OutputContext has correct fields for prompted text output."""
-        captured: list[OutputContext] = []
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='{"value": 1}')])
-
-        @dataclass
-        class CaptureCap(AbstractCapability[Any]):
-            async def before_output_validate(
-                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
-            ) -> str | dict[str, Any]:
-                captured.append(output_context)
-                return output
-
-        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[CaptureCap()])
-        await agent.run('hello')
-        assert len(captured) == 1
-        oc = captured[0]
-        assert oc.mode == 'prompted'
-        assert oc.output_type is MyOutput
-        assert oc.object_def is not None
-        assert oc.has_function is False
-        assert oc.tool_call is None
-        assert oc.tool_def is None
-
-    async def test_output_context_for_plain_text(self):
-        """OutputContext has correct fields for plain text output (via process hooks)."""
-        captured: list[OutputContext] = []
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response('hello')
-
-        @dataclass
-        class CaptureCap(AbstractCapability[Any]):
-            async def before_output_process(
-                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
-            ) -> Any:
-                captured.append(output_context)
-                return output
-
-        agent = Agent(FunctionModel(model_fn), capabilities=[CaptureCap()])
-        await agent.run('hello')
-        assert len(captured) == 1
-        oc = captured[0]
-        assert oc.mode == 'text'
-        assert oc.output_type is str
-        assert oc.object_def is None
-        assert oc.has_function is False
-
-    async def test_output_context_for_text_function(self):
-        """OutputContext has correct fields for TextOutput function (via process hooks)."""
-        captured: list[OutputContext] = []
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response('hello')
-
-        def upcase(text: str) -> str:
-            return text.upper()
-
-        @dataclass
-        class CaptureCap(AbstractCapability[Any]):
-            async def before_output_process(
-                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
-            ) -> Any:
-                captured.append(output_context)
-                return output
-
-        agent = Agent(FunctionModel(model_fn), output_type=TextOutput(upcase), capabilities=[CaptureCap()])
-        await agent.run('hello')
-        assert len(captured) == 1
-        oc = captured[0]
-        assert oc.mode == 'text'
-        assert oc.output_type is str
-        assert oc.has_function is True
-
-    async def test_output_context_for_tool_output(self):
-        """OutputContext has correct fields for tool-based output, including tool_call and tool_def."""
-        captured: list[OutputContext] = []
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if info.output_tools:
-                tool = info.output_tools[0]
-                return ModelResponse(
-                    parts=[ToolCallPart(tool_name=tool.name, args='{"value": 1}', tool_call_id='call-1')]
-                )
-            return make_text_response('no output tools')  # pragma: no cover
-
-        @dataclass
-        class CaptureCap(AbstractCapability[Any]):
-            async def before_output_validate(
-                self, ctx: RunContext[Any], *, output_context: OutputContext, output: str | dict[str, Any]
-            ) -> str | dict[str, Any]:
-                captured.append(output_context)
-                return output
-
-        agent = Agent(FunctionModel(model_fn), output_type=MyOutput, capabilities=[CaptureCap()])
-        await agent.run('hello')
-        assert len(captured) == 1
-        oc = captured[0]
-        assert oc.mode == 'tool'
-        assert oc.output_type is MyOutput
-        assert oc.object_def is not None
-        assert oc.has_function is False
-        assert oc.tool_call is not None
-        assert oc.tool_call.tool_name == 'final_result'
-        assert oc.tool_def is not None
-        assert oc.tool_def.name == 'final_result'
-        assert oc.tool_def.kind == 'output'
-
-
-class TestWrapOutputProcess:
-    """wrap_output_process provides full middleware control around execution."""
-
-    async def test_wrap_can_observe(self):
-        """wrap_output_process can observe without modifying."""
-        log: list[str] = []
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='{"value": 42}')])
-
-        @dataclass
-        class WrapCap(AbstractCapability[Any]):
-            async def wrap_output_process(
-                self,
-                ctx: RunContext[Any],
-                *,
-                output_context: OutputContext,
-                output: str | dict[str, Any],
-                handler: Any,
-            ) -> Any:
-                log.append('before')
-                result = await handler(output)
-                log.append('after')
-                return result
-
-        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[WrapCap()])
-        result = await agent.run('hello')
-        assert result.output == MyOutput(value=42)
-        assert log == ['before', 'after']
-
-    async def test_wrap_can_replace_result(self):
-        """wrap_output_process can replace the result entirely."""
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart(content='{"value": 42}')])
-
-        @dataclass
-        class ReplaceCap(AbstractCapability[Any]):
-            async def wrap_output_process(
-                self,
-                ctx: RunContext[Any],
-                *,
-                output_context: OutputContext,
-                output: str | dict[str, Any],
-                handler: Any,
-            ) -> Any:
-                await handler(output)  # Call handler but ignore result
-                return MyOutput(value=0)
-
-        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput), capabilities=[ReplaceCap()])
-        result = await agent.run('hello')
-        assert result.output == MyOutput(value=0)
-
-
-class TestOnOutputProcessError:
-    """on_output_process_error can recover from execution failures."""
-
-    async def test_recover_from_output_function_error(self):
-        """on_output_process_error catches errors from output functions."""
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response('trigger error')
-
-        def failing_func(text: str) -> str:
-            raise ValueError('output function failed')
-
-        @dataclass
-        class RecoverCap(AbstractCapability[Any]):
-            async def on_output_process_error(
-                self,
-                ctx: RunContext[Any],
-                *,
-                output_context: OutputContext,
-                output: str | dict[str, Any],
-                error: Exception,
-            ) -> Any:
-                return 'recovered'
-
-        agent = Agent(FunctionModel(model_fn), output_type=TextOutput(failing_func), capabilities=[RecoverCap()])
-        result = await agent.run('hello')
-        assert result.output == 'recovered'
-        assert result.all_messages() == snapshot(
-            [
-                ModelRequest(
-                    parts=[UserPromptPart(content='hello', timestamp=IsDatetime())],
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-                ModelResponse(
-                    parts=[TextPart(content='trigger error')],
-                    usage=RequestUsage(input_tokens=51, output_tokens=2),
-                    model_name='function:model_fn:',
-                    timestamp=IsDatetime(),
-                    run_id=IsStr(),
-                    conversation_id=IsStr(),
-                ),
-            ]
-        )
-
-    async def test_default_reraises(self):
-        """Without a recovery hook, output execution errors propagate."""
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return make_text_response('trigger error')
-
-        def failing_func(text: str) -> str:
-            raise ValueError('output function failed')
-
-        agent = Agent(FunctionModel(model_fn), output_type=TextOutput(failing_func))
-        with pytest.raises(ValueError, match='output function failed'):
-            await agent.run('hello')
-
-
 class TestRunSync:
     """Output hooks work with run_sync as well as run."""
 
@@ -20375,6 +20450,96 @@ class TestRunSync:
 
 class TestOutputHookErrorPaths:
     """Test error paths to ensure correct error wrapping and hook firing."""
+
+    def test_on_output_validate_error_recovery_is_invisible_to_wrap(self):
+        call_order: list[str] = []
+
+        @dataclass
+        class RecoverInsideWrapCap(AbstractCapability[Any]):
+            async def wrap_output_validate(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                handler: Any,
+            ) -> Any:
+                call_order.append('wrap:before')
+                result = await handler(output)
+                call_order.append('wrap:after')
+                return result
+
+            async def on_output_validate_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: str | dict[str, Any],
+                error: ValidationError | ModelRetry,
+            ) -> Any:
+                call_order.append('on_error')
+                return MyOutput(value=42)
+
+            async def after_output_validate(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                call_order.append('after')
+                return output
+
+        agent = Agent(
+            FunctionModel(lambda messages, info: make_text_response('invalid')),
+            output_type=PromptedOutput(MyOutput),
+            capabilities=[RecoverInsideWrapCap()],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == MyOutput(value=42)
+        assert call_order == ['wrap:before', 'on_error', 'after', 'wrap:after']
+
+    def test_on_output_process_error_recovery_is_invisible_to_wrap(self):
+        call_order: list[str] = []
+
+        def failing_output(value: int) -> str:
+            raise ValueError(f'cannot process {value}')
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert info.output_tools is not None
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'value': 1})])
+
+        @dataclass
+        class RecoverInsideWrapCap(AbstractCapability[Any]):
+            async def wrap_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any, handler: Any
+            ) -> Any:
+                call_order.append('wrap:before')
+                result = await handler(output)
+                call_order.append('wrap:after')
+                return result
+
+            async def on_output_process_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                output_context: OutputContext,
+                output: Any,
+                error: Exception,
+            ) -> Any:
+                call_order.append('on_error')
+                return 'recovered'
+
+            async def after_output_process(
+                self, ctx: RunContext[Any], *, output_context: OutputContext, output: Any
+            ) -> Any:
+                call_order.append('after')
+                return output
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            output_type=failing_output,
+            capabilities=[RecoverInsideWrapCap()],
+        )
+        result = agent.run_sync('hello')
+        assert result.output == 'recovered'
+        assert call_order == ['wrap:before', 'on_error', 'after', 'wrap:after']
 
     def test_on_output_validate_error_reraise_wraps_in_tool_retry(self):
         """When on_output_validate_error re-raises ValidationError, it's wrapped in ToolRetryError causing retry."""
@@ -22277,6 +22442,37 @@ class TestHookExceptionHandling:
     """ValidationError/ModelRetry raised from before_* and after_* hooks should trigger retry,
     matching the behavior when raised from wrap_output_validate/wrap_output_process.
     """
+
+    async def test_prompted_output_validator_model_retry_round_trips_retry_prompt(self):
+        requests: list[list[ModelMessage]] = []
+        validator_calls = 0
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            requests.append(messages.copy())
+            return ModelResponse(parts=[TextPart(content='{"value": 5}')])
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput(MyOutput))
+
+        @agent.output_validator
+        def validate_output(output: MyOutput) -> MyOutput:
+            nonlocal validator_calls
+            validator_calls += 1
+            if validator_calls == 1:
+                raise ModelRetry('validate again')
+            return output
+
+        result = await agent.run('hello')
+
+        assert result.output == MyOutput(value=5)
+        assert validator_calls == 2
+        assert len(requests) == 2
+        assert [
+            part.content
+            for message in requests[1]
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, RetryPromptPart)
+        ] == ['validate again']
 
     async def test_validation_error_from_after_output_validate_triggers_retry(self):
         """ValidationError from after_output_validate should be caught and trigger model retry."""

@@ -28,7 +28,7 @@ from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai._agent_graph import _resolve_interrupted_stream_state  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities import Hooks
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import SkipModelRequest, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
@@ -391,7 +391,7 @@ async def test_hooks_fire_once_around_continuation_chain(stream: bool) -> None:
     else:
         await agent.run('go')
 
-    assert calls == snapshot(['before', 'wrap', 'after'])
+    assert calls == snapshot(['wrap', 'before', 'after'])
     # The single `after_model_request` call sees the final merged (complete) response.
     assert len(after_responses) == 1
     assert after_responses[0].state == 'complete'
@@ -580,6 +580,42 @@ async def test_resume_from_trailing_suspended_history(stream: bool) -> None:
     assert calls == snapshot(['before', 'after'])
 
 
+@pytest.mark.parametrize('stream', [False, True])
+async def test_resume_wrap_short_circuit_replaces_suspended_response_in_history(stream: bool) -> None:
+    """A `wrap_model_request` short-circuit on a resumed run must not leave the suspended
+    response dangling in history: the replacement response is appended after the base history,
+    exactly as it would be for a completed continuation."""
+    hooks = Hooks()
+
+    @hooks.on.model_request
+    async def _wrap(ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any) -> ModelResponse:
+        raise SkipModelRequest(ModelResponse(parts=[TextPart('cached')]))
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='go')]),
+        _suspended(texts=['partial '], provider_response_id='r1', input_tokens=5, output_tokens=2),
+    ]
+    agent = Agent(FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('never called')])), capabilities=[hooks])
+
+    if stream:
+        async with agent.run_stream(message_history=history) as result:
+            output = await result.get_output()
+        all_messages = result.all_messages()
+        new_messages = result.new_messages()
+    else:
+        run_result = await agent.run(message_history=history)
+        output = run_result.output
+        all_messages = run_result.all_messages()
+        new_messages = run_result.new_messages()
+
+    assert output == 'cached'
+    assert [type(m).__name__ for m in all_messages] == ['ModelRequest', 'ModelResponse']
+    replacement = all_messages[-1]
+    assert isinstance(replacement, ModelResponse)
+    assert replacement.state == 'complete'
+    assert [type(m).__name__ for m in new_messages] == ['ModelResponse']
+
+
 async def test_new_prompt_after_trailing_suspended_history_errors() -> None:
     """A new prompt on top of a suspended-ending history is rejected, not silently started as a fresh turn.
 
@@ -737,8 +773,8 @@ async def test_nonstream_usage_limit_on_completed_merge_does_not_cancel() -> Non
     assert model.cancelled == []
 
 
-async def test_error_on_first_streamed_segment_propagates() -> None:
-    """An error raised while iterating the first streamed segment surfaces cleanly out of the node."""
+async def test_error_on_first_streamed_segment_propagates_from_consumer_and_cancels_wrap() -> None:
+    """A streamed model error surfaces in the consumer task and cancels the model-request wrapper."""
 
     @dataclass
     class _ExplodingStream(StreamedResponse):
@@ -776,11 +812,32 @@ async def test_error_on_first_streamed_segment_propagates() -> None:
         ) -> AsyncGenerator[StreamedResponse]:
             yield _ExplodingStream(model_request_parameters)
 
-    agent = Agent(_ExplodingModel())
+    hooks = Hooks()
+    calls: list[str] = []
+
+    @hooks.on.model_request
+    async def _wrap(ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any) -> ModelResponse:
+        calls.append('wrap:before')
+        try:
+            return await handler(request_context)
+        except asyncio.CancelledError:
+            calls.append('wrap:cancelled')
+            raise
+
+    @hooks.on.model_request_error
+    async def _on_error(
+        ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        calls.append('on_error')  # pragma: no cover
+        raise error  # pragma: no cover
+
+    agent = Agent(_ExplodingModel(), capabilities=[hooks])
 
     with pytest.raises(RuntimeError, match='stream exploded'):
         async with agent.run_stream('go'):
             pass
+
+    assert calls == ['wrap:before', 'wrap:cancelled']
 
 
 @pytest.mark.parametrize('stream', [False, True])
@@ -1221,13 +1278,12 @@ async def test_iter_node_stream_early_break_records_suspended() -> None:
     with capture_run_messages() as messages:
         async with agent.iter('go') as run:
             node = run.next_node
-            while not isinstance(node, End):
-                if Agent.is_model_request_node(node):
-                    async with node.stream(run.ctx) as stream:
-                        async for _ in stream:  # pragma: no branch
-                            break  # walk away mid suspended segment, without cancelling
-                    break  # stop driving the run
-                node = await run.next(node)
+            assert not isinstance(node, End)
+            node = await run.next(node)
+            assert Agent.is_model_request_node(node)
+            async with node.stream(run.ctx) as stream:
+                async for _ in stream:  # pragma: no branch
+                    break  # walk away mid suspended segment, without cancelling
 
     assert model.cancelled == []  # detach left the job alive
     assert isinstance(messages[-1], ModelResponse)
