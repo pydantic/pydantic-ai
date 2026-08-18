@@ -587,6 +587,8 @@ navigation:
       - page: "Client"
         path: "mcp/client.md"
         slug: "mcp/client"
+        aliases:
+          - "mcp/fastmcp-client"
       - page: "Server"
         path: "mcp/server.md"
         slug: "mcp/server"
@@ -1182,6 +1184,9 @@ redirects:
   - from: "realtime"
     to: "realtime/overview"
     status: 302
+  - from: "overview/realtime"
+    to: "realtime/overview"
+    status: 302
   - from: "core-concepts"
     to: "core-concepts/agent"
     status: 302
@@ -1228,11 +1233,11 @@ redirects:
     to: "capabilities/thinking/index.md"
   # Content that moved outside the documentation site.
   - from: "a2a"
-    to: "https://github.com/pydantic/fasta2a"
+    to: "https://github.com/datalayer/fasta2a"
   - from: "integrations/a2a"
-    to: "https://github.com/pydantic/fasta2a"
+    to: "https://github.com/datalayer/fasta2a"
   - from: "api/fasta2a"
-    to: "https://github.com/pydantic/fasta2a"
+    to: "https://github.com/datalayer/fasta2a"
   - from: "mcp/run-python"
     to: "https://github.com/pydantic/mcp-run-python"
   - from: "graph/tree/main/pydantic_graph"
@@ -1248,3 +1253,5 @@ redirects:
     to: "overview/:splat"
   - from: "integrations/durable_execution/*"
     to: "capabilities/durable_execution/:splat"
+  - from: "overview/realtime/*"
+    to: "realtime/:splat"
