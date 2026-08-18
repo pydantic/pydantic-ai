@@ -608,6 +608,12 @@ def _schema_to_type_expr(
             ref_schema = _normalize_schema_node(defs[ref_name])
             if ref_schema.get('type') == 'object' and 'properties' in ref_schema:
                 _build_and_register_type(ref_name, ref_schema, defs, referenced_types, tool_name, path)
+            elif 'enum' in ref_schema and ref_schema.keys().isdisjoint(('$ref', 'allOf', 'anyOf', 'oneOf')):
+                # Non-object enum defs (Pydantic's default enum shape) resolve inline as
+                # `Literal[...]` like inline enums — a bare class name here would never be
+                # defined. Defs without composition keywords are terminal, so this recursion
+                # cannot cycle.
+                return _schema_to_type_expr(ref_schema, defs, referenced_types, tool_name, path)
         # Return the TypeSignature object if available, otherwise the name
         if ref_name in referenced_types:
             return referenced_types[ref_name]
